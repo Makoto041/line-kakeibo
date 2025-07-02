@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
@@ -15,7 +15,7 @@ export default function LinkClientPage() {
   const token = searchParams.get('token');
   const lineId = searchParams.get('lineId');
 
-  const verifyToken = async () => {
+  const verifyToken = useCallback(async () => {
     try {
       const response = await fetch(`/api/link?token=${token}&lineId=${lineId}`);
       const data = await response.json();
@@ -31,7 +31,7 @@ export default function LinkClientPage() {
       setError('リンクの検証に失敗しました。');
       setTokenValid(false);
     }
-  };
+  }, [token, lineId]);
 
   useEffect(() => {
     if (token && lineId) {
