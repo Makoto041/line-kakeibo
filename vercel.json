@@ -1,0 +1,8 @@
+{
+  "scope": "makoto041s-projects",
+  "projects": {
+    "web": {
+      "rootDirectory": "web"
+    }
+  }
+}

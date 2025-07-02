@@ -1,0 +1,33 @@
+{
+  "name": "line-kakeibo-bot",
+  "version": "1.0.0",
+  "description": "LINE Receipt Bot for Household Budget",
+  "main": "dist/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "predeploy": "npm run build",
+    "deploy": "npm run build && firebase deploy --only functions",
+    "dev": "ts-node-dev src/index.ts"
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@google-cloud/functions-framework": "^4.0.0",
+    "@google-cloud/vision": "^5.2.0",
+    "@line/bot-sdk": "^10.0.0",
+    "dayjs": "^1.11.10",
+    "dotenv": "^16.4.4",
+    "express": "^4.19.2",
+    "firebase-admin": "^13.4.0",
+    "firebase-functions": "^6.3.2"
+  },
+  "engines": {
+    "node": "20"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.2"
+  }
+}

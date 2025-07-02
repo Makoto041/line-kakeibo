@@ -1,0 +1,10 @@
+{
+  "name": "line-kakeibo",
+  "version": "1.0.0",
+  "description": "LINE Receipt Household Budget App",
+  "private": true,
+  "workspaces": [
+    "bot",
+    "web"
+  ]
+}
