@@ -3,13 +3,13 @@ import { getFirestore } from 'firebase/firestore';
 import { getAuth, signInAnonymously, UserCredential } from 'firebase/auth';
 
 const config = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  apiKey: "AIzaSyCC5zztgElGW-ORnXMKA9LeqH0XilcU39c",
+  authDomain: "line-kakeibo-0410.firebaseapp.com",
+  projectId: "line-kakeibo-0410",
+  storageBucket: "line-kakeibo-0410.appspot.com",
+  messagingSenderId: "440748785600",
+  appId: "1:440748785600:web:2319a5fe3e7a7d2571d225",
+  measurementId: "G-PLNC7GY160",
 };
 
 const app =

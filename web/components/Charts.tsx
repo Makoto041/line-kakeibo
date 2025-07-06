@@ -14,6 +14,7 @@ import {
   Legend,
 } from 'chart.js';
 import { Pie, Bar, Line } from 'react-chartjs-2';
+import dayjs from 'dayjs';
 
 ChartJS.register(
   CategoryScale,
@@ -115,30 +116,60 @@ export function MonthlyBarChart({ data, label = '支出額' }: MonthlyBarChartPr
 
 interface DailyLineChartProps {
   data: Record<string, number>;
-  month: number;
-  year: number;
+  startDate: string;
+  endDate: string;
+  mode: 'monthly' | 'custom';
 }
 
-export function DailyLineChart({ data, month, year }: DailyLineChartProps) {
-  // Generate all days of the month
-  const daysInMonth = new Date(year, month, 0).getDate();
-  const allDays = Array.from({ length: daysInMonth }, (_, i) => {
-    const day = (i + 1).toString().padStart(2, '0');
-    return `${year}-${month.toString().padStart(2, '0')}-${day}`;
-  });
+export function DailyLineChart({ data, startDate, endDate, mode }: DailyLineChartProps) {
+  let chartData;
+  
+  // Generate all days in the range - using dayjs for better timezone handling
+  const start = dayjs(startDate);
+  const end = dayjs(endDate);
+  const allDays: string[] = [];
+  
+  let current = start;
+  while (current.isBefore(end) || current.isSame(end, 'day')) {
+    allDays.push(current.format('YYYY-MM-DD'));
+    current = current.add(1, 'day');
+  }
 
-  const chartData = {
-    labels: allDays.map(date => date.split('-')[2] + '日'),
-    datasets: [
-      {
-        label: '日別支出',
-        data: allDays.map(date => data[date] || 0),
-        borderColor: 'rgb(75, 192, 192)',
-        backgroundColor: 'rgba(75, 192, 192, 0.2)',
-        tension: 0.1
-      }
-    ]
-  };
+  if (mode === 'monthly') {
+    // For monthly mode, show day numbers (1, 2, 3...)
+    chartData = {
+      labels: allDays.map(date => {
+        const day = date.split('-')[2];
+        return day + '日';
+      }),
+      datasets: [
+        {
+          label: '日別支出',
+          data: allDays.map(date => data[date] || 0),
+          borderColor: 'rgb(75, 192, 192)',
+          backgroundColor: 'rgba(75, 192, 192, 0.2)',
+          tension: 0.1
+        }
+      ]
+    };
+  } else {
+    // For custom range, show month/day format
+    chartData = {
+      labels: allDays.map(date => {
+        const parts = date.split('-');
+        return `${parseInt(parts[1])}/${parseInt(parts[2])}`;
+      }),
+      datasets: [
+        {
+          label: '日別支出',
+          data: allDays.map(date => data[date] || 0),
+          borderColor: 'rgb(75, 192, 192)',
+          backgroundColor: 'rgba(75, 192, 192, 0.2)',
+          tension: 0.1
+        }
+      ]
+    };
+  }
 
   const options = {
     responsive: true,

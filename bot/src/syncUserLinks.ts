@@ -26,7 +26,7 @@ export const syncUserLinks = onDocumentCreated(
         return;
       }
 
-      const { userId: lineId, appUid } = data;
+      const { lineId, appUid } = data;
       
       console.log('Processing expense with lineId:', lineId, 'appUid:', appUid);
       
