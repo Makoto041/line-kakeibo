@@ -141,11 +141,7 @@ export async function enhanceImageForOCR(inputBuffer: Buffer): Promise<Buffer> {
       .gamma(1.2)
       
       // 4. エッジ強調
-      .sharpen({
-        sigma: 1,      // エッジ検出の強度
-        flat: 1,       // フラット領域の保護
-        jagged: 2      // ジャギー除去
-      })
+      .sharpen(1, 1, 2)  // sigma, flat, jagged
       
       // 5. 最終的なコントラスト調整
       .linear(1.1, -(128 * 0.1)) // わずかなコントラスト向上

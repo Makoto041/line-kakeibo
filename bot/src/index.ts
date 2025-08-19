@@ -260,8 +260,12 @@ async function processImageInBackground(event: any, MAX_IMAGE_SIZE: number, MAX_
         const parsedData = enhancedParseReceipt(detectedText);
         
         // OCR信頼度評価
-        const confidenceScore = assessOCRConfidence(parsedData);
+        const confidenceResult = assessOCRConfidence(detectedText, parsedData);
+        const confidenceScore = confidenceResult.confidence;
         console.log(`OCR Confidence Score: ${(confidenceScore * 100).toFixed(1)}%`);
+        if (confidenceResult.issues.length > 0) {
+          console.log('OCR Issues:', confidenceResult.issues);
+        }
         
         // 低信頼度の場合、フォールバック処理
         if (confidenceScore < 0.5) {
@@ -342,7 +346,9 @@ async function processImageInBackground(event: any, MAX_IMAGE_SIZE: number, MAX_
           } else {
             // 新機能: 自動カテゴリー分類
             console.log(`=== AUTO CATEGORY CLASSIFICATION ===`);
-            const autoCategory = autoClassifyCategory(parsedData);
+            // 商品名と店舗名からカテゴリーを推定
+            const itemsText = parsedData.items.map(i => i.name).join(' ');
+            const autoCategory = autoClassifyCategory(itemsText, parsedData.storeName);
             if (autoCategory !== "その他") {
               defaultCategory = autoCategory;
               console.log(`=== AUTO CATEGORY: Classified as ${autoCategory} based on items ===`);
