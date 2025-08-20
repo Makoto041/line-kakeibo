@@ -14,9 +14,9 @@ export function parseTextExpense(input: string): ParsedTextExpense | null {
   const tokens = input.trim().split(/\s+/);
 
   // 金額 (= 数字) を抜き出す
-  const amountIdx = tokens.findIndex(t => /^\d+円?$/.test(t.replace(/,/g, '')));
+  const amountIdx = tokens.findIndex(t => /^¥?\d+円?$/.test(t.replace(/,/g, '')));
   if (amountIdx === -1) return null;
-  const amount = Number(tokens[amountIdx].replace(/[,円]/g, ''));
+  const amount = Number(tokens[amountIdx].replace(/[¥,円]/g, ''));
 
   // 日付っぽいトークンを探す
   const dateIdx = tokens.findIndex(t => /^(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}|\d{1,2}月\d{1,2}日?)$/.test(t));
