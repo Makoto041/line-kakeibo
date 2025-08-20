@@ -40,64 +40,148 @@ export async function optimizeImageForOCR(
     console.log(`=== IMAGE OPTIMIZATION START ===`);
     console.log(`Original size: ${(originalSize / 1024 / 1024).toFixed(2)}MB`);
 
-    // Sharp pipeline for OCR optimization
-    let sharpPipeline = sharp(inputBuffer)
-      .resize(opts.maxWidth, opts.maxHeight, {
+    // Sharp の可用性チェック
+    if (!sharp) {
+      console.warn('Sharp library not available, using original image');
+      return {
+        buffer: inputBuffer,
+        originalSize,
+        optimizedSize: originalSize,
+        compressionRatio: 0
+      };
+    }
+
+    // メモリ使用量をチェック
+    const maxImageSize = 50 * 1024 * 1024; // 50MB制限
+    if (originalSize > maxImageSize) {
+      console.warn(`Image too large (${(originalSize / 1024 / 1024).toFixed(2)}MB), using original`);
+      return {
+        buffer: inputBuffer,
+        originalSize,
+        optimizedSize: originalSize,
+        compressionRatio: 0
+      };
+    }
+
+    // Sharp pipeline for OCR optimization with error handling
+    let sharpPipeline;
+    try {
+      sharpPipeline = sharp(inputBuffer);
+      
+      // メタデータを取得してバリデーション
+      const metadata = await sharpPipeline.metadata();
+      console.log(`Image metadata: ${metadata.width}x${metadata.height}, format: ${metadata.format}`);
+      
+      // サポートされていないフォーマットのチェック
+      if (!metadata.width || !metadata.height) {
+        throw new Error('Invalid image dimensions');
+      }
+
+    } catch (sharpError) {
+      console.error('Sharp initialization failed:', sharpError);
+      return {
+        buffer: inputBuffer,
+        originalSize,
+        optimizedSize: originalSize,
+        compressionRatio: 0
+      };
+    }
+
+    try {
+      // リサイズ処理
+      sharpPipeline = sharpPipeline.resize(opts.maxWidth, opts.maxHeight, {
         fit: 'inside',
         withoutEnlargement: true
       });
 
-    // OCR特化の前処理
-    sharpPipeline = sharpPipeline
-      .greyscale() // グレースケール変換でファイルサイズ削減 + OCR精度向上
-      .normalize() // コントラスト正規化
-      .sharpen(); // エッジ強化
+      // OCR特化の前処理 (Cloud Functions で安全な設定)
+      sharpPipeline = sharpPipeline
+        .greyscale() // グレースケール変換
+        .normalize() // コントラスト正規化
+        .sharpen(); // エッジ強化
 
-    // フォーマット変換と圧縮
-    let outputBuffer: Buffer;
-    switch (opts.format) {
-      case 'jpeg':
-        outputBuffer = await sharpPipeline
-          .jpeg({ 
-            quality: opts.quality,
-            progressive: true,
-            mozjpeg: true // 高効率圧縮
-          })
+      // フォーマット変換と圧縮 (より安全な設定)
+      let outputBuffer: Buffer;
+      switch (opts.format) {
+        case 'jpeg':
+          outputBuffer = await sharpPipeline
+            .jpeg({ 
+              quality: opts.quality,
+              progressive: false, // Cloud Functions でより安全
+              mozjpeg: false // デフォルトエンコーダーを使用
+            })
+            .toBuffer();
+          break;
+        case 'png':
+          outputBuffer = await sharpPipeline
+            .png({ 
+              compressionLevel: 6 // より軽い圧縮レベル
+            })
+            .toBuffer();
+          break;
+        case 'webp':
+          outputBuffer = await sharpPipeline
+            .webp({ 
+              quality: opts.quality,
+              effort: 3 // より軽いエフォート
+            })
+            .toBuffer();
+          break;
+        default:
+          // サポートされていないフォーマットの場合は JPEG にフォールバック
+          console.warn(`Unsupported format ${opts.format}, using JPEG`);
+          outputBuffer = await sharpPipeline
+            .jpeg({ quality: opts.quality })
+            .toBuffer();
+      }
+
+      const optimizedSize = outputBuffer.length;
+      const compressionRatio = (1 - optimizedSize / originalSize) * 100;
+
+      console.log(`Optimized size: ${(optimizedSize / 1024 / 1024).toFixed(2)}MB`);
+      console.log(`Compression ratio: ${compressionRatio.toFixed(1)}%`);
+      console.log(`=== IMAGE OPTIMIZATION END ===`);
+
+      return {
+        buffer: outputBuffer,
+        originalSize,
+        optimizedSize,
+        compressionRatio
+      };
+
+    } catch (processingError) {
+      console.error('Image processing failed:', processingError);
+      
+      // 処理エラーの場合、基本的なリサイズのみ試行
+      try {
+        console.log('Attempting basic resize only');
+        const basicBuffer = await sharp(inputBuffer)
+          .resize(1600, 900, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 80 })
           .toBuffer();
-        break;
-      case 'png':
-        outputBuffer = await sharpPipeline
-          .png({ 
-            quality: opts.quality,
-            compressionLevel: 9
-          })
-          .toBuffer();
-        break;
-      case 'webp':
-        outputBuffer = await sharpPipeline
-          .webp({ 
-            quality: opts.quality,
-            effort: 6 // 高圧縮
-          })
-          .toBuffer();
-        break;
-      default:
-        throw new Error(`Unsupported format: ${opts.format}`);
+          
+        const basicSize = basicBuffer.length;
+        const basicRatio = (1 - basicSize / originalSize) * 100;
+        
+        console.log(`Basic optimization successful: ${basicRatio.toFixed(1)}% reduction`);
+        return {
+          buffer: basicBuffer,
+          originalSize,
+          optimizedSize: basicSize,
+          compressionRatio: basicRatio
+        };
+        
+      } catch (basicError) {
+        console.error('Basic resize also failed:', basicError);
+        // 最終フォールバック
+        return {
+          buffer: inputBuffer,
+          originalSize,
+          optimizedSize: originalSize,
+          compressionRatio: 0
+        };
+      }
     }
-
-    const optimizedSize = outputBuffer.length;
-    const compressionRatio = (1 - optimizedSize / originalSize) * 100;
-
-    console.log(`Optimized size: ${(optimizedSize / 1024 / 1024).toFixed(2)}MB`);
-    console.log(`Compression ratio: ${compressionRatio.toFixed(1)}%`);
-    console.log(`=== IMAGE OPTIMIZATION END ===`);
-
-    return {
-      buffer: outputBuffer,
-      originalSize,
-      optimizedSize,
-      compressionRatio
-    };
 
   } catch (error) {
     console.error('Image optimization failed:', error);
@@ -126,30 +210,51 @@ export async function enhanceImageForOCR(inputBuffer: Buffer): Promise<Buffer> {
   try {
     console.log(`=== OCR ENHANCEMENT START ===`);
 
-    const enhancedBuffer = await sharp(inputBuffer)
-      // 1. ノイズ除去 (median filter的効果)
-      .blur(0.3)
-      .sharpen(1, 1)
-      
-      // 2. コントラスト強化
-      .normalize({
-        lower: 1,   // 最暗部を1%に
-        upper: 99   // 最明部を99%に
-      })
-      
-      // 3. ガンマ補正 (中間調を明るく)
-      .gamma(1.2)
-      
-      // 4. エッジ強調
-      .sharpen(1, 1, 2)  // sigma, flat, jagged
-      
-      // 5. 最終的なコントラスト調整
-      .linear(1.1, -(128 * 0.1)) // わずかなコントラスト向上
-      
-      .toBuffer();
+    // Sharp の可用性チェック
+    if (!sharp) {
+      console.warn('Sharp library not available for enhancement, using original image');
+      return inputBuffer;
+    }
 
-    console.log(`=== OCR ENHANCEMENT END ===`);
-    return enhancedBuffer;
+    // より安全な設定での画像処理
+    try {
+      const enhancedBuffer = await sharp(inputBuffer)
+        // 1. 軽いノイズ除去
+        .blur(0.1)
+        .sharpen(0.8, 0.8)
+        
+        // 2. 基本的なコントラスト強化
+        .normalize()
+        
+        // 3. 軽いガンマ補正
+        .gamma(1.1)
+        
+        // 4. 軽いエッジ強調  
+        .sharpen(0.8, 0.8, 1)
+        
+        .toBuffer();
+
+      console.log(`=== OCR ENHANCEMENT END ===`);
+      return enhancedBuffer;
+
+    } catch (processingError) {
+      console.error('Enhanced processing failed, trying basic enhancement:', processingError);
+      
+      // より基本的な処理のみ
+      try {
+        const basicEnhanced = await sharp(inputBuffer)
+          .normalize()
+          .sharpen()
+          .toBuffer();
+        
+        console.log('Basic enhancement successful');
+        return basicEnhanced;
+        
+      } catch (basicError) {
+        console.error('Basic enhancement also failed:', basicError);
+        return inputBuffer; // 最終フォールバック
+      }
+    }
 
   } catch (error) {
     console.error('OCR enhancement failed:', error);
@@ -167,13 +272,22 @@ export async function assessImageQuality(inputBuffer: Buffer): Promise<{
   recommendations: string[];
 }> {
   try {
+    // Sharp の可用性チェック
+    if (!sharp) {
+      console.warn('Sharp library not available for quality assessment');
+      return {
+        isGoodQuality: true, // エラー時は処理を続行
+        issues: [],
+        recommendations: []
+      };
+    }
+
     const metadata = await sharp(inputBuffer).metadata();
-    const stats = await sharp(inputBuffer).stats();
     
     const issues: string[] = [];
     const recommendations: string[] = [];
 
-    // 解像度チェック
+    // 基本的な解像度チェック
     if (metadata.width && metadata.height) {
       const pixels = metadata.width * metadata.height;
       if (pixels < 300000) { // 300K pixels未満
@@ -182,16 +296,24 @@ export async function assessImageQuality(inputBuffer: Buffer): Promise<{
       }
     }
 
-    // 明度チェック
-    if (stats.channels) {
-      const avgBrightness = stats.channels[0].mean;
-      if (avgBrightness < 50) {
-        issues.push('画像が暗すぎます');
-        recommendations.push('明るい場所で撮影してください');
-      } else if (avgBrightness > 200) {
-        issues.push('画像が明るすぎます');
-        recommendations.push('光の反射を避けて撮影してください');
+    // より安全な統計情報取得
+    try {
+      const stats = await sharp(inputBuffer).stats();
+      
+      // 明度チェック (最初のチャンネルのみ)
+      if (stats.channels && stats.channels.length > 0) {
+        const avgBrightness = stats.channels[0].mean;
+        if (avgBrightness < 50) {
+          issues.push('画像が暗すぎます');
+          recommendations.push('明るい場所で撮影してください');
+        } else if (avgBrightness > 200) {
+          issues.push('画像が明るすぎます');
+          recommendations.push('光の反射を避けて撮影してください');
+        }
       }
+    } catch (statsError) {
+      console.warn('Could not analyze image statistics:', statsError);
+      // 統計情報が取得できない場合はスキップ
     }
 
     return {
