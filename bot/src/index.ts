@@ -206,8 +206,10 @@ async function processImageInBackground(event: any, MAX_IMAGE_SIZE: number, MAX_
       
       console.log(`Image downloaded successfully: ${totalSize} bytes`);
 
-      // 新機能: 画像品質チェック
-      const qualityCheck = await assessImageQuality(buffer);
+      // 新機能: 画像品質チェック (エラーハンドリング強化)
+      let qualityCheck;
+      try {
+        qualityCheck = await assessImageQuality(buffer);
       if (!qualityCheck.isGoodQuality) {
         console.log('Image quality issues detected:', qualityCheck.issues);
         
@@ -217,19 +219,40 @@ async function processImageInBackground(event: any, MAX_IMAGE_SIZE: number, MAX_
           type: "text",
           text: `📸 画像を受信しましたが、以下の点で改善できます：\n${qualityCheck.recommendations.join('\n')}\n\n処理を続行しています...`,
         });
+        }
+      } catch (qualityError) {
+        console.warn('Image quality check failed, proceeding with processing:', qualityError);
+        qualityCheck = { isGoodQuality: true, issues: [], recommendations: [] };
       }
 
-      // 新機能: 画像最適化パイプライン (コスト削減 60-70%)
+      // 新機能: 画像最適化パイプライン (コスト削減 60-70% + エラーハンドリング)
       console.log("=== STARTING IMAGE OPTIMIZATION ===");
-      const optimizationSettings = getOptimalSettings();
-      const optimizedImage = await optimizeImageForOCR(buffer, optimizationSettings);
+      let optimizedImage;
+      try {
+        const optimizationSettings = getOptimalSettings();
+        optimizedImage = await optimizeImageForOCR(buffer, optimizationSettings);
       
-      console.log(`Compression achieved: ${optimizedImage.compressionRatio.toFixed(1)}% reduction`);
-      console.log(`Original: ${(optimizedImage.originalSize / 1024 / 1024).toFixed(2)}MB → Optimized: ${(optimizedImage.optimizedSize / 1024 / 1024).toFixed(2)}MB`);
+        console.log(`Compression achieved: ${optimizedImage.compressionRatio.toFixed(1)}% reduction`);
+        console.log(`Original: ${(optimizedImage.originalSize / 1024 / 1024).toFixed(2)}MB → Optimized: ${(optimizedImage.optimizedSize / 1024 / 1024).toFixed(2)}MB`);
+      } catch (optimizationError) {
+        console.error('Image optimization failed, using original image:', optimizationError);
+        optimizedImage = {
+          buffer: buffer,
+          originalSize: buffer.length,
+          optimizedSize: buffer.length,
+          compressionRatio: 0
+        };
+      }
 
-      // 新機能: OCR精度向上のための画像強化
+      // 新機能: OCR精度向上のための画像強化 (エラーハンドリング強化)
       console.log("=== STARTING IMAGE ENHANCEMENT ===");
-      const enhancedBuffer = await enhanceImageForOCR(optimizedImage.buffer);
+      let enhancedBuffer;
+      try {
+        enhancedBuffer = await enhanceImageForOCR(optimizedImage.buffer);
+      } catch (enhancementError) {
+        console.error('Image enhancement failed, using optimized image:', enhancementError);
+        enhancedBuffer = optimizedImage.buffer;
+      }
 
       // OCR processing
       if (!visionClient) {
