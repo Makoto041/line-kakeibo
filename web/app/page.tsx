@@ -7,12 +7,21 @@ import { CategoryPieChart, DailyLineChart } from '../components/Charts';
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
 import Header from '../components/Header';
 import dayjs from 'dayjs';
+import { db } from '../lib/firebase';
 
 export default function Dashboard() {
   const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
   const [currentDate, setCurrentDate] = useState(dayjs());
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>({ mode: 'monthly' });
   const [settingsLoading, setSettingsLoading] = useState(true);
+  const [firebaseError, setFirebaseError] = useState(false);
+  
+  useEffect(() => {
+    // Check if Firebase is properly initialized
+    if (typeof window !== 'undefined' && !db) {
+      setFirebaseError(true);
+    }
+  }, []);
   
   useEffect(() => {
     const loadSettings = async () => {
@@ -57,6 +66,31 @@ export default function Dashboard() {
       setCurrentDate(prev => prev.add(1, 'month'));
     }
   };
+
+  if (firebaseError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-red-50 via-white to-orange-50">
+        <div className="text-center max-w-md p-8 bg-white rounded-lg shadow-lg">
+          <div className="text-red-500 mb-4">
+            <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">設定エラー</h2>
+          <p className="text-gray-600 mb-6">
+            アプリケーションの初期化に失敗しました。<br />
+            システム管理者にお問い合わせください。
+          </p>
+          <div className="bg-gray-100 rounded-lg p-4 text-left">
+            <p className="text-sm text-gray-600 font-mono">
+              Firebase configuration is missing.<br />
+              Please check environment variables.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (authLoading || settingsLoading) {
     return (
