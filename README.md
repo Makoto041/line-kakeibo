@@ -79,9 +79,14 @@ cd ../web && npm install
 firebase login
 firebase init
 
-# 環境変数設定
+# 環境変数設定（重要）
 cp web/.env.example web/.env.local
-# .env.local を編集
+# .env.local を編集して Firebase の認証情報を設定
+
+# Vercel デプロイ時は以下の環境変数を設定:
+# - NEXT_PUBLIC_FIREBASE_API_KEY
+# - NEXT_PUBLIC_FIREBASE_APP_ID
+# その他の値は .env.example を参照
 ```
 
 ### 4. ローカル開発
