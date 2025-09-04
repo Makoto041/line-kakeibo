@@ -22,6 +22,12 @@ interface GeminiClassificationResult {
   reasoning?: string; // 分類の理由（デバッグ用）
 }
 
+// デフォルトカテゴリリスト（Firestoreからの取得に失敗した場合のフォールバック）
+const DEFAULT_CATEGORIES = [
+  '食費', '日用品', '交通費', '医療費', '娯楽費', 
+  '衣服費', '教育費', '通信費', 'その他'
+];
+
 /**
  * Gemini APIを使って支出説明からカテゴリを自動分類
  */
@@ -35,9 +41,21 @@ export async function classifyExpenseWithGemini(
       return { category: null, confidence: 0 };
     }
 
-    // ユーザーの利用可能なカテゴリを取得
-    const availableCategories = await getAllUserCategories(lineId);
-    const categoryNames = availableCategories.map(cat => cat.name);
+    // ユーザーの利用可能なカテゴリを取得（フォールバック付き）
+    let categoryNames: string[] = [];
+    try {
+      const availableCategories = await getAllUserCategories(lineId);
+      categoryNames = availableCategories.map((cat: CategoryMaster | UserCustomCategory) => cat.name);
+      console.log(`Retrieved ${categoryNames.length} categories from Firestore for user ${lineId}`);
+    } catch (firestoreError) {
+      console.warn('Failed to get categories from Firestore, using default categories:', firestoreError);
+      categoryNames = DEFAULT_CATEGORIES;
+    }
+    
+    if (categoryNames.length === 0) {
+      console.warn('No categories available, using default categories');
+      categoryNames = DEFAULT_CATEGORIES;
+    }
     
     // Geminiモデルを取得
     const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
@@ -49,7 +67,7 @@ export async function classifyExpenseWithGemini(
 支出説明: "${description}"
 
 利用可能なカテゴリ:
-${categoryNames.map(name => `- ${name}`).join('\n')}
+${categoryNames.map((name: string) => `- ${name}`).join('\n')}
 
 以下のJSON形式で回答してください（JSON以外の文字は含めないでください）:
 {
@@ -72,29 +90,49 @@ ${categoryNames.map(name => `- ${name}`).join('\n')}
 
     console.log(`Gemini Classification - Input: "${description}", Response: ${text}`);
 
-    // JSONレスポンスをパース
+    // JSONレスポンスをパース（Markdownコードブロック形式の場合も対応）
     try {
-      const parsed = JSON.parse(text);
+      let jsonText = text;
+      
+      // Markdownコードブロック形式の場合（```json ... ```）を処理
+      if (text.startsWith('```json') && text.endsWith('```')) {
+        jsonText = text.replace(/^```json\s*\n/, '').replace(/\n\s*```$/, '').trim();
+        console.log(`Extracted JSON from markdown: ${jsonText}`);
+      } else if (text.startsWith('```') && text.endsWith('```')) {
+        // 一般的なコードブロック形式も処理
+        jsonText = text.replace(/^```\s*\n/, '').replace(/\n\s*```$/, '').trim();
+        console.log(`Extracted JSON from code block: ${jsonText}`);
+      }
+      
+      const parsed = JSON.parse(jsonText);
       
       // カテゴリ名が利用可能なカテゴリに含まれているかチェック
       if (parsed.category && categoryNames.includes(parsed.category)) {
-        return {
+        const result = {
           category: parsed.category,
           confidence: Math.max(0, Math.min(1, parsed.confidence || 0.5)),
           reasoning: parsed.reasoning || 'Gemini AI classification'
         };
+        
+        // 統計を更新
+        updateClassificationStats(true, result.confidence);
+        
+        return result;
       } else {
         console.warn(`Gemini suggested invalid category: ${parsed.category}`);
+        updateClassificationStats(false, 0);
         return { category: null, confidence: 0 };
       }
     } catch (parseError) {
       console.error('Failed to parse Gemini response as JSON:', parseError);
       console.error('Raw response:', text);
+      updateClassificationStats(false, 0);
       return { category: null, confidence: 0 };
     }
 
   } catch (error) {
     console.error('Gemini API classification error:', error);
+    updateClassificationStats(false, 0);
     return { category: null, confidence: 0 };
   }
 }
@@ -116,7 +154,7 @@ export async function findCategoryWithGemini(
       
       // カテゴリ名から実際のカテゴリオブジェクトを取得
       const availableCategories = await getAllUserCategories(lineId);
-      const matchedCategory = availableCategories.find(cat => cat.name === geminiResult.category);
+      const matchedCategory = availableCategories.find((cat: CategoryMaster | UserCustomCategory) => cat.name === geminiResult.category);
       
       if (matchedCategory) {
         return matchedCategory;

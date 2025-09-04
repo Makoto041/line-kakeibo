@@ -11,10 +11,13 @@
     "deploy": "npm run build && firebase deploy --only functions",
     "dev": "ts-node-dev src/index.ts"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "dependencies": {
     "@google-cloud/functions-framework": "^4.0.0",
     "@google-cloud/vision": "^5.2.0",
+    "@google/generative-ai": "^0.24.1",
     "@line/bot-sdk": "^10.0.0",
     "dayjs": "^1.11.10",
     "dotenv": "^16.4.4",

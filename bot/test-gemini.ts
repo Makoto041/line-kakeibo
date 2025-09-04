@@ -1,8 +1,21 @@
 import dotenv from 'dotenv';
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { classifyExpenseWithGemini, isGeminiAvailable } from './src/geminiCategoryClassifier';
 
 // 環境変数を読み込み
 dotenv.config({ path: '../.env' });
+
+// Firebase Admin初期化
+if (!getApps().length) {
+  try {
+    initializeApp({
+      projectId: process.env.FIREBASE_PROJECT_ID || 'line-kakeibo-0410',
+    });
+    console.log('Firebase Admin SDK initialized successfully for testing');
+  } catch (error) {
+    console.error('Firebase initialization error:', error);
+  }
+}
 
 async function testGeminiClassification() {
   console.log('=== Gemini分類機能テスト ===');
