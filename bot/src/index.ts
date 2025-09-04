@@ -926,7 +926,7 @@ async function handleTextMessage(event: any) {
 
     // ② テキスト登録
     console.log(`=== TEXT PROCESSING: Trying to parse as expense text ===`);
-    const parsed = parseTextExpense(text);
+    const parsed = await parseTextExpense(text, event.source.userId);
     if (!parsed) {
       console.log(
         `=== TEXT PROCESSING: Failed to parse as expense, sending help message ===`

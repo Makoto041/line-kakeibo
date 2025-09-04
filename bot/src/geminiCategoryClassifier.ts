@@ -28,6 +28,7 @@ const DEFAULT_CATEGORIES = [
   '衣服費', '教育費', '通信費', 'その他'
 ];
 
+
 /**
  * Gemini APIを使って支出説明からカテゴリを自動分類
  */

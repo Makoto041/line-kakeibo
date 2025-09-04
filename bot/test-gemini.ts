@@ -16,7 +16,6 @@ if (!getApps().length) {
     console.error('Firebase initialization error:', error);
   }
 }
-
 async function testGeminiClassification() {
   console.log('=== Gemini分類機能テスト ===');
   
