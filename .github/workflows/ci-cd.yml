@@ -239,7 +239,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: web-build
           path: web/
@@ -290,7 +290,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: bot-build
           path: bot/
