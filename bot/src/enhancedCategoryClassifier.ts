@@ -387,9 +387,7 @@ export async function recordUserFeedback(
       originalCategory,
       correctedCategory,
       description: context.description,
-      amount: context.amount,
-      storeName: context.storeName,
-      confidence
+      amount: context.amount
     });
     console.log(`Feedback recorded: ${originalCategory} -> ${correctedCategory}`);
   } catch (error) {
