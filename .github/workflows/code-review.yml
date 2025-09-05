@@ -59,7 +59,7 @@ jobs:
         
       # PR コメントの作成
       - name: Comment PR with metrics
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const metrics = {
