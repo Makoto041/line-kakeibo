@@ -1,0 +1,118 @@
+name: Preview Deployment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  preview-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      deployments: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Create deployment
+        uses: actions/github-script@v7
+        id: deployment
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.payload.pull_request.head.sha,
+              environment: 'preview',
+              auto_merge: false,
+              required_contexts: [],
+              description: `Preview deployment for PR #${context.payload.pull_request.number}`
+            });
+            return deployment.data.id;
+            
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+        
+      - name: Pull Vercel environment
+        working-directory: ./web
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+        
+      - name: Build project
+        working-directory: ./web
+        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+        
+      - name: Deploy to Vercel Preview
+        id: deploy
+        working-directory: ./web
+        run: |
+          DEPLOYMENT_URL=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          echo "url=${DEPLOYMENT_URL}" >> $GITHUB_OUTPUT
+          echo "Preview deployed to: ${DEPLOYMENT_URL}"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          
+      - name: Update deployment status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ steps.deployment.outputs.result }},
+              state: 'success',
+              environment_url: '${{ steps.deploy.outputs.url }}',
+              description: 'Deployment successful'
+            });
+            
+      - name: Comment PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = `## 🔍 Preview Deployment Ready!
+            
+            Your preview deployment is available at: ${{ steps.deploy.outputs.url }}
+            
+            | Status | Preview | Updated |
+            |--------|---------|---------|
+            | ✅ Ready | [Visit Preview](${{ steps.deploy.outputs.url }}) | ${new Date().toISOString()} |
+            
+            This preview will be automatically updated with new commits.`;
+            
+            // Find and update existing comment or create new one
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('Preview Deployment Ready')
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: comment
+              });
+            }

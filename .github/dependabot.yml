@@ -1,0 +1,59 @@
+# Dependabot設定
+version: 2
+updates:
+  # npm dependencies for web
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+    open-pull-requests-limit: 5
+    groups:
+      production-dependencies:
+        dependency-type: "production"
+      development-dependencies:
+        dependency-type: "development"
+    commit-message:
+      prefix: "chore(web):"
+    labels:
+      - "dependencies"
+      - "web"
+    reviewers:
+      - "makoto"
+    
+  # npm dependencies for bot
+  - package-ecosystem: "npm"
+    directory: "/bot"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+    open-pull-requests-limit: 5
+    groups:
+      production-dependencies:
+        dependency-type: "production"
+      development-dependencies:
+        dependency-type: "development"
+    commit-message:
+      prefix: "chore(bot):"
+    labels:
+      - "dependencies"
+      - "bot"
+    reviewers:
+      - "makoto"
+    
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+    commit-message:
+      prefix: "chore(ci):"
+    labels:
+      - "ci/cd"
+      - "dependencies"
+    reviewers:
+      - "makoto"
