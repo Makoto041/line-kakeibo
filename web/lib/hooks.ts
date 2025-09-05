@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import dayjs from 'dayjs';
+import { normalizeCategoryName } from './categoryNormalization';
 
 // Group interface for shared household budgets
 export interface Group {
@@ -219,10 +220,14 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
         }
         
         const personalSnapshot = await getDocs(personalQuery);
-        const personalExpenses = personalSnapshot.docs.map(doc => ({ 
-          id: doc.id, 
-          ...doc.data() 
-        } as Expense));
+        const personalExpenses = personalSnapshot.docs.map(doc => {
+          const data = doc.data() as any;
+          return {
+            id: doc.id,
+            ...data,
+            category: normalizeCategoryName(data.category)
+          } as Expense;
+        });
         
         console.log("個人の支出:", personalExpenses.length, "件");
         
@@ -305,10 +310,14 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
             const lineGroupSnapshot = await getDocs(lineGroupQuery);
             console.log("クエリ結果:", lineGroupSnapshot.docs.length, "件");
             
-            const lineGroupExpenseList = lineGroupSnapshot.docs.map(doc => ({ 
-              id: doc.id, 
-              ...doc.data() 
-            } as Expense));
+            const lineGroupExpenseList = lineGroupSnapshot.docs.map(doc => {
+              const data = doc.data() as any;
+              return {
+                id: doc.id,
+                ...data,
+                category: normalizeCategoryName(data.category)
+              } as Expense;
+            });
             
             // Log each expense found in the LINE group
             lineGroupExpenseList.forEach((expense, index) => {
@@ -387,15 +396,20 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
   const updateExpense = async (id: string, updates: Partial<Expense>) => {
     if (!db) throw new Error('Firebase not initialized');
     try {
-      await updateDoc(doc(db!, 'expenses', id), {
+      const normalizedUpdates = {
         ...updates,
+        category: updates.category ? normalizeCategoryName(updates.category) : updates.category,
+      } as Partial<Expense>;
+
+      await updateDoc(doc(db!, 'expenses', id), {
+        ...normalizedUpdates,
         updatedAt: new Date()
       });
       
       // Update local state
       setExpenses(prev => 
         prev.map(expense => 
-          expense.id === id ? { ...expense, ...updates } : expense
+          expense.id === id ? { ...expense, ...normalizedUpdates } : expense
         )
       );
     } catch (err) {
