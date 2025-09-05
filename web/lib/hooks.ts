@@ -16,6 +16,9 @@ import { db } from './firebase';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
 
+// Firestore document data shape for expenses (avoids explicit any)
+type FirestoreExpenseData = Partial<Expense> & { category?: string };
+
 // Group interface for shared household budgets
 export interface Group {
   id: string;
@@ -221,7 +224,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
         
         const personalSnapshot = await getDocs(personalQuery);
         const personalExpenses = personalSnapshot.docs.map(doc => {
-          const data = doc.data() as any;
+          const data = doc.data() as FirestoreExpenseData;
           return {
             id: doc.id,
             ...data,
@@ -311,7 +314,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
             console.log("クエリ結果:", lineGroupSnapshot.docs.length, "件");
             
             const lineGroupExpenseList = lineGroupSnapshot.docs.map(doc => {
-              const data = doc.data() as any;
+              const data = doc.data() as FirestoreExpenseData;
               return {
                 id: doc.id,
                 ...data,
