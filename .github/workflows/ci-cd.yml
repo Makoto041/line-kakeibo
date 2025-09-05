@@ -9,7 +9,6 @@ on:
 
 env:
   NODE_VERSION: '20'
-  PNPM_VERSION: '8'
 
 # 同時実行の制御
 concurrency:
@@ -38,7 +37,7 @@ jobs:
               - '.github/workflows/**'
             deps:
               - 'package*.json'
-              - 'pnpm-lock.yaml'
+              - 'package-lock.json'
               - '**/package*.json'
 
   # 依存関係のインストールとキャッシング
@@ -54,21 +53,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: ${{ env.PNPM_VERSION }}
-          
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
+          cache: 'npm'
           
 
       - name: Install dependencies
         run: |
-          pnpm install --frozen-lockfile
+          npm ci
           
       - name: Cache node_modules
         uses: actions/cache@v4
@@ -77,7 +71,7 @@ jobs:
             node_modules
             web/node_modules
             bot/node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}
 
   # Linting & Type Checking
   lint:
@@ -94,11 +88,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: ${{ env.PNPM_VERSION }}
-          
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
@@ -111,12 +100,12 @@ jobs:
             node_modules
             web/node_modules
             bot/node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}
           
       - name: Run ESLint
         working-directory: ./${{ matrix.app }}
         run: |
-          pnpm run lint --if-present || echo "::warning::Lint completed with warnings/errors"
+          npm run lint --if-present || echo "::warning::Lint completed with warnings/errors"
           
       - name: Run TypeScript check
         working-directory: ./${{ matrix.app }}
@@ -138,11 +127,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: ${{ env.PNPM_VERSION }}
-          
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
@@ -155,16 +139,16 @@ jobs:
             node_modules
             web/node_modules
             bot/node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}
           
       - name: Build ${{ matrix.app }}
         working-directory: ./${{ matrix.app }}
-        run: pnpm run build
+        run: npm run build
         
       - name: Run tests
         working-directory: ./${{ matrix.app }}
         run: |
-          pnpm test --if-present || echo "::notice::No tests configured for ${{ matrix.app }}"
+          npm test --if-present || echo "::notice::No tests configured for ${{ matrix.app }}"
           
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -185,11 +169,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: ${{ env.PNPM_VERSION }}
-          
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
@@ -202,11 +181,11 @@ jobs:
             node_modules
             web/node_modules
             bot/node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}
           
       - name: Run audit
         run: |
-          pnpm audit --audit-level=moderate || echo "::warning::Security vulnerabilities found"
+          npm audit --audit-level=moderate || echo "::warning::Security vulnerabilities found"
           
       - name: Run secret scanning
         uses: trufflesecurity/trufflehog@main
