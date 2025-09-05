@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getAllUserCategories, CategoryMaster, UserCustomCategory } from './firestore';
+import { normalizeCategoryName } from './categoryNormalization';
 
 // Gemini APIクライアントの初期化
 let genAI: GoogleGenerativeAI | null = null;
@@ -24,8 +25,26 @@ interface GeminiClassificationResult {
 
 // デフォルトカテゴリリスト（Firestoreからの取得に失敗した場合のフォールバック）
 const DEFAULT_CATEGORIES = [
-  '食費', '日用品', '交通費', '医療費', '娯楽費', 
-  '衣服費', '教育費', '通信費', 'その他'
+  '食費',
+  '日用品',
+  '交通費',
+  '医療費',
+  '娯楽費',
+  '衣服費',
+  '教育費',
+  '通信費',
+  '住居費',
+  '光熱費',
+  '美容・理容',
+  '保険',
+  '税金・手数料',
+  '交際費',
+  'サブスク',
+  'ペット',
+  '子ども',
+  '旅行',
+  '家具・家電',
+  'その他',
 ];
 
 
@@ -107,23 +126,20 @@ ${categoryNames.map((name: string) => `- ${name}`).join('\n')}
       
       const parsed = JSON.parse(jsonText);
       
-      // カテゴリ名が利用可能なカテゴリに含まれているかチェック
-      if (parsed.category && categoryNames.includes(parsed.category)) {
+      // 正規化してから、利用可能なカテゴリに合わせる
+      const normalized = normalizeCategoryName(parsed.category, categoryNames);
+      if (normalized) {
         const result = {
-          category: parsed.category,
+          category: normalized,
           confidence: Math.max(0, Math.min(1, parsed.confidence || 0.5)),
           reasoning: parsed.reasoning || 'Gemini AI classification'
         };
-        
-        // 統計を更新
         updateClassificationStats(true, result.confidence);
-        
         return result;
-      } else {
-        console.warn(`Gemini suggested invalid category: ${parsed.category}`);
-        updateClassificationStats(false, 0);
-        return { category: null, confidence: 0 };
       }
+      console.warn(`Gemini suggested invalid category: ${parsed.category}`);
+      updateClassificationStats(false, 0);
+      return { category: null, confidence: 0 };
     } catch (parseError) {
       console.error('Failed to parse Gemini response as JSON:', parseError);
       console.error('Raw response:', text);

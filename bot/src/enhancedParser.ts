@@ -1,4 +1,5 @@
 import { ReceiptItem, ParsedReceipt } from './parser';
+import { normalizeCategoryName } from './categoryNormalization';
 
 /**
  * 日本の主要チェーン店のレシートフォーマット定義
@@ -374,23 +375,23 @@ export function autoClassifyCategory(itemName: string, storeName?: string): stri
   if (storeName) {
     if (storeName.includes('ドラッグ') || storeName.includes('薬局')) {
       if (normalizedName.includes('薬') || normalizedName.includes('サプリ')) {
-        return '医療費';
+        return normalizeCategoryName('医療費');
       }
-      return '日用品';
+      return normalizeCategoryName('日用品');
     }
     if (storeName.includes('ガソリン') || storeName.includes('ENEOS') || storeName.includes('昭和シェル')) {
-      return '交通費';
+      return normalizeCategoryName('交通費');
     }
   }
   
   // キーワードマッチング
   for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
     if (keywords.some(keyword => normalizedName.includes(keyword.toLowerCase()))) {
-      return category;
+      return normalizeCategoryName(category);
     }
   }
   
-  return 'その他';
+  return normalizeCategoryName('その他');
 }
 
 /**
