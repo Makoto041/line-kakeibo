@@ -1,4 +1,7 @@
 {
   "scope": "makoto041s-projects",
-  "rootDirectory": "web"
+  "buildCommand": "cd web && npm run build",
+  "outputDirectory": "web/.next",
+  "installCommand": "cd web && npm install --no-frozen-lockfile",
+  "framework": "nextjs"
 }
