@@ -77,6 +77,55 @@ export interface UserLink {
   updatedAt?: Timestamp;
 }
 
+// カテゴリマスターインターフェース
+export interface CategoryMaster {
+  id?: string;
+  name: string;
+  keywords?: string[];
+  icon?: string;
+  isDefault: boolean;
+}
+
+// ユーザーカスタムカテゴリインターフェース
+export interface UserCustomCategory {
+  id?: string;
+  lineId: string;
+  name: string;
+  keywords?: string[];
+  icon?: string;
+}
+
+// ユーザーの利用可能なカテゴリを全て取得
+export async function getAllUserCategories(lineId: string): Promise<Array<CategoryMaster | UserCustomCategory>> {
+  const categories: Array<CategoryMaster | UserCustomCategory> = [];
+  
+  // デフォルトカテゴリを取得
+  const defaultCategories = await getDb().collection('categoryMasters')
+    .where('isDefault', '==', true)
+    .get();
+    
+  defaultCategories.forEach(doc => {
+    categories.push({
+      id: doc.id,
+      ...doc.data()
+    } as CategoryMaster);
+  });
+  
+  // ユーザーカスタムカテゴリを取得
+  const customCategories = await getDb().collection('userCustomCategories')
+    .where('lineId', '==', lineId)
+    .get();
+    
+  customCategories.forEach(doc => {
+    categories.push({
+      id: doc.id,
+      ...doc.data()
+    } as UserCustomCategory);
+  });
+  
+  return categories;
+}
+
 export async function saveExpense(expense: Omit<Expense, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
   try {
     const now = Timestamp.now();

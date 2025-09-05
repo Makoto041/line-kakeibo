@@ -22,7 +22,7 @@ import {
 } from "./firestore";
 import { parseTextExpense } from "./textParser";
 import { resolveAppUidForExpense } from "./linkUserResolver";
-import { getClassificationStats, classifyExpenseWithGemini, isGeminiAvailable } from "./geminiCategoryClassifier";
+import { getClassificationStats, classifyExpenseWithGemini, isGeminiAvailable, findCategoryWithGemini } from "./geminiCategoryClassifier";
 
 // 新機能: 画像最適化とOCR精度向上
 import {
@@ -1081,35 +1081,54 @@ async function processExpenseInBackground(event: any, parsed: any) {
     // Get user's default category or use auto-detected category
     let finalCategory = "その他";
     
-    // 1. 自動検出されたカテゴリを優先
-    if (parsed.category) {
-      finalCategory = parsed.category;
-      console.log(
-        `=== CATEGORY DEBUG TEXT: Using auto-detected category: ${finalCategory} ===`
+    // Gemini APIによるカテゴリ分類を試みる
+    console.log(
+      `=== GEMINI CATEGORY CLASSIFICATION: Trying to classify "${parsed.description}" ===`
+    );
+    
+    try {
+      const geminiResult = await classifyExpenseWithGemini(
+        event.source.userId, 
+        parsed.description
       );
-    } else {
-      // 2. フォールバック：デフォルトカテゴリを使用
-      try {
+      
+      if (geminiResult.category && geminiResult.confidence >= 0.6) {
+        finalCategory = geminiResult.category;
         console.log(
-          `=== CATEGORY DEBUG TEXT: Getting user settings for ${event.source.userId} ===`
+          `=== GEMINI CATEGORY: Success! Category: ${finalCategory}, Confidence: ${geminiResult.confidence} ===`
         );
+      } else {
+        console.log(
+          `=== GEMINI CATEGORY: Low confidence or null result. Result: ${JSON.stringify(geminiResult)} ===`
+        );
+        
+        // Gemini分類が失敗した場合、ユーザーのデフォルトカテゴリを使用
+        try {
+          const userSettings = await getUserSettings(event.source.userId);
+          if (userSettings?.defaultCategory) {
+            finalCategory = userSettings.defaultCategory;
+            console.log(
+              `=== CATEGORY: Using user default: ${finalCategory} ===`
+            );
+          }
+        } catch (error) {
+          console.log("Failed to get user settings:", error);
+        }
+      }
+    } catch (geminiError) {
+      console.error("=== GEMINI CATEGORY ERROR:", geminiError);
+      
+      // エラーの場合もユーザーのデフォルトカテゴリを使用
+      try {
         const userSettings = await getUserSettings(event.source.userId);
-        console.log(`=== CATEGORY DEBUG TEXT: Retrieved settings:`, userSettings);
         if (userSettings?.defaultCategory) {
           finalCategory = userSettings.defaultCategory;
           console.log(
-            `=== CATEGORY DEBUG TEXT: Using default category: ${finalCategory} ===`
-          );
-        } else {
-          console.log(
-            `=== CATEGORY DEBUG TEXT: No default category found, using: ${finalCategory} ===`
+            `=== CATEGORY: Fallback to user default: ${finalCategory} ===`
           );
         }
       } catch (error) {
-        console.log(
-          "=== CATEGORY DEBUG TEXT: Failed to get user settings, using default category:",
-          error
-        );
+        console.log("Failed to get user settings:", error);
       }
     }
 
@@ -1322,7 +1341,7 @@ export const webhook = onRequest(
     memory: "512MiB", // Increased from 256MiB to handle image processing
     timeoutSeconds: 540, // Increased from 300s to 540s (9 minutes max)
     invoker: "public",
-    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET"],
+    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY"],
   },
   app
 );
