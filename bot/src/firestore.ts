@@ -723,3 +723,106 @@ function generateInviteCode(): string {
   }
   return result;
 }
+
+// Category interfaces for enhanced category classification
+export interface CategoryMaster {
+  id: string;
+  name: string;
+  icon?: string;
+  keywords?: string[];
+  isDefault: boolean;
+}
+
+export interface UserCustomCategory {
+  id: string;
+  lineId: string;
+  name: string;
+  icon?: string;
+  keywords?: string[];
+  isDefault: boolean;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
+export interface CategoryFeedback {
+  id?: string;
+  lineId: string;
+  originalCategory: string;
+  correctedCategory: string;
+  description: string;
+  amount?: number;
+  createdAt?: Timestamp;
+}
+
+// Category management functions
+export async function getAllUserCategories(lineId: string): Promise<Array<CategoryMaster | UserCustomCategory>> {
+  try {
+    // Get default categories
+    const defaultCategories: CategoryMaster[] = [
+      { id: 'food', name: '食費', icon: '🍱', isDefault: true, keywords: ['食', 'ランチ', 'ディナー', '弁当', 'コンビニ'] },
+      { id: 'transport', name: '交通費', icon: '🚃', isDefault: true, keywords: ['電車', 'バス', 'タクシー', '交通'] },
+      { id: 'daily', name: '日用品', icon: '🧻', isDefault: true, keywords: ['日用品', 'ティッシュ', '洗剤'] },
+      { id: 'entertainment', name: '娯楽', icon: '🎮', isDefault: true, keywords: ['ゲーム', '映画', '娯楽'] },
+      { id: 'clothing', name: '衣服', icon: '👕', isDefault: true, keywords: ['服', '衣類', 'ユニクロ'] },
+      { id: 'health', name: '医療・健康', icon: '💊', isDefault: true, keywords: ['病院', '薬', '医療'] },
+      { id: 'education', name: '教育', icon: '📚', isDefault: true, keywords: ['本', '教育', '学習'] },
+      { id: 'utility', name: '光熱費', icon: '💡', isDefault: true, keywords: ['電気', 'ガス', '水道'] },
+      { id: 'other', name: 'その他', icon: '📝', isDefault: true, keywords: [] }
+    ];
+
+    // Get user custom categories
+    const customSnapshot = await getDb()
+      .collection('userCustomCategories')
+      .where('lineId', '==', lineId)
+      .get();
+    
+    const customCategories = customSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as UserCustomCategory));
+
+    return [...defaultCategories, ...customCategories];
+  } catch (error) {
+    console.error('Error getting all user categories:', error);
+    // Return default categories on error
+    return [
+      { id: 'food', name: '食費', icon: '🍱', isDefault: true },
+      { id: 'other', name: 'その他', icon: '📝', isDefault: true }
+    ];
+  }
+}
+
+export async function getUserCategoryFeedback(
+  lineId: string,
+  limit: number = 100
+): Promise<CategoryFeedback[]> {
+  try {
+    const snapshot = await getDb()
+      .collection('categoryFeedback')
+      .where('lineId', '==', lineId)
+      .orderBy('createdAt', 'desc')
+      .limit(limit)
+      .get();
+    
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as CategoryFeedback));
+  } catch (error) {
+    console.error('Error getting category feedback:', error);
+    return [];
+  }
+}
+
+export async function recordCategoryFeedback(feedback: Omit<CategoryFeedback, 'id' | 'createdAt'>): Promise<void> {
+  try {
+    await getDb().collection('categoryFeedback').add({
+      ...feedback,
+      createdAt: Timestamp.now()
+    });
+    console.log(`Category feedback recorded for ${feedback.lineId}`);
+  } catch (error) {
+    console.error('Error recording category feedback:', error);
+    throw error;
+  }
+}
