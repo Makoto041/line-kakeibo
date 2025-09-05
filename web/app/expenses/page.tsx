@@ -51,13 +51,15 @@ export default function ExpensesPage() {
   const categories = [...new Set(expenses.map((e) => e.category))];
   const allCategories = [
     "食費",
-    "日用品",
     "交通費",
-    "医療費",
-    "娯楽費",
-    "衣服費",
-    "教育費",
+    "日用品",
+    "娯楽",
+    "衣服",
+    "医療・健康",
+    "教育",
     "通信費",
+    "光熱費",
+    "美容・理容",
     "その他",
   ];
 
