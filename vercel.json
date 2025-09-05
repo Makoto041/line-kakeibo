@@ -1,9 +1,9 @@
 {
   "scope": "makoto041s-projects",
-  "buildCommand": "cd web && npm run build",
+  "buildCommand": "cd web && pnpm run build",
   "outputDirectory": "web/.next",
-  "installCommand": "cd web && npm install",
+  "installCommand": "cd web && pnpm install",
   "framework": "nextjs",
-  "devCommand": "cd web && npm run dev",
-  "rootDirectory": "web"
+  "devCommand": "cd web && pnpm run dev",
+  "rootDirectory": "."
 }
