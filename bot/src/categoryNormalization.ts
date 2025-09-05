@@ -7,7 +7,9 @@ export const CANONICAL_CATEGORIES = [
   '衣服',
   '医療・健康',
   '教育',
+  '通信費',
   '光熱費',
+  '美容・理容',
   'その他',
 ];
 
@@ -35,9 +37,10 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   '消耗品': '日用品',
   'ドラッグストア': '日用品',
   '衛生用品': '日用品',
-  '美容': '日用品',
-  '理容': '日用品',
-  '美容・理容': '日用品',
+  // 美容・理容は独立カテゴリに保持
+  '美容': '美容・理容',
+  '理容': '美容・理容',
+  '美容・理容': '美容・理容',
 
   // 娯楽
   '娯楽費': '娯楽',
@@ -75,13 +78,15 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   '書籍': '教育',
   '本': '教育',
 
-  // 光熱費（通信費もここに統合）
+  // 光熱費
   '公共料金': '光熱費',
-  '通信費': '光熱費',
-  'インターネット': '光熱費',
-  '携帯': '光熱費',
-  'スマホ': '光熱費',
-  '電話': '光熱費',
+
+  // 通信費（独立カテゴリ）
+  '通信費': '通信費',
+  'インターネット': '通信費',
+  '携帯': '通信費',
+  'スマホ': '通信費',
+  '電話': '通信費',
 };
 
 function normalizeString(s?: string): string {
@@ -164,4 +169,3 @@ function pickAvailable(target: string, available?: string[]): string {
   // As a last resort, return the first available entry
   return available[0];
 }
-
