@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-export const dynamic = 'force-static';
-
 // LINE ID認証用のシンプルなAPIルート
 export async function GET(request: NextRequest) {
   try {
