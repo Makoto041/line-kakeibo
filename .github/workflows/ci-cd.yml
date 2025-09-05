@@ -261,7 +261,8 @@ jobs:
         run: |
           npm install -g vercel@latest
           cd web
-          DEPLOYMENT_URL=$(vercel --prod --token="${{ secrets.VERCEL_TOKEN }}" --yes)
+          vercel pull --environment=production --token="${{ secrets.VERCEL_TOKEN }}" --yes --project line-kakeibo
+          DEPLOYMENT_URL=$(vercel --prod --token="${{ secrets.VERCEL_TOKEN }}" --yes --project line-kakeibo)
           echo "url=${DEPLOYMENT_URL}" >> $GITHUB_OUTPUT
           echo "Deployed to: ${DEPLOYMENT_URL}"
         env:
