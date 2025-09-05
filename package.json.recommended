@@ -1,0 +1,51 @@
+{
+  "name": "line-kakeibo",
+  "version": "1.0.0",
+  "description": "LINE Receipt Household Budget App",
+  "private": true,
+  "workspaces": [
+    "bot",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:web\" \"npm run dev:bot\"",
+    "dev:web": "npm run dev --workspace=web",
+    "dev:bot": "npm run dev --workspace=bot",
+    "build": "npm run build:web && npm run build:bot",
+    "build:web": "npm run build --workspace=web",
+    "build:bot": "npm run build --workspace=bot",
+    "lint": "npm run lint:web && npm run lint:bot",
+    "lint:web": "npm run lint --workspace=web",
+    "lint:bot": "npm run lint --workspace=bot",
+    "test": "npm run test:web && npm run test:bot",
+    "test:web": "npm run test --workspace=web --if-present",
+    "test:bot": "npm run test --workspace=bot --if-present",
+    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{js,jsx,ts,tsx,json,md}\"",
+    "prepare": "husky install",
+    "pre-commit": "lint-staged",
+    "clean": "npm run clean:web && npm run clean:bot",
+    "clean:web": "rm -rf web/.next web/node_modules",
+    "clean:bot": "rm -rf bot/dist bot/node_modules",
+    "reinstall": "npm run clean && rm -rf node_modules package-lock.json && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "husky": "^9.0.11",
+    "lint-staged": "^15.2.2",
+    "prettier": "^3.2.5"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": [
+      "prettier --write",
+      "eslint --fix"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}
