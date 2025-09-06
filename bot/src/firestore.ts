@@ -79,7 +79,7 @@ export interface UserLink {
 
 // カテゴリマスターインターフェース
 export interface CategoryMaster {
-  id?: string;
+  id: string;
   name: string;
   keywords?: string[];
   icon?: string;
@@ -88,43 +88,16 @@ export interface CategoryMaster {
 
 // ユーザーカスタムカテゴリインターフェース
 export interface UserCustomCategory {
-  id?: string;
+  id: string;
   lineId: string;
   name: string;
   keywords?: string[];
   icon?: string;
+  isDefault: boolean;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
 }
 
-// ユーザーの利用可能なカテゴリを全て取得
-export async function getAllUserCategories(lineId: string): Promise<Array<CategoryMaster | UserCustomCategory>> {
-  const categories: Array<CategoryMaster | UserCustomCategory> = [];
-  
-  // デフォルトカテゴリを取得
-  const defaultCategories = await getDb().collection('categoryMasters')
-    .where('isDefault', '==', true)
-    .get();
-    
-  defaultCategories.forEach(doc => {
-    categories.push({
-      id: doc.id,
-      ...doc.data()
-    } as CategoryMaster);
-  });
-  
-  // ユーザーカスタムカテゴリを取得
-  const customCategories = await getDb().collection('userCustomCategories')
-    .where('lineId', '==', lineId)
-    .get();
-    
-  customCategories.forEach(doc => {
-    categories.push({
-      id: doc.id,
-      ...doc.data()
-    } as UserCustomCategory);
-  });
-  
-  return categories;
-}
 
 export async function saveExpense(expense: Omit<Expense, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
   try {
@@ -724,26 +697,7 @@ function generateInviteCode(): string {
   return result;
 }
 
-// Category interfaces for enhanced category classification
-export interface CategoryMaster {
-  id: string;
-  name: string;
-  icon?: string;
-  keywords?: string[];
-  isDefault: boolean;
-}
-
-export interface UserCustomCategory {
-  id: string;
-  lineId: string;
-  name: string;
-  icon?: string;
-  keywords?: string[];
-  isDefault: boolean;
-  createdAt?: Timestamp;
-  updatedAt?: Timestamp;
-}
-
+// Category feedback interface
 export interface CategoryFeedback {
   id?: string;
   lineId: string;
