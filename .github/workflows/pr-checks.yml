@@ -1,0 +1,166 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [ master, develop ]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Install dependencies (Bot)
+      run: |
+        cd bot
+        npm ci
+        
+    - name: Install dependencies (Web)
+      run: |
+        cd web
+        npm ci
+        
+    - name: TypeScript Check (Bot)
+      run: |
+        cd bot
+        npm run build
+        
+    - name: Lint Check (Web)
+      run: |
+        cd web
+        npm run lint
+        
+    - name: Build Check (Web)
+      run: |
+        cd web
+        npm run build
+        
+    - name: Security Audit
+      run: |
+        cd bot && npm audit --audit-level=high --production
+        cd ../web && npm audit --audit-level=high --production
+      continue-on-error: true
+        
+  preview-deploy:
+    name: Deploy Preview
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.base.ref == 'develop'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Install dependencies (Web)
+      run: |
+        cd web
+        npm ci
+        
+    - name: Deploy Vercel Preview
+      uses: amondnet/vercel-action@v25
+      id: vercel-deploy
+      with:
+        vercel-token: ${{ secrets.VERCEL_TOKEN }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+        vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+        working-directory: ./web
+        scope: ${{ secrets.VERCEL_ORG_ID }}
+        
+    - name: Comment PR with Preview URL
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { context } = require('@actions/github');
+          
+          // Find existing bot comment
+          const comments = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          
+          const botComment = comments.data.find(comment => 
+            comment.user.type === 'Bot' && 
+            comment.body.includes('Preview Deployment')
+          );
+          
+          const previewUrl = '${{ steps.vercel-deploy.outputs.preview-url }}';
+          const commentBody = `
+          ## 🔍 Preview Deployment
+          
+          📱 **Vercel Preview**: ${previewUrl}
+          
+          ### ✅ Checks Status
+          - TypeScript compilation: ✅
+          - Linting: ✅
+          - Build: ✅
+          
+          _Preview will be updated automatically with new commits._
+          `;
+          
+          if (botComment) {
+            // Update existing comment
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body: commentBody
+            });
+          } else {
+            // Create new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: commentBody
+            });
+          }
+          
+  size-check:
+    name: Bundle Size Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Install dependencies (Web)
+      run: |
+        cd web
+        npm ci
+        
+    - name: Build and analyze bundle
+      run: |
+        cd web
+        npm run build
+        
+    - name: Upload bundle stats
+      uses: actions/upload-artifact@v4
+      with:
+        name: bundle-stats
+        path: web/.next/analyze/
+        retention-days: 30

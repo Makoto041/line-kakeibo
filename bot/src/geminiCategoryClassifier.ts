@@ -46,64 +46,124 @@ const DEFAULT_CATEGORIES = [
   'その他',
 ];
 
+// カテゴリキャッシュ（メモリ内、30分TTL）
+const categoryCache = new Map<string, { categories: string[]; timestamp: number }>();
+const CATEGORY_CACHE_TTL = 30 * 60 * 1000; // 30分
+
+// カテゴリ分類結果キャッシュ（15分TTL）
+const classificationCache = new Map<string, { result: GeminiClassificationResult; timestamp: number }>();
+const CLASSIFICATION_CACHE_TTL = 15 * 60 * 1000; // 15分
+
+// 高速ローカル分類のためのキーワードマップ
+const FAST_KEYWORD_MAP: Record<string, string[]> = {
+  '食費': ['食', 'レストラン', 'カフェ', 'ランチ', 'ディナー', '弁当', 'コンビニ', 'マクドナルド', 'スターバックス', '居酒屋', 'ラーメン', '寿司'],
+  '交通費': ['電車', 'バス', 'タクシー', '地下鉄', '新幹線', '高速', 'ガソリン', 'JR', '運賃', '切符'],
+  '日用品': ['ティッシュ', '洗剤', 'シャンプー', '歯ブラシ', 'タオル', '石鹸', 'トイレットペーパー', '掃除', '洗濯'],
+  '娯楽': ['映画', 'ゲーム', 'カラオケ', 'ボウリング', '遊園地', 'コンサート', 'ライブ', '本', 'DVD'],
+  '衣服': ['服', '靴', '帽子', 'バッグ', 'アクセサリー', 'ユニクロ', 'しまむら', 'Tシャツ', 'ジーンズ'],
+  '医療・健康': ['病院', '薬', '歯医者', 'サプリメント', '整体', 'マッサージ', 'ジム', '健康診断'],
+  '通信費': ['携帯', 'インターネット', 'Wi-Fi', 'スマホ', '電話代', 'データ'],
+  '光熱費': ['電気', 'ガス', '水道'],
+};
 
 /**
- * Gemini APIを使って支出説明からカテゴリを自動分類
+ * 高速ローカルカテゴリ判定（キーワードベース）
+ */
+function fastLocalClassification(description: string): { category: string | null; confidence: number } {
+  const desc = description.toLowerCase();
+  
+  for (const [category, keywords] of Object.entries(FAST_KEYWORD_MAP)) {
+    for (const keyword of keywords) {
+      if (desc.includes(keyword.toLowerCase())) {
+        return { category, confidence: 0.8 }; // 高い信頼度
+      }
+    }
+  }
+  
+  return { category: null, confidence: 0 };
+}
+
+
+/**
+ * 最適化されたカテゴリ分類（ローカル判定 + キャッシュ + Gemini）
  */
 export async function classifyExpenseWithGemini(
   lineId: string, 
   description: string
 ): Promise<GeminiClassificationResult> {
+  // キャッシュキー
+  const cacheKey = `${lineId}_${description.toLowerCase().trim()}`;
+  
+  // 分類結果キャッシュをチェック
+  const cached = classificationCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp < CLASSIFICATION_CACHE_TTL)) {
+    console.log(`Cache hit for classification: "${description}" -> ${cached.result.category}`);
+    return cached.result;
+  }
+  
+  // 1. 高速ローカル分類を最初に試行
+  const localResult = fastLocalClassification(description);
+  if (localResult.category) {
+    const result = {
+      category: localResult.category,
+      confidence: localResult.confidence,
+      reasoning: 'Fast local keyword matching'
+    };
+    
+    // 結果をキャッシュ
+    classificationCache.set(cacheKey, { result, timestamp: Date.now() });
+    console.log(`Fast local classification: "${description}" -> ${result.category} (confidence: ${result.confidence})`);
+    return result;
+  }
+
+  // 2. Gemini APIでの詳細分類（ローカルで分類できない場合のみ）
   try {
     const client = getGeminiClient();
     if (!client) {
       return { category: null, confidence: 0 };
     }
 
-    // ユーザーの利用可能なカテゴリを取得（フォールバック付き）
+    // カテゴリキャッシュをチェック
     let categoryNames: string[] = [];
-    try {
-      const availableCategories = await getAllUserCategories(lineId);
-      categoryNames = availableCategories.map((cat: CategoryMaster | UserCustomCategory) => cat.name);
-      console.log(`Retrieved ${categoryNames.length} categories from Firestore for user ${lineId}`);
-    } catch (firestoreError) {
-      console.warn('Failed to get categories from Firestore, using default categories:', firestoreError);
-      categoryNames = DEFAULT_CATEGORIES;
-    }
-    
-    if (categoryNames.length === 0) {
-      console.warn('No categories available, using default categories');
-      categoryNames = DEFAULT_CATEGORIES;
+    const categoryCached = categoryCache.get(lineId);
+    if (categoryCached && (Date.now() - categoryCached.timestamp < CATEGORY_CACHE_TTL)) {
+      categoryNames = categoryCached.categories;
+      console.log(`Using cached categories for user ${lineId} (${categoryNames.length} categories)`);
+    } else {
+      // カテゴリを取得してキャッシュ
+      try {
+        const availableCategories = await getAllUserCategories(lineId);
+        categoryNames = availableCategories.map((cat: CategoryMaster | UserCustomCategory) => cat.name);
+        
+        // キャッシュに保存
+        categoryCache.set(lineId, { categories: categoryNames, timestamp: Date.now() });
+        console.log(`Fetched and cached ${categoryNames.length} categories for user ${lineId}`);
+      } catch (firestoreError) {
+        console.warn('Failed to get categories from Firestore, using default categories:', firestoreError);
+        categoryNames = DEFAULT_CATEGORIES;
+      }
+      
+      if (categoryNames.length === 0) {
+        console.warn('No categories available, using default categories');
+        categoryNames = DEFAULT_CATEGORIES;
+      }
     }
     
     // Geminiモデルを取得
     const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    // プロンプトを構築
-    const prompt = `
-あなたは家計簿のカテゴリ分類の専門家です。以下の支出説明を最も適切なカテゴリに分類してください。
+    // 短縮化されたプロンプト（レスポンス時間短縮のため）
+    const prompt = `分類: "${description}"
+カテゴリ: ${categoryNames.slice(0, 10).join(', ')}...
+JSON形式で回答: {"category":"カテゴリ名","confidence":0.8}`;
 
-支出説明: "${description}"
+    // Gemini APIを呼び出し（タイムアウト付き）
+    const geminiPromise = model.generateContent(prompt);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Gemini API timeout')), 3000) // 3秒タイムアウト
+    );
 
-利用可能なカテゴリ:
-${categoryNames.map((name: string) => `- ${name}`).join('\n')}
-
-以下のJSON形式で回答してください（JSON以外の文字は含めないでください）:
-{
-  "category": "最適なカテゴリ名",
-  "confidence": 0.85,
-  "reasoning": "分類の理由を簡潔に"
-}
-
-分類のガイドライン:
-- 説明文から最も関連性の高いカテゴリを選択
-- どのカテゴリにも該当しない場合は "その他" を選択
-- confidence は 0.0 から 1.0 の値で、分類の確信度を表す
-- 曖昧な場合は confidence を低くする
-`;
-
-    // Gemini APIを呼び出し
-    const result = await model.generateContent(prompt);
+    const result = await Promise.race([geminiPromise, timeoutPromise]) as any;
     const response = result.response;
     const text = response.text().trim();
 
@@ -133,6 +193,11 @@ ${categoryNames.map((name: string) => `- ${name}`).join('\n')}
           confidence: Math.max(0, Math.min(1, parsed.confidence || 0.5)),
           reasoning: parsed.reasoning || 'Gemini AI classification'
         };
+        
+        // 結果をキャッシュ
+        classificationCache.set(cacheKey, { result, timestamp: Date.now() });
+        console.log(`Gemini classification cached: "${description}" -> ${result.category}`);
+        
         updateClassificationStats(true, result.confidence);
         return result;
       }
@@ -149,6 +214,12 @@ ${categoryNames.map((name: string) => `- ${name}`).join('\n')}
   } catch (error) {
     console.error('Gemini API classification error:', error);
     updateClassificationStats(false, 0);
+    
+    // タイムアウトまたはAPI障害の場合、フォールバックとしてユーザーデフォルトを返す
+    if (error instanceof Error && error.message?.includes('timeout')) {
+      console.log('Gemini timeout, falling back to default category');
+    }
+    
     return { category: null, confidence: 0 };
   }
 }

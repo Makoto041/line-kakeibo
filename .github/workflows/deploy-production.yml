@@ -1,0 +1,124 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ master ]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  lint-and-test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Install dependencies (Bot)
+      run: |
+        cd bot
+        npm ci
+        
+    - name: Install dependencies (Web)
+      run: |
+        cd web
+        npm ci
+        
+    - name: Lint Bot
+      run: |
+        cd bot
+        npm run build
+        
+    - name: Lint Web
+      run: |
+        cd web
+        npm run lint
+        npm run build
+        
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Install dependencies (Bot)
+      run: |
+        cd bot
+        npm ci
+        
+    - name: Install dependencies (Web)
+      run: |
+        cd web
+        npm ci
+        
+    - name: Build Bot
+      run: |
+        cd bot
+        npm run build
+        
+    - name: Build Web
+      run: |
+        cd web
+        npm run build
+        
+    - name: Deploy to Firebase (Production)
+      uses: FirebaseExtended/action-hosting-deploy@v0
+      with:
+        repoToken: ${{ secrets.GITHUB_TOKEN }}
+        firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LINE_KAKEIBO_0410 }}
+        projectId: line-kakeibo-0410
+        
+    - name: Deploy Firebase Functions (Production)
+      uses: w9jds/firebase-action@master
+      with:
+        args: deploy --only functions
+      env:
+        FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        PROJECT_ID: line-kakeibo-0410
+        
+    - name: Deploy to Vercel (Production)
+      uses: amondnet/vercel-action@v25
+      with:
+        vercel-token: ${{ secrets.VERCEL_TOKEN }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+        vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+        vercel-args: '--prod'
+        working-directory: ./web
+        scope: ${{ secrets.VERCEL_ORG_ID }}
+        
+    - name: Notify Slack on Success
+      if: success()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: success
+        text: '🚀 Production deployment successful!'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        
+    - name: Notify Slack on Failure
+      if: failure()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: failure
+        text: '❌ Production deployment failed!'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

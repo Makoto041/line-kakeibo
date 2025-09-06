@@ -110,9 +110,45 @@ app.post("/webhook", async (req: Request, res: Response) => {
         console.log("Processing event:", event.type);
 
         if (event.type === "message" && event.message.type === "image") {
-          await handleImageMessage(event);
+          // 即座に受信確認レスポンス
+          const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
+          await client.pushMessage(targetId, {
+            type: "text",
+            text: "📸 画像を受信しました！処理中です...",
+          });
+          
+          // バックグラウンドで処理実行（ノンブロッキング）
+          handleImageMessage(event).catch(error => {
+            console.error("Image processing error:", error);
+            // エラー時もユーザーに通知
+            client.pushMessage(targetId, {
+              type: "text",
+              text: "❌ 画像処理中にエラーが発生しました。もう一度お試しください。",
+            }).catch(console.error);
+          });
         } else if (event.type === "message" && event.message.type === "text") {
-          await handleTextMessage(event);
+          // テキスト処理も即座レスポンス
+          const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
+          
+          // 金額らしきテキストかチェック
+          const hasAmount = /\d+/.test(event.message.text);
+          if (hasAmount) {
+            await client.pushMessage(targetId, {
+              type: "text",
+              text: "💬 テキストを受信しました！処理中です...",
+            });
+          }
+          
+          // バックグラウンドで処理実行
+          handleTextMessage(event).catch(error => {
+            console.error("Text processing error:", error);
+            if (hasAmount) {
+              client.pushMessage(targetId, {
+                type: "text",
+                text: "❌ テキスト処理中にエラーが発生しました。もう一度お試しください。",
+              }).catch(console.error);
+            }
+          });
         } else if (event.type === "join") {
           await handleJoin(event);
         } else if (event.type === "memberJoined") {
@@ -984,151 +1020,150 @@ async function handleTextMessage(event: any) {
   }
 }
 
+// ユーザー情報キャッシュ（メモリ内、15分TTL）
+const userProfileCache = new Map<string, { profile: any; groups: any[]; timestamp: number }>();
+const CACHE_TTL = 15 * 60 * 1000; // 15分
+
 async function processExpenseInBackground(event: any, parsed: any) {
   try {
-    console.log("Starting background expense processing...");
+    console.log("Starting optimized background expense processing...");
 
-    // Determine group context and user display name
+    // 並列実行のためのプロミス配列
+    const promises: Promise<any>[] = [];
+    
     let activeGroup = null;
     let userDisplayName = "個人";
     let lineGroupId = null;
+    let appUid = null;
 
     // Check if this is from a LINE group
     if (event.source.type === "group") {
       lineGroupId = event.source.groupId;
-
-      // Get user profile from LINE to get display name with shorter timeout for background processing
-      try {
-        console.log("Getting user profile from LINE group...");
-        const profilePromise = client.getGroupMemberProfile(
-          lineGroupId,
-          event.source.userId
-        );
-        const profileTimeoutPromise = new Promise(
-          (_, reject) =>
-            setTimeout(() => reject(new Error("Profile fetch timeout")), 3000) // Reduced to 3 seconds
-        );
-
-        const profile = (await Promise.race([
-          profilePromise,
-          profileTimeoutPromise,
-        ])) as any;
-        userDisplayName = profile.displayName;
-
-        // Find or create group for this LINE group
-        const groupId = await findOrCreateLineGroup(
-          lineGroupId,
-          event.source.userId,
-          userDisplayName
-        );
-        const groups = await getUserGroups(event.source.userId);
-        activeGroup = groups.find((g) => g.id === groupId);
-        console.log("Successfully set up LINE group context");
-      } catch (profileError) {
-        console.warn(
-          "Could not get user profile, using fallback:",
-          profileError
-        );
-        userDisplayName = "メンバー";
-
-        // Still try to create/find group with fallback name
-        try {
-          const groupId = await findOrCreateLineGroup(
-            lineGroupId,
-            event.source.userId,
-            userDisplayName
-          );
-          const groups = await getUserGroups(event.source.userId);
-          activeGroup = groups.find((g) => g.id === groupId);
-        } catch (groupError) {
-          console.error("Failed to create group with fallback:", groupError);
-        }
-      }
-    } else {
-      // Individual chat - use existing group logic
-      try {
-        const userGroups = await getUserGroups(event.source.userId);
-        activeGroup = userGroups.length > 0 ? userGroups[0] : null;
-
-        if (activeGroup) {
-          userDisplayName = activeGroup.memberInfo.displayName;
-        }
-      } catch (groupError) {
-        console.warn("Failed to get user groups:", groupError);
-      }
-    }
-
-    // Resolve appUid for this lineId
-    console.log(
-      `=== APPUID DEBUG TEXT: Resolving appUid for lineId: ${event.source.userId} ===`
-    );
-    let appUid = null;
-    try {
-      appUid = await resolveAppUidForExpense(event.source.userId);
-      console.log(`=== APPUID DEBUG TEXT: Resolved appUid: ${appUid} ===`);
-    } catch (appUidError) {
-      console.error("Failed to resolve appUid:", appUidError);
-      // フォールバックとしてlineIdを使用
-      appUid = event.source.userId;
-      console.log(`=== APPUID DEBUG TEXT: Using lineId as fallback appUid: ${appUid} ===`);
-    }
-    
-    if (!appUid) {
-      console.error("Failed to resolve appUid for expense creation, using lineId");
-      appUid = event.source.userId;
-    }
-
-    // Get user's default category or use auto-detected category
-    let finalCategory = "その他";
-    
-    // Gemini APIによるカテゴリ分類を試みる
-    console.log(
-      `=== GEMINI CATEGORY CLASSIFICATION: Trying to classify "${parsed.description}" ===`
-    );
-    
-    try {
-      const geminiResult = await classifyExpenseWithGemini(
-        event.source.userId, 
-        parsed.description
-      );
       
-      if (geminiResult.category && geminiResult.confidence >= 0.6) {
-        finalCategory = geminiResult.category;
-        console.log(
-          `=== GEMINI CATEGORY: Success! Category: ${finalCategory}, Confidence: ${geminiResult.confidence} ===`
-        );
+      // キャッシュチェック
+      const cacheKey = `${event.source.userId}_${lineGroupId}`;
+      const cached = userProfileCache.get(cacheKey);
+      const now = Date.now();
+      
+      if (cached && (now - cached.timestamp < CACHE_TTL)) {
+        // キャッシュヒット - 高速化
+        console.log("Using cached user profile (fast path)");
+        userDisplayName = cached.profile.displayName || "メンバー";
+        activeGroup = cached.groups[0] || null;
       } else {
-        console.log(
-          `=== GEMINI CATEGORY: Low confidence or null result. Result: ${JSON.stringify(geminiResult)} ===`
+        // キャッシュミス - 並列取得
+        console.log("Cache miss, fetching user profile (parallel)");
+        
+        // プロファイル取得を並列実行
+        promises.push(
+          Promise.race([
+            client.getGroupMemberProfile(lineGroupId, event.source.userId),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Profile timeout")), 2000))
+          ]).then(profile => ({ type: 'profile', data: profile }))
+          .catch(error => ({ type: 'profile', error, data: { displayName: "メンバー" } }))
         );
         
-        // Gemini分類が失敗した場合、ユーザーのデフォルトカテゴリを使用
-        try {
-          const userSettings = await getUserSettings(event.source.userId);
-          if (userSettings?.defaultCategory) {
-            finalCategory = userSettings.defaultCategory;
-            console.log(
-              `=== CATEGORY: Using user default: ${finalCategory} ===`
-            );
-          }
-        } catch (error) {
-          console.log("Failed to get user settings:", error);
-        }
+        // グループ取得も並列実行
+        promises.push(
+          findOrCreateLineGroup(lineGroupId, event.source.userId, "メンバー")
+            .then(groupId => getUserGroups(event.source.userId))
+            .then(groups => ({ type: 'groups', data: groups }))
+            .catch(error => ({ type: 'groups', error, data: [] }))
+        );
       }
-    } catch (geminiError) {
-      console.error("=== GEMINI CATEGORY ERROR:", geminiError);
+    } else {
+      // Individual chat - キャッシュまたは並列取得
+      const cacheKey = event.source.userId;
+      const cached = userProfileCache.get(cacheKey);
+      const now = Date.now();
       
-      // エラーの場合もユーザーのデフォルトカテゴリを使用
-      try {
-        const userSettings = await getUserSettings(event.source.userId);
-        if (userSettings?.defaultCategory) {
-          finalCategory = userSettings.defaultCategory;
-          console.log(
-            `=== CATEGORY: Fallback to user default: ${finalCategory} ===`
-          );
+      if (cached && (now - cached.timestamp < CACHE_TTL)) {
+        console.log("Using cached individual user data (fast path)");
+        activeGroup = cached.groups[0] || null;
+        userDisplayName = activeGroup?.memberInfo.displayName || "個人";
+      } else {
+        promises.push(
+          getUserGroups(event.source.userId)
+            .then(groups => ({ type: 'groups', data: groups }))
+            .catch(error => ({ type: 'groups', error, data: [] }))
+        );
+      }
+    }
+
+    // appUid解決も並列実行
+    promises.push(
+      resolveAppUidForExpense(event.source.userId)
+        .then(uid => ({ type: 'appUid', data: uid }))
+        .catch(error => ({ type: 'appUid', error, data: null }))
+    );
+
+    // 並列実行で結果を待つ
+    if (promises.length > 0) {
+      const results = await Promise.allSettled(promises);
+      
+      results.forEach(result => {
+        if (result.status === 'fulfilled') {
+          const { value } = result;
+          switch (value.type) {
+            case 'profile':
+              if (!value.error) userDisplayName = value.data.displayName;
+              break;
+            case 'groups':
+              if (!value.error && value.data.length > 0) {
+                activeGroup = value.data[0];
+                if (event.source.type !== "group") {
+                  userDisplayName = activeGroup.memberInfo.displayName;
+                }
+              }
+              break;
+            case 'appUid':
+              if (!value.error) appUid = value.data;
+              break;
+          }
         }
-      } catch (error) {
-        console.log("Failed to get user settings:", error);
+      });
+
+      // キャッシュ更新
+      const cacheKey = event.source.type === "group" 
+        ? `${event.source.userId}_${lineGroupId}`
+        : event.source.userId;
+      
+      userProfileCache.set(cacheKey, {
+        profile: { displayName: userDisplayName },
+        groups: activeGroup ? [activeGroup] : [],
+        timestamp: Date.now()
+      });
+    }
+
+    // フォールバック処理
+    if (!appUid) {
+      console.log("No appUid resolved, using lineId as fallback");
+      appUid = event.source.userId;
+    }
+
+    // カテゴリ分類を並列実行（Gemini + ユーザーデフォルト）
+    const [geminiResult, userSettingsResult] = await Promise.allSettled([
+      classifyExpenseWithGemini(event.source.userId, parsed.description),
+      getUserSettings(event.source.userId)
+    ]);
+
+    let finalCategory = "その他";
+    
+    // Gemini結果を優先使用
+    if (geminiResult.status === 'fulfilled') {
+      const result = geminiResult.value;
+      if (result && result.category && result.confidence >= 0.6) {
+        finalCategory = result.category;
+        console.log(`Fast Gemini classification: ${finalCategory} (confidence: ${result.confidence})`);
+      }
+    }
+    
+    // Geminiが失敗またはlow confidenceの場合、ユーザーデフォルトを使用
+    if (finalCategory === "その他" && userSettingsResult.status === 'fulfilled') {
+      const userSettings = userSettingsResult.value;
+      if (userSettings?.defaultCategory) {
+        finalCategory = userSettings.defaultCategory;
+        console.log(`Using user default category: ${finalCategory}`);
       }
     }
 
