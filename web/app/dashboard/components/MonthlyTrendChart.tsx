@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+// @ts-ignore - Recharts compatibility with React 19
 import {
   LineChart,
   Line,
@@ -79,7 +80,7 @@ export default function MonthlyTrendChart() {
           <Tooltip content={<CustomTooltip />} />
           <Legend 
             wrapperStyle={{ paddingTop: '20px' }}
-            formatter={(value) => (
+            formatter={(value: any) => (
               <span className="text-sm text-foreground">{value}</span>
             )}
           />

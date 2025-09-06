@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+// @ts-ignore - Recharts compatibility with React 19
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { motion } from 'framer-motion'
 
@@ -126,7 +127,7 @@ export default function ExpenseRatioChart() {
             <Legend 
               verticalAlign="bottom" 
               height={36}
-              formatter={(value, entry: any) => (
+              formatter={(value: any, entry: any) => (
                 <span 
                   className="text-sm text-foreground cursor-pointer hover:underline"
                   onClick={() => setSelectedSegment(value as string)}

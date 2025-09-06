@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+// @ts-ignore - Recharts compatibility with React 19
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
 
 interface CategoryData {
@@ -89,7 +90,7 @@ export default function CategoryChart() {
           <Legend
             verticalAlign="bottom"
             height={36}
-            formatter={(value, entry: any) => (
+            formatter={(value: any, entry: any) => (
               <span className="text-sm text-foreground">
                 {value}: ¥{entry.payload.value.toLocaleString()}
               </span>
