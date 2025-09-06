@@ -87,6 +87,7 @@ export default function CategoryChart() {
             ))}
           </Pie>
           <Tooltip content={<CustomTooltip />} />
+          {/* @ts-ignore - React 19 compatibility issue with Recharts */}
           <Legend
             verticalAlign="bottom"
             height={36}
