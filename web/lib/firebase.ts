@@ -13,15 +13,15 @@ interface FirebaseConfig {
   measurementId?: string;
 }
 
-// Firebase設定を環境変数から取得
+// Firebase設定を環境変数から取得（文字列をトリム）
 const config: FirebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "line-kakeibo-0410.firebaseapp.com",
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "line-kakeibo-0410",
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "line-kakeibo-0410.appspot.com",
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "440748785600",
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "",
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || "G-PLNC7GY160",
+  apiKey: (process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "").trim(),
+  authDomain: (process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "line-kakeibo-0410.firebaseapp.com").trim(),
+  projectId: (process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "line-kakeibo-0410").trim(),
+  storageBucket: (process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "line-kakeibo-0410.appspot.com").trim(),
+  messagingSenderId: (process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "440748785600").trim(),
+  appId: (process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "").trim(),
+  measurementId: (process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || "G-PLNC7GY160").trim(),
 };
 
 // Firebaseの初期化状態を管理
