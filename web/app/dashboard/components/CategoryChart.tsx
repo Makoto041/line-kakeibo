@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-// @ts-ignore - Recharts compatibility with React 19
+// @ts-expect-error - Recharts compatibility with React 19
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
 
 interface CategoryData {
@@ -27,7 +27,7 @@ export default function CategoryChart() {
     ])
   }, [])
 
-  const CustomTooltip = ({ active, payload }: any) => {
+  const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ name: string; value: number }> }) => {
     if (active && payload && payload[0]) {
       return (
         <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700">
@@ -44,7 +44,7 @@ export default function CategoryChart() {
     return null
   }
 
-  const CustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+  const CustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: { cx: number; cy: number; midAngle: number; innerRadius: number; outerRadius: number; percent: number }) => {
     const RADIAN = Math.PI / 180
     const radius = innerRadius + (outerRadius - innerRadius) * 0.5
     const x = cx + radius * Math.cos(-midAngle * RADIAN)
@@ -87,11 +87,11 @@ export default function CategoryChart() {
             ))}
           </Pie>
           <Tooltip content={<CustomTooltip />} />
-          {/* @ts-ignore - React 19 compatibility issue with Recharts */}
+          {/* @ts-expect-error - React 19 compatibility issue with Recharts */}
           <Legend
             verticalAlign="bottom"
             height={36}
-            formatter={(value: any, entry: any) => (
+            formatter={(value: string, entry: { payload: { value: number } }) => (
               <span className="text-sm text-foreground">
                 {value}: ¥{entry.payload.value.toLocaleString()}
               </span>

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-// @ts-ignore - Recharts compatibility with React 19
+// @ts-expect-error - Recharts compatibility with React 19
 import {
   LineChart,
   Line,
@@ -36,12 +36,12 @@ export default function MonthlyTrendChart() {
     ])
   }, [])
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color: string }>; label?: string }) => {
     if (active && payload && payload.length) {
       return (
         <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700">
           <p className="font-semibold text-foreground mb-2">{label}</p>
-          {payload.map((entry: any, index: number) => (
+          {payload.map((entry, index) => (
             <p key={index} className="text-sm" style={{ color: entry.color }}>
               {entry.name}: ¥{entry.value.toLocaleString()}
             </p>
@@ -80,7 +80,7 @@ export default function MonthlyTrendChart() {
           <Tooltip content={<CustomTooltip />} />
           <Legend 
             wrapperStyle={{ paddingTop: '20px' }}
-            formatter={(value: any) => (
+            formatter={(value: string) => (
               <span className="text-sm text-foreground">{value}</span>
             )}
           />

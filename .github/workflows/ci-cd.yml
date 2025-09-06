@@ -192,10 +192,18 @@ jobs:
         with:
           extra_args: --only-verified --max-depth 1
           
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+          
       - name: SAST with CodeQL
         uses: github/codeql-action/analyze@v3
         with:
-          languages: javascript-typescript
+          category: "/language:javascript-typescript"
 
   # Webアプリデプロイ（Vercel）
   deploy-web:

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-// @ts-ignore - Recharts compatibility with React 19
+// @ts-expect-error - Recharts compatibility with React 19
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { motion } from 'framer-motion'
 
@@ -40,7 +40,7 @@ export default function ExpenseRatioChart() {
     '変動費': '#10B981'
   }
 
-  const CustomTooltip = ({ active, payload }: any) => {
+  const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ name: string; value: number; payload: { percentage: number } }> }) => {
     if (active && payload && payload[0]) {
       return (
         <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700">
@@ -57,7 +57,7 @@ export default function ExpenseRatioChart() {
     return null
   }
 
-  const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name }: any) => {
+  const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: { cx: number; cy: number; midAngle: number; innerRadius: number; outerRadius: number; percent: number }) => {
     const RADIAN = Math.PI / 180
     const radius = innerRadius + (outerRadius - innerRadius) * 0.5
     const x = cx + radius * Math.cos(-midAngle * RADIAN)
@@ -127,7 +127,7 @@ export default function ExpenseRatioChart() {
             <Legend 
               verticalAlign="bottom" 
               height={36}
-              formatter={(value: any, entry: any) => (
+              formatter={(value: string, entry: { payload: { value: number } }) => (
                 <span 
                   className="text-sm text-foreground cursor-pointer hover:underline"
                   onClick={() => setSelectedSegment(value as string)}
