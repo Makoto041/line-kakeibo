@@ -1,6 +1,7 @@
 {
-  "buildCommand": "echo 'Using static files'",
-  "outputDirectory": "public",
-  "installCommand": "echo 'No dependencies needed'",
-  "framework": null
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "outputDirectory": ".next"
 }
