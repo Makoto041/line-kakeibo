@@ -9,7 +9,7 @@ interface MonthlyTrendChartProps {
 export default function MonthlyTrendChart({ stats }: MonthlyTrendChartProps) {
   // For now, just return a placeholder since we don't have historical trend data
   // Suppress unused vars warning since this is a placeholder implementation
-  stats && void 0
+  void stats;
   return (
     <div className="h-[300px] w-full flex items-center justify-center">
       <div className="text-center text-gray-500">

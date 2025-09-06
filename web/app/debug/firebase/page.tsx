@@ -16,7 +16,7 @@ export default function FirebaseDebugPage() {
     success: null,
     message: ''
   });
-  const [testData, setTestData] = useState<any[]>([]);
+  const [testData, setTestData] = useState<Record<string, unknown>[]>([]);
 
   useEffect(() => {
     // Firebase状態を取得

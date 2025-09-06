@@ -131,9 +131,10 @@ const initializeFirebase = () => {
     initializationError = error as Error;
     
     // エラーの詳細情報を提供
-    if ((error as any)?.code === 'auth/invalid-api-key') {
+    const firebaseError = error as { code?: string };
+    if (firebaseError?.code === 'auth/invalid-api-key') {
       console.error('Invalid API key. Please check your Firebase configuration.');
-    } else if ((error as any)?.code === 'auth/invalid-project-id') {
+    } else if (firebaseError?.code === 'auth/invalid-project-id') {
       console.error('Invalid project ID. Please check your Firebase configuration.');
     }
   }
@@ -157,12 +158,13 @@ const testFirebaseConnection = async () => {
     console.error('❌ Firebase connection test failed:', error);
     
     // エラーの種類に応じた対処法を提示
-    if ((error as any)?.code === 'permission-denied') {
+    const firestoreError = error as { code?: string };
+    if (firestoreError?.code === 'permission-denied') {
       console.info(
         '📝 Firestore Security Rules may be blocking access.\n' +
         'Please check your Firestore rules in Firebase Console.'
       );
-    } else if ((error as any)?.code === 'unavailable') {
+    } else if (firestoreError?.code === 'unavailable') {
       console.info(
         '📝 Firestore service is unavailable.\n' +
         'Please check your internet connection and Firebase project status.'
