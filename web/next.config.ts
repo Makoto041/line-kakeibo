@@ -15,10 +15,8 @@ const nextConfig: NextConfig = {
     ignoreDuringBuilds: true,
   },
   // Exclude API routes from static export
-  experimental: {
-    outputFileTracingExcludes: {
-      '*': ['./app/api/**/*']
-    },
+  outputFileTracingExcludes: {
+    '*': ['./app/api/**/*']
   },
 };
 
