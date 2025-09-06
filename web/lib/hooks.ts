@@ -10,9 +10,10 @@ import {
   getDoc,
   doc,
   updateDoc,
-  deleteDoc 
+  deleteDoc,
+  FirestoreError
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, getFirebaseStatus } from './firebase';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
 
@@ -68,6 +69,62 @@ export interface ExpenseStats {
   categoryTotals: Record<string, number>;
   dailyTotals: Record<string, number>;
 }
+
+// Firebaseエラーハンドリングヘルパー
+const handleFirestoreError = (error: unknown): string => {
+  console.error('Firestore Error:', error);
+  
+  if (error instanceof FirestoreError) {
+    switch (error.code) {
+      case 'permission-denied':
+        return 'アクセス権限がありません。Firebaseのセキュリティルールを確認してください。';
+      case 'unavailable':
+        return 'Firestoreサービスに接続できません。インターネット接続を確認してください。';
+      case 'not-found':
+        return 'リクエストされたデータが見つかりません。';
+      case 'already-exists':
+        return 'データが既に存在します。';
+      case 'failed-precondition':
+        return '操作の前提条件が満たされていません。';
+      case 'resource-exhausted':
+        return 'リソースの上限に達しました。しばらくしてから再試行してください。';
+      case 'invalid-argument':
+        return '無効な引数が提供されました。';
+      case 'unauthenticated':
+        return '認証が必要です。再度ログインしてください。';
+      default:
+        return `Firestoreエラー: ${error.message}`;
+    }
+  }
+  
+  if (error instanceof Error) {
+    return `エラー: ${error.message}`;
+  }
+  
+  return '予期しないエラーが発生しました。';
+};
+
+// Firebase接続チェック関数
+const checkFirebaseConnection = (): boolean => {
+  const status = getFirebaseStatus();
+  
+  if (!status.isInitialized) {
+    console.error('Firebase is not initialized', status);
+    return false;
+  }
+  
+  if (status.hasError) {
+    console.error('Firebase initialization error:', status.error);
+    return false;
+  }
+  
+  if (!db) {
+    console.error('Firestore database is not available');
+    return false;
+  }
+  
+  return true;
+};
 
 export function useLineAuth() {
   const [user, setUser] = useState<{ uid: string; isAnonymous: boolean } | null>(null);
@@ -156,7 +213,16 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!userId || !db || userId === 'guest') {
+    if (!userId || userId === 'guest') {
+      setLoading(false);
+      setExpenses([]);
+      return;
+    }
+
+    // Firebase接続チェック
+    if (!checkFirebaseConnection()) {
+      const status = getFirebaseStatus();
+      setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
       setLoading(false);
       return;
     }
@@ -164,30 +230,46 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
     const fetchExpenses = async () => {
       try {
         setLoading(true);
+        setError(null);
         
         console.log("データ取得開始 - userId:", userId, "period:", periodDays);
         
+        // Firebase接続の再確認
+        if (!db) {
+          throw new Error('Firestoreデータベースが利用できません。設定を確認してください。');
+        }
+        
         // DEBUG: First try simple query like the bot does
         console.log("=== DEBUG: シンプルクエリテスト ===");
-        const simpleQuery = query(
-          collection(db!, 'expenses'),
-          where('lineId', '==', userId),
-          limit(10)
-        );
-        const simpleSnapshot = await getDocs(simpleQuery);
-        console.log("シンプルクエリ結果:", simpleSnapshot.docs.length, "件");
-        simpleSnapshot.docs.forEach(doc => {
-          const data = doc.data();
-          console.log("- 支出:", {
-            id: doc.id,
-            amount: data.amount,
-            description: data.description,
-            lineId: data.lineId,
-            groupId: data.groupId,
-            lineGroupId: data.lineGroupId,
-            date: data.date
+        try {
+          const simpleQuery = query(
+            collection(db, 'expenses'),
+            where('lineId', '==', userId),
+            limit(10)
+          );
+          const simpleSnapshot = await getDocs(simpleQuery);
+          console.log("シンプルクエリ結果:", simpleSnapshot.docs.length, "件");
+          
+          if (simpleSnapshot.docs.length === 0) {
+            console.log("警告: ユーザーの支出データが見つかりません。新規ユーザーの可能性があります。");
+          }
+          
+          simpleSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            console.log("- 支出:", {
+              id: doc.id,
+              amount: data.amount,
+              description: data.description,
+              lineId: data.lineId,
+              groupId: data.groupId,
+              lineGroupId: data.lineGroupId,
+              date: data.date
+            });
           });
-        });
+        } catch (debugError) {
+          console.error("デバッグクエリエラー:", debugError);
+          // デバッグクエリが失敗しても続行
+        }
         
         // NOTE: 一般的なグループ機能は廃止、LINEグループのみを使用
         
@@ -198,7 +280,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
           const startDate = customStartDate;
           const endDate = dayjs(customStartDate).add(1, 'month').subtract(1, 'day').format('YYYY-MM-DD');
           personalQuery = query(
-            collection(db!, 'expenses'),
+            collection(db, 'expenses'),
             where('lineId', '==', userId),
             where('date', '>=', startDate),
             where('date', '<=', endDate),
@@ -208,7 +290,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
           const endDate = dayjs().format('YYYY-MM-DD');
           const startDate = dayjs().subtract(periodDays, 'day').format('YYYY-MM-DD');
           personalQuery = query(
-            collection(db!, 'expenses'),
+            collection(db, 'expenses'),
             where('lineId', '==', userId),
             where('date', '>=', startDate),
             where('date', '<=', endDate),
@@ -216,7 +298,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
           );
         } else {
           personalQuery = query(
-            collection(db!, 'expenses'),
+            collection(db, 'expenses'),
             where('lineId', '==', userId),
             limit(limitCount)
           );
@@ -242,7 +324,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
           // First, get all user's expenses to find LINE group IDs they've participated in
           console.log("=== ユーザーの全支出からLINEグループIDを検索 ===");
           const allUserExpensesQuery = query(
-            collection(db!, 'expenses'),
+            collection(db, 'expenses'),
             where('lineId', '==', userId),
             limit(100) // Limit to avoid performance issues
           );
@@ -283,7 +365,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
               endDate = dayjs(customStartDate).add(1, 'month').subtract(1, 'day').format('YYYY-MM-DD');
               console.log("カスタム期間:", startDate, "〜", endDate);
               lineGroupQuery = query(
-                collection(db!, 'expenses'),
+                collection(db, 'expenses'),
                 where('lineGroupId', '==', lineGroupId),
                 where('date', '>=', startDate),
                 where('date', '<=', endDate),
@@ -294,7 +376,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
               startDate = dayjs().subtract(periodDays, 'day').format('YYYY-MM-DD');
               console.log("期間指定:", periodDays, "日間 (", startDate, "〜", endDate, ")");
               lineGroupQuery = query(
-                collection(db!, 'expenses'),
+                collection(db, 'expenses'),
                 where('lineGroupId', '==', lineGroupId),
                 where('date', '>=', startDate),
                 where('date', '<=', endDate),
@@ -303,7 +385,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
             } else {
               console.log("全期間での取得");
               lineGroupQuery = query(
-                collection(db!, 'expenses'),
+                collection(db, 'expenses'),
                 where('lineGroupId', '==', lineGroupId),
                 limit(limitCount)
               );
@@ -339,9 +421,9 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
           }
           
           console.log("LINEグループの支出合計:", lineGroupExpenses.length, "件");
-        } catch (error) {
-          console.error("LINEグループ支出取得エラー:", error);
-          // Continue with empty array if LINE group fetch fails
+        } catch (groupError) {
+          console.error("LINEグループ支出取得エラー:", groupError);
+          // LINEグループの取得が失敗しても個人支出は表示
         }
         
         // Combine all expenses and remove duplicates
@@ -386,8 +468,10 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
         setExpenses(sortedExpenses);
         setError(null);
       } catch (err) {
+        const errorMessage = handleFirestoreError(err);
         console.error('Error fetching expenses:', err);
-        setError('支出データの取得に失敗しました');
+        setError(errorMessage);
+        setExpenses([]);
       } finally {
         setLoading(false);
       }
@@ -397,14 +481,21 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
   }, [userId, periodDays, limitCount, customStartDate]);
 
   const updateExpense = async (id: string, updates: Partial<Expense>) => {
-    if (!db) throw new Error('Firebase not initialized');
+    if (!checkFirebaseConnection()) {
+      throw new Error('Firebase接続エラー: データベースが利用できません');
+    }
+    
+    if (!db) {
+      throw new Error('Firestoreデータベースが初期化されていません');
+    }
+    
     try {
       const normalizedUpdates = {
         ...updates,
         category: updates.category ? normalizeCategoryName(updates.category) : updates.category,
       } as Partial<Expense>;
 
-      await updateDoc(doc(db!, 'expenses', id), {
+      await updateDoc(doc(db, 'expenses', id), {
         ...normalizedUpdates,
         updatedAt: new Date()
       });
@@ -416,21 +507,30 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
         )
       );
     } catch (err) {
+      const errorMessage = handleFirestoreError(err);
       console.error('Error updating expense:', err);
-      throw new Error('支出の更新に失敗しました');
+      throw new Error(errorMessage);
     }
   };
 
   const deleteExpense = async (id: string) => {
-    if (!db) throw new Error('Firebase not initialized');
+    if (!checkFirebaseConnection()) {
+      throw new Error('Firebase接続エラー: データベースが利用できません');
+    }
+    
+    if (!db) {
+      throw new Error('Firestoreデータベースが初期化されていません');
+    }
+    
     try {
-      await deleteDoc(doc(db!, 'expenses', id));
+      await deleteDoc(doc(db, 'expenses', id));
       
       // Update local state
       setExpenses(prev => prev.filter(expense => expense.id !== id));
     } catch (err) {
+      const errorMessage = handleFirestoreError(err);
       console.error('Error deleting expense:', err);
-      throw new Error('支出の削除に失敗しました');
+      throw new Error(errorMessage);
     }
   };
 
@@ -453,9 +553,18 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
 export function useMonthlyStats(userId: string | null, year: number, month: number, startDay: number = 1, customStartDate?: string, customEndDate?: string) {
   const [stats, setStats] = useState<ExpenseStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!userId || !db || userId === 'guest') {
+    if (!userId || userId === 'guest') {
+      setLoading(false);
+      return;
+    }
+
+    // Firebase接続チェック
+    if (!checkFirebaseConnection()) {
+      const status = getFirebaseStatus();
+      setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
       setLoading(false);
       return;
     }
@@ -463,6 +572,11 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
     const fetchStats = async () => {
       try {
         setLoading(true);
+        setError(null);
+        
+        if (!db) {
+          throw new Error('Firestoreデータベースが利用できません');
+        }
         
         console.log("月次統計取得開始 - userId:", userId, "year:", year, "month:", month);
         
@@ -483,7 +597,7 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
         
         // Get personal expenses for monthly stats
         const personalQuery = query(
-          collection(db!, 'expenses'),
+          collection(db, 'expenses'),
           where('lineId', '==', userId),
           where('date', '>=', startDate),
           where('date', '<=', endDate)
@@ -503,7 +617,7 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
         try {
           // Get all user's expenses to find LINE group IDs they've participated in
           const allUserExpensesQuery = query(
-            collection(db!, 'expenses'),
+            collection(db, 'expenses'),
             where('lineId', '==', userId),
             limit(100)
           );
@@ -521,7 +635,7 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
           // Get expenses from LINE groups for the specified period
           for (const lineGroupId of userLineGroupIds) {
             const lineGroupQuery = query(
-              collection(db!, 'expenses'),
+              collection(db, 'expenses'),
               where('lineGroupId', '==', lineGroupId),
               where('date', '>=', startDate),
               where('date', '<=', endDate)
@@ -537,8 +651,8 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
           }
           
           console.log("月次統計 - LINEグループの支出:", lineGroupExpenses.length, "件");
-        } catch (error) {
-          console.error("月次統計 - LINEグループ支出取得エラー:", error);
+        } catch (groupError) {
+          console.error("月次統計 - LINEグループ支出取得エラー:", groupError);
         }
         
         // Combine all expenses and remove duplicates
@@ -573,8 +687,11 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
           categoryTotals,
           dailyTotals
         });
+        setError(null);
       } catch (err) {
+        const errorMessage = handleFirestoreError(err);
         console.error('Error fetching monthly stats:', err);
+        setError(errorMessage);
       } finally {
         setLoading(false);
       }
@@ -583,7 +700,7 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
     fetchStats();
   }, [userId, year, month, startDay, customStartDate, customEndDate]);
 
-  return { stats, loading };
+  return { stats, loading, error };
 }
 
 export function useUserGroups(userId: string | null) {
@@ -592,7 +709,15 @@ export function useUserGroups(userId: string | null) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!userId || !db || userId === 'guest') {
+    if (!userId || userId === 'guest') {
+      setLoading(false);
+      return;
+    }
+
+    // Firebase接続チェック
+    if (!checkFirebaseConnection()) {
+      const status = getFirebaseStatus();
+      setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
       setLoading(false);
       return;
     }
@@ -600,12 +725,17 @@ export function useUserGroups(userId: string | null) {
     const fetchGroups = async () => {
       try {
         setLoading(true);
+        setError(null);
+        
+        if (!db) {
+          throw new Error('Firestoreデータベースが利用できません');
+        }
         
         console.log("ユーザーグループ取得開始 - userId:", userId);
         
         // Get user's group memberships
         const membershipQuery = query(
-          collection(db!, 'groupMembers'),
+          collection(db, 'groupMembers'),
           where('lineId', '==', userId),
           where('isActive', '==', true)
         );
@@ -621,7 +751,7 @@ export function useUserGroups(userId: string | null) {
         // Get group details for each membership
         const groupPromises = membershipSnapshot.docs.map(async (memberDoc) => {
           const memberData = memberDoc.data();
-          const groupDoc = await getDoc(doc(db!, 'groups', memberData.groupId));
+          const groupDoc = await getDoc(doc(db, 'groups', memberData.groupId));
           
           if (groupDoc.exists()) {
             return {
@@ -640,8 +770,9 @@ export function useUserGroups(userId: string | null) {
         setGroups(validGroups);
         setError(null);
       } catch (err) {
+        const errorMessage = handleFirestoreError(err);
         console.error('Error fetching user groups:', err);
-        setError('グループ情報の取得に失敗しました');
+        setError(errorMessage);
       } finally {
         setLoading(false);
       }
@@ -659,7 +790,15 @@ export function useGroupExpenses(groupId: string | null, limitCount: number = 50
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!groupId || !db) {
+    if (!groupId) {
+      setLoading(false);
+      return;
+    }
+
+    // Firebase接続チェック
+    if (!checkFirebaseConnection()) {
+      const status = getFirebaseStatus();
+      setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
       setLoading(false);
       return;
     }
@@ -667,11 +806,16 @@ export function useGroupExpenses(groupId: string | null, limitCount: number = 50
     const fetchGroupExpenses = async () => {
       try {
         setLoading(true);
+        setError(null);
+        
+        if (!db) {
+          throw new Error('Firestoreデータベースが利用できません');
+        }
         
         console.log("グループ支出取得開始 - groupId:", groupId);
         
         const q = query(
-          collection(db!, 'expenses'),
+          collection(db, 'expenses'),
           where('groupId', '==', groupId),
           limit(limitCount)
         );
@@ -702,8 +846,9 @@ export function useGroupExpenses(groupId: string | null, limitCount: number = 50
         setExpenses(sortedExpenses);
         setError(null);
       } catch (err) {
+        const errorMessage = handleFirestoreError(err);
         console.error('Error fetching group expenses:', err);
-        setError('グループ支出データの取得に失敗しました');
+        setError(errorMessage);
       } finally {
         setLoading(false);
       }
@@ -721,7 +866,15 @@ export function useLineGroupExpenses(lineGroupId: string | null, limitCount: num
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!lineGroupId || !db) {
+    if (!lineGroupId) {
+      setLoading(false);
+      return;
+    }
+
+    // Firebase接続チェック
+    if (!checkFirebaseConnection()) {
+      const status = getFirebaseStatus();
+      setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
       setLoading(false);
       return;
     }
@@ -729,11 +882,16 @@ export function useLineGroupExpenses(lineGroupId: string | null, limitCount: num
     const fetchLineGroupExpenses = async () => {
       try {
         setLoading(true);
+        setError(null);
+        
+        if (!db) {
+          throw new Error('Firestoreデータベースが利用できません');
+        }
         
         console.log("LINEグループ支出取得開始 - lineGroupId:", lineGroupId);
         
         const q = query(
-          collection(db!, 'expenses'),
+          collection(db, 'expenses'),
           where('lineGroupId', '==', lineGroupId),
           limit(limitCount)
         );
@@ -764,8 +922,9 @@ export function useLineGroupExpenses(lineGroupId: string | null, limitCount: num
         setExpenses(sortedExpenses);
         setError(null);
       } catch (err) {
+        const errorMessage = handleFirestoreError(err);
         console.error('Error fetching LINE group expenses:', err);
-        setError('LINEグループ支出データの取得に失敗しました');
+        setError(errorMessage);
       } finally {
         setLoading(false);
       }
