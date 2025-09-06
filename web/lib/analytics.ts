@@ -104,27 +104,6 @@ export function isFixedExpense(category: string): boolean {
   );
 }
 
-/**
- * 月の営業日数を取得
- */
-function getBusinessDaysInMonth(yearMonth: string): number {
-  const [year, month] = yearMonth.split('-').map(Number);
-  const startDate = dayjs(`${year}-${month}-01`);
-  const endDate = startDate.endOf('month');
-  
-  let businessDays = 0;
-  let current = startDate;
-  
-  while (current.isBefore(endDate) || current.isSame(endDate, 'day')) {
-    const dayOfWeek = current.day();
-    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-      businessDays++;
-    }
-    current = current.add(1, 'day');
-  }
-  
-  return businessDays;
-}
 
 // ====================
 // メイン分析関数
@@ -372,8 +351,7 @@ export function detectAnomalies(
  * 季節性を分析
  */
 export function analyzeSeasonality(
-  expenses: Expense[],
-  years: number = 2
+  expenses: Expense[]
 ): SeasonalityData[] {
   const monthlyTotals = new Map<number, number[]>();
   
@@ -387,7 +365,6 @@ export function analyzeSeasonality(
     }
     
     const totals = monthlyTotals.get(month)!;
-    const yearMonth = date.format('YYYY-MM');
     
     // 同じ年月のデータを集約
     totals.push(expense.amount);
@@ -481,17 +458,17 @@ export function analyzeSpendingPatterns(expenses: Expense[]): SpendingPattern[] 
  * キャッシュマネージャー
  */
 export class AnalyticsCache {
-  private cache = new Map<string, { data: any; timestamp: number }>();
+  private cache = new Map<string, { data: unknown; timestamp: number }>();
   private ttl = 60 * 60 * 1000; // 1時間
 
-  set(key: string, data: any): void {
+  set(key: string, data: unknown): void {
     this.cache.set(key, {
       data,
       timestamp: Date.now(),
     });
   }
 
-  get(key: string): any | null {
+  get(key: string): unknown | null {
     const cached = this.cache.get(key);
     
     if (!cached) {
@@ -526,7 +503,7 @@ export async function performOptimizedAnalysis(
   const cacheKey = `analysis-${yearMonth}-${budget || 'no-budget'}`;
   
   if (useCache) {
-    const cached = analyticsCache.get(cacheKey);
+    const cached = analyticsCache.get(cacheKey) as MonthlyAnalytics | null;
     if (cached) {
       return cached;
     }
