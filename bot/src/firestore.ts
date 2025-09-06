@@ -713,14 +713,24 @@ export async function getAllUserCategories(lineId: string): Promise<Array<Catego
   try {
     // Get default categories
     const defaultCategories: CategoryMaster[] = [
-      { id: 'food', name: '食費', icon: '🍱', isDefault: true, keywords: ['食', 'ランチ', 'ディナー', '弁当', 'コンビニ'] },
-      { id: 'transport', name: '交通費', icon: '🚃', isDefault: true, keywords: ['電車', 'バス', 'タクシー', '交通'] },
-      { id: 'daily', name: '日用品', icon: '🧻', isDefault: true, keywords: ['日用品', 'ティッシュ', '洗剤'] },
-      { id: 'entertainment', name: '娯楽', icon: '🎮', isDefault: true, keywords: ['ゲーム', '映画', '娯楽'] },
-      { id: 'clothing', name: '衣服', icon: '👕', isDefault: true, keywords: ['服', '衣類', 'ユニクロ'] },
-      { id: 'health', name: '医療・健康', icon: '💊', isDefault: true, keywords: ['病院', '薬', '医療'] },
-      { id: 'education', name: '教育', icon: '📚', isDefault: true, keywords: ['本', '教育', '学習'] },
-      { id: 'utility', name: '光熱費', icon: '💡', isDefault: true, keywords: ['電気', 'ガス', '水道'] },
+      { id: 'food', name: '食費', icon: '🍱', isDefault: true, keywords: ['食', 'ランチ', 'ディナー', '弁当', 'コンビニ', 'レストラン', 'カフェ', 'マクドナルド', 'スターバックス'] },
+      { id: 'transport', name: '交通費', icon: '🚃', isDefault: true, keywords: ['電車', 'バス', 'タクシー', '交通', '地下鉄', '新幹線', '高速', 'ガソリン'] },
+      { id: 'daily', name: '日用品', icon: '🧻', isDefault: true, keywords: ['日用品', 'ティッシュ', '洗剤', 'シャンプー', '歯ブラシ', 'タオル', '石鹸'] },
+      { id: 'entertainment', name: '娯楽', icon: '🎮', isDefault: true, keywords: ['ゲーム', '映画', '娯楽', 'カラオケ', 'ボウリング', '遊園地', 'コンサート', 'ライブ'] },
+      { id: 'clothing', name: '衣服', icon: '👕', isDefault: true, keywords: ['服', '衣類', 'ユニクロ', 'しまむら', '靴', '帽子', 'バッグ', 'アクセサリー'] },
+      { id: 'health', name: '医療・健康', icon: '💊', isDefault: true, keywords: ['病院', '薬', '医療', '歯医者', 'サプリメント', '整体', 'マッサージ', 'ジム'] },
+      { id: 'education', name: '教育', icon: '📚', isDefault: true, keywords: ['本', '教育', '学習', '参考書', '資格', '講座', 'セミナー', '文房具'] },
+      { id: 'utility', name: '光熱費', icon: '💡', isDefault: true, keywords: ['電気', 'ガス', '水道', '携帯', 'インターネット', 'Wi-Fi'] },
+      { id: 'housing', name: '住居費', icon: '🏠', isDefault: true, keywords: ['家賃', '管理費', '住宅ローン', '修繕費', '家具', '家電', 'リフォーム'] },
+      { id: 'insurance', name: '保険', icon: '🛡️', isDefault: true, keywords: ['生命保険', '医療保険', '自動車保険', '火災保険', '年金'] },
+      { id: 'tax', name: '税金', icon: '📋', isDefault: true, keywords: ['所得税', '住民税', '固定資産税', '自動車税', '国民健康保険'] },
+      { id: 'beauty', name: '美容', icon: '💄', isDefault: true, keywords: ['化粧品', '美容院', 'ネイル', 'エステ', 'スキンケア', 'コスメ'] },
+      { id: 'communication', name: '通信費', icon: '📱', isDefault: true, keywords: ['スマホ', '携帯電話', 'インターネット', 'プロバイダ', 'Wi-Fi', '通信料'] },
+      { id: 'subscription', name: 'サブスク', icon: '📺', isDefault: true, keywords: ['Netflix', 'Amazon Prime', 'Spotify', 'YouTube Premium', 'サブスクリプション'] },
+      { id: 'gift', name: 'プレゼント', icon: '🎁', isDefault: true, keywords: ['プレゼント', 'ギフト', 'お祝い', 'お返し', '誕生日', 'クリスマス'] },
+      { id: 'travel', name: '旅行', icon: '✈️', isDefault: true, keywords: ['旅行', 'ホテル', '宿泊', '観光', '温泉', '航空券', '新幹線'] },
+      { id: 'pet', name: 'ペット', icon: '🐕', isDefault: true, keywords: ['ペット', '犬', '猫', 'ペットフード', '動物病院', 'トリミング'] },
+      { id: 'savings', name: '貯金', icon: '💰', isDefault: true, keywords: ['貯金', '投資', '積立', '定期預金', '株式', '投資信託'] },
       { id: 'other', name: 'その他', icon: '📝', isDefault: true, keywords: [] }
     ];
 
@@ -738,9 +748,12 @@ export async function getAllUserCategories(lineId: string): Promise<Array<Catego
     return [...defaultCategories, ...customCategories];
   } catch (error) {
     console.error('Error getting all user categories:', error);
-    // Return default categories on error
+    // Return basic default categories on error
     return [
       { id: 'food', name: '食費', icon: '🍱', isDefault: true },
+      { id: 'transport', name: '交通費', icon: '🚃', isDefault: true },
+      { id: 'daily', name: '日用品', icon: '🧻', isDefault: true },
+      { id: 'entertainment', name: '娯楽', icon: '🎮', isDefault: true },
       { id: 'other', name: 'その他', icon: '📝', isDefault: true }
     ];
   }

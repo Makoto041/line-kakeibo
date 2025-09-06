@@ -1,39 +1,55 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-// @ts-expect-error - Recharts compatibility with React 19
+import { useMemo } from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { motion } from 'framer-motion'
+import { ExpenseStats } from '../../../lib/hooks'
 
-interface RatioData {
-  name: string
-  value: number
-  percentage: number
+interface ExpenseRatioChartProps {
+  stats?: ExpenseStats | null
 }
 
-export default function ExpenseRatioChart() {
-  const [data, setData] = useState<RatioData[]>([])
-  const [selectedSegment, setSelectedSegment] = useState<string | null>(null)
+export default function ExpenseRatioChart({ stats }: ExpenseRatioChartProps) {
+  const { data, fixedExpenses, variableExpenses } = useMemo(() => {
+    if (!stats?.categoryTotals) {
+      return { data: [], fixedExpenses: [], variableExpenses: [] }
+    }
 
-  useEffect(() => {
-    // TODO: Fetch real data from API
-    const fixed = 120000
-    const variable = 165000
-    const total = fixed + variable
+    // Calculate fixed vs variable expenses based on categories
+    const categories = stats.categoryTotals
+    const fixedCategories = ['住宅', '光熱費', '通信費', '保険', '交通費']
+    
+    const fixedEntries = Object.entries(categories)
+      .filter(([category]) => fixedCategories.some(fixed => category.includes(fixed)))
+    
+    const variableEntries = Object.entries(categories)
+      .filter(([category]) => !fixedCategories.some(fixed => category.includes(fixed)))
+    
+    const fixedTotal = fixedEntries.reduce((sum, [, amount]) => sum + amount, 0)
+    const variableTotal = variableEntries.reduce((sum, [, amount]) => sum + amount, 0)
+    const total = fixedTotal + variableTotal
 
-    setData([
-      { 
-        name: '固定費', 
-        value: fixed, 
-        percentage: (fixed / total) * 100 
-      },
-      { 
-        name: '変動費', 
-        value: variable, 
-        percentage: (variable / total) * 100 
-      }
-    ])
-  }, [])
+    const data = []
+    if (fixedTotal > 0) {
+      data.push({
+        name: '固定費',
+        value: fixedTotal,
+        percentage: (fixedTotal / total) * 100
+      })
+    }
+    if (variableTotal > 0) {
+      data.push({
+        name: '変動費',
+        value: variableTotal,
+        percentage: (variableTotal / total) * 100
+      })
+    }
+
+    const fixedExpenses = fixedEntries.map(([name, amount]) => ({ name, amount }))
+    const variableExpenses = variableEntries.map(([name, amount]) => ({ name, amount }))
+
+    return { data, fixedExpenses, variableExpenses }
+  }, [stats])
 
   const COLORS = {
     '固定費': '#8B5CF6',
@@ -77,119 +93,113 @@ export default function ExpenseRatioChart() {
     )
   }
 
-  const fixedExpenses = [
-    { name: '家賃', amount: 80000 },
-    { name: '保険', amount: 15000 },
-    { name: '通信費', amount: 12000 },
-    { name: '光熱費', amount: 13000 }
-  ]
-
-  const variableExpenses = [
-    { name: '食費', amount: 45000 },
-    { name: '交通費', amount: 15000 },
-    { name: '娯楽費', amount: 30000 },
-    { name: '日用品', amount: 18000 },
-    { name: 'その他', amount: 57000 }
-  ]
-
   return (
     <div className="space-y-4">
-      <div className="h-[250px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              cx="50%"
-              cy="50%"
-              labelLine={false}
-              label={renderCustomizedLabel}
-              outerRadius={90}
-              fill="#8884d8"
-              dataKey="value"
-              animationBegin={0}
-              animationDuration={800}
-              onClick={(data) => setSelectedSegment(data.name)}
-            >
-              {data.map((entry, index) => (
-                <Cell 
-                  key={`cell-${index}`} 
-                  fill={COLORS[entry.name as keyof typeof COLORS]}
-                  style={{
-                    filter: selectedSegment && selectedSegment !== entry.name 
-                      ? 'opacity(0.5)' 
-                      : 'none',
-                    cursor: 'pointer'
-                  }}
-                />
-              ))}
-            </Pie>
-            <Tooltip content={<CustomTooltip />} />
-            <Legend 
-              verticalAlign="bottom" 
-              height={36}
-              formatter={(value: string, entry: { payload: { value: number } }) => (
-                <span 
-                  className="text-sm text-foreground cursor-pointer hover:underline"
-                  onClick={() => setSelectedSegment(value as string)}
-                >
-                  {value}: ¥{entry.payload.value.toLocaleString()}
-                </span>
-              )}
-            />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
+      {data.length === 0 ? (
+        <div className="h-[250px] w-full flex items-center justify-center">
+          <div className="text-center text-gray-500">
+            <div className="text-gray-400 mb-2">
+              <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 712-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 712 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </div>
+            <p className="text-sm">支出データがありません</p>
+          </div>
+        </div>
+      ) : (
+        <div className="h-[250px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={data}
+                cx="50%"
+                cy="50%"
+                labelLine={false}
+                label={renderCustomizedLabel}
+                outerRadius={90}
+                fill="#8884d8"
+                dataKey="value"
+                animationBegin={0}
+                animationDuration={800}
+              >
+                {data.map((entry, index) => (
+                  <Cell 
+                    key={`cell-${index}`} 
+                    fill={COLORS[entry.name as keyof typeof COLORS]}
+                  />
+                ))}
+              </Pie>
+              <Tooltip content={<CustomTooltip />} />
+              <Legend 
+                verticalAlign="bottom" 
+                height={36}
+                formatter={(value: string, entry: { payload: { value: number } }) => (
+                  <span className="text-sm text-foreground">
+                    {value}: ¥{entry.payload.value.toLocaleString()}
+                  </span>
+                )}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* Breakdown details */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <motion.div
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="space-y-2"
-        >
-          <h3 className="font-semibold text-sm text-purple-600 dark:text-purple-400">
-            固定費の内訳
-          </h3>
-          {fixedExpenses.map((item, index) => (
+      {(fixedExpenses.length > 0 || variableExpenses.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {fixedExpenses.length > 0 && (
             <motion.div
-              key={item.name}
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.05 }}
-              className="flex justify-between items-center p-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg"
+              className="space-y-2"
             >
-              <span className="text-sm text-foreground">{item.name}</span>
-              <span className="text-sm font-medium text-foreground">
-                ¥{item.amount.toLocaleString()}
-              </span>
+              <h3 className="font-semibold text-sm text-purple-600 dark:text-purple-400">
+                固定費の内訳
+              </h3>
+              {fixedExpenses.map((item, index) => (
+                <motion.div
+                  key={item.name}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="flex justify-between items-center p-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg"
+                >
+                  <span className="text-sm text-foreground">{item.name}</span>
+                  <span className="text-sm font-medium text-foreground">
+                    ¥{item.amount.toLocaleString()}
+                  </span>
+                </motion.div>
+              ))}
             </motion.div>
-          ))}
-        </motion.div>
+          )}
 
-        <motion.div
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="space-y-2"
-        >
-          <h3 className="font-semibold text-sm text-green-600 dark:text-green-400">
-            変動費の内訳
-          </h3>
-          {variableExpenses.map((item, index) => (
+          {variableExpenses.length > 0 && (
             <motion.div
-              key={item.name}
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.05 }}
-              className="flex justify-between items-center p-2 bg-green-50 dark:bg-green-900/20 rounded-lg"
+              className="space-y-2"
             >
-              <span className="text-sm text-foreground">{item.name}</span>
-              <span className="text-sm font-medium text-foreground">
-                ¥{item.amount.toLocaleString()}
-              </span>
+              <h3 className="font-semibold text-sm text-green-600 dark:text-green-400">
+                変動費の内訳
+              </h3>
+              {variableExpenses.map((item, index) => (
+                <motion.div
+                  key={item.name}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="flex justify-between items-center p-2 bg-green-50 dark:bg-green-900/20 rounded-lg"
+                >
+                  <span className="text-sm text-foreground">{item.name}</span>
+                  <span className="text-sm font-medium text-foreground">
+                    ¥{item.amount.toLocaleString()}
+                  </span>
+                </motion.div>
+              ))}
             </motion.div>
-          ))}
-        </motion.div>
-      </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

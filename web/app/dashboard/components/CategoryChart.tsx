@@ -1,34 +1,37 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-// @ts-expect-error - Recharts compatibility with React 19
+import { useMemo } from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
+import { ExpenseStats } from '../../../lib/hooks'
 
-interface CategoryData {
-  name: string
-  value: number
-  color: string
+interface CategoryChartProps {
+  stats?: ExpenseStats | null
 }
 
-export default function CategoryChart() {
-  const [data, setData] = useState<CategoryData[]>([])
+export default function CategoryChart({ stats }: CategoryChartProps) {
+  const data = useMemo(() => {
+    if (!stats?.categoryTotals) {
+      return []
+    }
 
-  useEffect(() => {
-    // TODO: Fetch real data from API
-    // Mock data for now
-    setData([
-      { name: '食費', value: 45000, color: '#3B82F6' },
-      { name: '交通費', value: 15000, color: '#10B981' },
-      { name: '光熱費', value: 25000, color: '#F59E0B' },
-      { name: '通信費', value: 12000, color: '#EF4444' },
-      { name: '娯楽費', value: 30000, color: '#8B5CF6' },
-      { name: '日用品', value: 18000, color: '#EC4899' },
-      { name: 'その他', value: 20000, color: '#6B7280' }
-    ])
-  }, [])
+    // Color palette for categories
+    const colors = [
+      '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', 
+      '#EC4899', '#6B7280', '#14B8A6', '#F97316', '#84CC16'
+    ]
+
+    return Object.entries(stats.categoryTotals)
+      .map(([name, value], index) => ({
+        name,
+        value,
+        color: colors[index % colors.length]
+      }))
+      .sort((a, b) => b.value - a.value) // Sort by value descending
+  }, [stats])
 
   const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ name: string; value: number }> }) => {
     if (active && payload && payload[0]) {
+      const total = data.reduce((a, b) => a + b.value, 0)
       return (
         <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700">
           <p className="font-semibold text-foreground">{payload[0].name}</p>
@@ -36,7 +39,7 @@ export default function CategoryChart() {
             ¥{payload[0].value.toLocaleString()}
           </p>
           <p className="text-xs text-muted-foreground">
-            {((payload[0].value / data.reduce((a, b) => a + b.value, 0)) * 100).toFixed(1)}%
+            {total > 0 ? ((payload[0].value / total) * 100).toFixed(1) : 0}%
           </p>
         </div>
       )
@@ -66,6 +69,21 @@ export default function CategoryChart() {
     )
   }
 
+  if (data.length === 0) {
+    return (
+      <div className="h-[300px] w-full flex items-center justify-center">
+        <div className="text-center text-gray-500">
+          <div className="text-gray-400 mb-2">
+            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          </div>
+          <p className="text-sm">カテゴリデータがありません</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="h-[300px] w-full">
       <ResponsiveContainer width="100%" height="100%">
@@ -87,7 +105,6 @@ export default function CategoryChart() {
             ))}
           </Pie>
           <Tooltip content={<CustomTooltip />} />
-          {/* @ts-expect-error - React 19 compatibility issue with Recharts */}
           <Legend
             verticalAlign="bottom"
             height={36}

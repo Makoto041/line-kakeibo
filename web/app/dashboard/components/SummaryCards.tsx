@@ -1,69 +1,59 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { useState, useEffect } from 'react'
+import { ExpenseStats } from '../../../lib/hooks'
 
-interface SummaryData {
-  totalExpense: number
-  fixedExpense: number
-  variableExpense: number
-  monthlyChange: number
-  budgetUsage: number
+interface SummaryCardsProps {
+  stats?: ExpenseStats | null
 }
 
-export default function SummaryCards() {
-  const [data, setData] = useState<SummaryData>({
-    totalExpense: 0,
-    fixedExpense: 0,
-    variableExpense: 0,
-    monthlyChange: 0,
-    budgetUsage: 0
-  })
-
-  useEffect(() => {
-    // TODO: Fetch real data from API
-    // Mock data for now
-    setData({
-      totalExpense: 285000,
-      fixedExpense: 120000,
-      variableExpense: 165000,
-      monthlyChange: -5.2,
-      budgetUsage: 82
-    })
-  }, [])
+export default function SummaryCards({ stats }: SummaryCardsProps) {
+  // Default values when no stats available
+  const totalExpense = stats?.totalAmount || 0
+  const expenseCount = stats?.expenseCount || 0
+  
+  // Calculate fixed vs variable costs based on categories
+  // This is a simplified calculation - you might want to improve this logic
+  const categories = stats?.categoryTotals || {}
+  const fixedCategories = ['住宅', '光熱費', '通信費', '保険', '交通費']
+  const fixedExpense = Object.entries(categories)
+    .filter(([category]) => fixedCategories.some(fixed => category.includes(fixed)))
+    .reduce((sum, [, amount]) => sum + amount, 0)
+  const variableExpense = totalExpense - fixedExpense
 
   const cards = [
     {
       title: '今月の支出合計',
-      value: `¥${data.totalExpense.toLocaleString()}`,
+      value: `¥${totalExpense.toLocaleString()}`,
       icon: '💴',
       bgColor: 'bg-gradient-to-br from-blue-500 to-blue-600',
-      change: data.monthlyChange,
-      changeType: data.monthlyChange < 0 ? 'decrease' : 'increase'
+      // TODO: Calculate actual monthly change when we have historical data
+      change: 0,
+      changeType: 'same' as const
     },
     {
       title: '固定費',
-      value: `¥${data.fixedExpense.toLocaleString()}`,
+      value: `¥${fixedExpense.toLocaleString()}`,
       icon: '🏠',
       bgColor: 'bg-gradient-to-br from-purple-500 to-purple-600',
-      percentage: ((data.fixedExpense / data.totalExpense) * 100).toFixed(1)
+      percentage: totalExpense > 0 ? ((fixedExpense / totalExpense) * 100).toFixed(1) : '0'
     },
     {
       title: '変動費',
-      value: `¥${data.variableExpense.toLocaleString()}`,
+      value: `¥${variableExpense.toLocaleString()}`,
       icon: '🛒',
       bgColor: 'bg-gradient-to-br from-green-500 to-green-600',
-      percentage: ((data.variableExpense / data.totalExpense) * 100).toFixed(1)
+      percentage: totalExpense > 0 ? ((variableExpense / totalExpense) * 100).toFixed(1) : '0'
     },
     {
-      title: '予算使用率',
-      value: `${data.budgetUsage}%`,
+      title: '支出回数',
+      value: `${expenseCount}回`,
       icon: '📊',
-      bgColor: data.budgetUsage > 80 
-        ? 'bg-gradient-to-br from-red-500 to-red-600' 
-        : 'bg-gradient-to-br from-amber-500 to-amber-600',
-      progressBar: true,
-      progress: data.budgetUsage
+      bgColor: 'bg-gradient-to-br from-amber-500 to-amber-600',
+      // Average amount per expense
+      subValue: totalExpense > 0 && expenseCount > 0 
+        ? `平均 ¥${Math.round(totalExpense / expenseCount).toLocaleString()}`
+        : '平均 ¥0'
     }
   ]
 
@@ -87,10 +77,15 @@ export default function SummaryCards() {
               <span className="text-3xl">{card.icon}</span>
             </div>
 
-            {card.change !== undefined && (
+            {card.change !== undefined && card.change !== 0 && (
               <div className="flex items-center gap-1">
-                <span className={card.changeType === 'decrease' ? 'text-green-200' : 'text-red-200'}>
-                  {card.changeType === 'decrease' ? '↓' : '↑'}
+                <span className={
+                  card.changeType === 'decrease' ? 'text-green-200' : 
+                  card.changeType === 'increase' ? 'text-red-200' :
+                  'text-white/60'
+                }>
+                  {card.changeType === 'decrease' ? '↓' : 
+                   card.changeType === 'increase' ? '↑' : '→'}
                 </span>
                 <span className="text-sm text-white/80">
                   前月比 {Math.abs(card.change)}%
@@ -104,17 +99,10 @@ export default function SummaryCards() {
               </p>
             )}
 
-            {card.progressBar && (
-              <div className="mt-3">
-                <div className="w-full bg-white/20 rounded-full h-2">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${card.progress}%` }}
-                    transition={{ duration: 1, delay: 0.5 }}
-                    className="bg-white rounded-full h-2"
-                  />
-                </div>
-              </div>
+            {card.subValue && (
+              <p className="text-sm text-white/80">
+                {card.subValue}
+              </p>
             )}
           </div>
 

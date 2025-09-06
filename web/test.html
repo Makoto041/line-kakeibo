@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSSテスト - ぶちこむ家計簿アプリ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes blob {
+            0% {
+                transform: translate(0px, 0px) scale(1);
+            }
+            33% {
+                transform: translate(30px, -50px) scale(1.1);
+            }
+            66% {
+                transform: translate(-20px, 20px) scale(0.9);
+            }
+            100% {
+                transform: translate(0px, 0px) scale(1);
+            }
+        }
+
+        .animate-blob {
+            animation: blob 7s infinite;
+        }
+
+        .animation-delay-2000 {
+            animation-delay: 2s;
+        }
+
+        .animation-delay-4000 {
+            animation-delay: 4s;
+        }
+
+        .glass {
+            background: rgba(255, 255, 255, 0.25);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+
+        .glass-strong {
+            background: rgba(255, 255, 255, 0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
+    <!-- Animated background blobs -->
+    <div class="fixed inset-0 overflow-hidden pointer-events-none">
+        <div class="absolute top-10 -left-4 w-72 h-72 bg-purple-300 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob"></div>
+        <div class="absolute top-0 -right-4 w-72 h-72 bg-yellow-300 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000"></div>
+        <div class="absolute -bottom-8 left-20 w-72 h-72 bg-pink-300 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000"></div>
+    </div>
+
+    <div class="relative z-10 p-4 md:p-6 lg:p-8">
+        <div class="max-w-7xl mx-auto">
+            <!-- Header -->
+            <div class="flex justify-between items-center mb-8">
+                <h1 class="text-3xl md:text-4xl font-bold text-gray-900">
+                    💰 家計簿ダッシュボード
+                </h1>
+                <button class="p-2 rounded-lg bg-white shadow-lg hover:shadow-xl transition-all duration-200">
+                    🌙
+                </button>
+            </div>
+
+            <!-- Summary Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="glass rounded-xl p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-2">今月の支出</h3>
+                    <p class="text-3xl font-bold text-red-600">¥125,430</p>
+                    <p class="text-sm text-gray-600 mt-1">前月比 +8.2%</p>
+                </div>
+                <div class="glass rounded-xl p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-2">今月の収入</h3>
+                    <p class="text-3xl font-bold text-green-600">¥350,000</p>
+                    <p class="text-sm text-gray-600 mt-1">予算内</p>
+                </div>
+                <div class="glass rounded-xl p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-2">貯蓄率</h3>
+                    <p class="text-3xl font-bold text-blue-600">64.2%</p>
+                    <p class="text-sm text-gray-600 mt-1">目標: 60%</p>
+                </div>
+            </div>
+
+            <!-- Charts Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Category Chart -->
+                <div class="glass-strong rounded-xl p-6">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-800">カテゴリ別支出</h2>
+                    <div class="h-[300px] flex items-center justify-center">
+                        <div class="text-center text-gray-500">
+                            <div class="text-gray-400 mb-2">
+                                <svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                </svg>
+                            </div>
+                            <p class="text-sm">チャートデータを読み込み中...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Expense Ratio Chart -->
+                <div class="glass-strong rounded-xl p-6">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-800">固定費・変動費比率</h2>
+                    <div class="h-[300px] flex items-center justify-center">
+                        <div class="text-center text-gray-500">
+                            <div class="text-gray-400 mb-2">
+                                <svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
+                                </svg>
+                            </div>
+                            <p class="text-sm">チャートデータを読み込み中...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CSSが正常に動作していることを示すテストセクション -->
+            <div class="mt-8 p-6 glass rounded-xl">
+                <h2 class="text-xl font-semibold mb-4 text-gray-800">✅ CSS動作確認</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="p-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg shadow-lg transform hover:scale-105 transition-transform duration-200">
+                        <h3 class="font-bold">Tailwind CSS</h3>
+                        <p class="text-sm">グラデーション & ホバー効果</p>
+                    </div>
+                    <div class="p-4 bg-gradient-to-r from-green-500 to-blue-500 text-white rounded-lg shadow-lg transform hover:scale-105 transition-transform duration-200">
+                        <h3 class="font-bold">ガラスモーフィズム</h3>
+                        <p class="text-sm">背景ブラー & 透明度</p>
+                    </div>
+                    <div class="p-4 bg-gradient-to-r from-pink-500 to-red-500 text-white rounded-lg shadow-lg transform hover:scale-105 transition-transform duration-200">
+                        <h3 class="font-bold">アニメーション</h3>
+                        <p class="text-sm">Blob アニメーション & トランジション</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

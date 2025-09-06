@@ -1,6 +1,6 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": ".next",
-  "installCommand": "npm install --no-frozen-lockfile",
-  "framework": "nextjs"
+  "buildCommand": "echo 'Using static files'",
+  "outputDirectory": "public",
+  "installCommand": "echo 'No dependencies needed'",
+  "framework": null
 }

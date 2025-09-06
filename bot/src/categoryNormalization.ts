@@ -7,9 +7,17 @@ export const CANONICAL_CATEGORIES = [
   '衣服',
   '医療・健康',
   '教育',
-  '通信費',
   '光熱費',
-  '美容・理容',
+  '住居費',
+  '保険',
+  '税金',
+  '美容',
+  '通信費',
+  'サブスク',
+  'プレゼント',
+  '旅行',
+  'ペット',
+  '貯金',
   'その他',
 ];
 
@@ -37,10 +45,6 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   '消耗品': '日用品',
   'ドラッグストア': '日用品',
   '衛生用品': '日用品',
-  // 美容・理容は独立カテゴリに保持
-  '美容': '美容・理容',
-  '理容': '美容・理容',
-  '美容・理容': '美容・理容',
 
   // 娯楽
   '娯楽費': '娯楽',
@@ -81,12 +85,70 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   // 光熱費
   '公共料金': '光熱費',
 
-  // 通信費（独立カテゴリ）
+  // 通信費
   '通信費': '通信費',
   'インターネット': '通信費',
   '携帯': '通信費',
   'スマホ': '通信費',
   '電話': '通信費',
+
+  // 住居費
+  '住居': '住居費',
+  '家賃': '住居費',
+  '管理費': '住居費',
+  'ローン': '住居費',
+  '住宅ローン': '住居費',
+  '家具': '住居費',
+  '家電': '住居費',
+
+  // 保険
+  '保険料': '保険',
+  '生命保険': '保険',
+  '医療保険': '保険',
+  '自動車保険': '保険',
+  '火災保険': '保険',
+
+  // 税金
+  '税': '税金',
+  '所得税': '税金',
+  '住民税': '税金',
+  '固定資産税': '税金',
+  '自動車税': '税金',
+
+  // 美容
+  '美容・理容': '美容',
+  '理容': '美容',
+  '化粧品': '美容',
+  'コスメ': '美容',
+  '美容院': '美容',
+  'ネイル': '美容',
+  'エステ': '美容',
+
+  // サブスク
+  'サブスクリプション': 'サブスク',
+  'Netflix': 'サブスク',
+  'Spotify': 'サブスク',
+  'Prime': 'サブスク',
+
+  // プレゼント
+  'ギフト': 'プレゼント',
+  'お祝い': 'プレゼント',
+  'お返し': 'プレゼント',
+
+  // 旅行
+  'ホテル': '旅行',
+  '宿泊': '旅行',
+  '観光': '旅行',
+  '温泉': '旅行',
+
+  // ペット
+  'ペットフード': 'ペット',
+  '動物病院': 'ペット',
+
+  // 貯金
+  '投資': '貯金',
+  '積立': '貯金',
+  '定期預金': '貯金',
 };
 
 function normalizeString(s?: string): string {
@@ -130,26 +192,56 @@ export function normalizeCategoryName(
   }
 
   // Heuristic fallbacks by substring keywords
-  if (/映画|ゲーム|カラオケ|ボウリング|コンサート|ライブ/.test(trimmed)) {
+  if (/映画|ゲーム|カラオケ|ボウリング|コンサート|ライブ|遊園地/.test(trimmed)) {
     return pickAvailable('娯楽', safeAvailable);
   }
-  if (/薬|病院|クリニック|診療|歯科|整体/.test(trimmed)) {
+  if (/薬|病院|クリニック|診療|歯科|整体|マッサージ|ジム/.test(trimmed)) {
     return pickAvailable('医療・健康', safeAvailable);
   }
-  if (/電車|バス|タクシー|ガソリン|駐車場|高速|ETC/i.test(trimmed)) {
+  if (/電車|バス|タクシー|ガソリン|駐車場|高速|ETC|地下鉄|新幹線/i.test(trimmed)) {
     return pickAvailable('交通費', safeAvailable);
   }
-  if (/ユニクロ|服|衣類|アパレル|ファッション/.test(trimmed)) {
+  if (/ユニクロ|服|衣類|アパレル|ファッション|しまむら|靴|帽子|バッグ/.test(trimmed)) {
     return pickAvailable('衣服', safeAvailable);
   }
-  if (/本|書籍|教材|学習|教育/.test(trimmed)) {
+  if (/本|書籍|教材|学習|教育|参考書|資格|講座|セミナー|文房具/.test(trimmed)) {
     return pickAvailable('教育', safeAvailable);
   }
-  if (/電気|ガス|水道|通信|インターネット|Wi-?Fi|携帯/.test(trimmed)) {
+  if (/電気|ガス|水道/.test(trimmed)) {
     return pickAvailable('光熱費', safeAvailable);
   }
-  if (/ランチ|ディナー|朝食|カフェ|コンビニ|スーパー|食|弁当/.test(trimmed)) {
+  if (/通信|インターネット|Wi-?Fi|携帯|スマホ|電話|プロバイダ/.test(trimmed)) {
+    return pickAvailable('通信費', safeAvailable);
+  }
+  if (/ランチ|ディナー|朝食|カフェ|コンビニ|スーパー|食|弁当|レストラン|マクドナルド|スターバックス/.test(trimmed)) {
     return pickAvailable('食費', safeAvailable);
+  }
+  if (/家賃|管理費|住宅ローン|修繕|家具|家電|リフォーム/.test(trimmed)) {
+    return pickAvailable('住居費', safeAvailable);
+  }
+  if (/生命保険|医療保険|自動車保険|火災保険|年金/.test(trimmed)) {
+    return pickAvailable('保険', safeAvailable);
+  }
+  if (/所得税|住民税|固定資産税|自動車税|国民健康保険/.test(trimmed)) {
+    return pickAvailable('税金', safeAvailable);
+  }
+  if (/化粧品|美容院|ネイル|エステ|スキンケア|コスメ/.test(trimmed)) {
+    return pickAvailable('美容', safeAvailable);
+  }
+  if (/Netflix|Amazon Prime|Spotify|YouTube Premium|サブスクリプション/.test(trimmed)) {
+    return pickAvailable('サブスク', safeAvailable);
+  }
+  if (/プレゼント|ギフト|お祝い|お返し|誕生日|クリスマス/.test(trimmed)) {
+    return pickAvailable('プレゼント', safeAvailable);
+  }
+  if (/旅行|ホテル|宿泊|観光|温泉|航空券/.test(trimmed)) {
+    return pickAvailable('旅行', safeAvailable);
+  }
+  if (/ペット|犬|猫|ペットフード|動物病院|トリミング/.test(trimmed)) {
+    return pickAvailable('ペット', safeAvailable);
+  }
+  if (/貯金|投資|積立|定期預金|株式|投資信託/.test(trimmed)) {
+    return pickAvailable('貯金', safeAvailable);
   }
 
   return pickAvailable('その他', safeAvailable);

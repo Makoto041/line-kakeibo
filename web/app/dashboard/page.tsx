@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import { useLineAuth, useMonthlyStats } from '../../lib/hooks'
+import dayjs from 'dayjs'
 import SummaryCards from './components/SummaryCards'
 import CategoryChart from './components/CategoryChart'
 import MonthlyTrendChart from './components/MonthlyTrendChart'
@@ -9,8 +11,17 @@ import BudgetAlert from './components/BudgetAlert'
 import ExpenseRatioChart from './components/ExpenseRatioChart'
 
 export default function DashboardPage() {
-  const [isLoading, setIsLoading] = useState(true)
+  const { user, loading: authLoading } = useLineAuth()
+  const [currentDate] = useState(dayjs()) // setCurrentDate removed as currently unused
   const [darkMode, setDarkMode] = useState(false)
+
+  // Get monthly stats for current month
+  const { stats, loading: statsLoading } = useMonthlyStats(
+    user?.uid || null,
+    currentDate.year(),
+    currentDate.month() + 1,
+    1 // Start from 1st of month
+  )
 
   useEffect(() => {
     // Check for dark mode preference
@@ -20,9 +31,6 @@ export default function DashboardPage() {
     if (isDark) {
       document.documentElement.classList.add('dark')
     }
-    
-    // Simulate data loading
-    setTimeout(() => setIsLoading(false), 1000)
   }, [])
 
   const toggleDarkMode = () => {
@@ -36,6 +44,8 @@ export default function DashboardPage() {
     }
   }
 
+  const isLoading = authLoading || statsLoading
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -47,8 +57,24 @@ export default function DashboardPage() {
     )
   }
 
+  if (!user || user.isAnonymous) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center max-w-md p-8">
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">認証が必要です</h2>
+          <p className="text-gray-600 mb-6">
+            このページにアクセスするにはLINEからのリンクが必要です。
+          </p>
+          <p className="text-sm text-gray-500">
+            LINEで「家計簿」と送信してアクセスリンクを取得してください。
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 p-4 md:p-6 lg:p-8">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 md:p-6 lg:p-8">
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -86,7 +112,7 @@ export default function DashboardPage() {
           transition={{ duration: 0.5, delay: 0.2 }}
           className="mb-8"
         >
-          <SummaryCards />
+          <SummaryCards stats={stats} />
         </motion.div>
 
         {/* Charts Grid */}
@@ -99,7 +125,7 @@ export default function DashboardPage() {
             className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6"
           >
             <h2 className="text-xl font-semibold mb-4 text-foreground">カテゴリ別支出</h2>
-            <CategoryChart />
+            <CategoryChart stats={stats} />
           </motion.div>
 
           {/* Expense Ratio Chart */}
@@ -110,7 +136,7 @@ export default function DashboardPage() {
             className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6"
           >
             <h2 className="text-xl font-semibold mb-4 text-foreground">固定費・変動費比率</h2>
-            <ExpenseRatioChart />
+            <ExpenseRatioChart stats={stats} />
           </motion.div>
 
           {/* Monthly Trend Chart */}
@@ -121,7 +147,7 @@ export default function DashboardPage() {
             className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 lg:col-span-2"
           >
             <h2 className="text-xl font-semibold mb-4 text-foreground">月次推移</h2>
-            <MonthlyTrendChart />
+            <MonthlyTrendChart stats={stats} />
           </motion.div>
         </div>
       </motion.div>
