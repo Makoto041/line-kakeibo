@@ -8,6 +8,7 @@ import {
   limit, 
   FirestoreError,
   onSnapshot,
+  getDocs,
   orderBy,
   Unsubscribe
 } from 'firebase/firestore';
@@ -89,6 +90,9 @@ export function useRealtimeExpenses(userId: string | null, periodDays: number = 
       setLastUpdate(new Date());
     }
 
+    // 一時的にリアルタイム機能を無効化（デバッグ用）
+    const DISABLE_REALTIME = process.env.NEXT_PUBLIC_DISABLE_REALTIME === 'true';
+    
     // リアルタイムリスナーの設定
     let unsubscribe: Unsubscribe | null = null;
     
@@ -123,6 +127,45 @@ export function useRealtimeExpenses(userId: string | null, periodDays: number = 
           limit(limitCount)
         );
         
+        // リアルタイム機能が無効化されている場合は通常の読み取り
+        if (DISABLE_REALTIME) {
+          console.log('リアルタイム機能無効化中 - 通常読み取りを実行');
+          const snapshot = await getDocs(q);
+          const expenseData: Expense[] = snapshot.docs.map((doc) => {
+            const data = doc.data() as FirestoreExpenseData;
+            const firebaseTimestamp = data.createdAt as { seconds: number; nanoseconds: number } | undefined;
+            
+            return {
+              id: doc.id,
+              lineId: data.lineId || '',
+              groupId: data.groupId,
+              lineGroupId: data.lineGroupId,
+              userDisplayName: data.userDisplayName,
+              amount: data.amount || 0,
+              description: data.description || '',
+              date: data.date || dayjs().format('YYYY-MM-DD'),
+              category: normalizeCategoryName(data.category) || 'その他',
+              confirmed: data.confirmed !== false,
+              ocrText: data.ocrText,
+              items: data.items || [],
+              createdAt: firebaseTimestamp ? new Date(firebaseTimestamp.seconds * 1000) : new Date(),
+              updatedAt: data.updatedAt ? new Date((data.updatedAt as { seconds: number }).seconds * 1000) : new Date()
+            };
+          });
+          
+          // キャッシュ更新
+          expenseCache.set(cacheKey, {
+            data: expenseData,
+            timestamp: Date.now()
+          });
+          
+          setExpenses(expenseData);
+          setLoading(false);
+          setLastUpdate(new Date());
+          setError(null);
+          return;
+        }
+
         // リアルタイムリスナーの開始
         unsubscribe = onSnapshot(q, 
           (snapshot) => {
