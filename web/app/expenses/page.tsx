@@ -320,6 +320,7 @@ export default function ExpensesPage() {
               </div>
             </div>
           </div>
+        </div>
 
         {/* Individual Person Totals */}
         {/* {sortedPersonTotals.length > 0 && (
