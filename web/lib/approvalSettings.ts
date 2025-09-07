@@ -220,6 +220,16 @@ export async function getApprovalRequests(): Promise<ApprovalRequest[]> {
     })) as ApprovalRequest[];
   } catch (error) {
     console.error('Error fetching approval requests:', error);
+    
+    // Firestoreエラーの詳細情報をログ出力
+    if (error instanceof Error) {
+      console.error('Error details:', {
+        message: error.message,
+        name: error.name,
+        stack: error.stack
+      });
+    }
+    
     return [];
   }
 }

@@ -53,11 +53,24 @@ export default function ApprovalRequestsPage() {
   const fetchRequests = async () => {
     try {
       setLoading(true);
+      setError(null); // エラー状態をリセット
       const fetchedRequests = await getApprovalRequests();
       setRequests(fetchedRequests);
     } catch (error) {
       console.error('Error fetching requests:', error);
-      setError('申請一覧の取得に失敗しました');
+      
+      // より詳細なエラー情報を提供
+      if (error instanceof Error) {
+        if (error.message.includes('permission-denied')) {
+          setError('権限がありません。Firestore Security Rulesを確認してください。');
+        } else if (error.message.includes('unavailable')) {
+          setError('Firestoreサービスが利用できません。ネットワーク接続を確認してください。');
+        } else {
+          setError(`申請一覧の取得に失敗しました: ${error.message}`);
+        }
+      } else {
+        setError('申請一覧の取得に失敗しました');
+      }
     } finally {
       setLoading(false);
     }
