@@ -298,6 +298,25 @@ export default function ExpensesPage() {
                     未承認: {filteredExpenses.filter(e => !e.confirmed).length}件
                   </div>
                 )}
+                
+                {/* 承認者関連リンク */}
+                <div className="mt-3 space-y-2">
+                  {isUserApprover ? (
+                    <a
+                      href="/admin/approval-requests"
+                      className="inline-block bg-blue-600 text-white px-3 py-1 rounded-md text-xs font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      🔐 承認者申請管理
+                    </a>
+                  ) : (
+                    <a
+                      href="/request-approval"
+                      className="inline-block bg-green-600 text-white px-3 py-1 rounded-md text-xs font-medium hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      📝 承認者申請
+                    </a>
+                  )}
+                </div>
               </div>
             </div>
           </div>

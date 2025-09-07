@@ -4,10 +4,15 @@ import {
   doc, 
   getDoc, 
   setDoc,
+  addDoc,
+  updateDoc,
+  deleteDoc,
   collection,
   query,
   where,
-  getDocs
+  getDocs,
+  orderBy,
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -19,13 +24,25 @@ export interface ApprovalSettings {
   updatedBy?: string;
 }
 
+// 承認者申請の型定義
+export interface ApprovalRequest {
+  id?: string;
+  userId: string; // 申請者のLINE ID
+  displayName: string; // 申請者の表示名
+  status: 'pending' | 'approved' | 'rejected';
+  requestedAt: Date;
+  processedAt?: Date;
+  processedBy?: string; // 処理した管理者のID
+  message?: string; // 申請理由やメッセージ
+}
+
 // デフォルトの承認者設定
 export const DEFAULT_APPROVAL_SETTINGS: ApprovalSettings = {
   approvers: [],
 };
 
-// ハードコードされたパスワード（本番環境では環境変数にすべき）
-const ADMIN_PASSWORD = 'makoto014';
+// 環境変数からパスワードを取得（フォールバックとして従来のパスワードを使用）
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'makoto014';
 
 /**
  * 承認者設定を取得
@@ -137,5 +154,196 @@ export async function getUnconfirmedExpenseCount(userId?: string): Promise<numbe
   } catch (error) {
     console.error('Error fetching unconfirmed expense count:', error);
     return 0;
+  }
+}
+
+/**
+ * 承認者申請を送信
+ */
+export async function submitApprovalRequest(
+  userId: string,
+  displayName: string,
+  message?: string
+): Promise<string> {
+  if (!db) {
+    throw new Error('Firestore is not initialized');
+  }
+
+  // 既存の申請をチェック
+  const existingRequest = await getPendingApprovalRequest(userId);
+  if (existingRequest) {
+    throw new Error('既に申請中です。管理者の承認をお待ちください。');
+  }
+
+  // 既に承認者かどうかチェック
+  const isAlreadyApprover = await isApprover(userId);
+  if (isAlreadyApprover) {
+    throw new Error('既に承認者として登録されています。');
+  }
+
+  try {
+    const docRef = await addDoc(collection(db, 'approvalRequests'), {
+      userId,
+      displayName,
+      status: 'pending',
+      requestedAt: serverTimestamp(),
+      message: message || ''
+    });
+    
+    return docRef.id;
+  } catch (error) {
+    console.error('Error submitting approval request:', error);
+    throw error;
+  }
+}
+
+/**
+ * 承認者申請一覧を取得
+ */
+export async function getApprovalRequests(): Promise<ApprovalRequest[]> {
+  if (!db) {
+    console.error('Firestore is not initialized');
+    return [];
+  }
+
+  try {
+    const q = query(
+      collection(db, 'approvalRequests'),
+      orderBy('requestedAt', 'desc')
+    );
+    
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      requestedAt: doc.data().requestedAt?.toDate(),
+      processedAt: doc.data().processedAt?.toDate()
+    })) as ApprovalRequest[];
+  } catch (error) {
+    console.error('Error fetching approval requests:', error);
+    return [];
+  }
+}
+
+/**
+ * 保留中の承認者申請を取得
+ */
+export async function getPendingApprovalRequest(userId: string): Promise<ApprovalRequest | null> {
+  if (!db) {
+    return null;
+  }
+
+  try {
+    const q = query(
+      collection(db, 'approvalRequests'),
+      where('userId', '==', userId),
+      where('status', '==', 'pending')
+    );
+    
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) {
+      return null;
+    }
+    
+    const doc = snapshot.docs[0];
+    return {
+      id: doc.id,
+      ...doc.data(),
+      requestedAt: doc.data().requestedAt?.toDate(),
+      processedAt: doc.data().processedAt?.toDate()
+    } as ApprovalRequest;
+  } catch (error) {
+    console.error('Error fetching pending approval request:', error);
+    return null;
+  }
+}
+
+/**
+ * 承認者申請を承認
+ */
+export async function approveRequest(
+  requestId: string,
+  adminUserId: string
+): Promise<void> {
+  if (!db) {
+    throw new Error('Firestore is not initialized');
+  }
+
+  try {
+    // 申請を取得
+    const requestDoc = await getDoc(doc(db, 'approvalRequests', requestId));
+    if (!requestDoc.exists()) {
+      throw new Error('申請が見つかりません。');
+    }
+
+    const request = requestDoc.data() as ApprovalRequest;
+    
+    // 申請を承認状態に更新
+    await updateDoc(doc(db, 'approvalRequests', requestId), {
+      status: 'approved',
+      processedAt: serverTimestamp(),
+      processedBy: adminUserId
+    });
+
+    // 承認者リストに追加
+    const settings = await getApprovalSettings();
+    const updatedApprovers = [...settings.approvers, request.userId];
+    
+    await saveApprovalSettings({
+      ...settings,
+      approvers: updatedApprovers
+    }, adminUserId);
+    
+  } catch (error) {
+    console.error('Error approving request:', error);
+    throw error;
+  }
+}
+
+/**
+ * 承認者申請を拒否
+ */
+export async function rejectRequest(
+  requestId: string,
+  adminUserId: string
+): Promise<void> {
+  if (!db) {
+    throw new Error('Firestore is not initialized');
+  }
+
+  try {
+    await updateDoc(doc(db, 'approvalRequests', requestId), {
+      status: 'rejected',
+      processedAt: serverTimestamp(),
+      processedBy: adminUserId
+    });
+  } catch (error) {
+    console.error('Error rejecting request:', error);
+    throw error;
+  }
+}
+
+/**
+ * 承認者を削除
+ */
+export async function removeApprover(
+  approverUserId: string,
+  adminUserId: string
+): Promise<void> {
+  if (!db) {
+    throw new Error('Firestore is not initialized');
+  }
+
+  try {
+    const settings = await getApprovalSettings();
+    const updatedApprovers = settings.approvers.filter(id => id !== approverUserId);
+    
+    await saveApprovalSettings({
+      ...settings,
+      approvers: updatedApprovers
+    }, adminUserId);
+  } catch (error) {
+    console.error('Error removing approver:', error);
+    throw error;
   }
 }
