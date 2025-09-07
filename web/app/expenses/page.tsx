@@ -1,14 +1,16 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useLineAuth, useExpenses } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
+import { isApprover } from "../../lib/approvalSettings";
 import Header from "../../components/Header";
 import dayjs from "dayjs";
 
 export default function ExpensesPage() {
   const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
   const [periodDays, setPeriodDays] = useState(30);
+  const [isUserApprover, setIsUserApprover] = useState(false);
 
   const { expenses, loading, error, updateExpense, deleteExpense } =
     useExpenses(user?.uid || null, periodDays, 200);
@@ -22,6 +24,17 @@ export default function ExpensesPage() {
     category: string;
     confirmed: boolean;
   }>({ amount: 0, description: "", date: "", category: "", confirmed: false });
+
+  // 承認者かどうかをチェック
+  useEffect(() => {
+    const checkApprover = async () => {
+      if (user?.uid) {
+        const approverStatus = await isApprover(user.uid);
+        setIsUserApprover(approverStatus);
+      }
+    };
+    checkApprover();
+  }, [user?.uid]);
 
   if (authLoading) {
     return (
@@ -66,7 +79,10 @@ export default function ExpensesPage() {
   // Calculate individual person totals
   const personTotals = filteredExpenses.reduce((acc, expense) => {
     const personName = expense.userDisplayName || "個人";
-    acc[personName] = (acc[personName] || 0) + expense.amount;
+    // 承認済みの項目のみ合計に含める
+    if (expense.confirmed) {
+      acc[personName] = (acc[personName] || 0) + expense.amount;
+    }
     return acc;
   }, {} as Record<string, number>);
 
@@ -272,10 +288,16 @@ export default function ExpensesPage() {
                 <div className="text-2xl font-black text-red-600 my-1">
                   ¥
                   {filteredExpenses
+                    .filter(e => e.confirmed) // 承認済みのみ合計
                     .reduce((sum, e) => sum + e.amount, 0)
                     .toLocaleString()}
                 </div>
-                <div className="text-xs text-gray-500">総支出額</div>
+                <div className="text-xs text-gray-500">承認済み総支出額</div>
+                {filteredExpenses.some(e => !e.confirmed) && (
+                  <div className="text-xs text-yellow-600 mt-1">
+                    未承認: {filteredExpenses.filter(e => !e.confirmed).length}件
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -557,7 +579,7 @@ export default function ExpensesPage() {
                         className="flex flex-wrap gap-2 pt-3 border-t border-gray-100"
                         style={{ position: "relative", zIndex: 10 }}
                       >
-                        {!expense.confirmed && (
+                        {!expense.confirmed && isUserApprover && (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -570,8 +592,13 @@ export default function ExpensesPage() {
                             style={{ pointerEvents: "auto" }}
                           >
                             <span className="text-sm">✓</span>
-                            確認
+                            承認
                           </button>
+                        )}
+                        {!expense.confirmed && !isUserApprover && (
+                          <div className="text-xs text-gray-500 italic py-2">
+                            承認権限がありません
+                          </div>
                         )}
 
                         <button
