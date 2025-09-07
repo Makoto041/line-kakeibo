@@ -669,21 +669,24 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
         // Sort in memory by date desc
         const expenses = allExpenses.sort((a, b) => b.date.localeCompare(a.date));
         
-        const totalAmount = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+        // 承認済みの支出のみを統計計算に含める
+        const confirmedExpenses = expenses.filter(expense => expense.confirmed);
         
-        const categoryTotals = expenses.reduce((acc, expense) => {
+        const totalAmount = confirmedExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+        
+        const categoryTotals = confirmedExpenses.reduce((acc, expense) => {
           acc[expense.category] = (acc[expense.category] || 0) + expense.amount;
           return acc;
         }, {} as Record<string, number>);
         
-        const dailyTotals = expenses.reduce((acc, expense) => {
+        const dailyTotals = confirmedExpenses.reduce((acc, expense) => {
           acc[expense.date] = (acc[expense.date] || 0) + expense.amount;
           return acc;
         }, {} as Record<string, number>);
         
         setStats({
           totalAmount,
-          expenseCount: expenses.length,
+          expenseCount: confirmedExpenses.length,
           categoryTotals,
           dailyTotals
         });

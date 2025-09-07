@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useLineAuth, useMonthlyStats } from '../../lib/hooks'
+import { isApprover } from '../../lib/approvalSettings'
 import dayjs from 'dayjs'
 import SummaryCards from './components/SummaryCards'
 import CategoryChart from './components/CategoryChart'
@@ -14,6 +15,18 @@ export default function DashboardPage() {
   const { user, loading: authLoading } = useLineAuth()
   const [currentDate] = useState(dayjs()) // setCurrentDate removed as currently unused
   const [darkMode, setDarkMode] = useState(false)
+  const [userIsApprover, setUserIsApprover] = useState(false)
+
+  // Check if user is approver
+  useEffect(() => {
+    const checkApprover = async () => {
+      if (user?.uid) {
+        const approverStatus = await isApprover(user.uid)
+        setUserIsApprover(approverStatus)
+      }
+    }
+    checkApprover()
+  }, [user?.uid])
 
   // Get monthly stats for current month
   const { stats, loading: statsLoading } = useMonthlyStats(
@@ -148,6 +161,41 @@ export default function DashboardPage() {
           >
             <h2 className="text-xl font-semibold mb-4 text-foreground">月次推移</h2>
             <MonthlyTrendChart stats={stats} />
+          </motion.div>
+
+          {/* 承認者申請システムへの導線 */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5, delay: 0.6 }}
+            className="bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 rounded-xl shadow-lg p-6 lg:col-span-2 border border-green-200 dark:border-green-800"
+          >
+            <div className="text-center">
+              <h3 className="text-lg font-semibold text-foreground mb-2">
+                🔐 承認者システム
+              </h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                {userIsApprover 
+                  ? "承認者申請の管理ができます" 
+                  : "承認者への申請が可能です"}
+              </p>
+              
+              {userIsApprover ? (
+                <a
+                  href="/admin/approval-requests"
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                >
+                  🔐 承認者申請を管理
+                </a>
+              ) : (
+                <a
+                  href="/request-approval"
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
+                >
+                  📝 承認者に申請する
+                </a>
+              )}
+            </div>
           </motion.div>
         </div>
       </motion.div>
