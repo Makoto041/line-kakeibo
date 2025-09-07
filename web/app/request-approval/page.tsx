@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useLineAuth } from '@/lib/hooks';
 import { 
   submitApprovalRequest, 
@@ -23,9 +23,9 @@ export default function RequestApprovalPage() {
     if (user) {
       checkStatus();
     }
-  }, [user]);
+  }, [user, checkStatus]);
 
-  const checkStatus = async () => {
+  const checkStatus = useCallback(async () => {
     if (!user) return;
     
     try {
@@ -46,7 +46,7 @@ export default function RequestApprovalPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,9 +73,10 @@ export default function RequestApprovalPage() {
       // ステータスを再確認
       await checkStatus();
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error submitting request:', error);
-      setError(error.message || '申請の送信に失敗しました');
+      const errorMessage = error instanceof Error ? error.message : '申請の送信に失敗しました';
+      setError(errorMessage);
     } finally {
       setSubmitting(false);
     }

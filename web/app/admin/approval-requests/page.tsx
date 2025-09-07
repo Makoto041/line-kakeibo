@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useLineAuth } from '@/lib/hooks';
 import { 
   getApprovalRequests, 
@@ -25,9 +25,9 @@ export default function ApprovalRequestsPage() {
     if (user) {
       checkApproverStatus();
     }
-  }, [user]);
+  }, [user, checkApproverStatus]);
 
-  const checkApproverStatus = async () => {
+  const checkApproverStatus = useCallback(async () => {
     if (!user) return;
     
     try {
@@ -36,7 +36,7 @@ export default function ApprovalRequestsPage() {
     } catch (error) {
       console.error('Error checking approver status:', error);
     }
-  };
+  }, [user]);
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();

@@ -6,7 +6,6 @@ import {
   setDoc,
   addDoc,
   updateDoc,
-  deleteDoc,
   collection,
   query,
   where,
@@ -115,7 +114,7 @@ export async function isApprover(userId: string): Promise<boolean> {
  * 未承認の支出をデフォルトで作成
  * 新規作成された支出はデフォルトで未承認状態
  */
-export function createUnconfirmedExpense(expenseData: any) {
+export function createUnconfirmedExpense(expenseData: Record<string, unknown>) {
   return {
     ...expenseData,
     confirmed: false,
