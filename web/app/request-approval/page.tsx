@@ -19,12 +19,6 @@ export default function RequestApprovalPage() {
   const [pendingRequest, setPendingRequest] = useState<ApprovalRequest | null>(null);
   const [userIsApprover, setUserIsApprover] = useState(false);
 
-  useEffect(() => {
-    if (user) {
-      checkStatus();
-    }
-  }, [user, checkStatus]);
-
   const checkStatus = useCallback(async () => {
     if (!user) return;
     
@@ -47,6 +41,12 @@ export default function RequestApprovalPage() {
       setLoading(false);
     }
   }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      checkStatus();
+    }
+  }, [user, checkStatus]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -21,12 +21,6 @@ export default function ApprovalRequestsPage() {
   const [processingRequest, setProcessingRequest] = useState<string | null>(null);
   const [userIsApprover, setUserIsApprover] = useState(false);
 
-  useEffect(() => {
-    if (user) {
-      checkApproverStatus();
-    }
-  }, [user, checkApproverStatus]);
-
   const checkApproverStatus = useCallback(async () => {
     if (!user) return;
     
@@ -37,6 +31,12 @@ export default function ApprovalRequestsPage() {
       console.error('Error checking approver status:', error);
     }
   }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      checkApproverStatus();
+    }
+  }, [user, checkApproverStatus]);
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();
