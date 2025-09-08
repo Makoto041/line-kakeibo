@@ -24,7 +24,7 @@ jobs:
       bot: ${{ steps.filter.outputs.bot }}
       deps: ${{ steps.filter.outputs.deps }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -51,7 +51,7 @@ jobs:
       needs.changes.outputs.deps == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -86,7 +86,7 @@ jobs:
         app: [web, bot]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -125,7 +125,7 @@ jobs:
         app: [web, bot]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -167,7 +167,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -210,7 +210,7 @@ jobs:
       url: ${{ steps.deploy.outputs.url }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -261,7 +261,7 @@ jobs:
       name: production-bot
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -337,7 +337,7 @@ jobs:
       (needs.deploy-web.result == 'success' || needs.deploy-bot.result == 'success')
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           
