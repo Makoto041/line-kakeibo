@@ -25,9 +25,10 @@ export default function ExpensesPage() {
     payerDisplayName: string;
   }>({ amount: 0, description: "", date: "", category: "", includeInTotal: true, payerId: "", payerDisplayName: "" });
   
-  // Get the first expense's group ID for group members lookup
-  const firstExpenseGroupId = expenses.length > 0 ? expenses[0].groupId : null;
-  const { members: groupMembers } = useGroupMembers(firstExpenseGroupId);
+  // Get group members for the expense being edited
+  const editingExpenseData = editingExpense ? expenses.find(e => e.id === editingExpense) : null;
+  const editingGroupId = editingExpenseData?.groupId || null;
+  const { members: groupMembers } = useGroupMembers(editingGroupId);
 
 
   if (authLoading) {
@@ -458,28 +459,37 @@ export default function ExpensesPage() {
                           <label className="block text-sm font-medium text-gray-700 mb-2">
                             💳 支払い者
                           </label>
-                          {groupMembers.length > 0 ? (
-                            <select
-                              name="payerId"
-                              value={editForm.payerId}
-                              onChange={handleEditInputChange}
-                              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            >
-                              {groupMembers.map((member) => (
+                          <select
+                            name="payerId"
+                            value={editForm.payerId}
+                            onChange={handleEditInputChange}
+                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          >
+                            {/* 現在の入力者を常に表示 */}
+                            {editingExpenseData && (
+                              <option key={editingExpenseData.lineId} value={editingExpenseData.lineId}>
+                                {editingExpenseData.userDisplayName || "入力者"}
+                              </option>
+                            )}
+                            
+                            {/* グループメンバーを表示（入力者と重複する場合は除外） */}
+                            {groupMembers
+                              .filter(member => member.lineId !== editingExpenseData?.lineId)
+                              .map((member) => (
                                 <option key={member.lineId} value={member.lineId}>
                                   {member.displayName}
                                 </option>
                               ))}
-                            </select>
-                          ) : (
-                            <input
-                              type="text"
-                              value={editForm.payerDisplayName}
-                              readOnly
-                              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-500 bg-gray-50"
-                              placeholder="グループメンバーが見つかりません"
-                            />
-                          )}
+                              
+                            {/* 既存の支払い者が上記に含まれていない場合は追加 */}
+                            {editForm.payerId && 
+                             editForm.payerId !== editingExpenseData?.lineId &&
+                             !groupMembers.some(member => member.lineId === editForm.payerId) && (
+                              <option key={editForm.payerId} value={editForm.payerId}>
+                                {editForm.payerDisplayName || "不明なユーザー"}
+                              </option>
+                            )}
+                          </select>
                           <p className="text-xs text-gray-500 mt-1">
                             デフォルトは入力者と同じです
                           </p>
