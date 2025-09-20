@@ -565,10 +565,10 @@ export default function ExpensesPage() {
                               👤 入力者: {expense.userDisplayName}
                             </span>
                           )}
-                        {expense.payerDisplayName &&
-                          expense.payerDisplayName !== expense.userDisplayName && (
-                            <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                              💳 支払い者: {expense.payerDisplayName}
+                        {(expense.payerDisplayName || expense.userDisplayName) &&
+                          (expense.payerDisplayName || expense.userDisplayName) !== "個人" && (
+                            <span className="bg-purple-100 text-purple-800 text-xs font-medium px-2.5 py-0.5 rounded">
+                              💳 支払い者: {expense.payerDisplayName || expense.userDisplayName}
                             </span>
                           )}
                         {expense.lineGroupId && (
