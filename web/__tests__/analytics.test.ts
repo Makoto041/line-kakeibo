@@ -27,7 +27,7 @@ const mockExpenses: Expense[] = [
     description: 'ランチ',
     date: '2024-08-01',
     category: '食費',
-    confirmed: true,
+    includeInTotal: true,
   },
   {
     id: '2',
@@ -36,7 +36,7 @@ const mockExpenses: Expense[] = [
     description: '光熱費支払い',
     date: '2024-08-05',
     category: '光熱費',
-    confirmed: true,
+    includeInTotal: true,
   },
   {
     id: '3',
@@ -45,7 +45,7 @@ const mockExpenses: Expense[] = [
     description: '通信費',
     date: '2024-08-10',
     category: '通信費',
-    confirmed: true,
+    includeInTotal: true,
   },
   {
     id: '4',
@@ -54,7 +54,7 @@ const mockExpenses: Expense[] = [
     description: '娯楽',
     date: '2024-08-15',
     category: '娯楽',
-    confirmed: true,
+    includeInTotal: true,
   },
   {
     id: '5',
@@ -63,7 +63,7 @@ const mockExpenses: Expense[] = [
     description: '日用品',
     date: '2024-08-20',
     category: '日用品',
-    confirmed: true,
+    includeInTotal: true,
   },
   // 2024年9月のデータ
   {
@@ -73,7 +73,7 @@ const mockExpenses: Expense[] = [
     description: 'ランチ',
     date: '2024-09-01',
     category: '食費',
-    confirmed: true,
+    includeInTotal: true,
   },
   {
     id: '7',
@@ -82,7 +82,7 @@ const mockExpenses: Expense[] = [
     description: '光熱費支払い',
     date: '2024-09-05',
     category: '光熱費',
-    confirmed: true,
+    includeInTotal: true,
   },
   {
     id: '8',
@@ -91,7 +91,7 @@ const mockExpenses: Expense[] = [
     description: '通信費',
     date: '2024-09-10',
     category: '通信費',
-    confirmed: true,
+    includeInTotal: true,
   },
   {
     id: '9',
@@ -100,7 +100,7 @@ const mockExpenses: Expense[] = [
     description: '娯楽',
     date: '2024-09-15',
     category: '娯楽',
-    confirmed: true,
+    includeInTotal: true,
   },
   {
     id: '10',
@@ -109,7 +109,7 @@ const mockExpenses: Expense[] = [
     description: '特別な買い物',
     date: '2024-09-20',
     category: 'その他',
-    confirmed: true,
+    includeInTotal: true,
   },
 ];
 
@@ -248,7 +248,7 @@ export async function runTests() {
     
     const retrieved = cache.get('test-key');
     assert(retrieved !== null, 'Should retrieve cached data');
-    assert(retrieved.test === 'data', 'Cached data should match');
+    assert((retrieved as any).test === 'data', 'Cached data should match');
     
     cache.clear();
     const afterClear = cache.get('test-key');

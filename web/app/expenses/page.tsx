@@ -20,8 +20,9 @@ export default function ExpensesPage() {
     description: string;
     date: string;
     category: string;
-    confirmed: boolean;
-  }>({ amount: 0, description: "", date: "", category: "", confirmed: false });
+    includeInTotal: boolean;
+  }>({ amount: 0, description: "", date: "", category: "", includeInTotal: true });
+
 
   if (authLoading) {
     return (
@@ -36,8 +37,8 @@ export default function ExpensesPage() {
 
   const filteredExpenses = expenses.filter((expense) => {
     if (filter === "all") return true;
-    if (filter === "confirmed") return expense.confirmed;
-    if (filter === "unconfirmed") return !expense.confirmed;
+    if (filter === "included") return expense.includeInTotal;
+    if (filter === "excluded") return !expense.includeInTotal;
     return expense.category === filter;
   });
 
@@ -66,7 +67,10 @@ export default function ExpensesPage() {
   // Calculate individual person totals
   const personTotals = filteredExpenses.reduce((acc, expense) => {
     const personName = expense.userDisplayName || "個人";
-    acc[personName] = (acc[personName] || 0) + expense.amount;
+    // 承認済みの項目のみ合計に含める
+    if (expense.includeInTotal) {
+      acc[personName] = (acc[personName] || 0) + expense.amount;
+    }
     return acc;
   }, {} as Record<string, number>);
 
@@ -85,13 +89,6 @@ export default function ExpensesPage() {
     }))
   );
 
-  const handleConfirmExpense = async (id: string) => {
-    try {
-      await updateExpense(id, { confirmed: true });
-    } catch {
-      alert("エラーが発生しました");
-    }
-  };
 
   const handleEditStart = (expense: Expense) => {
     console.log("Edit button clicked for expense:", expense.id);
@@ -101,7 +98,7 @@ export default function ExpensesPage() {
       description: expense.description,
       date: expense.date,
       category: expense.category,
-      confirmed: expense.confirmed,
+      includeInTotal: expense.includeInTotal,
     });
   };
 
@@ -112,7 +109,7 @@ export default function ExpensesPage() {
       description: "",
       date: "",
       category: "",
-      confirmed: false,
+      includeInTotal: true,
     });
   };
 
@@ -141,7 +138,7 @@ export default function ExpensesPage() {
   const handleEditCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setEditForm((prev) => ({
       ...prev,
-      confirmed: e.target.checked,
+      includeInTotal: e.target.checked,
     }));
   };
 
@@ -188,8 +185,8 @@ export default function ExpensesPage() {
                   className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="all">すべて</option>
-                  <option value="confirmed">確認済み</option>
-                  <option value="unconfirmed">未確認</option>
+                  <option value="included">合計に含む</option>
+                  <option value="excluded">合計から除外</option>
                   {categories.map((category) => (
                     <option key={category} value={category}>
                       {category}
@@ -272,10 +269,17 @@ export default function ExpensesPage() {
                 <div className="text-2xl font-black text-red-600 my-1">
                   ¥
                   {filteredExpenses
+                    .filter(e => e.includeInTotal) // 合計に含むもののみ
                     .reduce((sum, e) => sum + e.amount, 0)
                     .toLocaleString()}
                 </div>
-                <div className="text-xs text-gray-500">総支出額</div>
+                <div className="text-xs text-gray-500">合計総支出額</div>
+                {filteredExpenses.some(e => !e.includeInTotal) && (
+                  <div className="text-xs text-yellow-600 mt-1">
+                    除外: {filteredExpenses.filter(e => !e.includeInTotal).length}件
+                  </div>
+                )}
+                
               </div>
             </div>
           </div>
@@ -356,7 +360,7 @@ export default function ExpensesPage() {
               <div
                 key={expense.id}
                 className={`bg-white rounded-xl shadow-sm border hover:shadow-md transition-shadow duration-200 overflow-hidden ${
-                  !expense.confirmed
+                  !expense.includeInTotal
                     ? "border-l-4 border-l-yellow-400 bg-gradient-to-r from-yellow-50 to-white"
                     : "border-l-4 border-l-green-400 bg-gradient-to-r from-green-50 to-white"
                 }`}
@@ -433,13 +437,13 @@ export default function ExpensesPage() {
                       <div className="flex items-center bg-white rounded-lg p-3 border border-gray-200">
                         <input
                           type="checkbox"
-                          name="confirmed"
-                          checked={editForm.confirmed}
+                          name="includeInTotal"
+                          checked={editForm.includeInTotal}
                           onChange={handleEditCheckboxChange}
                           className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                         />
                         <label className="ml-3 text-sm font-medium text-gray-700">
-                          確認済みとしてマーク
+                          合計に含める
                         </label>
                       </div>
 
@@ -514,9 +518,9 @@ export default function ExpensesPage() {
                             📱 LINEグループ
                           </span>
                         )}
-                        {!expense.confirmed && (
-                          <span className="bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                            未確認
+                        {!expense.includeInTotal && (
+                          <span className="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded">
+                            合計から除外
                           </span>
                         )}
                       </div>
@@ -557,22 +561,27 @@ export default function ExpensesPage() {
                         className="flex flex-wrap gap-2 pt-3 border-t border-gray-100"
                         style={{ position: "relative", zIndex: 10 }}
                       >
-                        {!expense.confirmed && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              console.log("Confirm button clicked");
-                              handleConfirmExpense(expense.id);
-                            }}
-                            className="bg-green-500 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1 cursor-pointer"
-                            style={{ pointerEvents: "auto" }}
-                          >
-                            <span className="text-sm">✓</span>
-                            確認
-                          </button>
-                        )}
+                        {/* 合計に含める/除外する切り替えボタン */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            console.log("Toggle include in total clicked");
+                            updateExpense(expense.id, { includeInTotal: !expense.includeInTotal });
+                          }}
+                          className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer ${
+                            expense.includeInTotal 
+                              ? "bg-green-500 text-white hover:bg-green-600"
+                              : "bg-gray-500 text-white hover:bg-gray-600"
+                          }`}
+                          style={{ pointerEvents: "auto" }}
+                        >
+                          <span className="text-sm">
+                            {expense.includeInTotal ? "✓" : "✗"}
+                          </span>
+                          {expense.includeInTotal ? "合計に含む" : "合計から除外"}
+                        </button>
 
                         <button
                           type="button"

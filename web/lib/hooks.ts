@@ -18,7 +18,7 @@ import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
 
 // Firestore document data shape for expenses (avoids explicit any)
-type FirestoreExpenseData = Partial<Expense> & { category?: string };
+export type FirestoreExpenseData = Partial<Expense> & { category?: string };
 
 // Group interface for shared household budgets
 export interface Group {
@@ -51,7 +51,7 @@ export interface Expense {
   description: string;
   date: string;             // YYYY-MM-DD format
   category: string;
-  confirmed: boolean;
+  includeInTotal: boolean;  // 合計に含めるかどうか（旧confirmed）
   ocrText?: string;
   items?: Array<{
     name: string;
@@ -669,21 +669,24 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
         // Sort in memory by date desc
         const expenses = allExpenses.sort((a, b) => b.date.localeCompare(a.date));
         
-        const totalAmount = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+        // 合計に含める支出のみを統計計算に含める
+        const includedExpenses = expenses.filter(expense => expense.includeInTotal);
         
-        const categoryTotals = expenses.reduce((acc, expense) => {
+        const totalAmount = includedExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+        
+        const categoryTotals = includedExpenses.reduce((acc, expense) => {
           acc[expense.category] = (acc[expense.category] || 0) + expense.amount;
           return acc;
         }, {} as Record<string, number>);
         
-        const dailyTotals = expenses.reduce((acc, expense) => {
+        const dailyTotals = includedExpenses.reduce((acc, expense) => {
           acc[expense.date] = (acc[expense.date] || 0) + expense.amount;
           return acc;
         }, {} as Record<string, number>);
         
         setStats({
           totalAmount,
-          expenseCount: expenses.length,
+          expenseCount: includedExpenses.length,
           categoryTotals,
           dailyTotals
         });
@@ -751,7 +754,7 @@ export function useUserGroups(userId: string | null) {
         // Get group details for each membership
         const groupPromises = membershipSnapshot.docs.map(async (memberDoc) => {
           const memberData = memberDoc.data();
-          const groupDoc = await getDoc(doc(db, 'groups', memberData.groupId));
+          const groupDoc = await getDoc(doc(db!, 'groups', memberData.groupId));
           
           if (groupDoc.exists()) {
             return {

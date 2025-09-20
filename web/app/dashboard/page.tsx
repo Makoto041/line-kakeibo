@@ -149,6 +149,8 @@ export default function DashboardPage() {
             <h2 className="text-xl font-semibold mb-4 text-foreground">月次推移</h2>
             <MonthlyTrendChart stats={stats} />
           </motion.div>
+
+          {/* 承認者申請システムへの導線 */}
         </div>
       </motion.div>
     </div>
