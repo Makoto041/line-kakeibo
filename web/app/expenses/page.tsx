@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useLineAuth, useExpenses } from "../../lib/hooks";
+import { useLineAuth, useExpenses, useGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
 import Header from "../../components/Header";
 import dayjs from "dayjs";
@@ -21,7 +21,13 @@ export default function ExpensesPage() {
     date: string;
     category: string;
     includeInTotal: boolean;
-  }>({ amount: 0, description: "", date: "", category: "", includeInTotal: true });
+    payerId: string;
+    payerDisplayName: string;
+  }>({ amount: 0, description: "", date: "", category: "", includeInTotal: true, payerId: "", payerDisplayName: "" });
+  
+  // Get the first expense's group ID for group members lookup
+  const firstExpenseGroupId = expenses.length > 0 ? expenses[0].groupId : null;
+  const { members: groupMembers } = useGroupMembers(firstExpenseGroupId);
 
 
   if (authLoading) {
@@ -64,12 +70,13 @@ export default function ExpensesPage() {
     "その他",
   ];
 
-  // Calculate individual person totals
+  // Calculate individual person totals based on payer
   const personTotals = filteredExpenses.reduce((acc, expense) => {
-    const personName = expense.userDisplayName || "個人";
+    // 支払い者ベースで集計（デフォルトは入力者）
+    const payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
     // 承認済みの項目のみ合計に含める
     if (expense.includeInTotal) {
-      acc[personName] = (acc[personName] || 0) + expense.amount;
+      acc[payerName] = (acc[payerName] || 0) + expense.amount;
     }
     return acc;
   }, {} as Record<string, number>);
@@ -99,6 +106,8 @@ export default function ExpensesPage() {
       date: expense.date,
       category: expense.category,
       includeInTotal: expense.includeInTotal,
+      payerId: expense.payerId || expense.lineId,
+      payerDisplayName: expense.payerDisplayName || expense.userDisplayName || "",
     });
   };
 
@@ -110,6 +119,8 @@ export default function ExpensesPage() {
       date: "",
       category: "",
       includeInTotal: true,
+      payerId: "",
+      payerDisplayName: "",
     });
   };
 
@@ -129,10 +140,20 @@ export default function ExpensesPage() {
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     const { name, value, type } = e.target;
-    setEditForm((prev) => ({
-      ...prev,
-      [name]: type === "number" ? Number(value) : value,
-    }));
+    if (name === "payerId") {
+      // 支払い者IDが変更されたら、対応する表示名も更新
+      const selectedMember = groupMembers.find(member => member.lineId === value);
+      setEditForm((prev) => ({
+        ...prev,
+        payerId: value,
+        payerDisplayName: selectedMember?.displayName || prev.payerDisplayName,
+      }));
+    } else {
+      setEditForm((prev) => ({
+        ...prev,
+        [name]: type === "number" ? Number(value) : value,
+      }));
+    }
   };
 
   const handleEditCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -247,7 +268,7 @@ export default function ExpensesPage() {
                           {
                             filteredExpenses.filter(
                               (e) =>
-                                (e.userDisplayName || "個人") === personName
+                                (e.payerDisplayName || e.userDisplayName || "個人") === personName
                             ).length
                           }
                           件
@@ -432,6 +453,37 @@ export default function ExpensesPage() {
                             ))}
                           </select>
                         </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            💳 支払い者
+                          </label>
+                          {groupMembers.length > 0 ? (
+                            <select
+                              name="payerId"
+                              value={editForm.payerId}
+                              onChange={handleEditInputChange}
+                              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                              {groupMembers.map((member) => (
+                                <option key={member.lineId} value={member.lineId}>
+                                  {member.displayName}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={editForm.payerDisplayName}
+                              readOnly
+                              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-500 bg-gray-50"
+                              placeholder="グループメンバーが見つかりません"
+                            />
+                          )}
+                          <p className="text-xs text-gray-500 mt-1">
+                            デフォルトは入力者と同じです
+                          </p>
+                        </div>
                       </div>
 
                       <div className="flex items-center bg-white rounded-lg p-3 border border-gray-200">
@@ -510,7 +562,13 @@ export default function ExpensesPage() {
                         {expense.userDisplayName &&
                           expense.userDisplayName !== "個人" && (
                             <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                              👤 {expense.userDisplayName}
+                              👤 入力者: {expense.userDisplayName}
+                            </span>
+                          )}
+                        {expense.payerDisplayName &&
+                          expense.payerDisplayName !== expense.userDisplayName && (
+                            <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">
+                              💳 支払い者: {expense.payerDisplayName}
                             </span>
                           )}
                         {expense.lineGroupId && (

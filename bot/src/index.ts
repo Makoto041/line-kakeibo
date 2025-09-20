@@ -572,6 +572,8 @@ async function processImageInBackground(
           date: dayjs().format("YYYY-MM-DD"),
           category: defaultCategory,
           confirmed: false,
+          payerId: event.source.userId, // デフォルトは入力者
+          payerDisplayName: userDisplayName,
           ocrText: detectedText,
           items: parsedData.items,
         };
@@ -1328,6 +1330,8 @@ async function processExpenseInBackground(event: any, parsed: any) {
       date: parsed.date,
       category: finalCategory,
       confirmed: true,
+      payerId: event.source.userId, // デフォルトは入力者
+      payerDisplayName: userDisplayName,
       ocrText: "",
       items: [],
     };

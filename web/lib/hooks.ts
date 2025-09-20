@@ -52,6 +52,8 @@ export interface Expense {
   date: string;             // YYYY-MM-DD format
   category: string;
   includeInTotal: boolean;  // 合計に含めるかどうか（旧confirmed）
+  payerId: string;          // LINE User ID of the person who paid (defaults to lineId)
+  payerDisplayName?: string; // Display name of the person who paid (defaults to userDisplayName)
   ocrText?: string;
   items?: Array<{
     name: string;
@@ -937,4 +939,66 @@ export function useLineGroupExpenses(lineGroupId: string | null, limitCount: num
   }, [lineGroupId, limitCount]);
 
   return { expenses, loading, error };
+}
+
+// グループメンバーを取得するフック
+export function useGroupMembers(groupId: string | null) {
+  const [members, setMembers] = useState<GroupMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!groupId) {
+      setLoading(false);
+      setMembers([]);
+      return;
+    }
+
+    if (!checkFirebaseConnection()) {
+      setError('Firebaseに接続できません');
+      setLoading(false);
+      return;
+    }
+
+    const fetchGroupMembers = async () => {
+      try {
+        setLoading(true);
+        console.log("グループメンバー取得開始 - groupId:", groupId);
+
+        const membersQuery = query(
+          collection(db!, 'groupMembers'),
+          where('groupId', '==', groupId),
+          where('isActive', '==', true)
+        );
+
+        const snapshot = await getDocs(membersQuery);
+        
+        if (snapshot.empty) {
+          console.log("グループメンバーが見つかりません");
+          setMembers([]);
+          setError(null);
+          return;
+        }
+
+        const memberList: GroupMember[] = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as GroupMember));
+
+        console.log("取得したグループメンバー:", memberList);
+        setMembers(memberList);
+        setError(null);
+      } catch (err) {
+        const errorMessage = handleFirestoreError(err);
+        console.error('Error fetching group members:', err);
+        setError(errorMessage);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchGroupMembers();
+  }, [groupId]);
+
+  return { members, loading, error };
 }
