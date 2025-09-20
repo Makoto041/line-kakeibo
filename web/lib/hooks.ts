@@ -980,10 +980,17 @@ export function useGroupMembers(groupId: string | null) {
           return;
         }
 
-        const memberList: GroupMember[] = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as GroupMember));
+        const memberList: GroupMember[] = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            groupId: data.groupId,
+            lineId: data.lineId,
+            displayName: data.displayName,
+            joinedAt: data.joinedAt,
+            isActive: data.isActive
+          } as GroupMember;
+        });
 
         console.log("取得したグループメンバー:", memberList);
         setMembers(memberList);
@@ -999,6 +1006,96 @@ export function useGroupMembers(groupId: string | null) {
 
     fetchGroupMembers();
   }, [groupId]);
+
+  return { members, loading, error };
+}
+
+// LINE Group IDベースでメンバーを取得するフック（フォールバック用）
+export function useLineGroupMembers(lineGroupId: string | null) {
+  const [members, setMembers] = useState<GroupMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!lineGroupId) {
+      setLoading(false);
+      setMembers([]);
+      return;
+    }
+
+    if (!checkFirebaseConnection()) {
+      setError('Firebaseに接続できません');
+      setLoading(false);
+      return;
+    }
+
+    const fetchLineGroupMembers = async () => {
+      try {
+        setLoading(true);
+        console.log("LINE グループメンバー取得開始 - lineGroupId:", lineGroupId);
+
+        // まずlineGroupIdに対応するグループを探す
+        const groupQuery = query(
+          collection(db!, 'groups'),
+          where('lineGroupId', '==', lineGroupId)
+        );
+
+        const groupSnapshot = await getDocs(groupQuery);
+        
+        if (groupSnapshot.empty) {
+          console.log("LINE Group IDに対応するグループが見つかりません");
+          setMembers([]);
+          setError(null);
+          return;
+        }
+
+        const group = groupSnapshot.docs[0];
+        const groupId = group.id;
+        
+        console.log("対応するgroupId:", groupId);
+
+        // そのグループのメンバーを取得
+        const membersQuery = query(
+          collection(db!, 'groupMembers'),
+          where('groupId', '==', groupId),
+          where('isActive', '==', true)
+        );
+
+        const membersSnapshot = await getDocs(membersQuery);
+        
+        if (membersSnapshot.empty) {
+          console.log("グループメンバーが見つかりません");
+          setMembers([]);
+          setError(null);
+          return;
+        }
+
+        const memberList: GroupMember[] = membersSnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            groupId: data.groupId,
+            lineId: data.lineId,
+            displayName: data.displayName,
+            joinedAt: data.joinedAt,
+            isActive: data.isActive
+          } as GroupMember;
+        });
+
+        console.log("取得したLINE グループメンバー:", memberList);
+        setMembers(memberList);
+        setError(null);
+      } catch (err) {
+        const errorMessage = handleFirestoreError(err);
+        console.error('Error fetching LINE group members:', err);
+        setError(errorMessage);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchLineGroupMembers();
+  }, [lineGroupId]);
 
   return { members, loading, error };
 }

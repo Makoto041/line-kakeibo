@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useLineAuth, useExpenses, useGroupMembers } from "../../lib/hooks";
+import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
 import Header from "../../components/Header";
 import dayjs from "dayjs";
@@ -28,7 +28,24 @@ export default function ExpensesPage() {
   // Get group members for the expense being edited
   const editingExpenseData = editingExpense ? expenses.find(e => e.id === editingExpense) : null;
   const editingGroupId = editingExpenseData?.groupId || null;
-  const { members: groupMembers } = useGroupMembers(editingGroupId);
+  const editingLineGroupId = editingExpenseData?.lineGroupId || null;
+  
+  // Try both group ID and LINE group ID based member fetching
+  const { members: groupMembers, loading: membersLoading, error: membersError } = useGroupMembers(editingGroupId);
+  const { members: lineGroupMembers, loading: lineGroupMembersLoading } = useLineGroupMembers(editingLineGroupId);
+  
+  // Use group members if available, otherwise fallback to LINE group members
+  const availableMembers = groupMembers.length > 0 ? groupMembers : lineGroupMembers;
+  
+  // Debug logging
+  console.log("EditingExpenseData:", editingExpenseData);
+  console.log("EditingGroupId:", editingGroupId);
+  console.log("EditingLineGroupId:", editingLineGroupId);
+  console.log("GroupMembers:", groupMembers);
+  console.log("LineGroupMembers:", lineGroupMembers);
+  console.log("AvailableMembers:", availableMembers);
+  console.log("MembersLoading:", membersLoading);
+  console.log("MembersError:", membersError);
 
 
   if (authLoading) {
@@ -143,7 +160,7 @@ export default function ExpensesPage() {
     const { name, value, type } = e.target;
     if (name === "payerId") {
       // 支払い者IDが変更されたら、対応する表示名も更新
-      const selectedMember = groupMembers.find(member => member.lineId === value);
+      const selectedMember = availableMembers.find(member => member.lineId === value);
       setEditForm((prev) => ({
         ...prev,
         payerId: value,
@@ -473,7 +490,7 @@ export default function ExpensesPage() {
                             )}
                             
                             {/* グループメンバーを表示（入力者と重複する場合は除外） */}
-                            {groupMembers
+                            {availableMembers
                               .filter(member => member.lineId !== editingExpenseData?.lineId)
                               .map((member) => (
                                 <option key={member.lineId} value={member.lineId}>
@@ -484,7 +501,7 @@ export default function ExpensesPage() {
                             {/* 既存の支払い者が上記に含まれていない場合は追加 */}
                             {editForm.payerId && 
                              editForm.payerId !== editingExpenseData?.lineId &&
-                             !groupMembers.some(member => member.lineId === editForm.payerId) && (
+                             !availableMembers.some(member => member.lineId === editForm.payerId) && (
                               <option key={editForm.payerId} value={editForm.payerId}>
                                 {editForm.payerDisplayName || "不明なユーザー"}
                               </option>
