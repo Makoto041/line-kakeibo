@@ -1,10 +1,9 @@
 {
   "scope": "makoto041s-projects",
   "buildCommand": "cd web && npm run build",
-  "installCommand": "npm install",
+  "installCommand": "cd web && npm install",
   "framework": "nextjs",
   "outputDirectory": "web/.next",
-  "rootDirectory": "web",
   "git": {
     "deploymentEnabled": {
       "main": true,

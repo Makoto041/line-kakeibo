@@ -7,6 +7,9 @@
     "bot",
     "web"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "recharts": "^3.1.2"
   }
