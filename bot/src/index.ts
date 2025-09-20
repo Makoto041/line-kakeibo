@@ -362,7 +362,7 @@ async function processImageInBackground(
 
         // Determine group context and user display name
         let activeGroup = null;
-        let userDisplayName = "個人";
+        let userDisplayName = null; // Will be set based on context
         let lineGroupId = null;
 
         // Check if this is from a LINE group
@@ -491,6 +491,15 @@ async function processImageInBackground(
           console.error("Failed to resolve appUid for expense creation, using lineId");
           appUid = event.source.userId;
         }
+        
+        // ユーザー表示名のフォールバック処理
+        if (!userDisplayName) {
+          const fallbackName = `User_${event.source.userId.slice(-6)}`;
+          console.log(`=== IMAGE FALLBACK DEBUG: No displayName found, using fallback: ${fallbackName} ===`);
+          userDisplayName = fallbackName;
+        }
+        
+        console.log(`=== IMAGE FINAL USER DEBUG: Final userDisplayName: ${userDisplayName} ===`);
 
         // Get user's default category or use auto-classification
         let defaultCategory = "その他";
@@ -1076,7 +1085,7 @@ async function processExpenseInBackground(event: any, parsed: any) {
     const promises: Promise<any>[] = [];
     
     let activeGroup = null;
-    let userDisplayName = "個人";
+    let userDisplayName = null; // Will be set based on context
     let lineGroupId = null;
     let appUid = null;
 
@@ -1149,7 +1158,8 @@ async function processExpenseInBackground(event: any, parsed: any) {
       if (cached && (now - cached.timestamp < CACHE_TTL)) {
         console.log("Using cached individual user data (fast path)");
         activeGroup = cached.groups[0] || null;
-        userDisplayName = cached.profile?.displayName || "個人";
+        userDisplayName = cached.profile?.displayName;
+        console.log(`=== CACHED PROFILE DEBUG: Using cached displayName: ${userDisplayName} ===`);
       } else {
         // 個人チャットの場合もプロファイルを取得
         console.log(`=== PROFILE DEBUG: Starting profile fetch for individual context. UserId: ${event.source.userId} ===`);
@@ -1229,6 +1239,15 @@ async function processExpenseInBackground(event: any, parsed: any) {
       console.log("No appUid resolved, using lineId as fallback");
       appUid = event.source.userId;
     }
+    
+    // ユーザー表示名のフォールバック処理
+    if (!userDisplayName) {
+      const fallbackName = `User_${event.source.userId.slice(-6)}`;
+      console.log(`=== FALLBACK DEBUG: No displayName found, using fallback: ${fallbackName} ===`);
+      userDisplayName = fallbackName;
+    }
+    
+    console.log(`=== FINAL USER DEBUG: Final userDisplayName: ${userDisplayName} ===`);
 
     // カテゴリ分類を並列実行（Gemini + ユーザーデフォルト）
     const [geminiResult, userSettingsResult] = await Promise.allSettled([
