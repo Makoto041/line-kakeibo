@@ -372,7 +372,7 @@ async function processImageInBackground(
 
           // Try multiple methods to get user profile
           try {
-            console.log("Trying to get user profile from LINE group...");
+            console.log(`=== IMAGE PROFILE DEBUG: Trying to get user profile from LINE group. GroupId: ${lineGroupId}, UserId: ${event.source.userId} ===`);
             
             // Method 1: Try getGroupMemberProfile
             let profile = null;
@@ -441,7 +441,7 @@ async function processImageInBackground(
           console.log("Individual chat context detected");
           
           try {
-            console.log("Getting user profile for individual chat...");
+            console.log(`=== IMAGE PROFILE DEBUG: Getting user profile for individual chat. UserId: ${event.source.userId} ===`);
             const profilePromise = client.getProfile(event.source.userId);
             const profileTimeoutPromise = new Promise((_, reject) =>
               setTimeout(() => reject(new Error("Profile fetch timeout")), 3000)
@@ -1099,27 +1099,34 @@ async function processExpenseInBackground(event: any, parsed: any) {
         console.log("Cache miss, fetching user profile (parallel)");
         
         // プロファイル取得を並列実行（複数メソッド試行）
+        console.log(`=== PROFILE DEBUG: Starting profile fetch for group context. LineGroupId: ${lineGroupId}, UserId: ${event.source.userId} ===`);
         promises.push(
           (async () => {
             try {
+              console.log(`=== PROFILE DEBUG: Attempting getGroupMemberProfile ===`);
               // Method 1: Try getGroupMemberProfile
               const profile = await Promise.race([
                 client.getGroupMemberProfile(lineGroupId, event.source.userId),
                 new Promise((_, reject) => setTimeout(() => reject(new Error("Group profile timeout")), 2000))
               ]);
+              console.log(`=== PROFILE DEBUG: getGroupMemberProfile SUCCESS:`, profile);
               return { type: 'profile', data: profile };
             } catch (groupError) {
-              console.warn("Group member profile failed, trying individual profile:", groupError);
+              console.warn(`=== PROFILE DEBUG: getGroupMemberProfile FAILED:`, groupError);
               try {
+                console.log(`=== PROFILE DEBUG: Attempting fallback getProfile ===`);
                 // Method 2: Try regular getProfile as fallback
                 const profile = await Promise.race([
                   client.getProfile(event.source.userId),
                   new Promise((_, reject) => setTimeout(() => reject(new Error("Individual profile timeout")), 2000))
                 ]);
+                console.log(`=== PROFILE DEBUG: getProfile SUCCESS:`, profile);
                 return { type: 'profile', data: profile };
               } catch (individualError) {
-                console.warn("Individual profile also failed:", individualError);
-                return { type: 'profile', error: individualError, data: { displayName: `User_${event.source.userId.slice(-6)}` } };
+                console.warn(`=== PROFILE DEBUG: getProfile ALSO FAILED:`, individualError);
+                const fallbackName = `User_${event.source.userId.slice(-6)}`;
+                console.log(`=== PROFILE DEBUG: Using fallback name: ${fallbackName} ===`);
+                return { type: 'profile', error: individualError, data: { displayName: fallbackName } };
               }
             }
           })()
@@ -1145,12 +1152,21 @@ async function processExpenseInBackground(event: any, parsed: any) {
         userDisplayName = cached.profile?.displayName || "個人";
       } else {
         // 個人チャットの場合もプロファイルを取得
+        console.log(`=== PROFILE DEBUG: Starting profile fetch for individual context. UserId: ${event.source.userId} ===`);
         promises.push(
           Promise.race([
             client.getProfile(event.source.userId),
             new Promise((_, reject) => setTimeout(() => reject(new Error("Profile timeout")), 2000))
-          ]).then(profile => ({ type: 'profile', data: profile }))
-          .catch(error => ({ type: 'profile', error, data: { displayName: `User_${event.source.userId.slice(-6)}` } }))
+          ]).then(profile => {
+            console.log(`=== PROFILE DEBUG: Individual getProfile SUCCESS:`, profile);
+            return { type: 'profile', data: profile };
+          })
+          .catch(error => {
+            console.warn(`=== PROFILE DEBUG: Individual getProfile FAILED:`, error);
+            const fallbackName = `User_${event.source.userId.slice(-6)}`;
+            console.log(`=== PROFILE DEBUG: Using individual fallback name: ${fallbackName} ===`);
+            return { type: 'profile', error, data: { displayName: fallbackName } };
+          })
         );
         
         promises.push(
