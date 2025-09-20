@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useLineAuth, useMonthlyStats } from '../lib/hooks';
 import { CategoryPieChart, DailyLineChart } from '../components/Charts';
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
-import { isApprover } from '../lib/approvalSettings';
 import Header from '../components/Header';
 import dayjs from 'dayjs';
 import { db } from '../lib/firebase';
@@ -16,18 +15,6 @@ export default function Dashboard() {
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>({ mode: 'monthly' });
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [firebaseError, setFirebaseError] = useState(false);
-  const [userIsApprover, setUserIsApprover] = useState(false);
-  
-  // Check if user is approver
-  useEffect(() => {
-    const checkApprover = async () => {
-      if (user?.uid) {
-        const approverStatus = await isApprover(user.uid);
-        setUserIsApprover(approverStatus);
-      }
-    };
-    checkApprover();
-  }, [user?.uid]);
 
   useEffect(() => {
     // Check if Firebase is properly initialized
@@ -268,37 +255,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* 承認者申請システムへの導線 */}
-            <div className="mt-8">
-              <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg shadow-sm border border-green-200 p-6">
-                <div className="text-center">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                    🔐 承認者システム
-                  </h3>
-                  <p className="text-sm text-gray-600 mb-4">
-                    {userIsApprover 
-                      ? "承認者申請の管理ができます" 
-                      : "承認者への申請が可能です"}
-                  </p>
-                  
-                  {userIsApprover ? (
-                    <a
-                      href="/admin/approval-requests"
-                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
-                    >
-                      🔐 承認者申請を管理
-                    </a>
-                  ) : (
-                    <a
-                      href="/request-approval"
-                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
-                    >
-                      📝 承認者に申請する
-                    </a>
-                  )}
-                </div>
-              </div>
-            </div>
           </>
         )}
       </main>

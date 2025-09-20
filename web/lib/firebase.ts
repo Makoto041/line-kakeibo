@@ -191,6 +191,7 @@ export const signInAnonymous = async (): Promise<UserCredential> => {
 // Firebase初期化状態を確認する関数
 export const getFirebaseStatus = () => ({
   isInitialized,
+  isConnected: isInitialized && !initializationError,
   hasError: !!initializationError,
   error: initializationError,
   config: {

@@ -3,7 +3,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from './firebase';
 
 export interface DateRangeSettings {
-  mode: 'monthly' | 'custom';
+  mode: 'monthly' | 'custom' | 'customStart';
   startDate?: string;
   endDate?: string;
   customStartDay?: number; // For monthly mode starting from custom day
