@@ -38,6 +38,14 @@ export default function ExpensesPage() {
   const availableMembers = groupMembers.length > 0 ? groupMembers : lineGroupMembers;
   
   // Debug logging
+  console.log("=== EXPENSE EDITING DEBUG ===");
+  console.log("All expenses:", expenses.map(e => ({
+    id: e.id,
+    userDisplayName: e.userDisplayName,
+    groupId: e.groupId,
+    lineGroupId: e.lineGroupId,
+    lineId: e.lineId
+  })));
   console.log("EditingExpenseData:", editingExpenseData);
   console.log("EditingGroupId:", editingGroupId);
   console.log("EditingLineGroupId:", editingLineGroupId);
@@ -45,7 +53,9 @@ export default function ExpensesPage() {
   console.log("LineGroupMembers:", lineGroupMembers);
   console.log("AvailableMembers:", availableMembers);
   console.log("MembersLoading:", membersLoading);
+  console.log("LineGroupMembersLoading:", lineGroupMembersLoading);
   console.log("MembersError:", membersError);
+  console.log("=== END DEBUG ===");
 
 
   if (authLoading) {
@@ -161,10 +171,13 @@ export default function ExpensesPage() {
     if (name === "payerId") {
       // 支払い者IDが変更されたら、対応する表示名も更新
       const selectedMember = availableMembers.find(member => member.lineId === value);
+      const selectedFromHistory = expenses.find(expense => expense.lineId === value);
+      const displayName = selectedMember?.displayName || selectedFromHistory?.userDisplayName || value;
+      
       setEditForm((prev) => ({
         ...prev,
         payerId: value,
-        payerDisplayName: selectedMember?.displayName || prev.payerDisplayName,
+        payerDisplayName: displayName,
       }));
     } else {
       setEditForm((prev) => ({
@@ -494,14 +507,38 @@ export default function ExpensesPage() {
                               .filter(member => member.lineId !== editingExpenseData?.lineId)
                               .map((member) => (
                                 <option key={member.lineId} value={member.lineId}>
-                                  {member.displayName}
+                                  {member.displayName} (ID: {member.lineId?.slice(-6) || 'unknown'})
+                                </option>
+                              ))}
+                              
+                            {/* 支出履歴から他のユーザーを抽出して選択肢に追加 */}
+                            {expenses
+                              .filter(expense => 
+                                expense.lineId !== editingExpenseData?.lineId && 
+                                expense.userDisplayName && 
+                                expense.userDisplayName !== "個人" &&
+                                !availableMembers.some(member => member.lineId === expense.lineId)
+                              )
+                              .reduce((unique, expense) => {
+                                if (!unique.find(u => u.lineId === expense.lineId)) {
+                                  unique.push({
+                                    lineId: expense.lineId,
+                                    displayName: expense.userDisplayName || "不明なユーザー"
+                                  });
+                                }
+                                return unique;
+                              }, [] as {lineId: string, displayName: string}[])
+                              .map((user) => (
+                                <option key={`history-${user.lineId}`} value={user.lineId}>
+                                  {user.displayName} (履歴から)
                                 </option>
                               ))}
                               
                             {/* 既存の支払い者が上記に含まれていない場合は追加 */}
                             {editForm.payerId && 
                              editForm.payerId !== editingExpenseData?.lineId &&
-                             !availableMembers.some(member => member.lineId === editForm.payerId) && (
+                             !availableMembers.some(member => member.lineId === editForm.payerId) &&
+                             !expenses.some(expense => expense.lineId === editForm.payerId) && (
                               <option key={editForm.payerId} value={editForm.payerId}>
                                 {editForm.payerDisplayName || "不明なユーザー"}
                               </option>
