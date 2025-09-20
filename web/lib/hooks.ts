@@ -52,7 +52,7 @@ export interface Expense {
   date: string;             // YYYY-MM-DD format
   category: string;
   includeInTotal: boolean;  // 合計に含めるかどうか（旧confirmed）
-  payerId: string;          // LINE User ID of the person who paid (defaults to lineId)
+  payerId?: string;          // LINE User ID of the person who paid (defaults to lineId)
   payerDisplayName?: string; // Display name of the person who paid (defaults to userDisplayName)
   ocrText?: string;
   items?: Array<{

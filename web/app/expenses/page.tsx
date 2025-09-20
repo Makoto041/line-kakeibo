@@ -101,7 +101,11 @@ export default function ExpensesPage() {
   // Calculate individual person totals based on payer
   const personTotals = filteredExpenses.reduce((acc, expense) => {
     // 支払い者ベースで集計（デフォルトは入力者）
-    const payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
+    // payerIdがない場合は入力者が支払い者とみなす
+    const payerName = expense.payerId && expense.payerId !== expense.lineId
+      ? (expense.payerDisplayName || "不明なユーザー")
+      : (expense.userDisplayName || "個人");
+    
     // 承認済みの項目のみ合計に含める
     if (expense.includeInTotal) {
       acc[payerName] = (acc[payerName] || 0) + expense.amount;
@@ -127,8 +131,10 @@ export default function ExpensesPage() {
 
   const handleEditStart = (expense: Expense) => {
     console.log("Edit button clicked for expense:", expense.id);
+    console.log("Original expense data:", expense);
+    
     setEditingExpense(expense.id);
-    setEditForm({
+    const formData = {
       amount: expense.amount,
       description: expense.description,
       date: expense.date,
@@ -136,7 +142,10 @@ export default function ExpensesPage() {
       includeInTotal: expense.includeInTotal,
       payerId: expense.payerId || expense.lineId,
       payerDisplayName: expense.payerDisplayName || expense.userDisplayName || "",
-    });
+    };
+    
+    console.log("Setting edit form data:", formData);
+    setEditForm(formData);
   };
 
   const handleEditCancel = () => {
@@ -154,13 +163,26 @@ export default function ExpensesPage() {
 
   const handleEditSave = async (id: string) => {
     try {
-      await updateExpense(id, {
+      console.log("=== SAVE DEBUG ===");
+      console.log("Saving expense with data:", {
+        id,
+        editForm,
+        originalExpense: editingExpenseData
+      });
+      
+      const updateData = {
         ...editForm,
         updatedAt: new Date(),
-      });
+      };
+      
+      console.log("Update data being sent:", updateData);
+      
+      await updateExpense(id, updateData);
+      console.log("Save successful");
       setEditingExpense(null);
-    } catch {
-      alert("保存に失敗しました");
+    } catch (error) {
+      console.error("保存エラー:", error);
+      alert(`保存に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
     }
   };
 
@@ -297,10 +319,12 @@ export default function ExpensesPage() {
                         </div>
                         <div className="text-xs text-gray-500">
                           {
-                            filteredExpenses.filter(
-                              (e) =>
-                                (e.payerDisplayName || e.userDisplayName || "個人") === personName
-                            ).length
+                            filteredExpenses.filter((e) => {
+                              const expensePayerName = e.payerId && e.payerId !== e.lineId
+                                ? (e.payerDisplayName || "不明なユーザー")
+                                : (e.userDisplayName || "個人");
+                              return expensePayerName === personName;
+                            }).length
                           }
                           件
                         </div>
@@ -629,12 +653,20 @@ export default function ExpensesPage() {
                               👤 入力者: {expense.userDisplayName}
                             </span>
                           )}
-                        {(expense.payerDisplayName || expense.userDisplayName) &&
-                          (expense.payerDisplayName || expense.userDisplayName) !== "個人" && (
-                            <span className="bg-purple-100 text-purple-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                              💳 支払い者: {expense.payerDisplayName || expense.userDisplayName}
+                        {(() => {
+                          const payerName = expense.payerDisplayName || expense.userDisplayName || "不明";
+                          const isDefaultPayer = !expense.payerId || expense.payerId === expense.lineId;
+                          return payerName !== "個人" && (
+                            <span className={`text-xs font-medium px-2.5 py-0.5 rounded ${
+                              isDefaultPayer 
+                                ? "bg-green-100 text-green-800" 
+                                : "bg-purple-100 text-purple-800"
+                            }`}>
+                              💳 支払い者: {payerName}
+                              {!isDefaultPayer && " (変更済み)"}
                             </span>
-                          )}
+                          );
+                        })()}
                         {expense.lineGroupId && (
                           <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">
                             📱 LINEグループ
