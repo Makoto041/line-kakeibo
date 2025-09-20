@@ -368,23 +368,47 @@ async function processImageInBackground(
         // Check if this is from a LINE group
         if (event.source.type === "group") {
           lineGroupId = event.source.groupId;
+          console.log(`Group context detected: ${lineGroupId}`);
 
-          // Get user profile from LINE to get display name with timeout
+          // Try multiple methods to get user profile
           try {
-            console.log("Getting user profile from LINE group...");
-            const profilePromise = client.getGroupMemberProfile(
-              lineGroupId,
-              event.source.userId
-            );
-            const profileTimeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error("Profile fetch timeout")), 5000)
-            );
+            console.log("Trying to get user profile from LINE group...");
+            
+            // Method 1: Try getGroupMemberProfile
+            let profile = null;
+            try {
+              const profilePromise = client.getGroupMemberProfile(
+                lineGroupId,
+                event.source.userId
+              );
+              const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error("Profile timeout")), 3000)
+              );
+              profile = await Promise.race([profilePromise, timeoutPromise]);
+              console.log("Group member profile obtained:", profile);
+            } catch (groupProfileError) {
+              console.warn("getGroupMemberProfile failed:", groupProfileError);
+              
+              // Method 2: Try regular getProfile as fallback
+              try {
+                const individualProfilePromise = client.getProfile(event.source.userId);
+                const timeoutPromise = new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error("Individual profile timeout")), 3000)
+                );
+                profile = await Promise.race([individualProfilePromise, timeoutPromise]);
+                console.log("Individual profile obtained as fallback:", profile);
+              } catch (individualProfileError) {
+                console.warn("getProfile also failed:", individualProfileError);
+              }
+            }
 
-            const profile = (await Promise.race([
-              profilePromise,
-              profileTimeoutPromise,
-            ])) as any;
-            userDisplayName = profile.displayName;
+            if (profile && (profile as any).displayName) {
+              userDisplayName = (profile as any).displayName;
+              console.log(`User display name set to: ${userDisplayName}`);
+            } else {
+              userDisplayName = `User_${event.source.userId.slice(-6)}`; // Use last 6 chars of userId
+              console.log(`Using fallback display name: ${userDisplayName}`);
+            }
 
             // Find or create group for this LINE group
             const groupId = await findOrCreateLineGroup(
@@ -395,13 +419,10 @@ async function processImageInBackground(
             const groups = await getUserGroups(event.source.userId);
             activeGroup = groups.find((g) => g.id === groupId);
             console.log("Successfully set up LINE group context");
-          } catch (profileError) {
-            console.warn(
-              "Could not get user profile, using fallback:",
-              profileError
-            );
-            userDisplayName = "メンバー";
-
+          } catch (error) {
+            console.error("Failed to get any user profile:", error);
+            userDisplayName = `User_${event.source.userId.slice(-6)}`;
+            
             // Still try to create/find group with fallback name
             try {
               const groupId = await findOrCreateLineGroup(
@@ -412,20 +433,43 @@ async function processImageInBackground(
               const groups = await getUserGroups(event.source.userId);
               activeGroup = groups.find((g) => g.id === groupId);
             } catch (groupError) {
-              console.error(
-                "Failed to create group with fallback:",
-                groupError
-              );
+              console.error("Failed to create group with fallback:", groupError);
             }
           }
         } else {
-          // Individual chat - use existing group logic
+          // Individual chat
+          console.log("Individual chat context detected");
+          
+          try {
+            console.log("Getting user profile for individual chat...");
+            const profilePromise = client.getProfile(event.source.userId);
+            const profileTimeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("Profile fetch timeout")), 3000)
+            );
+
+            const profile = (await Promise.race([
+              profilePromise,
+              profileTimeoutPromise,
+            ])) as any;
+            
+            if (profile && (profile as any).displayName) {
+              userDisplayName = (profile as any).displayName;
+              console.log(`Individual user display name: ${userDisplayName}`);
+            } else {
+              userDisplayName = `User_${event.source.userId.slice(-6)}`;
+              console.log(`Using fallback display name: ${userDisplayName}`);
+            }
+          } catch (profileError) {
+            console.warn(
+              "Could not get user profile for individual, using ID-based fallback:",
+              profileError
+            );
+            userDisplayName = `User_${event.source.userId.slice(-6)}`;
+          }
+
+          // Check if user has any groups
           const userGroups = await getUserGroups(event.source.userId);
           activeGroup = userGroups.length > 0 ? userGroups[0] : null;
-
-          if (activeGroup) {
-            userDisplayName = activeGroup.memberInfo.displayName;
-          }
         }
 
         // Resolve appUid for this lineId
@@ -1054,13 +1098,31 @@ async function processExpenseInBackground(event: any, parsed: any) {
         // キャッシュミス - 並列取得
         console.log("Cache miss, fetching user profile (parallel)");
         
-        // プロファイル取得を並列実行
+        // プロファイル取得を並列実行（複数メソッド試行）
         promises.push(
-          Promise.race([
-            client.getGroupMemberProfile(lineGroupId, event.source.userId),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Profile timeout")), 2000))
-          ]).then(profile => ({ type: 'profile', data: profile }))
-          .catch(error => ({ type: 'profile', error, data: { displayName: "メンバー" } }))
+          (async () => {
+            try {
+              // Method 1: Try getGroupMemberProfile
+              const profile = await Promise.race([
+                client.getGroupMemberProfile(lineGroupId, event.source.userId),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Group profile timeout")), 2000))
+              ]);
+              return { type: 'profile', data: profile };
+            } catch (groupError) {
+              console.warn("Group member profile failed, trying individual profile:", groupError);
+              try {
+                // Method 2: Try regular getProfile as fallback
+                const profile = await Promise.race([
+                  client.getProfile(event.source.userId),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error("Individual profile timeout")), 2000))
+                ]);
+                return { type: 'profile', data: profile };
+              } catch (individualError) {
+                console.warn("Individual profile also failed:", individualError);
+                return { type: 'profile', error: individualError, data: { displayName: `User_${event.source.userId.slice(-6)}` } };
+              }
+            }
+          })()
         );
         
         // グループ取得も並列実行
@@ -1080,8 +1142,17 @@ async function processExpenseInBackground(event: any, parsed: any) {
       if (cached && (now - cached.timestamp < CACHE_TTL)) {
         console.log("Using cached individual user data (fast path)");
         activeGroup = cached.groups[0] || null;
-        userDisplayName = activeGroup?.memberInfo.displayName || "個人";
+        userDisplayName = cached.profile?.displayName || "個人";
       } else {
+        // 個人チャットの場合もプロファイルを取得
+        promises.push(
+          Promise.race([
+            client.getProfile(event.source.userId),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Profile timeout")), 2000))
+          ]).then(profile => ({ type: 'profile', data: profile }))
+          .catch(error => ({ type: 'profile', error, data: { displayName: `User_${event.source.userId.slice(-6)}` } }))
+        );
+        
         promises.push(
           getUserGroups(event.source.userId)
             .then(groups => ({ type: 'groups', data: groups }))
@@ -1106,14 +1177,16 @@ async function processExpenseInBackground(event: any, parsed: any) {
           const { value } = result;
           switch (value.type) {
             case 'profile':
-              if (!value.error) userDisplayName = value.data.displayName;
+              if (!value.error && value.data && value.data.displayName) {
+                userDisplayName = value.data.displayName;
+              } else if (value.data && value.data.displayName) {
+                userDisplayName = value.data.displayName; // fallback name
+              }
               break;
             case 'groups':
               if (!value.error && value.data.length > 0) {
                 activeGroup = value.data[0];
-                if (event.source.type !== "group") {
-                  userDisplayName = activeGroup.memberInfo.displayName;
-                }
+                // グループ情報からの名前は使用しない（LINEプロファイルを優先）
               }
               break;
             case 'appUid':
