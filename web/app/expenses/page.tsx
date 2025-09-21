@@ -11,7 +11,7 @@ export default function ExpensesPage() {
   const [periodDays, setPeriodDays] = useState(30);
 
   const { expenses, loading, error, updateExpense, deleteExpense } =
-    useExpenses(user?.uid || null, periodDays, 200);
+    useExpenses(user?.uid || null, periodDays, 500); // Increase limit to get more data
   const [filter, setFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"date" | "amount">("date");
   const [editingExpense, setEditingExpense] = useState<string | null>(null);

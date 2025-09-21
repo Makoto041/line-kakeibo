@@ -328,7 +328,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
           const allUserExpensesQuery = query(
             collection(db, 'expenses'),
             where('lineId', '==', userId),
-            limit(100) // Limit to avoid performance issues
+            limit(200) // Increase limit to get more data
           );
           
           const allUserExpensesSnapshot = await getDocs(allUserExpensesQuery);
@@ -371,7 +371,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
                 where('lineGroupId', '==', lineGroupId),
                 where('date', '>=', startDate),
                 where('date', '<=', endDate),
-                limit(limitCount)
+                limit(Math.max(limitCount, 500)) // Ensure we get enough data
               );
             } else if (periodDays > 0) {
               endDate = dayjs().format('YYYY-MM-DD');
@@ -382,14 +382,14 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
                 where('lineGroupId', '==', lineGroupId),
                 where('date', '>=', startDate),
                 where('date', '<=', endDate),
-                limit(limitCount)
+                limit(Math.max(limitCount, 500)) // Ensure we get enough data
               );
             } else {
               console.log("全期間での取得");
               lineGroupQuery = query(
                 collection(db, 'expenses'),
                 where('lineGroupId', '==', lineGroupId),
-                limit(limitCount)
+                limit(Math.max(limitCount, 500)) // Ensure we get enough data
               );
             }
             
