@@ -34,7 +34,24 @@ export default function ExpensesPage() {
   const { members: groupMembers, loading: membersLoading, error: membersError } = useGroupMembers(editingGroupId);
   const { members: lineGroupMembers, loading: lineGroupMembersLoading } = useLineGroupMembers(editingLineGroupId);
   
-  // Get users who have expense history in this group
+  // Get all users who have ever created expenses (across all groups)
+  const allHistoricalUsers = useMemo(() => {
+    const usersMap = new Map();
+    
+    expenses.forEach(expense => {
+      if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
+        // Store the most recent display name for each LINE ID
+        usersMap.set(expense.lineId, {
+          lineId: expense.lineId,
+          displayName: expense.userDisplayName
+        });
+      }
+    });
+    
+    return Array.from(usersMap.values());
+  }, [expenses]);
+  
+  // Get users who have expense history in this specific group
   const groupExpenseUsers = useMemo(() => {
     if (!editingExpenseData) return [];
     
@@ -60,12 +77,12 @@ export default function ExpensesPage() {
     return Array.from(usersMap.values());
   }, [expenses, editingExpenseData]);
   
-  // Combine formal group members with users from expense history
+  // Combine all available users: formal group members, group history users, and all historical users
   const availableMembers = useMemo(() => {
     const formalMembers = groupMembers.length > 0 ? groupMembers : lineGroupMembers;
     const combinedMap = new Map();
     
-    // Add formal group members
+    // Priority 1: Add formal group members
     formalMembers.forEach(member => {
       combinedMap.set(member.lineId, {
         lineId: member.lineId,
@@ -74,19 +91,30 @@ export default function ExpensesPage() {
       });
     });
     
-    // Add users from expense history (if not already in formal members)
+    // Priority 2: Add users from this group's expense history
     groupExpenseUsers.forEach(user => {
       if (!combinedMap.has(user.lineId)) {
         combinedMap.set(user.lineId, {
           lineId: user.lineId,
           displayName: user.displayName,
-          source: 'history'
+          source: 'group-history'
+        });
+      }
+    });
+    
+    // Priority 3: Add all historical users (from any group)
+    allHistoricalUsers.forEach(user => {
+      if (!combinedMap.has(user.lineId)) {
+        combinedMap.set(user.lineId, {
+          lineId: user.lineId,
+          displayName: user.displayName,
+          source: 'all-history'
         });
       }
     });
     
     return Array.from(combinedMap.values());
-  }, [groupMembers, lineGroupMembers, groupExpenseUsers]);
+  }, [groupMembers, lineGroupMembers, groupExpenseUsers, allHistoricalUsers]);
   
   // Debug logging
   console.log("=== EXPENSE EDITING DEBUG ===");
@@ -103,6 +131,7 @@ export default function ExpensesPage() {
   console.log("GroupMembers:", groupMembers);
   console.log("LineGroupMembers:", lineGroupMembers);
   console.log("GroupExpenseUsers:", groupExpenseUsers);
+  console.log("AllHistoricalUsers:", allHistoricalUsers);
   console.log("AvailableMembers:", availableMembers);
   console.log("MembersLoading:", membersLoading);
   console.log("LineGroupMembersLoading:", lineGroupMembersLoading);
@@ -581,11 +610,27 @@ export default function ExpensesPage() {
                             {/* グループのメンバー・履歴ユーザーを表示（入力者と重複する場合は除外） */}
                             {availableMembers
                               .filter(member => member.lineId !== editingExpenseData?.lineId)
-                              .map((member) => (
-                                <option key={member.lineId} value={member.lineId}>
-                                  {member.displayName} {member.source === 'group' ? '(メンバー)' : '(履歴)'}
-                                </option>
-                              ))}
+                              .map((member) => {
+                                let label = '';
+                                switch(member.source) {
+                                  case 'group':
+                                    label = '(グループメンバー)';
+                                    break;
+                                  case 'group-history':
+                                    label = '(このグループ)';
+                                    break;
+                                  case 'all-history':
+                                    label = '(他グループ)';
+                                    break;
+                                  default:
+                                    label = '';
+                                }
+                                return (
+                                  <option key={member.lineId} value={member.lineId}>
+                                    {member.displayName} {label}
+                                  </option>
+                                );
+                              })}
                               
                             {/* 既存の支払い者が上記に含まれていない場合は追加 */}
                             {editForm.payerId && 
