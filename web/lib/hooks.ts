@@ -982,17 +982,25 @@ export function useGroupMembers(groupId: string | null) {
 
         const memberList: GroupMember[] = snapshot.docs.map(doc => {
           const data = doc.data();
+          console.log("--- GroupMember生データ ---");
+          console.log("Document ID:", doc.id);
+          console.log("Raw data:", data);
+          console.log("displayName:", data.displayName, typeof data.displayName);
+          console.log("lineId:", data.lineId);
+          console.log("groupId:", data.groupId);
+          console.log("isActive:", data.isActive);
+          
           return {
             id: doc.id,
             groupId: data.groupId,
             lineId: data.lineId,
-            displayName: data.displayName,
+            displayName: data.displayName || `Unknown_${data.lineId?.slice(-6) || 'NoID'}`,
             joinedAt: data.joinedAt,
             isActive: data.isActive
           } as GroupMember;
         });
 
-        console.log("取得したグループメンバー:", memberList);
+        console.log("処理後のグループメンバー:", memberList);
         setMembers(memberList);
         setError(null);
       } catch (err) {
@@ -1072,17 +1080,25 @@ export function useLineGroupMembers(lineGroupId: string | null) {
 
         const memberList: GroupMember[] = membersSnapshot.docs.map(doc => {
           const data = doc.data();
+          console.log("--- LINE GroupMember生データ ---");
+          console.log("Document ID:", doc.id);
+          console.log("Raw data:", data);
+          console.log("displayName:", data.displayName, typeof data.displayName);
+          console.log("lineId:", data.lineId);
+          console.log("groupId:", data.groupId);
+          console.log("isActive:", data.isActive);
+          
           return {
             id: doc.id,
             groupId: data.groupId,
             lineId: data.lineId,
-            displayName: data.displayName,
+            displayName: data.displayName || `LineUnknown_${data.lineId?.slice(-6) || 'NoID'}`,
             joinedAt: data.joinedAt,
             isActive: data.isActive
           } as GroupMember;
         });
 
-        console.log("取得したLINE グループメンバー:", memberList);
+        console.log("処理後のLINE グループメンバー:", memberList);
         setMembers(memberList);
         setError(null);
       } catch (err) {

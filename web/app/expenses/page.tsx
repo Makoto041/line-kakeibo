@@ -38,8 +38,20 @@ export default function ExpensesPage() {
   const allHistoricalUsers = useMemo(() => {
     const usersMap = new Map();
     
-    expenses.forEach(expense => {
+    console.log("=== allHistoricalUsers 生成中 ===");
+    console.log("総支出件数:", expenses.length);
+    
+    expenses.forEach((expense, index) => {
+      console.log(`支出[${index}]:`, {
+        id: expense.id,
+        lineId: expense.lineId,
+        userDisplayName: expense.userDisplayName,
+        payerId: expense.payerId,
+        payerDisplayName: expense.payerDisplayName
+      });
+      
       if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
+        console.log(`ユーザー追加: ${expense.lineId} -> ${expense.userDisplayName}`);
         // Store the most recent display name for each LINE ID
         usersMap.set(expense.lineId, {
           lineId: expense.lineId,
@@ -48,7 +60,9 @@ export default function ExpensesPage() {
       }
     });
     
-    return Array.from(usersMap.values());
+    const result = Array.from(usersMap.values());
+    console.log("allHistoricalUsers 結果:", result);
+    return result;
   }, [expenses]);
   
   // Get users who have expense history in this specific group
