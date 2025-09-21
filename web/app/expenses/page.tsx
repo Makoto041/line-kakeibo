@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
 import Header from "../../components/Header";
@@ -34,8 +34,59 @@ export default function ExpensesPage() {
   const { members: groupMembers, loading: membersLoading, error: membersError } = useGroupMembers(editingGroupId);
   const { members: lineGroupMembers, loading: lineGroupMembersLoading } = useLineGroupMembers(editingLineGroupId);
   
-  // Use group members if available, otherwise fallback to LINE group members
-  const availableMembers = groupMembers.length > 0 ? groupMembers : lineGroupMembers;
+  // Get users who have expense history in this group
+  const groupExpenseUsers = useMemo(() => {
+    if (!editingExpenseData) return [];
+    
+    const groupFilter = editingExpenseData.groupId 
+      ? (e: Expense) => e.groupId === editingExpenseData.groupId
+      : editingExpenseData.lineGroupId
+      ? (e: Expense) => e.lineGroupId === editingExpenseData.lineGroupId
+      : () => false;
+    
+    const usersMap = new Map();
+    
+    expenses
+      .filter(groupFilter)
+      .forEach(expense => {
+        if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
+          usersMap.set(expense.lineId, {
+            lineId: expense.lineId,
+            displayName: expense.userDisplayName
+          });
+        }
+      });
+    
+    return Array.from(usersMap.values());
+  }, [expenses, editingExpenseData]);
+  
+  // Combine formal group members with users from expense history
+  const availableMembers = useMemo(() => {
+    const formalMembers = groupMembers.length > 0 ? groupMembers : lineGroupMembers;
+    const combinedMap = new Map();
+    
+    // Add formal group members
+    formalMembers.forEach(member => {
+      combinedMap.set(member.lineId, {
+        lineId: member.lineId,
+        displayName: member.displayName,
+        source: 'group'
+      });
+    });
+    
+    // Add users from expense history (if not already in formal members)
+    groupExpenseUsers.forEach(user => {
+      if (!combinedMap.has(user.lineId)) {
+        combinedMap.set(user.lineId, {
+          lineId: user.lineId,
+          displayName: user.displayName,
+          source: 'history'
+        });
+      }
+    });
+    
+    return Array.from(combinedMap.values());
+  }, [groupMembers, lineGroupMembers, groupExpenseUsers]);
   
   // Debug logging
   console.log("=== EXPENSE EDITING DEBUG ===");
@@ -51,6 +102,7 @@ export default function ExpensesPage() {
   console.log("EditingLineGroupId:", editingLineGroupId);
   console.log("GroupMembers:", groupMembers);
   console.log("LineGroupMembers:", lineGroupMembers);
+  console.log("GroupExpenseUsers:", groupExpenseUsers);
   console.log("AvailableMembers:", availableMembers);
   console.log("MembersLoading:", membersLoading);
   console.log("LineGroupMembersLoading:", lineGroupMembersLoading);
@@ -526,35 +578,12 @@ export default function ExpensesPage() {
                               </option>
                             )}
                             
-                            {/* グループメンバーを表示（入力者と重複する場合は除外） */}
+                            {/* グループのメンバー・履歴ユーザーを表示（入力者と重複する場合は除外） */}
                             {availableMembers
                               .filter(member => member.lineId !== editingExpenseData?.lineId)
                               .map((member) => (
                                 <option key={member.lineId} value={member.lineId}>
-                                  {member.displayName} (ID: {member.lineId?.slice(-6) || 'unknown'})
-                                </option>
-                              ))}
-                              
-                            {/* 支出履歴から他のユーザーを抽出して選択肢に追加 */}
-                            {expenses
-                              .filter(expense => 
-                                expense.lineId !== editingExpenseData?.lineId && 
-                                expense.userDisplayName && 
-                                expense.userDisplayName !== "個人" &&
-                                !availableMembers.some(member => member.lineId === expense.lineId)
-                              )
-                              .reduce((unique, expense) => {
-                                if (!unique.find(u => u.lineId === expense.lineId)) {
-                                  unique.push({
-                                    lineId: expense.lineId,
-                                    displayName: expense.userDisplayName || "不明なユーザー"
-                                  });
-                                }
-                                return unique;
-                              }, [] as {lineId: string, displayName: string}[])
-                              .map((user) => (
-                                <option key={`history-${user.lineId}`} value={user.lineId}>
-                                  {user.displayName} (履歴から)
+                                  {member.displayName} {member.source === 'group' ? '(メンバー)' : '(履歴)'}
                                 </option>
                               ))}
                               
