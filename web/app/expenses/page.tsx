@@ -10,8 +10,21 @@ export default function ExpensesPage() {
   const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
   const [periodDays, setPeriodDays] = useState(30);
 
+  // URLからLINE IDを取得
+  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const lineIdFromUrl = urlParams.get('lineId');
+  
+  console.log("=== EXPENSES PAGE DEBUG ===");
+  console.log("user?.uid:", user?.uid);
+  console.log("lineIdFromUrl:", lineIdFromUrl);
+  console.log("user object:", user);
+  
+  // LINE IDがある場合は直接それを使用、なければuser.uidを使用
+  const effectiveUserId = lineIdFromUrl || user?.uid || null;
+  console.log("effectiveUserId:", effectiveUserId);
+
   const { expenses, loading, error, updateExpense, deleteExpense } =
-    useExpenses(user?.uid || null, periodDays, 500); // Increase limit to get more data
+    useExpenses(effectiveUserId, periodDays, 500); // Use LINE ID if available
   const [filter, setFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"date" | "amount">("date");
   const [editingExpense, setEditingExpense] = useState<string | null>(null);
@@ -648,15 +661,29 @@ export default function ExpensesPage() {
                             {availableMembers.length === 0 ? (
                               // フォールバック: 現在表示中の支出からユーザーを抽出
                               (() => {
+                                console.log("=== フォールバック処理 ===");
+                                console.log("availableMembers.length:", availableMembers.length);
+                                console.log("expenses.length:", expenses.length);
+                                
                                 const fallbackUsers = new Map();
                                 expenses.forEach(exp => {
                                   if (exp.lineId !== editingExpenseData?.lineId && exp.userDisplayName && exp.userDisplayName !== "個人") {
                                     fallbackUsers.set(exp.lineId, exp.userDisplayName);
                                   }
                                 });
+                                
+                                // 支出データもない場合は、サンプルユーザーを追加（テスト用）
+                                if (fallbackUsers.size === 0) {
+                                  console.log("支出データなし - サンプルユーザーを追加");
+                                  fallbackUsers.set("sample1", "田中太郎");
+                                  fallbackUsers.set("sample2", "佐藤花子");
+                                  fallbackUsers.set("sample3", "鈴木一郎");
+                                }
+                                
+                                console.log("フォールバックユーザー:", Array.from(fallbackUsers.entries()));
                                 return Array.from(fallbackUsers.entries()).map(([lineId, displayName]) => (
                                   <option key={lineId} value={lineId}>
-                                    {displayName} (支出履歴から)
+                                    {displayName} {lineId.startsWith('sample') ? '(テスト)' : '(支出履歴から)'}
                                   </option>
                                 ));
                               })()
