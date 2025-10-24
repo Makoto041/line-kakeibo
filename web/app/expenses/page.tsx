@@ -1,14 +1,17 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
 import Header from "../../components/Header";
 import dayjs from "dayjs";
+import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 
 export default function ExpensesPage() {
   const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
-  const [periodDays, setPeriodDays] = useState(30);
+  const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
+  const [currentMonth, setCurrentMonth] = useState(dayjs());
+  const [dateRange, setDateRange] = useState<{startDate: string; endDate: string} | null>(null);
 
   // URLからLINE IDを取得
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
@@ -23,8 +26,25 @@ export default function ExpensesPage() {
   const effectiveUserId = lineIdFromUrl || user?.uid || null;
   console.log("effectiveUserId:", effectiveUserId);
 
+  // Load date settings from Firestore on mount
+  useEffect(() => {
+    const loadSettings = async () => {
+      if (effectiveUserId && effectiveUserId !== 'guest') {
+        const settings = await getDateRangeSettings(effectiveUserId);
+        setDateSettings(settings);
+      }
+    };
+    loadSettings();
+  }, [effectiveUserId]);
+
+  // Calculate effective date range when settings or currentMonth changes
+  useEffect(() => {
+    const range = getEffectiveDateRange(currentMonth, dateSettings);
+    setDateRange({ startDate: range.startDate, endDate: range.endDate });
+  }, [currentMonth, dateSettings]);
+
   const { expenses, loading, error, updateExpense, deleteExpense } =
-    useExpenses(effectiveUserId, periodDays, 500); // Use LINE ID if available
+    useExpenses(effectiveUserId, 0, 500, dateRange?.startDate); // Use custom date range
   const [filter, setFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"date" | "amount">("date");
   const [editingExpense, setEditingExpense] = useState<string | null>(null);
@@ -48,12 +68,13 @@ export default function ExpensesPage() {
   const { members: lineGroupMembers, loading: lineGroupMembersLoading } = useLineGroupMembers(editingLineGroupId);
   
   // Get all users who have ever created expenses (across all groups)
+  // 入力者と支払い者の両方を含める
   const allHistoricalUsers = useMemo(() => {
     const usersMap = new Map();
-    
+
     console.log("=== allHistoricalUsers 生成中 ===");
     console.log("総支出件数:", expenses.length);
-    
+
     expenses.forEach((expense, index) => {
       console.log(`支出[${index}]:`, {
         id: expense.id,
@@ -62,54 +83,78 @@ export default function ExpensesPage() {
         payerId: expense.payerId,
         payerDisplayName: expense.payerDisplayName
       });
-      
+
+      // 入力者を追加
       if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
-        console.log(`ユーザー追加: ${expense.lineId} -> ${expense.userDisplayName}`);
-        // Store the most recent display name for each LINE ID
+        console.log(`入力者追加: ${expense.lineId} -> ${expense.userDisplayName}`);
         usersMap.set(expense.lineId, {
           lineId: expense.lineId,
           displayName: expense.userDisplayName
         });
       }
+
+      // 支払い者を追加（入力者と異なる場合）
+      if (expense.payerId && expense.payerDisplayName &&
+          expense.payerDisplayName !== "個人" &&
+          expense.payerId !== expense.lineId) {
+        console.log(`支払い者追加: ${expense.payerId} -> ${expense.payerDisplayName}`);
+        usersMap.set(expense.payerId, {
+          lineId: expense.payerId,
+          displayName: expense.payerDisplayName
+        });
+      }
     });
-    
+
     const result = Array.from(usersMap.values());
     console.log("allHistoricalUsers 結果:", result);
     return result;
   }, [expenses]);
   
   // Get users who have expense history in this specific group
+  // 入力者と支払い者の両方を含める
   const groupExpenseUsers = useMemo(() => {
     if (!editingExpenseData) return [];
-    
-    const groupFilter = editingExpenseData.groupId 
+
+    const groupFilter = editingExpenseData.groupId
       ? (e: Expense) => e.groupId === editingExpenseData.groupId
       : editingExpenseData.lineGroupId
       ? (e: Expense) => e.lineGroupId === editingExpenseData.lineGroupId
       : () => false;
-    
+
     const usersMap = new Map();
-    
+
     expenses
       .filter(groupFilter)
       .forEach(expense => {
+        // 入力者を追加
         if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
           usersMap.set(expense.lineId, {
             lineId: expense.lineId,
             displayName: expense.userDisplayName
           });
         }
+
+        // 支払い者を追加（入力者と異なる場合）
+        if (expense.payerId && expense.payerDisplayName &&
+            expense.payerDisplayName !== "個人" &&
+            expense.payerId !== expense.lineId) {
+          usersMap.set(expense.payerId, {
+            lineId: expense.payerId,
+            displayName: expense.payerDisplayName
+          });
+        }
       });
-    
+
     return Array.from(usersMap.values());
   }, [expenses, editingExpenseData]);
   
   // Combine all available users: formal group members, group history users, and all historical users
+  // 支出履歴のdisplayNameを優先（より正確な名前が入っている）
   const availableMembers = useMemo(() => {
     const formalMembers = groupMembers.length > 0 ? groupMembers : lineGroupMembers;
     const combinedMap = new Map();
-    
-    // Priority 1: Add formal group members
+
+    // Priority 1: Add formal group members (メンバーシップ情報として追加)
     formalMembers.forEach(member => {
       combinedMap.set(member.lineId, {
         lineId: member.lineId,
@@ -117,10 +162,20 @@ export default function ExpensesPage() {
         source: 'group'
       });
     });
-    
-    // Priority 2: Add users from this group's expense history
+
+    // Priority 2: Add/Update users from this group's expense history
+    // 支出履歴のdisplayNameで上書き（より正確）
     groupExpenseUsers.forEach(user => {
-      if (!combinedMap.has(user.lineId)) {
+      const existing = combinedMap.get(user.lineId);
+      if (existing) {
+        // 既存のグループメンバーがいる場合、displayNameだけ更新
+        combinedMap.set(user.lineId, {
+          ...existing,
+          displayName: user.displayName, // 支出履歴の名前を優先
+          source: 'group' // グループメンバーとして保持
+        });
+      } else {
+        // 新規追加
         combinedMap.set(user.lineId, {
           lineId: user.lineId,
           displayName: user.displayName,
@@ -128,10 +183,20 @@ export default function ExpensesPage() {
         });
       }
     });
-    
-    // Priority 3: Add all historical users (from any group)
+
+    // Priority 3: Add/Update all historical users (from any group)
     allHistoricalUsers.forEach(user => {
-      if (!combinedMap.has(user.lineId)) {
+      const existing = combinedMap.get(user.lineId);
+      if (existing) {
+        // 既存のユーザーがいる場合、displayNameが「メンバー」なら更新
+        if (existing.displayName === 'メンバー' || existing.displayName.startsWith('Unknown_')) {
+          combinedMap.set(user.lineId, {
+            ...existing,
+            displayName: user.displayName
+          });
+        }
+      } else {
+        // 新規追加
         combinedMap.set(user.lineId, {
           lineId: user.lineId,
           displayName: user.displayName,
@@ -139,7 +204,7 @@ export default function ExpensesPage() {
         });
       }
     });
-    
+
     return Array.from(combinedMap.values());
   }, [groupMembers, lineGroupMembers, groupExpenseUsers, allHistoricalUsers]);
   
@@ -231,12 +296,19 @@ export default function ExpensesPage() {
 
   // Calculate individual person totals based on payer
   const personTotals = filteredExpenses.reduce((acc, expense) => {
-    // 支払い者ベースで集計（デフォルトは入力者）
-    // payerIdがない場合は入力者が支払い者とみなす
-    const payerName = expense.payerId && expense.payerId !== expense.lineId
-      ? (expense.payerDisplayName || "不明なユーザー")
-      : (expense.userDisplayName || "個人");
-    
+    // 支払い者ベースで集計
+    const payerId = expense.payerId || expense.lineId;
+    // payerDisplayNameを最優先で使用（userDisplayNameは使わない）
+    let payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
+
+    // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
+    if (payerName === 'メンバー' || payerName === '個人' || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
+      const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
+      if (historicalUser) {
+        payerName = historicalUser.displayName;
+      }
+    }
+
     // 承認済みの項目のみ合計に含める
     if (expense.includeInTotal) {
       acc[payerName] = (acc[payerName] || 0) + expense.amount;
@@ -420,18 +492,25 @@ export default function ExpensesPage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">
                   📅 期間
                 </label>
-                <select
-                  value={periodDays}
-                  onChange={(e) => setPeriodDays(Number(e.target.value))}
-                  className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value={7}>過去7日</option>
-                  <option value={30}>過去30日</option>
-                  <option value={60}>過去60日</option>
-                  <option value={90}>過去90日</option>
-                  <option value={365}>過去1年</option>
-                  <option value={0}>全期間</option>
-                </select>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentMonth(prev => prev.subtract(1, 'month'))}
+                    className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    title="前月"
+                  >
+                    ◀
+                  </button>
+                  <div className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm whitespace-nowrap">
+                    {getDisplayTitle(currentMonth, dateSettings)}
+                  </div>
+                  <button
+                    onClick={() => setCurrentMonth(prev => prev.add(1, 'month'))}
+                    className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    title="次月"
+                  >
+                    ▶
+                  </button>
+                </div>
               </div>
             </div>
             {sortedPersonTotals.length > 0 && (
@@ -451,9 +530,18 @@ export default function ExpensesPage() {
                         <div className="text-xs text-gray-500">
                           {
                             filteredExpenses.filter((e) => {
-                              const expensePayerName = e.payerId && e.payerId !== e.lineId
-                                ? (e.payerDisplayName || "不明なユーザー")
-                                : (e.userDisplayName || "個人");
+                              const payerId = e.payerId || e.lineId;
+                              // payerDisplayNameを最優先で使用
+                              let expensePayerName = e.payerDisplayName || e.userDisplayName || "個人";
+
+                              // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
+                              if (expensePayerName === 'メンバー' || expensePayerName === '個人' || expensePayerName.startsWith('Unknown_') || expensePayerName.startsWith('User_')) {
+                                const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
+                                if (historicalUser) {
+                                  expensePayerName = historicalUser.displayName;
+                                }
+                              }
+
                               return expensePayerName === personName;
                             }).length
                           }
@@ -650,13 +738,6 @@ export default function ExpensesPage() {
                             onChange={handleEditInputChange}
                             className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           >
-                            {/* 現在の入力者を常に表示 */}
-                            {editingExpenseData && (
-                              <option key={editingExpenseData.lineId} value={editingExpenseData.lineId}>
-                                {editingExpenseData.userDisplayName || "入力者"}
-                              </option>
-                            )}
-                            
                             {/* availableMembersが空の場合、現在の支出リストから直接ユーザーを生成 */}
                             {availableMembers.length === 0 ? (
                               // フォールバック: 現在表示中の支出からユーザーを抽出
@@ -688,9 +769,8 @@ export default function ExpensesPage() {
                                 ));
                               })()
                             ) : (
-                              // 通常: availableMembersから選択肢を生成
+                              // 通常: availableMembersから選択肢を生成（自分も含める）
                               availableMembers
-                                .filter(member => member.lineId !== editingExpenseData?.lineId)
                                 .map((member) => {
                                   let label = '';
                                   switch(member.source) {
@@ -810,16 +890,26 @@ export default function ExpensesPage() {
                             </span>
                           )}
                         {(() => {
-                          const payerName = expense.payerDisplayName || expense.userDisplayName || "不明";
+                          // 支払い者の名前を取得（payerDisplayNameを最優先）
+                          const payerId = expense.payerId || expense.lineId;
+                          let payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
                           const isDefaultPayer = !expense.payerId || expense.payerId === expense.lineId;
+
+                          // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
+                          if (payerName === 'メンバー' || payerName === '個人' || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
+                            const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
+                            if (historicalUser) {
+                              payerName = historicalUser.displayName;
+                            }
+                          }
+
                           return payerName !== "個人" && (
                             <span className={`text-xs font-medium px-2.5 py-0.5 rounded ${
-                              isDefaultPayer 
-                                ? "bg-green-100 text-green-800" 
+                              isDefaultPayer
+                                ? "bg-green-100 text-green-800"
                                 : "bg-purple-100 text-purple-800"
                             }`}>
                               💳 支払い者: {payerName}
-                              {!isDefaultPayer && " (変更済み)"}
                             </span>
                           );
                         })()}

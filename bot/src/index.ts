@@ -5,6 +5,7 @@ import { initializeApp, cert, getApps } from "firebase-admin/app";
 import dayjs from "dayjs";
 import dotenv from "dotenv";
 import { onRequest } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { parseReceipt } from "./parser";
 import {
   saveExpense,
@@ -23,6 +24,8 @@ import {
 import { parseTextExpense } from "./textParser";
 import { resolveAppUidForExpense } from "./linkUserResolver";
 import { getClassificationStats, classifyExpenseWithGemini, isGeminiAvailable, findCategoryWithGemini } from "./geminiCategoryClassifier";
+// Money Forward Me Import
+import { importMoneyForward } from "./importMoneyForward";
 
 // 新機能: 画像最適化とOCR精度向上
 import {
@@ -42,7 +45,6 @@ import {
   generateWeeklyReport,
   CostMetrics,
 } from "./costMonitor";
-// No longer needed for LINE ID only authentication
 
 dotenv.config();
 
@@ -455,32 +457,52 @@ async function processImageInBackground(
         } else {
           // Individual chat
           console.log("Individual chat context detected");
-          
-          try {
-            console.log(`=== IMAGE PROFILE DEBUG: Getting user profile for individual chat. UserId: ${event.source.userId} ===`);
-            const profilePromise = client.getProfile(event.source.userId);
-            const profileTimeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error("Profile fetch timeout")), 3000)
-            );
 
-            const profile = (await Promise.race([
-              profilePromise,
-              profileTimeoutPromise,
-            ])) as any;
-            
-            if (profile && (profile as any).displayName) {
-              userDisplayName = (profile as any).displayName;
-              console.log(`Individual user display name: ${userDisplayName}`);
-            } else {
-              userDisplayName = `User_${event.source.userId.slice(-6)}`;
-              console.log(`Using fallback display name: ${userDisplayName}`);
+          // Try to get profile with retry logic
+          let profile = null;
+          let attempt = 0;
+          const maxAttempts = 3;
+
+          while (attempt < maxAttempts && !profile) {
+            attempt++;
+            console.log(`=== IMAGE PROFILE DEBUG: Individual profile attempt ${attempt}/${maxAttempts}. UserId: ${event.source.userId} ===`);
+
+            try {
+              const timeout = attempt === 1 ? 3000 : 5000; // Longer timeout for retries
+              const profilePromise = client.getProfile(event.source.userId);
+              const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error(`Profile timeout (attempt ${attempt})`)), timeout)
+              );
+
+              profile = (await Promise.race([
+                profilePromise,
+                timeoutPromise,
+              ])) as any;
+
+              if (profile && (profile as any).displayName) {
+                userDisplayName = (profile as any).displayName;
+                console.log(`Individual user display name: ${userDisplayName} (attempt ${attempt})`);
+                break;
+              }
+            } catch (profileError) {
+              console.warn(`Individual profile fetch failed on attempt ${attempt}:`, profileError);
+
+              if (attempt < maxAttempts) {
+                // Wait before retry
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
             }
-          } catch (profileError) {
-            console.warn(
-              "Could not get user profile for individual, using ID-based fallback:",
-              profileError
-            );
-            userDisplayName = `User_${event.source.userId.slice(-6)}`;
+          }
+
+          // プロファイル取得に完全に失敗した場合はエラーとして処理
+          if (!profile || !(profile as any).displayName) {
+            console.error(`INDIVIDUAL PROFILE ERROR: Failed to get user profile after ${maxAttempts} attempts for ${event.source.userId}`);
+            const targetId = event.source.userId;
+            await client.pushMessage(targetId, {
+              type: "text",
+              text: "⚠️ ユーザー情報の取得に失敗しました。\n\nしばらく待ってから再度お試しください。\n\n問題が継続する場合は、LINEアプリを再起動してください。"
+            });
+            return; // 処理を中断（データは書き込まない）
           }
 
           // Check if user has any groups
@@ -507,55 +529,67 @@ async function processImageInBackground(
           console.error("Failed to resolve appUid for expense creation, using lineId");
           appUid = event.source.userId;
         }
-        
-        // ユーザー表示名のフォールバック処理
-        if (!userDisplayName) {
-          const fallbackName = `User_${event.source.userId.slice(-6)}`;
-          console.log(`=== IMAGE FALLBACK DEBUG: No displayName found, using fallback: ${fallbackName} ===`);
-          userDisplayName = fallbackName;
-        }
-        
+
+        // userDisplayNameのチェックは既にリトライ処理内で行っているため、ここでは不要
         console.log(`=== IMAGE FINAL USER DEBUG: Final userDisplayName: ${userDisplayName} ===`);
 
-        // Get user's default category or use auto-classification
+        // Get category using AI classification
         let defaultCategory = "その他";
         try {
           console.log(
-            `=== CATEGORY DEBUG RECEIPT: Getting user settings for ${event.source.userId} ===`
+            `=== CATEGORY DEBUG RECEIPT: Getting category for receipt ===`
           );
-          const userSettings = await getUserSettings(event.source.userId);
-          console.log(
-            `=== CATEGORY DEBUG RECEIPT: Retrieved settings:`,
-            userSettings
-          );
-          if (userSettings?.defaultCategory) {
-            defaultCategory = userSettings.defaultCategory;
-            console.log(
-              `=== CATEGORY DEBUG RECEIPT: Using default category: ${defaultCategory} ===`
-            );
-          } else {
-            // 新機能: 自動カテゴリー分類
-            console.log(`=== AUTO CATEGORY CLASSIFICATION ===`);
-            // 商品名と店舗名からカテゴリーを推定
-            const itemsText = parsedData.items.map((i) => i.name).join(" ");
-            const autoCategory = autoClassifyCategory(
-              itemsText,
-              parsedData.storeName
-            );
-            if (autoCategory !== "その他") {
-              defaultCategory = autoCategory;
+
+          // レシート画像の場合、商品名と店舗名からカテゴリーをAIで推測
+          const itemsText = parsedData.items.map((i) => i.name).join(", ");
+          const descriptionForAI = itemsText || parsedData.storeName || "レシート";
+
+          console.log(`=== GEMINI CATEGORY: Classifying "${descriptionForAI}" ===`);
+
+          // Gemini + ユーザーデフォルトを並列取得
+          const [geminiResult, userSettingsResult] = await Promise.allSettled([
+            classifyExpenseWithGemini(event.source.userId, descriptionForAI),
+            getUserSettings(event.source.userId)
+          ]);
+
+          // Gemini結果を優先使用（閾値0.4で精度向上）
+          if (geminiResult.status === 'fulfilled') {
+            const result = geminiResult.value;
+            if (result && result.category && result.confidence >= 0.4) {
+              defaultCategory = result.category;
               console.log(
-                `=== AUTO CATEGORY: Classified as ${autoCategory} based on items ===`
+                `=== GEMINI CATEGORY SUCCESS: ${defaultCategory} (confidence: ${result.confidence}) ===`
               );
-            } else {
-              console.log(
-                `=== CATEGORY DEBUG RECEIPT: No default category found, using: ${defaultCategory} ===`
-              );
+            }
+          }
+
+          // Geminiが失敗またはlow confidenceの場合、ユーザーデフォルトまたはルールベースを使用
+          if (defaultCategory === "その他") {
+            if (userSettingsResult.status === 'fulfilled') {
+              const userSettings = userSettingsResult.value;
+              if (userSettings?.defaultCategory) {
+                defaultCategory = userSettings.defaultCategory;
+                console.log(
+                  `=== CATEGORY DEBUG RECEIPT: Using user default category: ${defaultCategory} ===`
+                );
+              } else {
+                // フォールバック: ルールベース分類
+                const autoCategory = autoClassifyCategory(
+                  itemsText,
+                  parsedData.storeName
+                );
+                if (autoCategory !== "その他") {
+                  defaultCategory = autoCategory;
+                  console.log(
+                    `=== AUTO CATEGORY: Classified as ${autoCategory} based on rules ===`
+                  );
+                }
+              }
             }
           }
         } catch (error) {
           console.log(
-            "=== CATEGORY DEBUG RECEIPT: Failed to get user settings, using default category:",
+            "=== CATEGORY DEBUG RECEIPT: Failed to classify category, using default:",
             error
           );
         }
@@ -689,7 +723,7 @@ async function handleTextMessage(event: any) {
         const expensesPromise = getExpensesSummary(event.source.userId, 3); // Only 3 items for maximum speed
         const timeoutPromise = new Promise(
           (_, reject) =>
-            setTimeout(() => reject(new Error("Expenses fetch timeout")), 2000) // 2 second timeout
+            setTimeout(() => reject(new Error("Expenses fetch timeout")), 5000) // Increased timeout for better reliability
         );
 
         const expenses = (await Promise.race([
@@ -1116,15 +1150,19 @@ async function processExpenseInBackground(event: any, parsed: any) {
       const cached = userProfileCache.get(cacheKey);
       const now = Date.now();
       
-      if (cached && (now - cached.timestamp < CACHE_TTL)) {
+      const hasCachedProfile = cached && (now - cached.timestamp < CACHE_TTL) && cached.profile.displayName;
+
+      if (hasCachedProfile) {
         // キャッシュヒット - 高速化
         console.log("Using cached user profile (fast path)");
-        userDisplayName = cached.profile.displayName || "メンバー";
+        userDisplayName = cached.profile.displayName;
         activeGroup = cached.groups[0] || null;
-      } else {
-        // キャッシュミス - 並列取得
-        console.log("Cache miss, fetching user profile (parallel)");
-        
+      }
+
+      if (!hasCachedProfile) {
+        // キャッシュミスまたは名前がない場合 - 並列取得
+        console.log("Cache miss or invalid cache, fetching user profile (parallel)");
+
         // プロファイル取得を並列実行（リトライ機能付き）
         console.log(`=== PROFILE DEBUG: Starting profile fetch for group context. LineGroupId: ${lineGroupId}, UserId: ${event.source.userId} ===`);
         promises.push(
@@ -1138,7 +1176,7 @@ async function processExpenseInBackground(event: any, parsed: any) {
               console.log(`=== PROFILE DEBUG: Group profile attempt ${attempt}/${maxAttempts} ===`);
               
               try {
-                const timeout = attempt === 1 ? 2000 : 3000;
+                const timeout = attempt === 1 ? 5000 : 8000; // Increased timeout for better reliability
                 profile = await Promise.race([
                   client.getGroupMemberProfile(lineGroupId, event.source.userId),
                   new Promise((_, reject) => setTimeout(() => reject(new Error(`Group profile timeout (attempt ${attempt})`)), timeout))
@@ -1154,7 +1192,7 @@ async function processExpenseInBackground(event: any, parsed: any) {
                     console.log(`=== PROFILE DEBUG: Attempting final fallback getProfile ===`);
                     profile = await Promise.race([
                       client.getProfile(event.source.userId),
-                      new Promise((_, reject) => setTimeout(() => reject(new Error("Individual profile timeout")), 3000))
+                      new Promise((_, reject) => setTimeout(() => reject(new Error("Individual profile timeout")), 6000)) // Increased timeout
                     ]);
                     console.log(`=== PROFILE DEBUG: getProfile SUCCESS:`, profile);
                   } catch (individualError) {
@@ -1172,13 +1210,8 @@ async function processExpenseInBackground(event: any, parsed: any) {
           })()
         );
         
-        // グループ取得も並列実行
-        promises.push(
-          findOrCreateLineGroup(lineGroupId, event.source.userId, "メンバー")
-            .then(groupId => getUserGroups(event.source.userId))
-            .then(groups => ({ type: 'groups', data: groups }))
-            .catch(error => ({ type: 'groups', error, data: [] }))
-        );
+        // グループ取得は後で（プロファイル取得後に実行）
+        // promises.pushはせずに、プロファイル取得が完了した後に実行
       }
     } else {
       // Individual chat - キャッシュまたは並列取得
@@ -1192,22 +1225,41 @@ async function processExpenseInBackground(event: any, parsed: any) {
         userDisplayName = cached.profile?.displayName;
         console.log(`=== CACHED PROFILE DEBUG: Using cached displayName: ${userDisplayName} ===`);
       } else {
-        // 個人チャットの場合もプロファイルを取得
+        // 個人チャットの場合もプロファイルを取得（リトライ機能付き）
         console.log(`=== PROFILE DEBUG: Starting profile fetch for individual context. UserId: ${event.source.userId} ===`);
         promises.push(
-          Promise.race([
-            client.getProfile(event.source.userId),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Profile timeout")), 2000))
-          ]).then(profile => {
-            console.log(`=== PROFILE DEBUG: Individual getProfile SUCCESS:`, profile);
-            return { type: 'profile', data: profile };
-          })
-          .catch(error => {
-            console.warn(`=== PROFILE DEBUG: Individual getProfile FAILED:`, error);
+          (async () => {
+            let profile = null;
+            let attempt = 0;
+            const maxAttempts = 3; // 個人チャットでもリトライ
+
+            while (attempt < maxAttempts && !profile) {
+              attempt++;
+              console.log(`=== PROFILE DEBUG: Individual profile attempt ${attempt}/${maxAttempts} ===`);
+
+              try {
+                const timeout = attempt === 1 ? 6000 : 10000; // Increased timeout for better reliability
+                profile = await Promise.race([
+                  client.getProfile(event.source.userId),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error(`Profile timeout (attempt ${attempt})`)), timeout))
+                ]);
+                console.log(`=== PROFILE DEBUG: Individual getProfile SUCCESS on attempt ${attempt}:`, profile);
+                return { type: 'profile', data: profile };
+              } catch (error) {
+                console.warn(`=== PROFILE DEBUG: Individual getProfile FAILED on attempt ${attempt}:`, error);
+
+                if (attempt < maxAttempts) {
+                  // リトライ前に短い待機
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                }
+              }
+            }
+
+            // すべてのリトライが失敗した場合のみフォールバック
             const fallbackName = `User_${event.source.userId.slice(-6)}`;
-            console.log(`=== PROFILE DEBUG: Using individual fallback name: ${fallbackName} ===`);
-            return { type: 'profile', error, data: { displayName: fallbackName } };
-          })
+            console.warn(`=== PROFILE DEBUG: All retry attempts failed for individual chat, using fallback: ${fallbackName} ===`);
+            return { type: 'profile', error: new Error('All retries failed'), data: { displayName: fallbackName } };
+          })()
         );
         
         promises.push(
@@ -1226,9 +1278,10 @@ async function processExpenseInBackground(event: any, parsed: any) {
     );
 
     // 並列実行で結果を待つ
+    let profileFetchError = null;
     if (promises.length > 0) {
       const results = await Promise.allSettled(promises);
-      
+
       results.forEach(result => {
         if (result.status === 'fulfilled') {
           const { value } = result;
@@ -1236,8 +1289,10 @@ async function processExpenseInBackground(event: any, parsed: any) {
             case 'profile':
               if (!value.error && value.data && value.data.displayName) {
                 userDisplayName = value.data.displayName;
-              } else if (value.data && value.data.displayName) {
-                userDisplayName = value.data.displayName; // fallback name
+              } else if (value.error) {
+                // プロファイル取得エラーを記録
+                profileFetchError = value.error;
+                // フォールバック名は設定しない（エラーとして処理）
               }
               break;
             case 'groups':
@@ -1254,15 +1309,27 @@ async function processExpenseInBackground(event: any, parsed: any) {
       });
 
       // キャッシュ更新
-      const cacheKey = event.source.type === "group" 
+      const cacheKey = event.source.type === "group"
         ? `${event.source.userId}_${lineGroupId}`
         : event.source.userId;
-      
+
       userProfileCache.set(cacheKey, {
         profile: { displayName: userDisplayName },
         groups: activeGroup ? [activeGroup] : [],
         timestamp: Date.now()
       });
+    }
+
+    // グループコンテキストでプロファイル取得後にグループ操作を実行
+    if (lineGroupId && userDisplayName && !activeGroup) {
+      try {
+        const groupId = await findOrCreateLineGroup(lineGroupId, event.source.userId, userDisplayName);
+        const groups = await getUserGroups(event.source.userId);
+        activeGroup = groups.find((g) => g.id === groupId) || null;
+        console.log("Successfully set up LINE group after profile fetch");
+      } catch (groupError) {
+        console.error("Failed to setup group after profile fetch:", groupError);
+      }
     }
 
     // フォールバック処理
@@ -1271,23 +1338,18 @@ async function processExpenseInBackground(event: any, parsed: any) {
       appUid = event.source.userId;
     }
     
-    // ユーザー表示名のフォールバック処理
-    if (!userDisplayName) {
-      if (event.source.type === "group") {
-        // グループでプロファイル取得失敗時はエラーとして処理
-        console.error(`TEXT GROUP PROFILE ERROR: Failed to get user profile for group member ${event.source.userId}`);
-        const targetId = event.source.groupId;
-        await client.pushMessage(targetId, {
-          type: "text",
-          text: "⚠️ ユーザー情報の取得に失敗しました。\n\nしばらく待ってから再度お試しください。\n\n問題が継続する場合は、LINEアプリを再起動してください。"
-        });
-        return; // 処理を中断
-      } else {
-        // 個人チャットの場合はフォールバック名を使用
-        const fallbackName = `User_${event.source.userId.slice(-6)}`;
-        console.log(`=== FALLBACK DEBUG: No displayName found for individual chat, using fallback: ${fallbackName} ===`);
-        userDisplayName = fallbackName;
-      }
+    // ユーザー表示名とプロファイル取得エラーのチェック
+    if (!userDisplayName || profileFetchError) {
+      // プロファイル取得に失敗した場合は、グループでも個人でもエラーとして処理
+      const context = event.source.type === "group" ? "グループ" : "個人チャット";
+      console.error(`PROFILE ERROR (${context}): Failed to get user profile for ${event.source.userId}`, profileFetchError);
+
+      const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
+      await client.pushMessage(targetId, {
+        type: "text",
+        text: "⚠️ ユーザー情報の取得に失敗しました。\n\nしばらく待ってから再度お試しください。\n\n問題が継続する場合は、LINEアプリを再起動してください。"
+      });
+      return; // 処理を中断（データは書き込まない）
     }
     
     console.log(`=== FINAL USER DEBUG: Final userDisplayName: ${userDisplayName} ===`);
@@ -1300,10 +1362,10 @@ async function processExpenseInBackground(event: any, parsed: any) {
 
     let finalCategory = "その他";
     
-    // Gemini結果を優先使用
+    // Gemini結果を優先使用（閾値0.4で精度向上）
     if (geminiResult.status === 'fulfilled') {
       const result = geminiResult.value;
-      if (result && result.category && result.confidence >= 0.6) {
+      if (result && result.category && result.confidence >= 0.4) {
         finalCategory = result.category;
         console.log(`Fast Gemini classification: ${finalCategory} (confidence: ${result.confidence})`);
       }
@@ -1536,5 +1598,16 @@ export const webhook = onRequest(
 
 // Export the syncUserLinks function
 export { syncUserLinks } from "./syncUserLinks";
+
+exports.importMoneyForward = onSchedule(
+  {
+    schedule: "0 5 * * *", // 毎朝5時
+    timeZone: "Asia/Tokyo",
+    region: "asia-northeast1",
+    timeoutSeconds: 300,
+    memory: "512MiB",
+  },
+  importMoneyForward
+);
 
 export default app;

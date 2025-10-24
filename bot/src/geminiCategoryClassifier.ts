@@ -56,13 +56,13 @@ const CLASSIFICATION_CACHE_TTL = 15 * 60 * 1000; // 15分
 
 // 高速ローカル分類のためのキーワードマップ
 const FAST_KEYWORD_MAP: Record<string, string[]> = {
-  '食費': ['食', 'レストラン', 'カフェ', 'ランチ', 'ディナー', '弁当', 'コンビニ', 'マクドナルド', 'スターバックス', '居酒屋', 'ラーメン', '寿司'],
-  '交通費': ['電車', 'バス', 'タクシー', '地下鉄', '新幹線', '高速', 'ガソリン', 'JR', '運賃', '切符'],
-  '日用品': ['ティッシュ', '洗剤', 'シャンプー', '歯ブラシ', 'タオル', '石鹸', 'トイレットペーパー', '掃除', '洗濯'],
-  '娯楽': ['映画', 'ゲーム', 'カラオケ', 'ボウリング', '遊園地', 'コンサート', 'ライブ', '本', 'DVD'],
-  '衣服': ['服', '靴', '帽子', 'バッグ', 'アクセサリー', 'ユニクロ', 'しまむら', 'Tシャツ', 'ジーンズ'],
-  '医療・健康': ['病院', '薬', '歯医者', 'サプリメント', '整体', 'マッサージ', 'ジム', '健康診断'],
-  '通信費': ['携帯', 'インターネット', 'Wi-Fi', 'スマホ', '電話代', 'データ'],
+  '食費': ['食', 'レストラン', 'カフェ', 'ランチ', 'ディナー', '弁当', 'コンビニ', 'マクドナルド', 'スターバックス', '居酒屋', 'ラーメン', '寿司', '夕食', '朝食', '昼食', '食事', '飲食'],
+  '交通費': ['電車', 'バス', 'タクシー', '地下鉄', '新幹線', '高速', 'ガソリン', 'JR', '運賃', '切符', '駐車'],
+  '日用品': ['ティッシュ', '洗剤', 'シャンプー', '歯ブラシ', 'タオル', '石鹸', 'トイレットペーパー', '掃除', '洗濯', 'ボディソープ', '歯磨き粉', 'ハンドソープ', 'キッチンペーパー'],
+  '娯楽': ['映画', 'ゲーム', 'カラオケ', 'ボウリング', '遊園地', 'コンサート', 'ライブ', '本', 'DVD', 'ぬいぐるみ', 'おもちゃ', '漫画', '雑誌', '趣味', '娯楽'],
+  '衣服': ['服', '靴', '帽子', 'バッグ', 'アクセサリー', 'ユニクロ', 'しまむら', 'Tシャツ', 'ジーンズ', '洋服', 'スニーカー'],
+  '医療・健康': ['病院', '薬', '歯医者', 'サプリメント', '整体', 'マッサージ', 'ジム', '健康診断', '処方箋', '医療'],
+  '通信費': ['携帯', 'インターネット', 'Wi-Fi', 'スマホ', '電話代', 'データ', '通信'],
   '光熱費': ['電気', 'ガス', '水道'],
 };
 
@@ -152,15 +152,50 @@ export async function classifyExpenseWithGemini(
     // Geminiモデルを取得
     const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    // 短縮化されたプロンプト（レスポンス時間短縮のため）
-    const prompt = `分類: "${description}"
-カテゴリ: ${categoryNames.slice(0, 10).join(', ')}...
-JSON形式で回答: {"category":"カテゴリ名","confidence":0.8}`;
+    // Few-shot学習形式の高精度プロンプト
+    const prompt = `あなたは家計簿の支出分類の専門家です。以下の支出内容を最も適切なカテゴリに正確に分類してください。
+
+## 利用可能なカテゴリ
+${categoryNames.join(', ')}
+
+## 分類例（Few-shot Examples）
+入力: "ぬいぐるみ" → {"category":"娯楽","confidence":0.95,"reasoning":"おもちゃ・趣味用品"}
+入力: "洗剤" → {"category":"日用品","confidence":0.95,"reasoning":"掃除用品"}
+入力: "ランチ" → {"category":"食費","confidence":0.95,"reasoning":"食事"}
+入力: "電車賃" → {"category":"交通費","confidence":0.95,"reasoning":"公共交通機関"}
+入力: "Tシャツ" → {"category":"衣服","confidence":0.95,"reasoning":"衣類"}
+入力: "映画チケット" → {"category":"娯楽","confidence":0.95,"reasoning":"エンターテイメント"}
+入力: "風邪薬" → {"category":"医療・健康","confidence":0.95,"reasoning":"医薬品"}
+入力: "携帯代" → {"category":"通信費","confidence":0.95,"reasoning":"通信サービス"}
+入力: "電気代" → {"category":"光熱費","confidence":0.95,"reasoning":"公共料金"}
+入力: "本" → {"category":"娯楽","confidence":0.90,"reasoning":"書籍・読み物"}
+入力: "おもちゃ" → {"category":"娯楽","confidence":0.95,"reasoning":"玩具・趣味用品"}
+入力: "ゲーム" → {"category":"娯楽","confidence":0.95,"reasoning":"ゲームソフト・娯楽"}
+
+## カテゴリの詳細定義
+- 食費: 食事、飲食店、食材、飲み物など食べ物・飲み物関連
+- 日用品: 洗剤、ティッシュ、シャンプー、掃除用品、トイレットペーパーなど生活必需品
+- 交通費: 電車、バス、タクシー、ガソリン、駐車場など移動関連
+- 娯楽: 映画、ゲーム、本、おもちゃ、ぬいぐるみ、漫画、趣味用品など娯楽・趣味関連
+- 衣服: 服、靴、バッグ、アクセサリーなど衣類・ファッション関連
+- 医療・健康: 病院、薬、サプリ、ジムなど健康・医療関連
+- 通信費: スマホ、インターネット、Wi-Fi、電話代など通信サービス
+- 光熱費: 電気、ガス、水道など公共料金
+- その他: 上記に当てはまらないもの
+
+## 分類する支出内容
+"${description}"
+
+## 出力形式
+必ずJSON形式のみで回答してください（他の説明文は不要）:
+{"category":"カテゴリ名","confidence":0.0-1.0,"reasoning":"分類理由"}
+
+重要: categoryは必ず上記の利用可能なカテゴリリストから完全一致するものを選んでください。`;
 
     // Gemini APIを呼び出し（タイムアウト付き）
     const geminiPromise = model.generateContent(prompt);
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Gemini API timeout')), 3000) // 3秒タイムアウト
+      setTimeout(() => reject(new Error('Gemini API timeout')), 8000) // 8秒タイムアウト（精度向上のため延長）
     );
 
     const result = await Promise.race([geminiPromise, timeoutPromise]) as any;
@@ -234,20 +269,20 @@ export async function findCategoryWithGemini(
   try {
     // Gemini APIで分類を試行
     const geminiResult = await classifyExpenseWithGemini(lineId, description);
-    
-    // 信頼度が十分高い場合はGeminiの結果を使用
-    if (geminiResult.category && geminiResult.confidence >= 0.6) {
+
+    // 信頼度が十分高い場合はGeminiの結果を使用（閾値を0.4に下げて精度向上）
+    if (geminiResult.category && geminiResult.confidence >= 0.4) {
       console.log(`Gemini classification success: ${geminiResult.category} (confidence: ${geminiResult.confidence})`);
-      
+
       // カテゴリ名から実際のカテゴリオブジェクトを取得
       const availableCategories = await getAllUserCategories(lineId);
       const matchedCategory = availableCategories.find((cat: CategoryMaster | UserCustomCategory) => cat.name === geminiResult.category);
-      
+
       if (matchedCategory) {
         return matchedCategory;
       }
     }
-    
+
     console.log(`Gemini classification failed or low confidence: ${geminiResult.confidence}, falling back to keywords`);
     return null;
     

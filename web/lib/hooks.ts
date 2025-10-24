@@ -497,8 +497,13 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
         category: updates.category ? normalizeCategoryName(updates.category) : updates.category,
       } as Partial<Expense>;
 
+      // Remove undefined values to avoid Firestore errors
+      const cleanUpdates = Object.fromEntries(
+        Object.entries(normalizedUpdates).filter(([_, value]) => value !== undefined)
+      );
+
       await updateDoc(doc(db, 'expenses', id), {
-        ...normalizedUpdates,
+        ...cleanUpdates,
         updatedAt: new Date()
       });
       
