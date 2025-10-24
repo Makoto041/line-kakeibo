@@ -86,6 +86,7 @@ jobs:
         
     - name: Deploy to Vercel (Preview)
       uses: amondnet/vercel-action@v25
+      id: vercel-deploy
       with:
         vercel-token: ${{ secrets.VERCEL_TOKEN }}
         github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -93,6 +94,11 @@ jobs:
         vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
         working-directory: ./web
         scope: ${{ secrets.VERCEL_ORG_ID }}
+        
+    - name: Output Deployment URL
+      run: |
+        echo "🚀 Development deployed to: ${{ steps.vercel-deploy.outputs.preview-url }}"
+        echo "DEPLOYMENT_URL=${{ steps.vercel-deploy.outputs.preview-url }}" >> $GITHUB_ENV
         
     - name: Comment PR with Preview URLs
       if: github.event_name == 'pull_request'

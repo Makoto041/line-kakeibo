@@ -15,7 +15,7 @@ export default function Dashboard() {
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>({ mode: 'monthly' });
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [firebaseError, setFirebaseError] = useState(false);
-  
+
   useEffect(() => {
     // Check if Firebase is properly initialized
     if (typeof window !== 'undefined' && !db) {
@@ -254,6 +254,7 @@ export default function Dashboard() {
                 </div>
               </div>
             )}
+
           </>
         )}
       </main>

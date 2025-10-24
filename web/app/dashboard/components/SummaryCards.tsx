@@ -29,7 +29,7 @@ export default function SummaryCards({ stats }: SummaryCardsProps) {
       bgColor: 'bg-gradient-to-br from-blue-500 to-blue-600',
       // TODO: Calculate actual monthly change when we have historical data
       change: 0,
-      changeType: 'same' as const
+      changeType: 'same' as 'same' | 'increase' | 'decrease'
     },
     {
       title: '固定費',

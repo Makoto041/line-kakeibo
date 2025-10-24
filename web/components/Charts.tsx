@@ -118,7 +118,7 @@ interface DailyLineChartProps {
   data: Record<string, number>;
   startDate: string;
   endDate: string;
-  mode: 'monthly' | 'custom';
+  mode: 'monthly' | 'custom' | 'customStart';
 }
 
 export function DailyLineChart({ data, startDate, endDate, mode }: DailyLineChartProps) {

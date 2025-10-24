@@ -1,17 +1,50 @@
 "use client";
 
-import React, { useState } from "react";
-import { useLineAuth, useExpenses } from "../../lib/hooks";
+import React, { useState, useMemo, useEffect } from "react";
+import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
 import Header from "../../components/Header";
 import dayjs from "dayjs";
+import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 
 export default function ExpensesPage() {
   const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
-  const [periodDays, setPeriodDays] = useState(30);
+  const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
+  const [currentMonth, setCurrentMonth] = useState(dayjs());
+  const [dateRange, setDateRange] = useState<{startDate: string; endDate: string} | null>(null);
+
+  // URLからLINE IDを取得
+  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const lineIdFromUrl = urlParams.get('lineId');
+  
+  console.log("=== EXPENSES PAGE DEBUG ===");
+  console.log("user?.uid:", user?.uid);
+  console.log("lineIdFromUrl:", lineIdFromUrl);
+  console.log("user object:", user);
+  
+  // LINE IDがある場合は直接それを使用、なければuser.uidを使用
+  const effectiveUserId = lineIdFromUrl || user?.uid || null;
+  console.log("effectiveUserId:", effectiveUserId);
+
+  // Load date settings from Firestore on mount
+  useEffect(() => {
+    const loadSettings = async () => {
+      if (effectiveUserId && effectiveUserId !== 'guest') {
+        const settings = await getDateRangeSettings(effectiveUserId);
+        setDateSettings(settings);
+      }
+    };
+    loadSettings();
+  }, [effectiveUserId]);
+
+  // Calculate effective date range when settings or currentMonth changes
+  useEffect(() => {
+    const range = getEffectiveDateRange(currentMonth, dateSettings);
+    setDateRange({ startDate: range.startDate, endDate: range.endDate });
+  }, [currentMonth, dateSettings]);
 
   const { expenses, loading, error, updateExpense, deleteExpense } =
-    useExpenses(user?.uid || null, periodDays, 200);
+    useExpenses(effectiveUserId, 0, 500, dateRange?.startDate); // Use custom date range
   const [filter, setFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"date" | "amount">("date");
   const [editingExpense, setEditingExpense] = useState<string | null>(null);
@@ -20,8 +53,206 @@ export default function ExpensesPage() {
     description: string;
     date: string;
     category: string;
-    confirmed: boolean;
-  }>({ amount: 0, description: "", date: "", category: "", confirmed: false });
+    includeInTotal: boolean;
+    payerId: string;
+    payerDisplayName: string;
+  }>({ amount: 0, description: "", date: "", category: "", includeInTotal: true, payerId: "", payerDisplayName: "" });
+  
+  // Get group members for the expense being edited
+  const editingExpenseData = editingExpense ? expenses.find(e => e.id === editingExpense) : null;
+  const editingGroupId = editingExpenseData?.groupId || null;
+  const editingLineGroupId = editingExpenseData?.lineGroupId || null;
+  
+  // Try both group ID and LINE group ID based member fetching
+  const { members: groupMembers, loading: membersLoading, error: membersError } = useGroupMembers(editingGroupId);
+  const { members: lineGroupMembers, loading: lineGroupMembersLoading } = useLineGroupMembers(editingLineGroupId);
+  
+  // Get all users who have ever created expenses (across all groups)
+  // 入力者と支払い者の両方を含める
+  const allHistoricalUsers = useMemo(() => {
+    const usersMap = new Map();
+
+    console.log("=== allHistoricalUsers 生成中 ===");
+    console.log("総支出件数:", expenses.length);
+
+    expenses.forEach((expense, index) => {
+      console.log(`支出[${index}]:`, {
+        id: expense.id,
+        lineId: expense.lineId,
+        userDisplayName: expense.userDisplayName,
+        payerId: expense.payerId,
+        payerDisplayName: expense.payerDisplayName
+      });
+
+      // 入力者を追加
+      if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
+        console.log(`入力者追加: ${expense.lineId} -> ${expense.userDisplayName}`);
+        usersMap.set(expense.lineId, {
+          lineId: expense.lineId,
+          displayName: expense.userDisplayName
+        });
+      }
+
+      // 支払い者を追加（入力者と異なる場合）
+      if (expense.payerId && expense.payerDisplayName &&
+          expense.payerDisplayName !== "個人" &&
+          expense.payerId !== expense.lineId) {
+        console.log(`支払い者追加: ${expense.payerId} -> ${expense.payerDisplayName}`);
+        usersMap.set(expense.payerId, {
+          lineId: expense.payerId,
+          displayName: expense.payerDisplayName
+        });
+      }
+    });
+
+    const result = Array.from(usersMap.values());
+    console.log("allHistoricalUsers 結果:", result);
+    return result;
+  }, [expenses]);
+  
+  // Get users who have expense history in this specific group
+  // 入力者と支払い者の両方を含める
+  const groupExpenseUsers = useMemo(() => {
+    if (!editingExpenseData) return [];
+
+    const groupFilter = editingExpenseData.groupId
+      ? (e: Expense) => e.groupId === editingExpenseData.groupId
+      : editingExpenseData.lineGroupId
+      ? (e: Expense) => e.lineGroupId === editingExpenseData.lineGroupId
+      : () => false;
+
+    const usersMap = new Map();
+
+    expenses
+      .filter(groupFilter)
+      .forEach(expense => {
+        // 入力者を追加
+        if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
+          usersMap.set(expense.lineId, {
+            lineId: expense.lineId,
+            displayName: expense.userDisplayName
+          });
+        }
+
+        // 支払い者を追加（入力者と異なる場合）
+        if (expense.payerId && expense.payerDisplayName &&
+            expense.payerDisplayName !== "個人" &&
+            expense.payerId !== expense.lineId) {
+          usersMap.set(expense.payerId, {
+            lineId: expense.payerId,
+            displayName: expense.payerDisplayName
+          });
+        }
+      });
+
+    return Array.from(usersMap.values());
+  }, [expenses, editingExpenseData]);
+  
+  // Combine all available users: formal group members, group history users, and all historical users
+  // 支出履歴のdisplayNameを優先（より正確な名前が入っている）
+  const availableMembers = useMemo(() => {
+    const formalMembers = groupMembers.length > 0 ? groupMembers : lineGroupMembers;
+    const combinedMap = new Map();
+
+    // Priority 1: Add formal group members (メンバーシップ情報として追加)
+    formalMembers.forEach(member => {
+      combinedMap.set(member.lineId, {
+        lineId: member.lineId,
+        displayName: member.displayName,
+        source: 'group'
+      });
+    });
+
+    // Priority 2: Add/Update users from this group's expense history
+    // 支出履歴のdisplayNameで上書き（より正確）
+    groupExpenseUsers.forEach(user => {
+      const existing = combinedMap.get(user.lineId);
+      if (existing) {
+        // 既存のグループメンバーがいる場合、displayNameだけ更新
+        combinedMap.set(user.lineId, {
+          ...existing,
+          displayName: user.displayName, // 支出履歴の名前を優先
+          source: 'group' // グループメンバーとして保持
+        });
+      } else {
+        // 新規追加
+        combinedMap.set(user.lineId, {
+          lineId: user.lineId,
+          displayName: user.displayName,
+          source: 'group-history'
+        });
+      }
+    });
+
+    // Priority 3: Add/Update all historical users (from any group)
+    allHistoricalUsers.forEach(user => {
+      const existing = combinedMap.get(user.lineId);
+      if (existing) {
+        // 既存のユーザーがいる場合、displayNameが「メンバー」なら更新
+        if (existing.displayName === 'メンバー' || existing.displayName.startsWith('Unknown_')) {
+          combinedMap.set(user.lineId, {
+            ...existing,
+            displayName: user.displayName
+          });
+        }
+      } else {
+        // 新規追加
+        combinedMap.set(user.lineId, {
+          lineId: user.lineId,
+          displayName: user.displayName,
+          source: 'all-history'
+        });
+      }
+    });
+
+    return Array.from(combinedMap.values());
+  }, [groupMembers, lineGroupMembers, groupExpenseUsers, allHistoricalUsers]);
+  
+  // Debug logging - より詳細な情報を追加
+  if (editingExpense) {
+    console.log("=== EXPENSE EDITING DEBUG (詳細版) ===");
+    console.log("編集中の支出ID:", editingExpense);
+    console.log("全支出データ数:", expenses.length);
+    console.log("全支出データ（最初の5件）:", expenses.slice(0, 5).map(e => ({
+      id: e.id,
+      userDisplayName: e.userDisplayName,
+      groupId: e.groupId,
+      lineGroupId: e.lineGroupId,
+      lineId: e.lineId,
+      payerId: e.payerId,
+      payerDisplayName: e.payerDisplayName
+    })));
+    
+    console.log("--- 編集中の支出データ ---");
+    console.log("EditingExpenseData:", editingExpenseData);
+    console.log("EditingGroupId:", editingGroupId);
+    console.log("EditingLineGroupId:", editingLineGroupId);
+    
+    console.log("--- ユーザー取得結果 ---");
+    console.log("GroupMembers (正式メンバー):", groupMembers);
+    console.log("LineGroupMembers (LINEグループメンバー):", lineGroupMembers);
+    console.log("GroupExpenseUsers (このグループの履歴):", groupExpenseUsers);
+    console.log("AllHistoricalUsers (全履歴ユーザー):", allHistoricalUsers);
+    console.log("AvailableMembers (最終的な選択肢):", availableMembers);
+    
+    console.log("--- ローディング状態 ---");
+    console.log("MembersLoading:", membersLoading);
+    console.log("LineGroupMembersLoading:", lineGroupMembersLoading);
+    console.log("MembersError:", membersError);
+    
+    // 選択肢の詳細を表示
+    console.log("--- 選択肢の内訳 ---");
+    const groupCount = availableMembers.filter(m => m.source === 'group').length;
+    const groupHistoryCount = availableMembers.filter(m => m.source === 'group-history').length;
+    const allHistoryCount = availableMembers.filter(m => m.source === 'all-history').length;
+    console.log(`グループメンバー: ${groupCount}人`);
+    console.log(`このグループの履歴: ${groupHistoryCount}人`);
+    console.log(`他グループの履歴: ${allHistoryCount}人`);
+    console.log(`合計: ${availableMembers.length}人`);
+    
+    console.log("=== END DEBUG ===");
+  }
+
 
   if (authLoading) {
     return (
@@ -36,8 +267,8 @@ export default function ExpensesPage() {
 
   const filteredExpenses = expenses.filter((expense) => {
     if (filter === "all") return true;
-    if (filter === "confirmed") return expense.confirmed;
-    if (filter === "unconfirmed") return !expense.confirmed;
+    if (filter === "included") return expense.includeInTotal;
+    if (filter === "excluded") return !expense.includeInTotal;
     return expense.category === filter;
   });
 
@@ -63,10 +294,25 @@ export default function ExpensesPage() {
     "その他",
   ];
 
-  // Calculate individual person totals
+  // Calculate individual person totals based on payer
   const personTotals = filteredExpenses.reduce((acc, expense) => {
-    const personName = expense.userDisplayName || "個人";
-    acc[personName] = (acc[personName] || 0) + expense.amount;
+    // 支払い者ベースで集計
+    const payerId = expense.payerId || expense.lineId;
+    // payerDisplayNameを最優先で使用（userDisplayNameは使わない）
+    let payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
+
+    // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
+    if (payerName === 'メンバー' || payerName === '個人' || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
+      const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
+      if (historicalUser) {
+        payerName = historicalUser.displayName;
+      }
+    }
+
+    // 承認済みの項目のみ合計に含める
+    if (expense.includeInTotal) {
+      acc[payerName] = (acc[payerName] || 0) + expense.amount;
+    }
     return acc;
   }, {} as Record<string, number>);
 
@@ -85,24 +331,24 @@ export default function ExpensesPage() {
     }))
   );
 
-  const handleConfirmExpense = async (id: string) => {
-    try {
-      await updateExpense(id, { confirmed: true });
-    } catch {
-      alert("エラーが発生しました");
-    }
-  };
 
   const handleEditStart = (expense: Expense) => {
     console.log("Edit button clicked for expense:", expense.id);
+    console.log("Original expense data:", expense);
+    
     setEditingExpense(expense.id);
-    setEditForm({
+    const formData = {
       amount: expense.amount,
       description: expense.description,
       date: expense.date,
       category: expense.category,
-      confirmed: expense.confirmed,
-    });
+      includeInTotal: expense.includeInTotal,
+      payerId: expense.payerId || expense.lineId,
+      payerDisplayName: expense.payerDisplayName || expense.userDisplayName || "",
+    };
+    
+    console.log("Setting edit form data:", formData);
+    setEditForm(formData);
   };
 
   const handleEditCancel = () => {
@@ -112,19 +358,34 @@ export default function ExpensesPage() {
       description: "",
       date: "",
       category: "",
-      confirmed: false,
+      includeInTotal: true,
+      payerId: "",
+      payerDisplayName: "",
     });
   };
 
   const handleEditSave = async (id: string) => {
     try {
-      await updateExpense(id, {
+      console.log("=== SAVE DEBUG ===");
+      console.log("Saving expense with data:", {
+        id,
+        editForm,
+        originalExpense: editingExpenseData
+      });
+      
+      const updateData = {
         ...editForm,
         updatedAt: new Date(),
-      });
+      };
+      
+      console.log("Update data being sent:", updateData);
+      
+      await updateExpense(id, updateData);
+      console.log("Save successful");
       setEditingExpense(null);
-    } catch {
-      alert("保存に失敗しました");
+    } catch (error) {
+      console.error("保存エラー:", error);
+      alert(`保存に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
     }
   };
 
@@ -132,16 +393,29 @@ export default function ExpensesPage() {
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     const { name, value, type } = e.target;
-    setEditForm((prev) => ({
-      ...prev,
-      [name]: type === "number" ? Number(value) : value,
-    }));
+    if (name === "payerId") {
+      // 支払い者IDが変更されたら、対応する表示名も更新
+      const selectedMember = availableMembers.find(member => member.lineId === value);
+      const selectedFromHistory = expenses.find(expense => expense.lineId === value);
+      const displayName = selectedMember?.displayName || selectedFromHistory?.userDisplayName || value;
+      
+      setEditForm((prev) => ({
+        ...prev,
+        payerId: value,
+        payerDisplayName: displayName,
+      }));
+    } else {
+      setEditForm((prev) => ({
+        ...prev,
+        [name]: type === "number" ? Number(value) : value,
+      }));
+    }
   };
 
   const handleEditCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setEditForm((prev) => ({
       ...prev,
-      confirmed: e.target.checked,
+      includeInTotal: e.target.checked,
     }));
   };
 
@@ -188,8 +462,8 @@ export default function ExpensesPage() {
                   className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="all">すべて</option>
-                  <option value="confirmed">確認済み</option>
-                  <option value="unconfirmed">未確認</option>
+                  <option value="included">合計に含む</option>
+                  <option value="excluded">合計から除外</option>
                   {categories.map((category) => (
                     <option key={category} value={category}>
                       {category}
@@ -218,18 +492,25 @@ export default function ExpensesPage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">
                   📅 期間
                 </label>
-                <select
-                  value={periodDays}
-                  onChange={(e) => setPeriodDays(Number(e.target.value))}
-                  className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value={7}>過去7日</option>
-                  <option value={30}>過去30日</option>
-                  <option value={60}>過去60日</option>
-                  <option value={90}>過去90日</option>
-                  <option value={365}>過去1年</option>
-                  <option value={0}>全期間</option>
-                </select>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentMonth(prev => prev.subtract(1, 'month'))}
+                    className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    title="前月"
+                  >
+                    ◀
+                  </button>
+                  <div className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm whitespace-nowrap">
+                    {getDisplayTitle(currentMonth, dateSettings)}
+                  </div>
+                  <button
+                    onClick={() => setCurrentMonth(prev => prev.add(1, 'month'))}
+                    className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    title="次月"
+                  >
+                    ▶
+                  </button>
+                </div>
               </div>
             </div>
             {sortedPersonTotals.length > 0 && (
@@ -248,10 +529,21 @@ export default function ExpensesPage() {
                         </div>
                         <div className="text-xs text-gray-500">
                           {
-                            filteredExpenses.filter(
-                              (e) =>
-                                (e.userDisplayName || "個人") === personName
-                            ).length
+                            filteredExpenses.filter((e) => {
+                              const payerId = e.payerId || e.lineId;
+                              // payerDisplayNameを最優先で使用
+                              let expensePayerName = e.payerDisplayName || e.userDisplayName || "個人";
+
+                              // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
+                              if (expensePayerName === 'メンバー' || expensePayerName === '個人' || expensePayerName.startsWith('Unknown_') || expensePayerName.startsWith('User_')) {
+                                const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
+                                if (historicalUser) {
+                                  expensePayerName = historicalUser.displayName;
+                                }
+                              }
+
+                              return expensePayerName === personName;
+                            }).length
                           }
                           件
                         </div>
@@ -272,10 +564,17 @@ export default function ExpensesPage() {
                 <div className="text-2xl font-black text-red-600 my-1">
                   ¥
                   {filteredExpenses
+                    .filter(e => e.includeInTotal) // 合計に含むもののみ
                     .reduce((sum, e) => sum + e.amount, 0)
                     .toLocaleString()}
                 </div>
-                <div className="text-xs text-gray-500">総支出額</div>
+                <div className="text-xs text-gray-500">合計総支出額</div>
+                {filteredExpenses.some(e => !e.includeInTotal) && (
+                  <div className="text-xs text-yellow-600 mt-1">
+                    除外: {filteredExpenses.filter(e => !e.includeInTotal).length}件
+                  </div>
+                )}
+                
               </div>
             </div>
           </div>
@@ -356,7 +655,7 @@ export default function ExpensesPage() {
               <div
                 key={expense.id}
                 className={`bg-white rounded-xl shadow-sm border hover:shadow-md transition-shadow duration-200 overflow-hidden ${
-                  !expense.confirmed
+                  !expense.includeInTotal
                     ? "border-l-4 border-l-yellow-400 bg-gradient-to-r from-yellow-50 to-white"
                     : "border-l-4 border-l-green-400 bg-gradient-to-r from-green-50 to-white"
                 }`}
@@ -428,18 +727,99 @@ export default function ExpensesPage() {
                             ))}
                           </select>
                         </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            💳 支払い者
+                          </label>
+                          <select
+                            name="payerId"
+                            value={editForm.payerId}
+                            onChange={handleEditInputChange}
+                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          >
+                            {/* availableMembersが空の場合、現在の支出リストから直接ユーザーを生成 */}
+                            {availableMembers.length === 0 ? (
+                              // フォールバック: 現在表示中の支出からユーザーを抽出
+                              (() => {
+                                console.log("=== フォールバック処理 ===");
+                                console.log("availableMembers.length:", availableMembers.length);
+                                console.log("expenses.length:", expenses.length);
+                                
+                                const fallbackUsers = new Map();
+                                expenses.forEach(exp => {
+                                  if (exp.lineId !== editingExpenseData?.lineId && exp.userDisplayName && exp.userDisplayName !== "個人") {
+                                    fallbackUsers.set(exp.lineId, exp.userDisplayName);
+                                  }
+                                });
+                                
+                                // 支出データもない場合は、サンプルユーザーを追加（テスト用）
+                                if (fallbackUsers.size === 0) {
+                                  console.log("支出データなし - サンプルユーザーを追加");
+                                  fallbackUsers.set("sample1", "田中太郎");
+                                  fallbackUsers.set("sample2", "佐藤花子");
+                                  fallbackUsers.set("sample3", "鈴木一郎");
+                                }
+                                
+                                console.log("フォールバックユーザー:", Array.from(fallbackUsers.entries()));
+                                return Array.from(fallbackUsers.entries()).map(([lineId, displayName]) => (
+                                  <option key={lineId} value={lineId}>
+                                    {displayName} {lineId.startsWith('sample') ? '(テスト)' : '(支出履歴から)'}
+                                  </option>
+                                ));
+                              })()
+                            ) : (
+                              // 通常: availableMembersから選択肢を生成（自分も含める）
+                              availableMembers
+                                .map((member) => {
+                                  let label = '';
+                                  switch(member.source) {
+                                    case 'group':
+                                      label = '(グループメンバー)';
+                                      break;
+                                    case 'group-history':
+                                      label = '(このグループ)';
+                                      break;
+                                    case 'all-history':
+                                      label = '(他グループ)';
+                                      break;
+                                    default:
+                                      label = '';
+                                  }
+                                  return (
+                                    <option key={member.lineId} value={member.lineId}>
+                                      {member.displayName} {label}
+                                    </option>
+                                  );
+                                })
+                            )}
+                              
+                            {/* 既存の支払い者が上記に含まれていない場合は追加 */}
+                            {editForm.payerId && 
+                             editForm.payerId !== editingExpenseData?.lineId &&
+                             !availableMembers.some(member => member.lineId === editForm.payerId) &&
+                             !expenses.some(expense => expense.lineId === editForm.payerId) && (
+                              <option key={editForm.payerId} value={editForm.payerId}>
+                                {editForm.payerDisplayName || "不明なユーザー"}
+                              </option>
+                            )}
+                          </select>
+                          <p className="text-xs text-gray-500 mt-1">
+                            デフォルトは入力者と同じです
+                          </p>
+                        </div>
                       </div>
 
                       <div className="flex items-center bg-white rounded-lg p-3 border border-gray-200">
                         <input
                           type="checkbox"
-                          name="confirmed"
-                          checked={editForm.confirmed}
+                          name="includeInTotal"
+                          checked={editForm.includeInTotal}
                           onChange={handleEditCheckboxChange}
                           className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                         />
                         <label className="ml-3 text-sm font-medium text-gray-700">
-                          確認済みとしてマーク
+                          合計に含める
                         </label>
                       </div>
 
@@ -506,17 +886,41 @@ export default function ExpensesPage() {
                         {expense.userDisplayName &&
                           expense.userDisplayName !== "個人" && (
                             <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                              👤 {expense.userDisplayName}
+                              👤 入力者: {expense.userDisplayName}
                             </span>
                           )}
+                        {(() => {
+                          // 支払い者の名前を取得（payerDisplayNameを最優先）
+                          const payerId = expense.payerId || expense.lineId;
+                          let payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
+                          const isDefaultPayer = !expense.payerId || expense.payerId === expense.lineId;
+
+                          // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
+                          if (payerName === 'メンバー' || payerName === '個人' || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
+                            const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
+                            if (historicalUser) {
+                              payerName = historicalUser.displayName;
+                            }
+                          }
+
+                          return payerName !== "個人" && (
+                            <span className={`text-xs font-medium px-2.5 py-0.5 rounded ${
+                              isDefaultPayer
+                                ? "bg-green-100 text-green-800"
+                                : "bg-purple-100 text-purple-800"
+                            }`}>
+                              💳 支払い者: {payerName}
+                            </span>
+                          );
+                        })()}
                         {expense.lineGroupId && (
                           <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">
                             📱 LINEグループ
                           </span>
                         )}
-                        {!expense.confirmed && (
-                          <span className="bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                            未確認
+                        {!expense.includeInTotal && (
+                          <span className="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded">
+                            合計から除外
                           </span>
                         )}
                       </div>
@@ -557,22 +961,27 @@ export default function ExpensesPage() {
                         className="flex flex-wrap gap-2 pt-3 border-t border-gray-100"
                         style={{ position: "relative", zIndex: 10 }}
                       >
-                        {!expense.confirmed && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              console.log("Confirm button clicked");
-                              handleConfirmExpense(expense.id);
-                            }}
-                            className="bg-green-500 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1 cursor-pointer"
-                            style={{ pointerEvents: "auto" }}
-                          >
-                            <span className="text-sm">✓</span>
-                            確認
-                          </button>
-                        )}
+                        {/* 合計に含める/除外する切り替えボタン */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            console.log("Toggle include in total clicked");
+                            updateExpense(expense.id, { includeInTotal: !expense.includeInTotal });
+                          }}
+                          className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer ${
+                            expense.includeInTotal 
+                              ? "bg-green-500 text-white hover:bg-green-600"
+                              : "bg-gray-500 text-white hover:bg-gray-600"
+                          }`}
+                          style={{ pointerEvents: "auto" }}
+                        >
+                          <span className="text-sm">
+                            {expense.includeInTotal ? "✓" : "✗"}
+                          </span>
+                          {expense.includeInTotal ? "合計に含む" : "合計から除外"}
+                        </button>
 
                         <button
                           type="button"
