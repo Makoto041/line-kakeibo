@@ -40,6 +40,9 @@ export interface GroupMember {
   isActive: boolean;
 }
 
+// Expense status type
+export type ExpenseStatus = 'pending' | 'shared' | 'personal' | 'advance_pending' | 'advance_settled';
+
 // Enhanced Expense interface with group support
 export interface Expense {
   id: string;
@@ -52,6 +55,7 @@ export interface Expense {
   date: string;             // YYYY-MM-DD format
   category: string;
   includeInTotal: boolean;  // 合計に含めるかどうか（旧confirmed）
+  status?: ExpenseStatus;   // 支出ステータス（確認待ち、共同費、立替など）
   payerId?: string;          // LINE User ID of the person who paid (defaults to lineId)
   payerDisplayName?: string; // Display name of the person who paid (defaults to userDisplayName)
   ocrText?: string;
@@ -499,7 +503,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
 
       // Remove undefined values to avoid Firestore errors
       const cleanUpdates = Object.fromEntries(
-        Object.entries(normalizedUpdates).filter(([_, value]) => value !== undefined)
+        Object.entries(normalizedUpdates).filter(([, value]) => value !== undefined)
       );
 
       await updateDoc(doc(db, 'expenses', id), {

@@ -74,7 +74,7 @@ export default function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListP
 
     // ステータスフィルター
     if (statusFilter) {
-      filtered = filtered.filter(e => (e as any).status === statusFilter)
+      filtered = filtered.filter(e => e.status === statusFilter)
     }
 
     // 日付範囲フィルター
@@ -187,7 +187,7 @@ export default function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListP
           {/* ソート */}
           <select
             value={sortOrder}
-            onChange={(e) => setSortOrder(e.target.value as any)}
+            onChange={(e) => setSortOrder(e.target.value as 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc')}
             className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
           >
             <option value="date-desc">日付 ↓</option>
@@ -279,9 +279,9 @@ export default function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListP
                           </>
                         )}
                         {/* ステータスバッジ */}
-                        {(expense as any).status && statusConfig[(expense as any).status] && (
-                          <span className={`px-2 py-0.5 rounded-full text-xs ${statusConfig[(expense as any).status].bgColor} ${statusConfig[(expense as any).status].color}`}>
-                            {statusConfig[(expense as any).status].label}
+                        {expense.status && statusConfig[expense.status] && (
+                          <span className={`px-2 py-0.5 rounded-full text-xs ${statusConfig[expense.status].bgColor} ${statusConfig[expense.status].color}`}>
+                            {statusConfig[expense.status].label}
                           </span>
                         )}
                       </div>
