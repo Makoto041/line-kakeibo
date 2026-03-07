@@ -25,10 +25,13 @@ jobs:
   # ========================================
   generate-code:
     runs-on: ubuntu-latest
+    continue-on-error: true
     # Issueコメントが `/claude` で始まる場合のみ実行
     if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/claude'))
+      secrets.ANTHROPIC_API_KEY != '' && (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/claude'))
+      )
     outputs:
       pr_number: ${{ steps.create-pr.outputs.pr_number }}
     steps:

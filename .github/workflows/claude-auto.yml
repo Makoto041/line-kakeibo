@@ -15,6 +15,9 @@ permissions:
 jobs:
   generate-and-pr:
     runs-on: ubuntu-latest
+    # APIキーが未設定の場合はスキップ
+    if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

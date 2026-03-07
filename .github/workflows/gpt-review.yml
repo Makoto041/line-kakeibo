@@ -18,6 +18,9 @@ permissions:
 jobs:
   chatgpt-review:
     runs-on: ubuntu-latest
+    # APIキーが未設定の場合はスキップ
+    if: ${{ secrets.OPENAI_API_KEY != '' }}
+    continue-on-error: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
