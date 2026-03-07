@@ -246,3 +246,199 @@ export async function sendStatusUpdateConfirmation(
 
   await sendTextMessage(targetId, messages[status]);
 }
+
+/**
+ * テキスト入力用の情報
+ */
+export interface TextExpenseInfo {
+  expenseId: string;
+  description: string;
+  amount: number;
+  category: string;
+  categoryEmoji: string;
+  date: string;
+  paymentMethod?: string;
+  payerName?: string;
+}
+
+/**
+ * テキスト入力登録完了のFlex Messageを生成
+ */
+export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage {
+  const { expenseId, description, amount, category, categoryEmoji, date, paymentMethod, payerName } = info;
+
+  // 支払い方法の表示
+  const paymentMethodText = paymentMethod ? `💰 ${paymentMethod}` : '';
+
+  const bubble: FlexBubble = {
+    type: 'bubble',
+    size: 'kilo',
+    header: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        {
+          type: 'text',
+          text: '✅ 支出を登録しました',
+          weight: 'bold',
+          size: 'md',
+          color: '#1DB446',
+        },
+      ],
+      paddingAll: 'lg',
+      backgroundColor: '#F0FFF0',
+    },
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        // 説明
+        {
+          type: 'text',
+          text: description,
+          weight: 'bold',
+          size: 'lg',
+          wrap: true,
+        },
+        // 金額
+        {
+          type: 'text',
+          text: `¥${amount.toLocaleString()}`,
+          weight: 'bold',
+          size: 'xl',
+          color: '#DD4444',
+          margin: 'sm',
+        },
+        // カテゴリと日付
+        {
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
+            {
+              type: 'text',
+              text: `${categoryEmoji} ${category}`,
+              size: 'sm',
+              color: '#888888',
+              flex: 1,
+            },
+            {
+              type: 'text',
+              text: date,
+              size: 'sm',
+              color: '#888888',
+              align: 'end',
+            },
+          ],
+          margin: 'md',
+        },
+        // 支払い方法（設定されている場合）
+        ...(paymentMethodText
+          ? [
+              {
+                type: 'text' as const,
+                text: paymentMethodText,
+                size: 'sm' as const,
+                color: '#666666',
+                margin: 'sm' as const,
+              },
+            ]
+          : []),
+        // 支払い者（設定されている場合）
+        ...(payerName
+          ? [
+              {
+                type: 'text' as const,
+                text: `👤 ${payerName}`,
+                size: 'sm' as const,
+                color: '#666666',
+                margin: 'sm' as const,
+              },
+            ]
+          : []),
+      ],
+      paddingAll: 'lg',
+    },
+    footer: {
+      type: 'box',
+      layout: 'horizontal',
+      contents: [
+        // OKボタン
+        {
+          type: 'button',
+          action: {
+            type: 'postback',
+            label: '✅ OK',
+            data: JSON.stringify({
+              action: 'confirm',
+              expenseId,
+              source: 'text',
+            }),
+            displayText: '✅ 登録を確認しました',
+          },
+          style: 'primary',
+          color: '#00C851',
+          height: 'sm',
+          flex: 1,
+        },
+        // 修正ボタン
+        {
+          type: 'button',
+          action: {
+            type: 'postback',
+            label: '✏️ 修正',
+            data: JSON.stringify({
+              action: 'edit',
+              expenseId,
+              source: 'text',
+            }),
+            displayText: '✏️ 修正が必要です',
+          },
+          style: 'secondary',
+          height: 'sm',
+          flex: 1,
+          margin: 'sm',
+        },
+        // 立替ボタン
+        {
+          type: 'button',
+          action: {
+            type: 'postback',
+            label: '↩️ 立替',
+            data: JSON.stringify({
+              action: 'advance',
+              expenseId,
+              source: 'text',
+            }),
+            displayText: '↩️ 立替として記録',
+          },
+          style: 'secondary',
+          height: 'sm',
+          flex: 1,
+          margin: 'sm',
+        },
+      ],
+      paddingAll: 'md',
+      spacing: 'sm',
+    },
+  };
+
+  return {
+    type: 'flex',
+    altText: `✅ ${description} ¥${amount.toLocaleString()}`,
+    contents: bubble,
+  };
+}
+
+/**
+ * テキスト入力登録完了通知を送信
+ */
+export async function sendTextExpenseNotification(
+  targetId: string,
+  info: TextExpenseInfo
+): Promise<void> {
+  const client = getLineClient();
+  const message = buildTextExpenseFlexMessage(info);
+
+  await client.pushMessage(targetId, message);
+  console.log(`Text expense notification sent to ${targetId}`);
+}

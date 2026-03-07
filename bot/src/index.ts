@@ -151,6 +151,12 @@ app.post("/webhook", async (req: Request, res: Response) => {
               }).catch(console.error);
             }
           });
+        } else if (event.type === "postback") {
+          // Postbackイベント処理
+          console.log("Processing postback event");
+          await handlePostback(event).catch(error => {
+            console.error("Postback processing error:", error);
+          });
         } else if (event.type === "join") {
           await handleJoin(event);
         } else if (event.type === "memberJoined") {
@@ -1081,26 +1087,9 @@ async function handleTextMessage(event: any) {
 
     console.log(`=== TEXT PROCESSING: Successfully parsed expense:`, parsed);
 
-    // Immediate acknowledgment - send success message to the source where message came from
-    try {
-      const targetId =
-        event.source.type === "group"
-          ? event.source.groupId
-          : event.source.userId;
-
-      await client.replyMessage(event.replyToken, {
-        type: "text",
-        text: `✅ 登録完了！\n${
-          parsed.description
-        } - ¥${parsed.amount.toLocaleString()} (${parsed.date})`,
-      });
-
-      console.log(
-        `Expense registration response sent to ${event.source.type}: ${targetId}`
-      );
-    } catch (replyError) {
-      console.error("Failed to send immediate reply:", replyError);
-    }
+    // 即座に処理中のメッセージを返す（Flex Messageは後で送信）
+    // 注: replyTokenは既に「💬 テキストを受信しました！処理中です...」で使用済みの場合あり
+    // そのため、ここでは追加のreplyMessageは送信しない
 
     // Process expense registration in background (don't await)
     processExpenseInBackground(event, parsed).catch((error) => {
@@ -1380,7 +1369,7 @@ async function processExpenseInBackground(event: any, parsed: any) {
       }
     }
 
-    // Create expense object
+    // Create expense object with payment method
     const expense = {
       lineId: event.source.userId,
       appUid: appUid,
@@ -1391,11 +1380,14 @@ async function processExpenseInBackground(event: any, parsed: any) {
       description: parsed.description,
       date: parsed.date,
       category: finalCategory,
-      confirmed: true,
+      confirmed: false, // 未確認状態で保存（ボタンで確認）
       payerId: event.source.userId, // デフォルトは入力者
       payerDisplayName: userDisplayName,
       ocrText: "",
       items: [],
+      // 新規追加: 入力元と支払い方法
+      inputSource: 'line_text' as const,
+      paymentMethod: parsed.paymentMethod,
     };
 
     // Save expense to database
@@ -1405,8 +1397,53 @@ async function processExpenseInBackground(event: any, parsed: any) {
       `Text expense saved with ID: ${expenseId} for lineId: ${event.source.userId}, appUid: ${expense.appUid}`
     );
 
-    // Send confirmation that background processing completed (optional)
-    // We could send a quiet notification, but for now just log success
+    // Flex Messageで確認通知を送信
+    const targetId = event.source.type === "group"
+      ? event.source.groupId
+      : event.source.userId;
+
+    if (targetId) {
+      const getCategoryEmoji = (category: string): string => {
+        const emojiMap: Record<string, string> = {
+          '食費': '🍽️',
+          '日用品': '🛒',
+          '交通費': '🚃',
+          '医療費': '🏥',
+          '娯楽費': '🎮',
+          '衣服費': '👕',
+          '教育費': '📚',
+          '通信費': '📱',
+          '光熱費': '💡',
+          '住居費': '🏠',
+          '保険': '🛡️',
+          '税金': '📋',
+          '貯蓄': '💰',
+          '投資': '📈',
+          '美容': '💅',
+          'ペット': '🐶',
+          '趣味': '🎨',
+          '交際費': '🎁',
+          'その他': '📦',
+        };
+        return emojiMap[category] || '📦';
+      };
+
+      const textExpenseInfo: TextExpenseInfo = {
+        expenseId,
+        description: parsed.description,
+        amount: parsed.amount,
+        category: finalCategory,
+        categoryEmoji: getCategoryEmoji(finalCategory),
+        date: parsed.date,
+        paymentMethod: parsed.paymentMethod !== 'unknown'
+          ? getPaymentMethodLabel(parsed.paymentMethod as PaymentMethod)
+          : undefined,
+        payerName: userDisplayName,
+      };
+
+      await sendTextExpenseNotification(targetId, textExpenseInfo);
+    }
+
     console.log("Background expense processing completed successfully");
   } catch (error) {
     console.error("Background expense processing error:", error);
@@ -1625,7 +1662,15 @@ import {
   processLatestEmail,
   isGmailAuthConfigured,
 } from "./gmail";
-import { handlePostback, isPostbackEvent, isGmailPostback } from "./line";
+import {
+  handlePostback,
+  isPostbackEvent,
+  isGmailPostback,
+  isTextExpensePostback,
+  sendTextExpenseNotification,
+  TextExpenseInfo,
+} from "./line";
+import { getPaymentMethodLabel, PaymentMethod } from "./textParser";
 
 /**
  * Gmail Pub/Subハンドラー

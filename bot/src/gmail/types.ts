@@ -106,7 +106,7 @@ export type GmailExpense = Expense & GmailExpenseExtension;
  */
 export interface PostbackActionData {
   /** アクション種別 */
-  action: 'shared' | 'personal' | 'advance';
+  action: 'shared' | 'personal' | 'advance' | 'confirm' | 'edit';
   /** 対象の支出ID */
   expenseId: string;
 }

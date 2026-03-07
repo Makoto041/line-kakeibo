@@ -11,6 +11,10 @@ export {
   sendTextMessage,
   sendStatusUpdateConfirmation,
   CardUsageInfo,
+  // テキスト入力用
+  buildTextExpenseFlexMessage,
+  sendTextExpenseNotification,
+  TextExpenseInfo,
 } from './flexMessage';
 
 // Postback処理
@@ -18,4 +22,5 @@ export {
   handlePostback,
   isPostbackEvent,
   isGmailPostback,
+  isTextExpensePostback,
 } from './postback';
