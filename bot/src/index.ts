@@ -1610,4 +1610,151 @@ exports.importMoneyForward = onSchedule(
   importMoneyForward
 );
 
+// ============================================
+// Gmail自動取得機能（新規追加）
+// ============================================
+
+import { onMessagePublished } from "firebase-functions/v2/pubsub";
+import {
+  handleGmailPubSub,
+  getAuthUrl,
+  handleOAuthCallback,
+  registerWatch,
+  renewWatch,
+  getWatchStatus,
+  processLatestEmail,
+  isGmailAuthConfigured,
+} from "./gmail";
+import { handlePostback, isPostbackEvent, isGmailPostback } from "./line";
+
+/**
+ * Gmail Pub/Subハンドラー
+ * Gmailから新着メール通知を受け取り、カード利用通知を処理
+ */
+export const gmailPubSubHandler = onMessagePublished(
+  {
+    topic: "gmail-notifications",
+    region: "asia-northeast1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    secrets: [
+      "LINE_CHANNEL_TOKEN",
+      "LINE_CHANNEL_SECRET",
+      "GEMINI_API_KEY",
+      "GMAIL_CLIENT_ID",
+      "GMAIL_CLIENT_SECRET",
+    ],
+  },
+  async (event) => {
+    const data = event.data.message.data;
+    await handleGmailPubSub(data);
+  }
+);
+
+/**
+ * Gmail Watch自動更新（6日ごと）
+ */
+export const renewGmailWatch = onSchedule(
+  {
+    schedule: "0 3 */6 * *", // 6日ごとの午前3時
+    timeZone: "Asia/Tokyo",
+    region: "asia-northeast1",
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    secrets: ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
+  },
+  async () => {
+    console.log("Renewing Gmail Watch...");
+    await renewWatch();
+    console.log("Gmail Watch renewed successfully");
+  }
+);
+
+/**
+ * Gmail OAuth2認証URL取得エンドポイント
+ * 初回セットアップ時に使用
+ */
+app.get("/gmail/auth", async (_req, res) => {
+  try {
+    const authUrl = getAuthUrl();
+    res.json({ authUrl });
+  } catch (error) {
+    console.error("Failed to generate auth URL:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * Gmail OAuth2コールバックエンドポイント
+ */
+app.get("/gmail/callback", async (req, res) => {
+  try {
+    const code = req.query.code as string;
+    if (!code) {
+      return res.status(400).json({ error: "Authorization code required" });
+    }
+
+    await handleOAuthCallback(code);
+    res.send("Gmail OAuth2 authentication successful! You can close this window.");
+  } catch (error) {
+    console.error("OAuth callback failed:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * Gmail Watch登録エンドポイント
+ */
+app.post("/gmail/register-watch", async (_req, res) => {
+  try {
+    const isConfigured = await isGmailAuthConfigured();
+    if (!isConfigured) {
+      return res.status(400).json({
+        error: "Gmail OAuth2 not configured. Please run /gmail/auth first.",
+      });
+    }
+
+    const watchState = await registerWatch();
+    res.json({
+      success: true,
+      historyId: watchState.historyId,
+      expiresAt: new Date(watchState.watchExpiration).toISOString(),
+    });
+  } catch (error) {
+    console.error("Failed to register watch:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * Gmail Watch状態確認エンドポイント
+ */
+app.get("/gmail/status", async (_req, res) => {
+  try {
+    const status = await getWatchStatus();
+    const isConfigured = await isGmailAuthConfigured();
+
+    res.json({
+      oauthConfigured: isConfigured,
+      ...status,
+    });
+  } catch (error) {
+    console.error("Failed to get watch status:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * テスト用: 最新のメールを手動で処理
+ */
+app.post("/gmail/process-latest", async (_req, res) => {
+  try {
+    const result = await processLatestEmail();
+    res.json(result);
+  } catch (error) {
+    console.error("Failed to process latest email:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
 export default app;
