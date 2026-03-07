@@ -10,6 +10,9 @@ env:
 jobs:
   preview-deploy:
     runs-on: ubuntu-latest
+    # Vercel secrets が設定されていない場合はスキップ
+    if: ${{ secrets.VERCEL_TOKEN != '' }}
+    continue-on-error: true  # デプロイ失敗でもPRをブロックしない
     permissions:
       pull-requests: write
       deployments: write

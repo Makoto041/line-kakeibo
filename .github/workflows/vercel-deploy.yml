@@ -18,7 +18,9 @@ jobs:
   deploy:
     name: Deploy to Vercel
     runs-on: ubuntu-latest
-    
+    # Vercel secrets が設定されていない場合でも続行
+    continue-on-error: true
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
