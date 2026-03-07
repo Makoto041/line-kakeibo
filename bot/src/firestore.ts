@@ -39,6 +39,12 @@ export interface GroupMember {
   isActive: boolean;
 }
 
+// 支出ステータス
+export type ExpenseStatusType = 'pending' | 'shared' | 'personal' | 'advance_pending' | 'advance_settled';
+
+// 入力元
+export type InputSourceType = 'line_text' | 'line_ocr' | 'gmail_auto';
+
 // Enhanced Expense interface with group support
 export interface Expense {
   id?: string;
@@ -60,6 +66,13 @@ export interface Expense {
     price: number;
     quantity?: number;
   }>;
+  // 立替機能フィールド
+  status?: ExpenseStatusType;     // 支出ステータス
+  inputSource?: InputSourceType;  // 入力元
+  advanceBy?: string;             // 立替者のLINE ID
+  advanceSettledAt?: Timestamp;   // 精算日時
+  paymentMethod?: string;         // 支払い方法（cash, paypay, card）
+  gmailMessageId?: string;        // Gmail自動取得時のメッセージID
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
@@ -791,6 +804,221 @@ export async function recordCategoryFeedback(feedback: Omit<CategoryFeedback, 'i
     console.log(`Category feedback recorded for ${feedback.lineId}`);
   } catch (error) {
     console.error('Error recording category feedback:', error);
+    throw error;
+  }
+}
+
+// ============================================
+// 立替機能
+// ============================================
+
+/**
+ * 立替情報のサマリー
+ */
+export interface AdvanceSummary {
+  userId: string;
+  userDisplayName: string;
+  totalAdvanced: number;
+  expenses: Expense[];
+}
+
+/**
+ * 精算結果
+ */
+export interface SettlementResult {
+  fromUserId: string;
+  fromUserName: string;
+  toUserId: string;
+  toUserName: string;
+  amount: number;
+}
+
+/**
+ * グループの未精算立替一覧を取得
+ */
+export async function getPendingAdvances(groupIdOrLineGroupId: string, isLineGroupId: boolean = false): Promise<Expense[]> {
+  try {
+    const field = isLineGroupId ? 'lineGroupId' : 'groupId';
+    const snapshot = await getDb()
+      .collection('expenses')
+      .where(field, '==', groupIdOrLineGroupId)
+      .where('status', '==', 'advance_pending')
+      .get();
+
+    const expenses = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Expense));
+
+    return expenses.sort((a, b) => {
+      const aTime = a.createdAt?.toMillis() || 0;
+      const bTime = b.createdAt?.toMillis() || 0;
+      return bTime - aTime;
+    });
+  } catch (error) {
+    console.error('Error getting pending advances:', error);
+    throw error;
+  }
+}
+
+/**
+ * ユーザー別の立替サマリーを取得
+ */
+export async function getAdvanceSummaryByUser(
+  groupIdOrLineGroupId: string,
+  isLineGroupId: boolean = false
+): Promise<AdvanceSummary[]> {
+  const expenses = await getPendingAdvances(groupIdOrLineGroupId, isLineGroupId);
+
+  // ユーザー別に集計
+  const userMap = new Map<string, AdvanceSummary>();
+
+  for (const expense of expenses) {
+    const userId = expense.advanceBy || expense.payerId;
+    const userName = expense.payerDisplayName || 'Unknown';
+
+    if (!userMap.has(userId)) {
+      userMap.set(userId, {
+        userId,
+        userDisplayName: userName,
+        totalAdvanced: 0,
+        expenses: []
+      });
+    }
+
+    const summary = userMap.get(userId)!;
+    summary.totalAdvanced += expense.amount;
+    summary.expenses.push(expense);
+  }
+
+  return Array.from(userMap.values());
+}
+
+/**
+ * 月別の立替一覧を取得
+ */
+export async function getMonthlyAdvances(
+  groupIdOrLineGroupId: string,
+  year: number,
+  month: number,
+  isLineGroupId: boolean = false
+): Promise<Expense[]> {
+  try {
+    const field = isLineGroupId ? 'lineGroupId' : 'groupId';
+    const startDate = dayjs(`${year}-${month.toString().padStart(2, '0')}-01`).format('YYYY-MM-DD');
+    const endDate = dayjs(startDate).endOf('month').format('YYYY-MM-DD');
+
+    const snapshot = await getDb()
+      .collection('expenses')
+      .where(field, '==', groupIdOrLineGroupId)
+      .where('status', '==', 'advance_pending')
+      .where('date', '>=', startDate)
+      .where('date', '<=', endDate)
+      .get();
+
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Expense));
+  } catch (error) {
+    console.error('Error getting monthly advances:', error);
+    throw error;
+  }
+}
+
+/**
+ * 精算額を計算
+ *
+ * 2人のユーザー間で、誰が誰にいくら払うべきかを計算
+ */
+export function calculateSettlement(summaries: AdvanceSummary[]): SettlementResult | null {
+  if (summaries.length !== 2) {
+    console.warn('Settlement calculation requires exactly 2 users');
+    return null;
+  }
+
+  const [user1, user2] = summaries;
+  const diff = user1.totalAdvanced - user2.totalAdvanced;
+
+  if (diff === 0) {
+    return null; // 精算不要
+  }
+
+  if (diff > 0) {
+    // user2 → user1 に diff/2 円支払う
+    return {
+      fromUserId: user2.userId,
+      fromUserName: user2.userDisplayName,
+      toUserId: user1.userId,
+      toUserName: user1.userDisplayName,
+      amount: Math.round(diff / 2)
+    };
+  } else {
+    // user1 → user2 に |diff|/2 円支払う
+    return {
+      fromUserId: user1.userId,
+      fromUserName: user1.userDisplayName,
+      toUserId: user2.userId,
+      toUserName: user2.userDisplayName,
+      amount: Math.round(Math.abs(diff) / 2)
+    };
+  }
+}
+
+/**
+ * 立替を精算済みにする
+ */
+export async function settleAdvances(expenseIds: string[]): Promise<void> {
+  try {
+    const now = Timestamp.now();
+    const batch = getDb().batch();
+
+    for (const id of expenseIds) {
+      const ref = getDb().collection('expenses').doc(id);
+      batch.update(ref, {
+        status: 'advance_settled',
+        advanceSettledAt: now,
+        updatedAt: now
+      });
+    }
+
+    await batch.commit();
+    console.log(`Settled ${expenseIds.length} advance expenses`);
+  } catch (error) {
+    console.error('Error settling advances:', error);
+    throw error;
+  }
+}
+
+/**
+ * グループの精算履歴を取得
+ */
+export async function getSettledAdvances(
+  groupIdOrLineGroupId: string,
+  isLineGroupId: boolean = false,
+  limitCount: number = 50
+): Promise<Expense[]> {
+  try {
+    const field = isLineGroupId ? 'lineGroupId' : 'groupId';
+    const snapshot = await getDb()
+      .collection('expenses')
+      .where(field, '==', groupIdOrLineGroupId)
+      .where('status', '==', 'advance_settled')
+      .limit(limitCount)
+      .get();
+
+    const expenses = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Expense));
+
+    return expenses.sort((a, b) => {
+      const aTime = a.advanceSettledAt?.toMillis() || 0;
+      const bTime = b.advanceSettledAt?.toMillis() || 0;
+      return bTime - aTime;
+    });
+  } catch (error) {
+    console.error('Error getting settled advances:', error);
     throw error;
   }
 }

@@ -20,6 +20,12 @@ import {
   getGroupByLineGroupId,
   saveUserSettings,
   getUserSettings,
+  // 立替機能
+  getPendingAdvances,
+  getAdvanceSummaryByUser,
+  calculateSettlement,
+  settleAdvances,
+  AdvanceSummary,
 } from "./firestore";
 import { parseTextExpense } from "./textParser";
 import { resolveAppUidForExpense } from "./linkUserResolver";
@@ -1071,7 +1077,130 @@ async function handleTextMessage(event: any) {
       return;
     }
 
-    // ② テキスト登録
+    // ④ 立替一覧コマンド
+    if (text === "立替一覧" || text === "立替") {
+      console.log(`=== COMMAND MATCHED: Processing 立替一覧 command ===`);
+      try {
+        // グループコンテキストが必要
+        if (event.source.type !== "group") {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "💡 立替一覧はグループ内でのみ利用できます。\n\nLINEグループで「立替一覧」と送信してください。",
+          });
+          return;
+        }
+
+        const lineGroupId = event.source.groupId;
+        const summaries = await getAdvanceSummaryByUser(lineGroupId, true);
+
+        if (summaries.length === 0) {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "📝 未精算の立替はありません。\n\n支出登録時に「↩️ 立替」ボタンを押すと、立替として記録できます。",
+          });
+          return;
+        }
+
+        // サマリーを表示
+        let replyText = "💰 未精算の立替一覧:\n\n";
+
+        let totalAdvances = 0;
+        for (const summary of summaries) {
+          replyText += `👤 ${summary.userDisplayName}\n`;
+          replyText += `   立替合計: ¥${summary.totalAdvanced.toLocaleString()}\n`;
+          // 最近の3件のみ表示
+          const recentExpenses = summary.expenses.slice(0, 3);
+          for (const expense of recentExpenses) {
+            replyText += `   • ${expense.description} ¥${expense.amount.toLocaleString()}\n`;
+          }
+          if (summary.expenses.length > 3) {
+            replyText += `   ...他${summary.expenses.length - 3}件\n`;
+          }
+          replyText += "\n";
+          totalAdvances += summary.totalAdvanced;
+        }
+
+        // 精算額を計算（2人の場合）
+        if (summaries.length === 2) {
+          const settlement = calculateSettlement(summaries);
+          if (settlement) {
+            replyText += `\n💸 精算額:\n`;
+            replyText += `${settlement.fromUserName} → ${settlement.toUserName}\n`;
+            replyText += `¥${settlement.amount.toLocaleString()}\n\n`;
+            replyText += `「精算」と送信すると精算を完了できます。`;
+          } else {
+            replyText += `\n✅ 精算不要（差額なし）`;
+          }
+        }
+
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: replyText,
+        });
+      } catch (error) {
+        console.error("Error getting advance list:", error);
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: "立替一覧の取得に失敗しました。",
+        });
+      }
+      return;
+    }
+
+    // ⑤ 精算コマンド
+    if (text === "精算") {
+      console.log(`=== COMMAND MATCHED: Processing 精算 command ===`);
+      try {
+        // グループコンテキストが必要
+        if (event.source.type !== "group") {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "💡 精算はグループ内でのみ利用できます。\n\nLINEグループで「精算」と送信してください。",
+          });
+          return;
+        }
+
+        const lineGroupId = event.source.groupId;
+        const pendingAdvances = await getPendingAdvances(lineGroupId, true);
+
+        if (pendingAdvances.length === 0) {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "📝 精算する立替がありません。",
+          });
+          return;
+        }
+
+        const summaries = await getAdvanceSummaryByUser(lineGroupId, true);
+
+        // 精算額を計算
+        let settlementText = "";
+        if (summaries.length === 2) {
+          const settlement = calculateSettlement(summaries);
+          if (settlement) {
+            settlementText = `\n\n💸 精算内容:\n${settlement.fromUserName} → ${settlement.toUserName}\n¥${settlement.amount.toLocaleString()}`;
+          }
+        }
+
+        // 立替を精算済みにする
+        const expenseIds = pendingAdvances.map((e) => e.id!);
+        await settleAdvances(expenseIds);
+
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: `✅ 精算が完了しました！\n\n精算件数: ${pendingAdvances.length}件${settlementText}\n\n次の立替からまた集計を開始します。`,
+        });
+      } catch (error) {
+        console.error("Error settling advances:", error);
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: "精算処理に失敗しました。",
+        });
+      }
+      return;
+    }
+
+    // ⑥ テキスト登録
     console.log(`=== TEXT PROCESSING: Trying to parse as expense text ===`);
     const parsed = await parseTextExpense(text);
     if (!parsed) {
