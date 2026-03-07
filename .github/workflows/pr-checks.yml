@@ -22,18 +22,8 @@ jobs:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'npm'
 
-    - name: Install root dependencies
+    - name: Install all dependencies (workspaces)
       run: npm ci
-
-    - name: Install dependencies (Bot)
-      run: |
-        cd bot
-        npm ci
-
-    - name: Install dependencies (Web)
-      run: |
-        cd web
-        npm ci
         
     - name: TypeScript Check (Bot)
       run: |
