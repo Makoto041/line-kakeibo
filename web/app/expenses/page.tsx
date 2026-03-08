@@ -13,9 +13,10 @@ export default function ExpensesPage() {
   const [currentMonth, setCurrentMonth] = useState(dayjs());
   const [dateRange, setDateRange] = useState<{startDate: string; endDate: string} | null>(null);
 
-  // URLからLINE IDを取得
+  // URLからパラメータを取得
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const lineIdFromUrl = urlParams.get('lineId');
+  const editExpenseId = urlParams.get('edit');
   
   console.log("=== EXPENSES PAGE DEBUG ===");
   console.log("user?.uid:", user?.uid);
@@ -42,6 +43,31 @@ export default function ExpensesPage() {
     const range = getEffectiveDateRange(currentMonth, dateSettings);
     setDateRange({ startDate: range.startDate, endDate: range.endDate });
   }, [currentMonth, dateSettings]);
+
+  // URLのeditパラメータで指定された支出を自動的に編集モードで開く
+  useEffect(() => {
+    if (editExpenseId && expenses.length > 0 && !editingExpense) {
+      const expenseToEdit = expenses.find(e => e.id === editExpenseId);
+      if (expenseToEdit) {
+        console.log("Auto-opening edit mode for expense:", editExpenseId);
+        setEditingExpense(expenseToEdit.id);
+        setEditForm({
+          amount: expenseToEdit.amount,
+          description: expenseToEdit.description,
+          date: expenseToEdit.date,
+          category: expenseToEdit.category,
+          includeInTotal: expenseToEdit.includeInTotal,
+          payerId: expenseToEdit.payerId || expenseToEdit.lineId,
+          payerDisplayName: expenseToEdit.payerDisplayName || expenseToEdit.userDisplayName || "",
+        });
+        // スクロールして表示
+        setTimeout(() => {
+          const element = document.getElementById(`expense-${editExpenseId}`);
+          element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
+      }
+    }
+  }, [editExpenseId, expenses, editingExpense]);
 
   const { expenses, loading, error, updateExpense, deleteExpense } =
     useExpenses(effectiveUserId, 0, 500, dateRange?.startDate); // Use custom date range
@@ -654,11 +680,12 @@ export default function ExpensesPage() {
             {sortedExpenses.map((expense) => (
               <div
                 key={expense.id}
+                id={`expense-${expense.id}`}
                 className={`bg-white rounded-xl shadow-sm border hover:shadow-md transition-shadow duration-200 overflow-hidden ${
                   !expense.includeInTotal
                     ? "border-l-4 border-l-yellow-400 bg-gradient-to-r from-yellow-50 to-white"
                     : "border-l-4 border-l-green-400 bg-gradient-to-r from-green-50 to-white"
-                }`}
+                } ${editingExpense === expense.id ? "ring-2 ring-blue-500" : ""}`}
               >
                 <div className="p-4 sm:p-6">
                   {editingExpense === expense.id ? (

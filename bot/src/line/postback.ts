@@ -155,7 +155,7 @@ async function handleTextExpensePostback(
         updatedAt: new Date(),
       });
       if (replyTarget) {
-        const editUrl = `https://line-kakeibo.vercel.app/expense/${expenseId}/edit?lineId=${event.source.userId}`;
+        const editUrl = `https://line-kakeibo.vercel.app/expenses?edit=${expenseId}&lineId=${event.source.userId}`;
         await sendTextMessage(
           replyTarget,
           `✏️ 以下のリンクから修正できます\n${editUrl}`
