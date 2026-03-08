@@ -3,11 +3,19 @@
  *
  * Google OAuth2を使用してGmail APIにアクセスするための認証を管理
  * トークンはFirestoreに保存・管理
+ *
+ * セキュリティ:
+ * - stateパラメータによるCSRF保護
+ * - state有効期限（10分）
  */
 
 import { google, Auth } from 'googleapis';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { GmailToken } from './types';
+import * as crypto from 'crypto';
+
+// OAuth stateの有効期限（10分）
+const STATE_EXPIRY_MS = 10 * 60 * 1000;
 
 // OAuth2クライアント
 let oauth2Client: Auth.OAuth2Client | null = null;
@@ -31,10 +39,66 @@ function getOAuth2Client() {
 }
 
 /**
+ * OAuth stateを生成してFirestoreに保存
+ */
+async function generateAndSaveState(): Promise<string> {
+  const state = crypto.randomBytes(32).toString('hex');
+  const db = getFirestore();
+
+  await db.collection('system').doc('oauthState').set({
+    state,
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromMillis(Date.now() + STATE_EXPIRY_MS),
+  });
+
+  return state;
+}
+
+/**
+ * OAuth stateを検証
+ * 一度使用したstateは削除して再利用を防ぐ
+ */
+async function validateAndConsumeState(state: string): Promise<boolean> {
+  const db = getFirestore();
+  const doc = await db.collection('system').doc('oauthState').get();
+
+  if (!doc.exists) {
+    console.error('OAuth state not found in Firestore');
+    return false;
+  }
+
+  const data = doc.data();
+  if (!data) {
+    return false;
+  }
+
+  // stateが一致するか確認
+  if (data.state !== state) {
+    console.error('OAuth state mismatch');
+    return false;
+  }
+
+  // 有効期限を確認
+  const expiresAt = data.expiresAt?.toMillis?.() || 0;
+  if (Date.now() > expiresAt) {
+    console.error('OAuth state expired');
+    // 期限切れのstateを削除
+    await db.collection('system').doc('oauthState').delete();
+    return false;
+  }
+
+  // 使用済みのstateを削除（再利用防止）
+  await db.collection('system').doc('oauthState').delete();
+
+  return true;
+}
+
+/**
  * OAuth2認証URLを生成
  * 初回セットアップ時にこのURLにアクセスして認証を行う
+ * stateパラメータでCSRF攻撃を防止
  */
-export function getAuthUrl(): string {
+export async function getAuthUrl(): Promise<string> {
   const client = getOAuth2Client();
 
   const scopes = [
@@ -42,18 +106,32 @@ export function getAuthUrl(): string {
     'https://www.googleapis.com/auth/gmail.metadata',
   ];
 
+  // CSRFトークンとして使用するstateを生成
+  const state = await generateAndSaveState();
+
   return client.generateAuthUrl({
     access_type: 'offline', // refresh_tokenを取得するために必要
     scope: scopes,
     prompt: 'consent', // 常に同意画面を表示（refresh_tokenを確実に取得）
+    state, // CSRF保護
   });
 }
 
 /**
  * 認証コードからトークンを取得してFirestoreに保存
  * OAuth2コールバックで呼び出される
+ *
+ * @param code - Google OAuth2から返された認証コード
+ * @param state - CSRF保護用のstateパラメータ
+ * @throws state検証失敗時にエラー
  */
-export async function handleOAuthCallback(code: string): Promise<GmailToken> {
+export async function handleOAuthCallback(code: string, state: string): Promise<GmailToken> {
+  // stateパラメータを検証（CSRF保護）
+  const isValidState = await validateAndConsumeState(state);
+  if (!isValidState) {
+    throw new Error('Invalid or expired OAuth state. Please start the authentication process again.');
+  }
+
   const client = getOAuth2Client();
 
   const { tokens } = await client.getToken(code);

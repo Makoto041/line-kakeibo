@@ -1847,11 +1847,15 @@ export const renewGmailWatch = onSchedule(
 /**
  * Gmail OAuth2認証URL取得エンドポイント
  * 初回セットアップ時に使用
+ * stateパラメータを生成してCSRF攻撃を防止
  */
 app.get("/gmail/auth", async (_req, res) => {
   try {
-    const authUrl = getAuthUrl();
-    res.json({ authUrl });
+    const authUrl = await getAuthUrl(); // async - stateを生成・保存
+    res.json({
+      authUrl,
+      note: "This URL is valid for 10 minutes. State parameter provides CSRF protection.",
+    });
   } catch (error) {
     console.error("Failed to generate auth URL:", error);
     res.status(500).json({ error: (error as Error).message });
@@ -1860,15 +1864,22 @@ app.get("/gmail/auth", async (_req, res) => {
 
 /**
  * Gmail OAuth2コールバックエンドポイント
+ * stateパラメータを検証してCSRF攻撃を防止
  */
 app.get("/gmail/callback", async (req, res) => {
   try {
     const code = req.query.code as string;
+    const state = req.query.state as string;
+
     if (!code) {
       return res.status(400).json({ error: "Authorization code required" });
     }
 
-    await handleOAuthCallback(code);
+    if (!state) {
+      return res.status(400).json({ error: "State parameter required for security validation" });
+    }
+
+    await handleOAuthCallback(code, state);
     res.send("Gmail OAuth2 authentication successful! You can close this window.");
   } catch (error) {
     console.error("OAuth callback failed:", error);
