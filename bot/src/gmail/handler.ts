@@ -27,6 +27,15 @@ import { sendCardUsageNotification } from '../line/flexMessage';
 // システム用のLINE ID（Gmail自動取得用）
 const GMAIL_SYSTEM_LINE_ID = 'gmail-auto-system';
 
+// デフォルトのグループID（環境変数から取得）
+const getDefaultGroupId = (): string | undefined => {
+  return process.env.DEFAULT_GROUP_ID;
+};
+
+const getDefaultLineGroupId = (): string | undefined => {
+  return process.env.LINE_GROUP_ID;
+};
+
 /**
  * Pub/Subメッセージを処理
  * Cloud Functions: onMessagePublished で呼び出される
@@ -50,6 +59,7 @@ export async function handleGmailPubSub(data: string): Promise<void> {
 
 /**
  * 新着メールを取得して処理
+ * ページネーション対応：全ページを処理してからhistoryIdを更新
  */
 async function processNewEmails(newHistoryId: string): Promise<void> {
   const gmail = await getGmailClient();
@@ -61,30 +71,43 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
   }
 
   const startHistoryId = watchState.historyId;
+  const processedMessageIds: string[] = [];
 
   try {
-    // historyId以降の変更を取得
-    const historyResponse = await gmail.users.history.list({
-      userId: 'me',
-      startHistoryId,
-      historyTypes: ['messageAdded'],
-    });
+    let pageToken: string | undefined;
 
-    const histories = historyResponse.data.history || [];
+    // 全ページを処理（ページネーション対応）
+    do {
+      const historyResponse = await gmail.users.history.list({
+        userId: 'me',
+        startHistoryId,
+        historyTypes: ['messageAdded'],
+        pageToken,
+      });
 
-    for (const history of histories) {
-      const messagesAdded = history.messagesAdded || [];
+      const histories = historyResponse.data.history || [];
 
-      for (const messageAdded of messagesAdded) {
-        const messageId = messageAdded.message?.id;
-        if (!messageId) continue;
+      for (const history of histories) {
+        const messagesAdded = history.messagesAdded || [];
 
-        await processMessage(gmail, messageId);
+        for (const messageAdded of messagesAdded) {
+          const messageId = messageAdded.message?.id;
+          if (!messageId) continue;
+
+          // 重複処理を防ぐ
+          if (processedMessageIds.includes(messageId)) continue;
+          processedMessageIds.push(messageId);
+
+          await processMessage(gmail, messageId);
+        }
       }
-    }
 
-    // historyIdを更新
+      pageToken = historyResponse.data.nextPageToken || undefined;
+    } while (pageToken);
+
+    // 全ページ処理完了後にhistoryIdを更新
     await updateHistoryId(newHistoryId);
+    console.log(`Processed ${processedMessageIds.length} messages, updated historyId to ${newHistoryId}`);
   } catch (error: any) {
     // historyIdが古すぎる場合は最新に更新
     if (error.code === 404) {
@@ -142,6 +165,10 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     );
     const category = categoryResult.category || 'その他';
 
+    // グループIDを取得（グループベースの集計に必要）
+    const groupId = getDefaultGroupId();
+    const lineGroupId = getDefaultLineGroupId();
+
     // 支出データを作成
     const expense: Partial<GmailExpense> = {
       lineId: GMAIL_SYSTEM_LINE_ID, // システムユーザーとして登録
@@ -151,6 +178,9 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       category,
       confirmed: false, // 未確認状態
       payerId: GMAIL_SYSTEM_LINE_ID,
+      // グループ関連（ダッシュボード集計・立替精算に必要）
+      groupId,
+      lineGroupId,
       // Gmail拡張フィールド
       inputSource: 'gmail_auto',
       gmailMessageId: messageId,
@@ -162,7 +192,6 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     console.log(`Expense saved from Gmail: ${expenseId}`);
 
     // LINEグループに通知
-    const lineGroupId = process.env.LINE_GROUP_ID;
     if (lineGroupId) {
       await sendCardUsageNotification(lineGroupId, {
         expenseId,
@@ -246,6 +275,9 @@ export async function processLatestEmail(): Promise<{
         category: categoryResult.category || 'その他',
         confirmed: false,
         payerId: GMAIL_SYSTEM_LINE_ID,
+        // グループ関連（ダッシュボード集計・立替精算に必要）
+        groupId: getDefaultGroupId(),
+        lineGroupId: getDefaultLineGroupId(),
         inputSource: 'gmail_auto' as const,
         gmailMessageId: msg.id,
         status: 'pending' as const,
