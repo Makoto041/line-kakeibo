@@ -967,23 +967,74 @@ export function calculateSettlement(summaries: AdvanceSummary[]): SettlementResu
 
 /**
  * 立替を精算済みにする
+ *
+ * セキュリティ:
+ * - 各expenseを取得して存在確認
+ * - groupId/lineGroupIdが呼び出し元のグループと一致するか検証
+ * - statusが'advance_pending'であることを検証
+ *
+ * @param expenseIds - 精算対象のexpense IDリスト
+ * @param groupIdOrLineGroupId - 検証用のグループID
+ * @param isLineGroupId - trueの場合lineGroupIdで検証、falseの場合groupIdで検証
  */
-export async function settleAdvances(expenseIds: string[]): Promise<void> {
+export async function settleAdvances(
+  expenseIds: string[],
+  groupIdOrLineGroupId: string,
+  isLineGroupId: boolean = false
+): Promise<{ settled: number; skipped: number; errors: string[] }> {
+  const result = { settled: 0, skipped: 0, errors: [] as string[] };
+
   try {
     const now = Timestamp.now();
     const batch = getDb().batch();
+    const field = isLineGroupId ? 'lineGroupId' : 'groupId';
 
     for (const id of expenseIds) {
       const ref = getDb().collection('expenses').doc(id);
+      const doc = await ref.get();
+
+      // 存在確認
+      if (!doc.exists) {
+        result.errors.push(`Expense ${id} not found`);
+        result.skipped++;
+        continue;
+      }
+
+      const data = doc.data();
+
+      // グループ所有権の検証
+      if (data?.[field] !== groupIdOrLineGroupId) {
+        result.errors.push(`Expense ${id} does not belong to this group`);
+        result.skipped++;
+        continue;
+      }
+
+      // ステータスの検証
+      if (data?.status !== 'advance_pending') {
+        result.errors.push(`Expense ${id} is not in advance_pending status (current: ${data?.status})`);
+        result.skipped++;
+        continue;
+      }
+
+      // 検証通過 - バッチに追加
       batch.update(ref, {
         status: 'advance_settled',
         advanceSettledAt: now,
         updatedAt: now
       });
+      result.settled++;
     }
 
-    await batch.commit();
-    console.log(`Settled ${expenseIds.length} advance expenses`);
+    if (result.settled > 0) {
+      await batch.commit();
+    }
+
+    console.log(`Settled ${result.settled} advance expenses, skipped ${result.skipped}`);
+    if (result.errors.length > 0) {
+      console.warn('Settle warnings:', result.errors);
+    }
+
+    return result;
   } catch (error) {
     console.error('Error settling advances:', error);
     throw error;

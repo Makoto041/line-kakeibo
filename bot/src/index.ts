@@ -1182,13 +1182,27 @@ async function handleTextMessage(event: any) {
           }
         }
 
-        // 立替を精算済みにする
+        // 立替を精算済みにする（グループ検証付き）
         const expenseIds = pendingAdvances.map((e) => e.id!);
-        await settleAdvances(expenseIds);
+        const settleResult = await settleAdvances(expenseIds, lineGroupId, true);
+
+        if (settleResult.settled === 0) {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "⚠️ 精算処理でエラーが発生しました。対象の立替が見つかりませんでした。",
+          });
+          return;
+        }
+
+        let resultText = `✅ 精算が完了しました！\n\n精算件数: ${settleResult.settled}件${settlementText}`;
+        if (settleResult.skipped > 0) {
+          resultText += `\n⚠️ ${settleResult.skipped}件はスキップされました`;
+        }
+        resultText += "\n\n次の立替からまた集計を開始します。";
 
         await client.replyMessage(event.replyToken, {
           type: "text",
-          text: `✅ 精算が完了しました！\n\n精算件数: ${pendingAdvances.length}件${settlementText}\n\n次の立替からまた集計を開始します。`,
+          text: resultText,
         });
       } catch (error) {
         console.error("Error settling advances:", error);
