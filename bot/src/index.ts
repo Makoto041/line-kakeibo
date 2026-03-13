@@ -32,6 +32,7 @@ import { resolveAppUidForExpense } from "./linkUserResolver";
 import { getClassificationStats, classifyExpenseWithGemini, isGeminiAvailable, findCategoryWithGemini } from "./geminiCategoryClassifier";
 // Money Forward Me Import
 import { importMoneyForward } from "./importMoneyForward";
+import rateLimit from "express-rate-limit";
 
 // 新機能: 画像最適化とOCR精度向上
 import {
@@ -1923,7 +1924,14 @@ app.get("/gmail/auth", requireAdminAuth, async (_req, res) => {
  * - stateパラメータを検証（CSRF攻撃防止）
  * - adminVerifiedフラグでAdmin認証済みフローを検証
  */
-app.get("/gmail/callback", requireAdminAuth, async (req, res) => {
+const gmailCallbackLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 20, // limit each IP to 20 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.get("/gmail/callback", requireAdminAuth, gmailCallbackLimiter, async (req, res) => {
   try {
     const code = req.query.code as string;
     const state = req.query.state as string;
