@@ -44,31 +44,6 @@ export default function ExpensesPage() {
     setDateRange({ startDate: range.startDate, endDate: range.endDate });
   }, [currentMonth, dateSettings]);
 
-  // URLのeditパラメータで指定された支出を自動的に編集モードで開く
-  useEffect(() => {
-    if (editExpenseId && expenses.length > 0 && !editingExpense) {
-      const expenseToEdit = expenses.find(e => e.id === editExpenseId);
-      if (expenseToEdit) {
-        console.log("Auto-opening edit mode for expense:", editExpenseId);
-        setEditingExpense(expenseToEdit.id);
-        setEditForm({
-          amount: expenseToEdit.amount,
-          description: expenseToEdit.description,
-          date: expenseToEdit.date,
-          category: expenseToEdit.category,
-          includeInTotal: expenseToEdit.includeInTotal,
-          payerId: expenseToEdit.payerId || expenseToEdit.lineId,
-          payerDisplayName: expenseToEdit.payerDisplayName || expenseToEdit.userDisplayName || "",
-        });
-        // スクロールして表示
-        setTimeout(() => {
-          const element = document.getElementById(`expense-${editExpenseId}`);
-          element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 100);
-      }
-    }
-  }, [editExpenseId, expenses, editingExpense]);
-
   const { expenses, loading, error, updateExpense, deleteExpense } =
     useExpenses(effectiveUserId, 0, 500, dateRange?.startDate); // Use custom date range
   const [filter, setFilter] = useState("all");
@@ -83,6 +58,37 @@ export default function ExpensesPage() {
     payerId: string;
     payerDisplayName: string;
   }>({ amount: 0, description: "", date: "", category: "", includeInTotal: true, payerId: "", payerDisplayName: "" });
+  // Flag to prevent re-triggering edit mode after user closes the editor
+  const [editConsumed, setEditConsumed] = useState(false);
+
+  // URLのeditパラメータで指定された支出を自動的に編集モードで開く
+  // Note: This effect must be after the useState/useExpenses declarations to avoid TDZ
+  useEffect(() => {
+    // Only trigger once per editExpenseId - don't re-trigger after user cancels
+    if (editExpenseId && expenses.length > 0 && !editingExpense && !editConsumed) {
+      const expenseToEdit = expenses.find(e => e.id === editExpenseId);
+      if (expenseToEdit) {
+        console.log("Auto-opening edit mode for expense:", editExpenseId);
+        setEditingExpense(expenseToEdit.id);
+        setEditForm({
+          amount: expenseToEdit.amount,
+          description: expenseToEdit.description,
+          date: expenseToEdit.date,
+          category: expenseToEdit.category,
+          includeInTotal: expenseToEdit.includeInTotal,
+          payerId: expenseToEdit.payerId || expenseToEdit.lineId,
+          payerDisplayName: expenseToEdit.payerDisplayName || expenseToEdit.userDisplayName || "",
+        });
+        // Mark as consumed to prevent re-triggering
+        setEditConsumed(true);
+        // スクロールして表示
+        setTimeout(() => {
+          const element = document.getElementById(`expense-${editExpenseId}`);
+          element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
+      }
+    }
+  }, [editExpenseId, expenses, editingExpense, editConsumed]);
   
   // Get group members for the expense being edited
   const editingExpenseData = editingExpense ? expenses.find(e => e.id === editingExpense) : null;
