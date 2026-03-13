@@ -1861,7 +1861,7 @@ export const renewGmailWatch = onSchedule(
 
 /**
  * Admin認証ミドルウェア
- * ADMIN_SECRET環境変数と照合してアクセスを制限
+ * ヘッダー (X-Admin-Secret, Authorization: Bearer) で認証
  * ヘッダー (X-Admin-Secret, Authorization: Bearer) またはクエリパラメータ (adminSecret) で認証
  */
 const requireAdminAuth = (req: Request, res: Response, next: express.NextFunction) => {
@@ -1872,10 +1872,9 @@ const requireAdminAuth = (req: Request, res: Response, next: express.NextFunctio
     console.error("ADMIN_SECRET is not configured");
     return res.status(503).json({ error: "Admin API is not configured" });
   }
-
+  // ヘッダーからシークレットを取得
   // ヘッダーまたはクエリパラメータからシークレットを取得
   const authHeader = req.headers.authorization;
-  const xAdminSecret = req.headers["x-admin-secret"] as string | undefined;
   const queryAdminSecret = req.query.adminSecret as string | undefined;
 
   let providedSecret: string | undefined;
@@ -1883,8 +1882,6 @@ const requireAdminAuth = (req: Request, res: Response, next: express.NextFunctio
   if (authHeader?.startsWith("Bearer ")) {
     providedSecret = authHeader.substring(7);
   } else if (xAdminSecret) {
-    providedSecret = xAdminSecret;
-  } else if (queryAdminSecret) {
     providedSecret = queryAdminSecret;
   }
 
