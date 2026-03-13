@@ -20,12 +20,19 @@ import {
   getGroupByLineGroupId,
   saveUserSettings,
   getUserSettings,
+  // 立替機能
+  getPendingAdvances,
+  getAdvanceSummaryByUser,
+  calculateSettlement,
+  settleAdvances,
+  AdvanceSummary,
 } from "./firestore";
 import { parseTextExpense } from "./textParser";
 import { resolveAppUidForExpense } from "./linkUserResolver";
 import { getClassificationStats, classifyExpenseWithGemini, isGeminiAvailable, findCategoryWithGemini } from "./geminiCategoryClassifier";
 // Money Forward Me Import
 import { importMoneyForward } from "./importMoneyForward";
+import rateLimit from "express-rate-limit";
 
 // 新機能: 画像最適化とOCR精度向上
 import {
@@ -150,6 +157,12 @@ app.post("/webhook", async (req: Request, res: Response) => {
                 text: "❌ テキスト処理中にエラーが発生しました。もう一度お試しください。",
               }).catch(console.error);
             }
+          });
+        } else if (event.type === "postback") {
+          // Postbackイベント処理
+          console.log("Processing postback event");
+          await handlePostback(event).catch(error => {
+            console.error("Postback processing error:", error);
           });
         } else if (event.type === "join") {
           await handleJoin(event);
@@ -1065,7 +1078,144 @@ async function handleTextMessage(event: any) {
       return;
     }
 
-    // ② テキスト登録
+    // ④ 立替一覧コマンド
+    if (text === "立替一覧" || text === "立替") {
+      console.log(`=== COMMAND MATCHED: Processing 立替一覧 command ===`);
+      try {
+        // グループコンテキストが必要
+        if (event.source.type !== "group") {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "💡 立替一覧はグループ内でのみ利用できます。\n\nLINEグループで「立替一覧」と送信してください。",
+          });
+          return;
+        }
+
+        const lineGroupId = event.source.groupId;
+        const summaries = await getAdvanceSummaryByUser(lineGroupId, true);
+
+        if (summaries.length === 0) {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "📝 未精算の立替はありません。\n\n支出登録時に「↩️ 立替」ボタンを押すと、立替として記録できます。",
+          });
+          return;
+        }
+
+        // サマリーを表示
+        let replyText = "💰 未精算の立替一覧:\n\n";
+
+        let totalAdvances = 0;
+        for (const summary of summaries) {
+          replyText += `👤 ${summary.userDisplayName}\n`;
+          replyText += `   立替合計: ¥${summary.totalAdvanced.toLocaleString()}\n`;
+          // 最近の3件のみ表示
+          const recentExpenses = summary.expenses.slice(0, 3);
+          for (const expense of recentExpenses) {
+            replyText += `   • ${expense.description} ¥${expense.amount.toLocaleString()}\n`;
+          }
+          if (summary.expenses.length > 3) {
+            replyText += `   ...他${summary.expenses.length - 3}件\n`;
+          }
+          replyText += "\n";
+          totalAdvances += summary.totalAdvanced;
+        }
+
+        // 精算額を計算（2人の場合）
+        if (summaries.length === 2) {
+          const settlement = calculateSettlement(summaries);
+          if (settlement) {
+            replyText += `\n💸 精算額:\n`;
+            replyText += `${settlement.fromUserName} → ${settlement.toUserName}\n`;
+            replyText += `¥${settlement.amount.toLocaleString()}\n\n`;
+            replyText += `「精算」と送信すると精算を完了できます。`;
+          } else {
+            replyText += `\n✅ 精算不要（差額なし）`;
+          }
+        }
+
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: replyText,
+        });
+      } catch (error) {
+        console.error("Error getting advance list:", error);
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: "立替一覧の取得に失敗しました。",
+        });
+      }
+      return;
+    }
+
+    // ⑤ 精算コマンド
+    if (text === "精算") {
+      console.log(`=== COMMAND MATCHED: Processing 精算 command ===`);
+      try {
+        // グループコンテキストが必要
+        if (event.source.type !== "group") {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "💡 精算はグループ内でのみ利用できます。\n\nLINEグループで「精算」と送信してください。",
+          });
+          return;
+        }
+
+        const lineGroupId = event.source.groupId;
+        const pendingAdvances = await getPendingAdvances(lineGroupId, true);
+
+        if (pendingAdvances.length === 0) {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "📝 精算する立替がありません。",
+          });
+          return;
+        }
+
+        const summaries = await getAdvanceSummaryByUser(lineGroupId, true);
+
+        // 精算額を計算
+        let settlementText = "";
+        if (summaries.length === 2) {
+          const settlement = calculateSettlement(summaries);
+          if (settlement) {
+            settlementText = `\n\n💸 精算内容:\n${settlement.fromUserName} → ${settlement.toUserName}\n¥${settlement.amount.toLocaleString()}`;
+          }
+        }
+
+        // 立替を精算済みにする（グループ検証付き）
+        const expenseIds = pendingAdvances.map((e) => e.id!);
+        const settleResult = await settleAdvances(expenseIds, lineGroupId, true);
+
+        if (settleResult.settled === 0) {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "⚠️ 精算処理でエラーが発生しました。対象の立替が見つかりませんでした。",
+          });
+          return;
+        }
+
+        let resultText = `✅ 精算が完了しました！\n\n精算件数: ${settleResult.settled}件${settlementText}`;
+        if (settleResult.skipped > 0) {
+          resultText += `\n⚠️ ${settleResult.skipped}件はスキップされました`;
+        }
+        resultText += "\n\n次の立替からまた集計を開始します。";
+
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: resultText,
+        });
+      } catch (error) {
+        console.error("Error settling advances:", error);
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: "精算処理に失敗しました。",
+        });
+      }
+      return;
+    }
+
+    // ⑥ テキスト登録
     console.log(`=== TEXT PROCESSING: Trying to parse as expense text ===`);
     const parsed = await parseTextExpense(text);
     if (!parsed) {
@@ -1081,26 +1231,9 @@ async function handleTextMessage(event: any) {
 
     console.log(`=== TEXT PROCESSING: Successfully parsed expense:`, parsed);
 
-    // Immediate acknowledgment - send success message to the source where message came from
-    try {
-      const targetId =
-        event.source.type === "group"
-          ? event.source.groupId
-          : event.source.userId;
-
-      await client.replyMessage(event.replyToken, {
-        type: "text",
-        text: `✅ 登録完了！\n${
-          parsed.description
-        } - ¥${parsed.amount.toLocaleString()} (${parsed.date})`,
-      });
-
-      console.log(
-        `Expense registration response sent to ${event.source.type}: ${targetId}`
-      );
-    } catch (replyError) {
-      console.error("Failed to send immediate reply:", replyError);
-    }
+    // 即座に処理中のメッセージを返す（Flex Messageは後で送信）
+    // 注: replyTokenは既に「💬 テキストを受信しました！処理中です...」で使用済みの場合あり
+    // そのため、ここでは追加のreplyMessageは送信しない
 
     // Process expense registration in background (don't await)
     processExpenseInBackground(event, parsed).catch((error) => {
@@ -1380,7 +1513,7 @@ async function processExpenseInBackground(event: any, parsed: any) {
       }
     }
 
-    // Create expense object
+    // Create expense object with payment method
     const expense = {
       lineId: event.source.userId,
       appUid: appUid,
@@ -1391,11 +1524,14 @@ async function processExpenseInBackground(event: any, parsed: any) {
       description: parsed.description,
       date: parsed.date,
       category: finalCategory,
-      confirmed: true,
+      confirmed: false, // 未確認状態で保存（ボタンで確認）
       payerId: event.source.userId, // デフォルトは入力者
       payerDisplayName: userDisplayName,
       ocrText: "",
       items: [],
+      // 新規追加: 入力元と支払い方法
+      inputSource: 'line_text' as const,
+      paymentMethod: parsed.paymentMethod,
     };
 
     // Save expense to database
@@ -1405,8 +1541,53 @@ async function processExpenseInBackground(event: any, parsed: any) {
       `Text expense saved with ID: ${expenseId} for lineId: ${event.source.userId}, appUid: ${expense.appUid}`
     );
 
-    // Send confirmation that background processing completed (optional)
-    // We could send a quiet notification, but for now just log success
+    // Flex Messageで確認通知を送信
+    const targetId = event.source.type === "group"
+      ? event.source.groupId
+      : event.source.userId;
+
+    if (targetId) {
+      const getCategoryEmoji = (category: string): string => {
+        const emojiMap: Record<string, string> = {
+          '食費': '🍽️',
+          '日用品': '🛒',
+          '交通費': '🚃',
+          '医療費': '🏥',
+          '娯楽費': '🎮',
+          '衣服費': '👕',
+          '教育費': '📚',
+          '通信費': '📱',
+          '光熱費': '💡',
+          '住居費': '🏠',
+          '保険': '🛡️',
+          '税金': '📋',
+          '貯蓄': '💰',
+          '投資': '📈',
+          '美容': '💅',
+          'ペット': '🐶',
+          '趣味': '🎨',
+          '交際費': '🎁',
+          'その他': '📦',
+        };
+        return emojiMap[category] || '📦';
+      };
+
+      const textExpenseInfo: TextExpenseInfo = {
+        expenseId,
+        description: parsed.description,
+        amount: parsed.amount,
+        category: finalCategory,
+        categoryEmoji: getCategoryEmoji(finalCategory),
+        date: parsed.date,
+        paymentMethod: parsed.paymentMethod !== 'unknown'
+          ? getPaymentMethodLabel(parsed.paymentMethod as PaymentMethod)
+          : undefined,
+        payerName: userDisplayName,
+      };
+
+      await sendTextExpenseNotification(targetId, textExpenseInfo);
+    }
+
     console.log("Background expense processing completed successfully");
   } catch (error) {
     console.error("Background expense processing error:", error);
@@ -1591,7 +1772,7 @@ export const webhook = onRequest(
     memory: "512MiB", // Increased from 256MiB to handle image processing
     timeoutSeconds: 540, // Increased from 300s to 540s (9 minutes max)
     invoker: "public",
-    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY"],
+    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "ADMIN_SECRET"],
   },
   app
 );
@@ -1609,5 +1790,221 @@ exports.importMoneyForward = onSchedule(
   },
   importMoneyForward
 );
+
+// ============================================
+// Gmail自動取得機能（新規追加）
+// ============================================
+
+import { onMessagePublished } from "firebase-functions/v2/pubsub";
+import {
+  handleGmailPubSub,
+  getAuthUrl,
+  handleOAuthCallback,
+  registerWatch,
+  renewWatch,
+  getWatchStatus,
+  processLatestEmail,
+  isGmailAuthConfigured,
+} from "./gmail";
+import {
+  handlePostback,
+  isPostbackEvent,
+  isGmailPostback,
+  isTextExpensePostback,
+  sendTextExpenseNotification,
+  TextExpenseInfo,
+} from "./line";
+import { getPaymentMethodLabel, PaymentMethod } from "./textParser";
+
+/**
+ * Gmail Pub/Subハンドラー
+ * Gmailから新着メール通知を受け取り、カード利用通知を処理
+ */
+export const gmailPubSubHandler = onMessagePublished(
+  {
+    topic: "gmail-notifications",
+    region: "asia-northeast1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    secrets: [
+      "LINE_CHANNEL_TOKEN",
+      "LINE_CHANNEL_SECRET",
+      "GEMINI_API_KEY",
+      "GMAIL_CLIENT_ID",
+      "GMAIL_CLIENT_SECRET",
+    ],
+  },
+  async (event) => {
+    const data = event.data.message.data;
+    await handleGmailPubSub(data);
+  }
+);
+
+/**
+ * Gmail Watch自動更新（6日ごと）
+ */
+export const renewGmailWatch = onSchedule(
+  {
+    schedule: "0 3 */6 * *", // 6日ごとの午前3時
+    timeZone: "Asia/Tokyo",
+    region: "asia-northeast1",
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    secrets: ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
+  },
+  async () => {
+    console.log("Renewing Gmail Watch...");
+    await renewWatch();
+    console.log("Gmail Watch renewed successfully");
+  }
+);
+
+/**
+ * Admin認証ミドルウェア
+ * ヘッダー (X-Admin-Secret, Authorization: Bearer) で認証
+ * ヘッダー (X-Admin-Secret, Authorization: Bearer) またはクエリパラメータ (adminSecret) で認証
+ */
+const requireAdminAuth = (req: Request, res: Response, next: express.NextFunction) => {
+  const adminSecret = process.env.ADMIN_SECRET;
+
+  // ADMIN_SECRETが設定されていない場合はアクセスを拒否
+  if (!adminSecret) {
+    console.error("ADMIN_SECRET is not configured");
+    return res.status(503).json({ error: "Admin API is not configured" });
+  }
+  // ヘッダーからシークレットを取得
+  // ヘッダーまたはクエリパラメータからシークレットを取得
+  const authHeader = req.headers.authorization;
+  const queryAdminSecret = req.query.adminSecret as string | undefined;
+
+  let providedSecret: string | undefined;
+
+  if (authHeader?.startsWith("Bearer ")) {
+    providedSecret = authHeader.substring(7);
+  } else if (xAdminSecret) {
+    providedSecret = queryAdminSecret;
+  }
+
+  if (!providedSecret || providedSecret !== adminSecret) {
+    console.warn("Unauthorized admin API access attempt");
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  next();
+};
+
+/**
+ * Gmail OAuth2認証URL取得エンドポイント
+ * 初回セットアップ時に使用
+ * stateパラメータを生成してCSRF攻撃を防止
+ * Admin認証が必要
+ */
+app.get("/gmail/auth", requireAdminAuth, async (_req, res) => {
+  try {
+    const authUrl = await getAuthUrl(); // async - stateを生成・保存
+    res.json({
+      authUrl,
+      note: "This URL is valid for 10 minutes. State parameter provides CSRF protection.",
+    });
+  } catch (error) {
+    console.error("Failed to generate auth URL:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * Gmail OAuth2コールバックエンドポイント
+ * Admin認証が必要（クエリパラメータ adminSecret で認証）
+ *
+ * セキュリティ:
+ * - Admin認証（クエリパラメータ対応）
+ * - stateパラメータを検証（CSRF攻撃防止）
+ * - adminVerifiedフラグでAdmin認証済みフローを検証
+ */
+const gmailCallbackLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 20, // limit each IP to 20 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.get("/gmail/callback", requireAdminAuth, gmailCallbackLimiter, async (req, res) => {
+  try {
+    const code = req.query.code as string;
+    const state = req.query.state as string;
+
+    if (!code) {
+      return res.status(400).json({ error: "Authorization code required" });
+    }
+
+    if (!state) {
+      return res.status(400).json({ error: "State parameter required for security validation" });
+    }
+
+    await handleOAuthCallback(code, state);
+    res.send("Gmail OAuth2 authentication successful! You can close this window.");
+  } catch (error) {
+    console.error("OAuth callback failed:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * Gmail Watch登録エンドポイント
+ * Admin認証が必要
+ */
+app.post("/gmail/register-watch", requireAdminAuth, async (_req, res) => {
+  try {
+    const isConfigured = await isGmailAuthConfigured();
+    if (!isConfigured) {
+      return res.status(400).json({
+        error: "Gmail OAuth2 not configured. Please run /gmail/auth first.",
+      });
+    }
+
+    const watchState = await registerWatch();
+    res.json({
+      success: true,
+      historyId: watchState.historyId,
+      expiresAt: new Date(watchState.watchExpiration).toISOString(),
+    });
+  } catch (error) {
+    console.error("Failed to register watch:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * Gmail Watch状態確認エンドポイント
+ * Admin認証が必要
+ */
+app.get("/gmail/status", requireAdminAuth, async (_req, res) => {
+  try {
+    const status = await getWatchStatus();
+    const isConfigured = await isGmailAuthConfigured();
+
+    res.json({
+      oauthConfigured: isConfigured,
+      ...status,
+    });
+  } catch (error) {
+    console.error("Failed to get watch status:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * テスト用: 最新のメールを手動で処理
+ * Admin認証が必要
+ */
+app.post("/gmail/process-latest", requireAdminAuth, async (_req, res) => {
+  try {
+    const result = await processLatestEmail();
+    res.json(result);
+  } catch (error) {
+    console.error("Failed to process latest email:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
 
 export default app;

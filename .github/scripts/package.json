@@ -1,0 +1,16 @@
+{
+  "name": "line-kakeibo-github-scripts",
+  "version": "1.0.0",
+  "description": "GitHub Actions scripts for AI code review",
+  "type": "module",
+  "scripts": {
+    "review": "node mcp-review.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@octokit/rest": "^21.0.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

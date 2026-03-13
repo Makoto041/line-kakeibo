@@ -14,33 +14,55 @@ env:
   VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
   VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   deploy:
     name: Deploy to Vercel
     runs-on: ubuntu-latest
-    
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
     steps:
+    - name: Check Vercel token
+      id: check-token
+      run: |
+        if [ -z "$VERCEL_TOKEN" ]; then
+          echo "skip=true" >> $GITHUB_OUTPUT
+          echo "::notice::VERCEL_TOKEN is not set, skipping Vercel deployment"
+        else
+          echo "skip=false" >> $GITHUB_OUTPUT
+        fi
+
     - name: Checkout code
+      if: steps.check-token.outputs.skip != 'true'
       uses: actions/checkout@v4
-      
+
     - name: Setup Node.js
+      if: steps.check-token.outputs.skip != 'true'
       uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'npm'
-        
+
     - name: Install Vercel CLI
+      if: steps.check-token.outputs.skip != 'true'
       run: npm install -g vercel@latest
-      
+
     - name: Pull Vercel Environment Information
+      if: steps.check-token.outputs.skip != 'true'
       run: vercel pull --yes --environment=${{ github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}
       working-directory: ./web
-      
+
     - name: Build Project Artifacts
+      if: steps.check-token.outputs.skip != 'true'
       run: vercel build ${{ github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
       working-directory: ./web
-      
+
     - name: Deploy Project Artifacts to Vercel
+      if: steps.check-token.outputs.skip != 'true'
       id: deploy
       run: |
         if [[ "${{ github.ref }}" == "refs/heads/master" || "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -53,7 +75,7 @@ jobs:
       working-directory: ./web
       
     - name: Comment on PR
-      if: github.event_name == 'pull_request'
+      if: github.event_name == 'pull_request' && steps.check-token.outputs.skip != 'true'
       uses: actions/github-script@v7
       with:
         script: |
