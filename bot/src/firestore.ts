@@ -85,6 +85,15 @@ export interface ExpenseStats {
   dailyTotals: Record<string, number>;
 }
 
+// Helper to normalize Expense data from Firestore (ensures status is always defined)
+function normalizeExpense(id: string, data: FirebaseFirestore.DocumentData): Expense {
+  return {
+    id,
+    ...data,
+    status: data.status || 'pending', // Default to 'pending' if not set
+  } as Expense;
+}
+
 // UserLink インターフェース
 export interface UserLink {
   lineId: string;
@@ -127,10 +136,7 @@ export async function getExpenses(lineId: string, limit: number = 50): Promise<E
       .get();
 
     // Sort in memory to avoid index requirement
-    const expenses = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Expense));
+    const expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
 
     return expenses.sort((a, b) => {
       const aTime = a.createdAt?.toMillis() || 0;
@@ -238,10 +244,7 @@ export async function getExpensesByDateRange(
       .get();
 
     // Sort in memory to avoid index requirement
-    const expenses = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Expense));
+    const expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
 
     return expenses.sort((a, b) => b.date.localeCompare(a.date)); // desc order by date
   } catch (error) {
@@ -501,10 +504,7 @@ export async function getGroupExpenses(groupId: string, limitCount: number = 50)
       .limit(limitCount)
       .get();
 
-    const expenses = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Expense));
+    const expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
 
     return expenses.sort((a, b) => {
       const aTime = a.createdAt?.toMillis() || 0;
@@ -526,10 +526,7 @@ export async function getLineGroupExpenses(lineGroupId: string, limitCount: numb
       .limit(limitCount)
       .get();
 
-    const expenses = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Expense));
+    const expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
 
     return expenses.sort((a, b) => {
       const aTime = a.createdAt?.toMillis() || 0;
@@ -845,10 +842,7 @@ export async function getPendingAdvances(groupIdOrLineGroupId: string, isLineGro
       .where('status', '==', 'advance_pending')
       .get();
 
-    const expenses = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Expense));
+    const expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
 
     return expenses.sort((a, b) => {
       const aTime = a.createdAt?.toMillis() || 0;
@@ -875,7 +869,11 @@ export async function getAdvanceSummaryByUser(
 
   for (const expense of expenses) {
     const userId = expense.advanceBy || expense.payerId;
-    const userName = expense.payerDisplayName || 'Unknown';
+    // Use userDisplayName when advanceBy is set (the person who advanced),
+    // otherwise use payerDisplayName (the person who paid)
+    const userName = expense.advanceBy
+      ? (expense.userDisplayName || expense.payerDisplayName || 'Unknown')
+      : (expense.payerDisplayName || 'Unknown');
 
     if (!userMap.has(userId)) {
       userMap.set(userId, {
@@ -916,10 +914,7 @@ export async function getMonthlyAdvances(
       .where('date', '<=', endDate)
       .get();
 
-    return snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Expense));
+    return snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
   } catch (error) {
     console.error('Error getting monthly advances:', error);
     throw error;
@@ -1058,10 +1053,7 @@ export async function getSettledAdvances(
       .limit(limitCount)
       .get();
 
-    const expenses = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Expense));
+    const expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
 
     return expenses.sort((a, b) => {
       const aTime = a.advanceSettledAt?.toMillis() || 0;

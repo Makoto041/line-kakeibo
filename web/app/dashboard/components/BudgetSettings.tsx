@@ -43,13 +43,23 @@ const defaultConfig: BudgetConfig = {
 function normalizeBudgetConfig(data: unknown): BudgetConfig {
   const raw = data as Partial<BudgetConfig> | undefined
 
+  // Normalize categoryBudgets: only include valid non-negative finite numbers
+  let normalizedCategoryBudgets: Record<string, number> = {}
+  if (raw?.categoryBudgets && typeof raw.categoryBudgets === 'object' && !Array.isArray(raw.categoryBudgets)) {
+    for (const [key, value] of Object.entries(raw.categoryBudgets)) {
+      const numValue = typeof value === 'string' ? parseFloat(value) : value
+      if (typeof numValue === 'number' && Number.isFinite(numValue) && numValue >= 0) {
+        normalizedCategoryBudgets[key] = numValue
+      }
+      // Invalid values are omitted (not included in the result)
+    }
+  }
+
   return {
     monthlyBudget: typeof raw?.monthlyBudget === 'number' && raw.monthlyBudget > 0
       ? raw.monthlyBudget
       : defaultConfig.monthlyBudget,
-    categoryBudgets: raw?.categoryBudgets && typeof raw.categoryBudgets === 'object' && !Array.isArray(raw.categoryBudgets)
-      ? raw.categoryBudgets
-      : {},
+    categoryBudgets: normalizedCategoryBudgets,
     alertThreshold: typeof raw?.alertThreshold === 'number' && raw.alertThreshold >= 0 && raw.alertThreshold <= 100
       ? raw.alertThreshold
       : defaultConfig.alertThreshold,
@@ -66,10 +76,17 @@ export default function BudgetSettings({ userId, onClose }: BudgetSettingsProps)
 
   // 設定を読み込み
   useEffect(() => {
+    // Reset state at the start of each load to ensure clean state when userId changes
+    setLoading(true)
+    setLoadError(false)
+    setHasLoaded(false)
+    setConfig(defaultConfig)
+    setMessage(null)
+
     const loadBudgetConfig = async () => {
+      // Missing userId or db is not a fatal error - just bail early
       if (!userId || !db) {
         setLoading(false)
-        setLoadError(true)
         return
       }
 
