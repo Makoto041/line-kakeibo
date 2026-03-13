@@ -40,6 +40,7 @@ function getOAuth2Client() {
 
 /**
  * OAuth stateを生成してFirestoreに保存
+ * adminVerifiedフラグを含めて、Admin認証済みフローであることを記録
  */
 async function generateAndSaveState(): Promise<string> {
   const state = crypto.randomBytes(32).toString('hex');
@@ -47,6 +48,7 @@ async function generateAndSaveState(): Promise<string> {
 
   await db.collection('system').doc('oauthState').set({
     state,
+    adminVerified: true, // Admin認証済みエンドポイントから生成されたことを証明
     createdAt: Timestamp.now(),
     expiresAt: Timestamp.fromMillis(Date.now() + STATE_EXPIRY_MS),
   });
@@ -57,6 +59,7 @@ async function generateAndSaveState(): Promise<string> {
 /**
  * OAuth stateを検証
  * 一度使用したstateは削除して再利用を防ぐ
+ * adminVerifiedフラグも検証してAdmin認証済みフローであることを確認
  */
 async function validateAndConsumeState(state: string): Promise<boolean> {
   const db = getFirestore();
@@ -75,6 +78,13 @@ async function validateAndConsumeState(state: string): Promise<boolean> {
   // stateが一致するか確認
   if (data.state !== state) {
     console.error('OAuth state mismatch');
+    return false;
+  }
+
+  // Admin認証済みフローであることを確認
+  if (!data.adminVerified) {
+    console.error('OAuth state was not created through admin-authenticated endpoint');
+    await db.collection('system').doc('oauthState').delete();
     return false;
   }
 

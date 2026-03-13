@@ -29,14 +29,39 @@ const defaultCategories = [
   { id: 'other', name: 'その他', emoji: '📦' },
 ]
 
+// デフォルト設定
+const defaultConfig: BudgetConfig = {
+  monthlyBudget: 200000,
+  categoryBudgets: {},
+  alertThreshold: 20,
+}
+
+/**
+ * Firestoreから取得したデータを検証・正規化
+ * 不完全なドキュメントに対して安全なデフォルト値を適用
+ */
+function normalizeBudgetConfig(data: unknown): BudgetConfig {
+  const raw = data as Partial<BudgetConfig> | undefined
+
+  return {
+    monthlyBudget: typeof raw?.monthlyBudget === 'number' && raw.monthlyBudget > 0
+      ? raw.monthlyBudget
+      : defaultConfig.monthlyBudget,
+    categoryBudgets: raw?.categoryBudgets && typeof raw.categoryBudgets === 'object' && !Array.isArray(raw.categoryBudgets)
+      ? raw.categoryBudgets
+      : {},
+    alertThreshold: typeof raw?.alertThreshold === 'number' && raw.alertThreshold >= 0 && raw.alertThreshold <= 100
+      ? raw.alertThreshold
+      : defaultConfig.alertThreshold,
+  }
+}
+
 export default function BudgetSettings({ userId, onClose }: BudgetSettingsProps) {
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [hasLoaded, setHasLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [config, setConfig] = useState<BudgetConfig>({
-    monthlyBudget: 200000,
-    categoryBudgets: {},
-    alertThreshold: 20,
-  })
+  const [config, setConfig] = useState<BudgetConfig>(defaultConfig)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // 設定を読み込み
@@ -44,6 +69,7 @@ export default function BudgetSettings({ userId, onClose }: BudgetSettingsProps)
     const loadBudgetConfig = async () => {
       if (!userId || !db) {
         setLoading(false)
+        setLoadError(true)
         return
       }
 
@@ -52,11 +78,16 @@ export default function BudgetSettings({ userId, onClose }: BudgetSettingsProps)
         const docSnap = await getDoc(docRef)
 
         if (docSnap.exists()) {
-          const data = docSnap.data() as BudgetConfig
-          setConfig(data)
+          // データを検証・正規化してから設定
+          const normalizedConfig = normalizeBudgetConfig(docSnap.data())
+          setConfig(normalizedConfig)
         }
+        // ドキュメントが存在しない場合はデフォルト値のまま（新規ユーザー）
+        setHasLoaded(true)
       } catch (error) {
         console.error('Error loading budget config:', error)
+        setLoadError(true)
+        setMessage({ type: 'error', text: '設定の読み込みに失敗しました。再読み込みしてください。' })
       } finally {
         setLoading(false)
       }
@@ -68,6 +99,18 @@ export default function BudgetSettings({ userId, onClose }: BudgetSettingsProps)
   // 設定を保存
   const handleSave = async () => {
     if (!userId || !db) return
+
+    // 読み込みエラー時は保存を許可しない（既存データの上書き防止）
+    if (loadError || !hasLoaded) {
+      setMessage({ type: 'error', text: '設定を正常に読み込めていないため、保存できません。' })
+      return
+    }
+
+    // 月間予算のバリデーション
+    if (!Number.isFinite(config.monthlyBudget) || config.monthlyBudget <= 0) {
+      setMessage({ type: 'error', text: '月間予算は1円以上の正の数を入力してください。' })
+      return
+    }
 
     setSaving(true)
     setMessage(null)
@@ -134,7 +177,12 @@ export default function BudgetSettings({ userId, onClose }: BudgetSettingsProps)
           <input
             type="number"
             value={config.monthlyBudget}
-            onChange={(e) => setConfig(prev => ({ ...prev, monthlyBudget: parseInt(e.target.value) || 0 }))}
+            onChange={(e) => {
+              const parsed = parseInt(e.target.value)
+              // 正の整数のみ許可（空や無効な値は最小値1に）
+              const value = Number.isFinite(parsed) && parsed > 0 ? parsed : 1
+              setConfig(prev => ({ ...prev, monthlyBudget: value }))
+            }}
             className="w-full pl-8 pr-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-lg font-bold focus:ring-2 focus:ring-primary focus:border-transparent"
           />
         </div>
@@ -205,12 +253,13 @@ export default function BudgetSettings({ userId, onClose }: BudgetSettingsProps)
       </div>
 
       {/* 予算配分バー */}
-      {categoryBudgetTotal > 0 && (
+      {categoryBudgetTotal > 0 && config.monthlyBudget > 0 && (
         <div className="mb-6">
           <div className="h-4 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden flex">
             {defaultCategories.map((category) => {
               const amount = config.categoryBudgets[category.name] || 0
-              const percentage = (amount / config.monthlyBudget) * 100
+              // 除算前にmonthlyBudgetが正であることを確認（防御的チェック）
+              const percentage = config.monthlyBudget > 0 ? (amount / config.monthlyBudget) * 100 : 0
               if (percentage === 0) return null
               return (
                 <motion.div
@@ -259,8 +308,9 @@ export default function BudgetSettings({ userId, onClose }: BudgetSettingsProps)
         )}
         <button
           onClick={handleSave}
-          disabled={saving}
-          className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
+          disabled={saving || loadError || !hasLoaded}
+          className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title={loadError ? '設定の読み込みに失敗したため保存できません' : undefined}
         >
           {saving ? '保存中...' : '💾 保存'}
         </button>

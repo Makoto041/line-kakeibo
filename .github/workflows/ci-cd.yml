@@ -191,7 +191,7 @@ jobs:
         uses: trufflesecurity/trufflehog@main
         with:
           extra_args: --only-verified --max-depth 1
-        continue-on-error: true
+        # Note: continue-on-error removed - verified secret leaks must fail the build
 
       # CodeQL requires init before analyze
       - name: Initialize CodeQL

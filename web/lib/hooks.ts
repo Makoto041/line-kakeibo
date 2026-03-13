@@ -40,13 +40,20 @@ export interface GroupMember {
   isActive: boolean;
 }
 
-// Expense status type
+// Expense status type (matches bot/src/firestore.ts ExpenseStatusType)
 export type ExpenseStatus = 'pending' | 'shared' | 'personal' | 'advance_pending' | 'advance_settled';
 
-// Enhanced Expense interface with group support
+// Input source type (matches bot/src/firestore.ts InputSourceType)
+export type InputSource = 'line_text' | 'line_ocr' | 'gmail_auto';
+
+// Firestore Timestamp-like type for client-side use
+export type FirestoreTimestamp = Date | { seconds: number; nanoseconds: number };
+
+// Enhanced Expense interface with group support (matches bot/src/firestore.ts)
 export interface Expense {
   id: string;
   lineId: string;           // LINE User ID (who made the expense)
+  appUid?: string;          // Firebase Auth User ID
   groupId?: string;         // Optional: if this expense belongs to a group
   lineGroupId?: string;     // LINE Group ID if from LINE group
   userDisplayName?: string; // Display name of the user who made the expense
@@ -54,8 +61,10 @@ export interface Expense {
   description: string;
   date: string;             // YYYY-MM-DD format
   category: string;
-  includeInTotal: boolean;  // 合計に含めるかどうか（旧confirmed）
+  confirmed?: boolean;      // 確認済みフラグ
+  includeInTotal: boolean;  // 合計に含めるかどうか
   status?: ExpenseStatus;   // 支出ステータス（確認待ち、共同費、立替など）
+  inputSource?: InputSource; // 入力元（LINE テキスト、OCR、Gmail自動取得）
   payerId?: string;          // LINE User ID of the person who paid (defaults to lineId)
   payerDisplayName?: string; // Display name of the person who paid (defaults to userDisplayName)
   ocrText?: string;
@@ -64,8 +73,13 @@ export interface Expense {
     price: number;
     quantity?: number;
   }>;
-  createdAt?: Date | { seconds: number; nanoseconds: number };
-  updatedAt?: Date | { seconds: number; nanoseconds: number };
+  // 立替機能フィールド
+  advanceBy?: string;             // 立替者のLINE ID
+  advanceSettledAt?: FirestoreTimestamp; // 精算日時
+  paymentMethod?: string;         // 支払い方法（cash, paypay, card）
+  gmailMessageId?: string;        // Gmail自動取得時のメッセージID
+  createdAt?: FirestoreTimestamp;
+  updatedAt?: FirestoreTimestamp;
 }
 
 // 統計情報インターフェース

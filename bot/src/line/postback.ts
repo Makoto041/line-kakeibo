@@ -78,8 +78,16 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
 
     // 立替の場合は立替者を記録
     if (action === 'advance') {
+      const userId = event.source.userId;
+      if (!userId) {
+        console.error('Cannot process advance: userId is missing', {
+          expenseId,
+          sourceType: event.source.type,
+        });
+        return; // 立替者不明では処理できない
+      }
       // ボタンを押したユーザーを立替者として記録
-      updateData.advanceBy = event.source.userId || 'unknown';
+      updateData.advanceBy = userId;
     }
 
     await expenseRef.update(updateData);
@@ -163,11 +171,19 @@ async function handleTextExpensePostback(
       }
       break;
 
-    case 'advance':
+    case 'advance': {
       // 立替として記録
+      const userId = event.source.userId;
+      if (!userId) {
+        console.error('Cannot process text expense advance: userId is missing', {
+          expenseId,
+          sourceType: event.source.type,
+        });
+        return; // 立替者不明では処理できない
+      }
       await expenseRef.update({
         status: 'advance_pending',
-        advanceBy: event.source.userId || 'unknown',
+        advanceBy: userId,
         confirmed: true,
         updatedAt: new Date(),
       });
@@ -178,6 +194,7 @@ async function handleTextExpensePostback(
         );
       }
       break;
+    }
 
     default:
       console.warn('Unknown text expense action:', action);

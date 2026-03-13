@@ -1771,7 +1771,7 @@ export const webhook = onRequest(
     memory: "512MiB", // Increased from 256MiB to handle image processing
     timeoutSeconds: 540, // Increased from 300s to 540s (9 minutes max)
     invoker: "public",
-    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY"],
+    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "ADMIN_SECRET"],
   },
   app
 );
@@ -1859,11 +1859,49 @@ export const renewGmailWatch = onSchedule(
 );
 
 /**
+ * Admin認証ミドルウェア
+ * ADMIN_SECRET環境変数と照合してアクセスを制限
+ * ヘッダー (X-Admin-Secret, Authorization: Bearer) またはクエリパラメータ (adminSecret) で認証
+ */
+const requireAdminAuth = (req: Request, res: Response, next: express.NextFunction) => {
+  const adminSecret = process.env.ADMIN_SECRET;
+
+  // ADMIN_SECRETが設定されていない場合はアクセスを拒否
+  if (!adminSecret) {
+    console.error("ADMIN_SECRET is not configured");
+    return res.status(503).json({ error: "Admin API is not configured" });
+  }
+
+  // ヘッダーまたはクエリパラメータからシークレットを取得
+  const authHeader = req.headers.authorization;
+  const xAdminSecret = req.headers["x-admin-secret"] as string | undefined;
+  const queryAdminSecret = req.query.adminSecret as string | undefined;
+
+  let providedSecret: string | undefined;
+
+  if (authHeader?.startsWith("Bearer ")) {
+    providedSecret = authHeader.substring(7);
+  } else if (xAdminSecret) {
+    providedSecret = xAdminSecret;
+  } else if (queryAdminSecret) {
+    providedSecret = queryAdminSecret;
+  }
+
+  if (!providedSecret || providedSecret !== adminSecret) {
+    console.warn("Unauthorized admin API access attempt");
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  next();
+};
+
+/**
  * Gmail OAuth2認証URL取得エンドポイント
  * 初回セットアップ時に使用
  * stateパラメータを生成してCSRF攻撃を防止
+ * Admin認証が必要
  */
-app.get("/gmail/auth", async (_req, res) => {
+app.get("/gmail/auth", requireAdminAuth, async (_req, res) => {
   try {
     const authUrl = await getAuthUrl(); // async - stateを生成・保存
     res.json({
@@ -1878,9 +1916,14 @@ app.get("/gmail/auth", async (_req, res) => {
 
 /**
  * Gmail OAuth2コールバックエンドポイント
- * stateパラメータを検証してCSRF攻撃を防止
+ * Admin認証が必要（クエリパラメータ adminSecret で認証）
+ *
+ * セキュリティ:
+ * - Admin認証（クエリパラメータ対応）
+ * - stateパラメータを検証（CSRF攻撃防止）
+ * - adminVerifiedフラグでAdmin認証済みフローを検証
  */
-app.get("/gmail/callback", async (req, res) => {
+app.get("/gmail/callback", requireAdminAuth, async (req, res) => {
   try {
     const code = req.query.code as string;
     const state = req.query.state as string;
@@ -1903,8 +1946,9 @@ app.get("/gmail/callback", async (req, res) => {
 
 /**
  * Gmail Watch登録エンドポイント
+ * Admin認証が必要
  */
-app.post("/gmail/register-watch", async (_req, res) => {
+app.post("/gmail/register-watch", requireAdminAuth, async (_req, res) => {
   try {
     const isConfigured = await isGmailAuthConfigured();
     if (!isConfigured) {
@@ -1927,8 +1971,9 @@ app.post("/gmail/register-watch", async (_req, res) => {
 
 /**
  * Gmail Watch状態確認エンドポイント
+ * Admin認証が必要
  */
-app.get("/gmail/status", async (_req, res) => {
+app.get("/gmail/status", requireAdminAuth, async (_req, res) => {
   try {
     const status = await getWatchStatus();
     const isConfigured = await isGmailAuthConfigured();
@@ -1945,8 +1990,9 @@ app.get("/gmail/status", async (_req, res) => {
 
 /**
  * テスト用: 最新のメールを手動で処理
+ * Admin認証が必要
  */
-app.post("/gmail/process-latest", async (_req, res) => {
+app.post("/gmail/process-latest", requireAdminAuth, async (_req, res) => {
   try {
     const result = await processLatestEmail();
     res.json(result);
