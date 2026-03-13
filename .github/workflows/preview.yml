@@ -10,23 +10,35 @@ env:
 jobs:
   preview-deploy:
     runs-on: ubuntu-latest
-    # Vercel secrets が設定されていない場合はスキップ
-    if: ${{ secrets.VERCEL_TOKEN != '' }}
-    continue-on-error: true  # デプロイ失敗でもPRをブロックしない
     permissions:
       pull-requests: write
       deployments: write
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
     steps:
+      - name: Check Vercel token
+        id: check-token
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "::notice::VERCEL_TOKEN is not set, skipping preview deployment"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout code
+        if: steps.check-token.outputs.skip != 'true'
         uses: actions/checkout@v4
-        
+
       - name: Setup Node.js
+        if: steps.check-token.outputs.skip != 'true'
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          
+
       - name: Create deployment
+        if: steps.check-token.outputs.skip != 'true'
         uses: actions/github-script@v8
         id: deployment
         with:
@@ -41,19 +53,23 @@ jobs:
               description: `Preview deployment for PR #${context.payload.pull_request.number}`
             });
             return deployment.data.id;
-            
+
       - name: Install Vercel CLI
+        if: steps.check-token.outputs.skip != 'true'
         run: npm install -g vercel@latest
-        
+
       - name: Pull Vercel environment
+        if: steps.check-token.outputs.skip != 'true'
         working-directory: ./web
         run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
-        
+
       - name: Build project
+        if: steps.check-token.outputs.skip != 'true'
         working-directory: ./web
         run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
-        
+
       - name: Deploy to Vercel Preview
+        if: steps.check-token.outputs.skip != 'true'
         id: deploy
         working-directory: ./web
         run: |
@@ -64,8 +80,9 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-          
+
       - name: Update deployment status
+        if: steps.check-token.outputs.skip != 'true'
         uses: actions/github-script@v8
         with:
           script: |
@@ -77,8 +94,9 @@ jobs:
               environment_url: '${{ steps.deploy.outputs.url }}',
               description: 'Deployment successful'
             });
-            
+
       - name: Comment PR
+        if: steps.check-token.outputs.skip != 'true'
         uses: actions/github-script@v8
         with:
           script: |

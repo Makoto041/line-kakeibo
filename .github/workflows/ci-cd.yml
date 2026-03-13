@@ -195,14 +195,14 @@ jobs:
 
       # CodeQL requires init before analyze
       - name: Initialize CodeQL
+        id: init-codeql
         uses: github/codeql-action/init@v3
         with:
           languages: javascript-typescript
-        continue-on-error: true
 
       - name: Perform CodeQL Analysis
+        if: steps.init-codeql.outcome == 'success'
         uses: github/codeql-action/analyze@v3
-        continue-on-error: true
 
   # Webアプリデプロイ（Vercel）
   deploy-web:

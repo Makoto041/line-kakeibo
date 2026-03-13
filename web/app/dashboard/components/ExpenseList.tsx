@@ -3,7 +3,6 @@
 import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Expense } from '../../../lib/hooks'
-import dayjs from 'dayjs'
 
 interface ExpenseListProps {
   expenses: Expense[]
@@ -48,8 +47,8 @@ export default function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListP
   const [categoryFilter, setCategoryFilter] = useState<string>('')
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>({
-    start: dayjs().startOf('month').format('YYYY-MM-DD'),
-    end: dayjs().endOf('month').format('YYYY-MM-DD'),
+    start: '',
+    end: '',
   })
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [sortOrder, setSortOrder] = useState<'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc'>('date-desc')
@@ -122,8 +121,8 @@ export default function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListP
     setCategoryFilter('')
     setStatusFilter('')
     setDateRange({
-      start: dayjs().startOf('month').format('YYYY-MM-DD'),
-      end: dayjs().endOf('month').format('YYYY-MM-DD'),
+      start: '',
+      end: '',
     })
     setSearchQuery('')
     setSortOrder('date-desc')
@@ -301,6 +300,7 @@ export default function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListP
                           onClick={() => onEdit(expense)}
                           className="p-2 text-gray-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
                           title="編集"
+                          aria-label={`${expense.description}を編集`}
                         >
                           ✏️
                         </button>
@@ -327,6 +327,7 @@ export default function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListP
                               onClick={() => handleDeleteClick(expense.id)}
                               className="p-2 text-gray-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
                               title="削除"
+                              aria-label={`${expense.description}を削除`}
                             >
                               🗑️
                             </button>
