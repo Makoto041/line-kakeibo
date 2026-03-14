@@ -170,6 +170,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     const lineGroupId = getDefaultLineGroupId();
 
     // 支出データを作成
+    // 初期状態ではincludeInTotal: falseにし、ユーザーが共同費/立替を選択した時にtrueにする
     const expense: Partial<GmailExpense> = {
       lineId: GMAIL_SYSTEM_LINE_ID, // システムユーザーとして登録
       amount: parsed.amount,
@@ -177,6 +178,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       date: dayjs(parsed.usedAt).format('YYYY-MM-DD'),
       category,
       confirmed: false, // 未確認状態
+      includeInTotal: false, // 未確認の支出は合計に含めない
       payerId: GMAIL_SYSTEM_LINE_ID,
       // グループ関連（ダッシュボード集計・立替精算に必要）
       groupId,
@@ -298,6 +300,111 @@ export async function processLatestEmail(): Promise<{
     };
   } catch (error) {
     console.error('processLatestEmail error:', error);
+    return {
+      success: false,
+      message: `Error: ${(error as Error).message}`,
+    };
+  }
+}
+
+/**
+ * テスト用: 指定したメッセージIDを強制処理（重複チェックをスキップ）
+ */
+export async function forceProcessMessage(messageId: string): Promise<{
+  success: boolean;
+  message: string;
+  expenseId?: string;
+}> {
+  try {
+    const gmail = await getGmailClient();
+
+    // メッセージの詳細を取得
+    const messageResponse = await gmail.users.messages.get({
+      userId: 'me',
+      id: messageId,
+      format: 'full',
+    });
+
+    const message = messageResponse.data;
+    const rawHeaders = message.payload?.headers || [];
+    const headers = rawHeaders.filter(
+      (h): h is { name: string; value: string } =>
+        h.name !== null && h.name !== undefined &&
+        h.value !== null && h.value !== undefined
+    );
+    const from = getFromAddress(headers);
+    const body = decodeEmailBody(message.payload);
+
+    // 三井住友ゴールドVISA（NL）のメールかチェック
+    if (!isSMBCGoldVISANL(from, body)) {
+      return {
+        success: false,
+        message: 'Not a SMBC Gold VISA NL notification',
+      };
+    }
+
+    // メールをパース
+    const parsed = parseSMBCCardEmail(messageId, body);
+    if (!parsed) {
+      return {
+        success: false,
+        message: 'Failed to parse email',
+      };
+    }
+
+    // Geminiでカテゴリを分類
+    const categoryResult = await classifyExpenseWithGemini(
+      GMAIL_SYSTEM_LINE_ID,
+      parsed.merchant
+    );
+    const category = categoryResult.category || 'その他';
+
+    // グループIDを取得
+    const groupId = getDefaultGroupId();
+    const lineGroupId = getDefaultLineGroupId();
+
+    // 支出データを作成
+    // 初期状態ではincludeInTotal: falseにし、ユーザーが共同費/立替を選択した時にtrueにする
+    const expense: Partial<GmailExpense> = {
+      lineId: GMAIL_SYSTEM_LINE_ID,
+      amount: parsed.amount,
+      description: parsed.merchant,
+      date: dayjs(parsed.usedAt).format('YYYY-MM-DD'),
+      category,
+      confirmed: false,
+      includeInTotal: false, // 未確認の支出は合計に含めない
+      payerId: GMAIL_SYSTEM_LINE_ID,
+      groupId,
+      lineGroupId,
+      inputSource: 'gmail_auto',
+      gmailMessageId: messageId,
+      status: 'pending',
+    };
+
+    // Firestoreに保存
+    const expenseId = await saveExpense(expense as any);
+    console.log(`Expense saved from Gmail (force): ${expenseId}`);
+
+    // LINEグループに通知
+    if (lineGroupId) {
+      await sendCardUsageNotification(lineGroupId, {
+        expenseId,
+        merchant: parsed.merchant,
+        amount: parsed.amount,
+        category,
+        categoryEmoji: getCategoryEmoji(category),
+        date: dayjs(parsed.usedAt).format('M/D'),
+      });
+      console.log(`LINE notification sent for expense: ${expenseId}`);
+    }
+
+    return {
+      success: true,
+      message: `Processed: ${parsed.merchant} ¥${parsed.amount}`,
+      expenseId,
+    };
+  } catch (error) {
+    console.error('forceProcessMessage error:', error);
     return {
       success: false,
       message: `Error: ${(error as Error).message}`,
