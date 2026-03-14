@@ -44,7 +44,7 @@ function normalizeBudgetConfig(data: unknown): BudgetConfig {
   const raw = data as Partial<BudgetConfig> | undefined
 
   // Normalize categoryBudgets: only include valid non-negative finite numbers
-  let normalizedCategoryBudgets: Record<string, number> = {}
+  const normalizedCategoryBudgets: Record<string, number> = {}
   if (raw?.categoryBudgets && typeof raw.categoryBudgets === 'object' && !Array.isArray(raw.categoryBudgets)) {
     for (const [key, value] of Object.entries(raw.categoryBudgets)) {
       const numValue = typeof value === 'string' ? parseFloat(value) : value
