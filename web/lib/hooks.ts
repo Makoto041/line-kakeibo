@@ -13,7 +13,7 @@ import {
   deleteDoc,
   FirestoreError
 } from 'firebase/firestore';
-import { db, getFirebaseStatus } from './firebase';
+import { db, getFirebaseStatus, ensureFirebaseInitialized } from './firebase';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
 
@@ -155,11 +155,16 @@ const checkFirebaseConnection = (): boolean => {
 const waitForFirebase = async (maxWaitMs: number = 5000): Promise<boolean> => {
   if (typeof window === 'undefined') return false;
 
+  // まず初期化を明示的に試みる
+  ensureFirebaseInitialized();
+
   const startTime = Date.now();
   while (Date.now() - startTime < maxWaitMs) {
     if (checkFirebaseConnection()) {
       return true;
     }
+    // 初期化が完了していない場合は再試行
+    ensureFirebaseInitialized();
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   return checkFirebaseConnection();

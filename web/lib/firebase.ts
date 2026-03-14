@@ -175,10 +175,22 @@ const testFirebaseConnection = async () => {
   }
 };
 
-// 初期化を実行
+// 初期化を実行（クライアントサイドのみ）
+// Next.jsのSSRでは実行されず、クライアントサイドでモジュールがロードされた時に実行される
 if (typeof window !== 'undefined') {
   initializeFirebase();
 }
+
+// クライアントサイドで明示的に初期化を確認・実行する関数
+export const ensureFirebaseInitialized = (): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  if (!isInitialized && !initializationError) {
+    initializeFirebase();
+  }
+  return isInitialized && !initializationError;
+};
 
 // 匿名認証のラッパー関数
 export const signInAnonymous = async (): Promise<UserCredential> => {
