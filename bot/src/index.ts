@@ -1772,7 +1772,7 @@ export const webhook = onRequest(
     memory: "512MiB", // Increased from 256MiB to handle image processing
     timeoutSeconds: 540, // Increased from 300s to 540s (9 minutes max)
     invoker: "public",
-    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "ADMIN_SECRET"],
+    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY"],
   },
   app
 );
