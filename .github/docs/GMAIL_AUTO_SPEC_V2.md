@@ -330,24 +330,30 @@ bot/src/
 |---------|---------|---------|
 | GMAIL_CLIENT_ID | ❌ 未設定 | Firebase Secret Manager |
 | GMAIL_CLIENT_SECRET | ❌ 未設定 | Firebase Secret Manager |
-| GMAIL_REDIRECT_URI | ❌ 未設定 | 環境変数 |
-| LINE_GROUP_ID | ❌ 未設定 | 環境変数（通知先グループ） |
-| DEFAULT_GROUP_ID | ❌ 未設定 | 環境変数（Firestore用） |
+| ADMIN_SECRET | ❌ 未設定 | Firebase Secret Manager |
+| GMAIL_REDIRECT_URI | ❌ 未設定 | `bot/.env` ファイル |
+| LINE_GROUP_ID | ❌ 未設定 | `bot/.env` ファイル（通知先グループ） |
+| DEFAULT_GROUP_ID | ❌ 未設定 | `bot/.env` ファイル（Firestore用） |
 | Google Cloud Pub/Sub Topic | ❌ 未設定 | `gmail-notifications` トピック作成 |
-| Gmail OAuth2認証 | ❌ 未完了 | `/gmail/auth` エンドポイントで実行 |
-| Gmail Watch登録 | ❌ 未完了 | `/gmail/register-watch` エンドポイントで実行 |
+| Gmail OAuth2認証 | ❌ 未完了 | `/api/gmail/auth` エンドポイントで実行 |
+| Gmail Watch登録 | ❌ 未完了 | `/api/gmail/register-watch` エンドポイントで実行 |
 
 ### セットアップ手順
 
 1. **Google Cloud Console で OAuth2 クライアント作成**
    - APIs & Services > Credentials > Create Credentials > OAuth 2.0 Client ID
    - Application type: Web application
-   - Authorized redirect URIs: `https://<your-project>.cloudfunctions.net/api/gmail/callback`
+   - Authorized redirect URIs: `https://us-central1-<your-project>.cloudfunctions.net/api/gmail/callback`
+   - 例: `https://us-central1-line-kakeibo-0410.cloudfunctions.net/api/gmail/callback`
 
 2. **Firebase Secret Manager に設定**
    ```bash
+   # 対話形式で設定
    firebase functions:secrets:set GMAIL_CLIENT_ID
    firebase functions:secrets:set GMAIL_CLIENT_SECRET
+
+   # ADMIN_SECRET は改行なしで設定（重要）
+   echo -n 'your-admin-secret' | firebase functions:secrets:set ADMIN_SECRET --data-file=-
    ```
 
 3. **Pub/Sub トピック作成**
@@ -355,23 +361,29 @@ bot/src/
    gcloud pubsub topics create gmail-notifications
    ```
 
-4. **環境変数設定（Firebase Functions）**
+4. **環境変数設定（bot/.env ファイル）**
+
+   Firebase Functions v2 では `.env` ファイルを使用します:
    ```bash
-   firebase functions:config:set gmail.redirect_uri="https://..."
-   firebase functions:config:set line.group_id="C..."
-   firebase functions:config:set default.group_id="..."
+   # bot/.env に追加
+   GMAIL_REDIRECT_URI=https://us-central1-<your-project>.cloudfunctions.net/api/gmail/callback
+   LINE_GROUP_ID=C...  # 通知先LINEグループID
+   DEFAULT_GROUP_ID=...  # FirestoreグループドキュメントID
    ```
 
 5. **デプロイして OAuth2 認証実行**
    ```bash
    firebase deploy --only functions
-   # ブラウザで /gmail/auth にアクセス
+
+   # ブラウザで認証URLを取得（ADMIN_SECRET が必要）
+   curl "https://us-central1-<your-project>.cloudfunctions.net/api/gmail/auth?adminSecret=YOUR_ADMIN_SECRET"
+
+   # 返却されたauthUrlをブラウザで開いてGoogleアカウントで認証
    ```
 
 6. **Gmail Watch 登録**
    ```bash
-   curl -X POST https://.../api/gmail/register-watch \
-     -H "Authorization: Bearer $ADMIN_SECRET"
+   curl -X POST "https://us-central1-<your-project>.cloudfunctions.net/api/gmail/register-watch?adminSecret=YOUR_ADMIN_SECRET"
    ```
 
 ### 将来ステップ（オプション）
