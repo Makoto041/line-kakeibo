@@ -79,13 +79,6 @@ jobs:
         cd web
         npm run build
         
-    - name: Deploy to Firebase (Production)
-      uses: FirebaseExtended/action-hosting-deploy@v0
-      with:
-        repoToken: ${{ secrets.GITHUB_TOKEN }}
-        firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LINE_KAKEIBO_0410 }}
-        projectId: line-kakeibo-0410
-        
     - name: Deploy Firebase Functions (Production)
       uses: w9jds/firebase-action@master
       with:
