@@ -313,12 +313,66 @@ bot/src/
 
 ### Step 1 完了条件
 
-- [ ] 三井住友ゴールドVISA（NL）の利用通知メールを自動検知
-- [ ] 既存のGemini分類でカテゴリを正しく分類
-- [ ] LINEグループに3ボタン付きFlexメッセージが届く
-- [ ] ボタン押下でFirestoreのstatusが更新される
-- [ ] 重複登録が発生しない
-- [ ] **既存のLINE入力機能が正常に動作する**
+| 条件 | ステータス | 備考 |
+|-----|---------|------|
+| 三井住友ゴールドVISA（NL）の利用通知メールを自動検知 | ✅ 実装済み | `gmail/parser.ts` で実装 |
+| 既存のGemini分類でカテゴリを正しく分類 | ✅ 実装済み | `handler.ts` で既存の `classifyExpenseWithGemini` を使用 |
+| LINEグループに3ボタン付きFlexメッセージが届く | ✅ 実装済み | `line/flexMessage.ts` で実装 |
+| ボタン押下でFirestoreのstatusが更新される | ✅ 実装済み | `line/postback.ts` で実装 |
+| 重複登録が発生しない | ✅ 実装済み | `gmailMessageId` で重複チェック |
+| **既存のLINE入力機能が正常に動作する** | ✅ 影響なし | 追加実装のみ、既存コード変更なし |
+
+### Step 1 セットアップ要件（未完了）
+
+以下の設定が動作確認前に必要:
+
+| 設定項目 | ステータス | 設定方法 |
+|---------|---------|---------|
+| GMAIL_CLIENT_ID | ❌ 未設定 | Firebase Secret Manager |
+| GMAIL_CLIENT_SECRET | ❌ 未設定 | Firebase Secret Manager |
+| GMAIL_REDIRECT_URI | ❌ 未設定 | 環境変数 |
+| LINE_GROUP_ID | ❌ 未設定 | 環境変数（通知先グループ） |
+| DEFAULT_GROUP_ID | ❌ 未設定 | 環境変数（Firestore用） |
+| Google Cloud Pub/Sub Topic | ❌ 未設定 | `gmail-notifications` トピック作成 |
+| Gmail OAuth2認証 | ❌ 未完了 | `/gmail/auth` エンドポイントで実行 |
+| Gmail Watch登録 | ❌ 未完了 | `/gmail/register-watch` エンドポイントで実行 |
+
+### セットアップ手順
+
+1. **Google Cloud Console で OAuth2 クライアント作成**
+   - APIs & Services > Credentials > Create Credentials > OAuth 2.0 Client ID
+   - Application type: Web application
+   - Authorized redirect URIs: `https://<your-project>.cloudfunctions.net/api/gmail/callback`
+
+2. **Firebase Secret Manager に設定**
+   ```bash
+   firebase functions:secrets:set GMAIL_CLIENT_ID
+   firebase functions:secrets:set GMAIL_CLIENT_SECRET
+   ```
+
+3. **Pub/Sub トピック作成**
+   ```bash
+   gcloud pubsub topics create gmail-notifications
+   ```
+
+4. **環境変数設定（Firebase Functions）**
+   ```bash
+   firebase functions:config:set gmail.redirect_uri="https://..."
+   firebase functions:config:set line.group_id="C..."
+   firebase functions:config:set default.group_id="..."
+   ```
+
+5. **デプロイして OAuth2 認証実行**
+   ```bash
+   firebase deploy --only functions
+   # ブラウザで /gmail/auth にアクセス
+   ```
+
+6. **Gmail Watch 登録**
+   ```bash
+   curl -X POST https://.../api/gmail/register-watch \
+     -H "Authorization: Bearer $ADMIN_SECRET"
+   ```
 
 ### 将来ステップ（オプション）
 
