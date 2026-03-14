@@ -1928,7 +1928,9 @@ const gmailCallbackLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-app.get("/gmail/callback", requireAdminAuth, gmailCallbackLimiter as any, async (req, res) => {
+// コールバックはGoogleからリダイレクトされるためAdmin認証不要
+// stateパラメータによるCSRF保護で代替（handleOAuthCallback内で検証）
+app.get("/gmail/callback", gmailCallbackLimiter as any, async (req, res) => {
   try {
     const code = req.query.code as string;
     const state = req.query.state as string;
@@ -2006,5 +2008,14 @@ app.post("/gmail/process-latest", requireAdminAuth, async (_req, res) => {
     res.status(500).json({ error: (error as Error).message });
   }
 });
+
+// Express app を Firebase Functions としてエクスポート
+export const api = onRequest(
+  {
+    region: "us-central1",
+    secrets: ["ADMIN_SECRET", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
+  },
+  app
+);
 
 export default app;
