@@ -1881,7 +1881,7 @@ const requireAdminAuth = (req: Request, res: Response, next: express.NextFunctio
 
   if (authHeader?.startsWith("Bearer ")) {
     providedSecret = authHeader.substring(7);
-  } else if (xAdminSecret) {
+  } else if (queryAdminSecret) {
     providedSecret = queryAdminSecret;
   }
 
@@ -1928,7 +1928,7 @@ const gmailCallbackLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-app.get("/gmail/callback", requireAdminAuth, gmailCallbackLimiter, async (req, res) => {
+app.get("/gmail/callback", requireAdminAuth, gmailCallbackLimiter as any, async (req, res) => {
   try {
     const code = req.query.code as string;
     const state = req.query.state as string;
