@@ -43,4 +43,5 @@ export {
 export {
   handleGmailPubSub,
   processLatestEmail,
+  forceProcessMessage,
 } from './handler';

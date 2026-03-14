@@ -111,9 +111,9 @@ async function validateAndConsumeState(state: string): Promise<boolean> {
 export async function getAuthUrl(): Promise<string> {
   const client = getOAuth2Client();
 
+  // gmail.readonlyのみ使用（gmail.metadataを含めるとq parameterやformat: fullが使えなくなる）
   const scopes = [
     'https://www.googleapis.com/auth/gmail.readonly',
-    'https://www.googleapis.com/auth/gmail.metadata',
   ];
 
   // CSRFトークンとして使用するstateを生成
@@ -259,12 +259,36 @@ export async function getValidAccessToken(): Promise<string> {
  * 認証済みのGmail APIクライアントを取得
  */
 export async function getGmailClient() {
-  const accessToken = await getValidAccessToken();
+  const token = await loadTokenFromFirestore();
+
+  if (!token) {
+    throw new Error('Gmail token not found. Please run OAuth2 setup first.');
+  }
+
   const client = getOAuth2Client();
 
-  client.setCredentials({
-    access_token: accessToken,
-  });
+  // トークンが期限切れかどうかチェック（5分のバッファ）
+  const isExpired = token.expiry_date < Date.now() + 5 * 60 * 1000;
+
+  if (isExpired) {
+    console.log('Gmail access token expired, refreshing...');
+    const newToken = await refreshAccessToken(token.refresh_token);
+    client.setCredentials({
+      access_token: newToken.access_token,
+      refresh_token: newToken.refresh_token,
+      expiry_date: newToken.expiry_date,
+      token_type: newToken.token_type,
+      scope: newToken.scope,
+    });
+  } else {
+    client.setCredentials({
+      access_token: token.access_token,
+      refresh_token: token.refresh_token,
+      expiry_date: token.expiry_date,
+      token_type: token.token_type,
+      scope: token.scope,
+    });
+  }
 
   return google.gmail({ version: 'v1', auth: client });
 }

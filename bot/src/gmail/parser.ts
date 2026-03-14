@@ -51,9 +51,11 @@ export function parseSMBCCardEmail(
   body: string
 ): ParsedCardNotification | null {
   try {
-    // 金額を抽出（「ご利用金額：3,240円」形式）
+    // 金額を抽出
+    // パターン1: 「ご利用金額：3,240円」形式
+    // パターン2: 「◇利用金額：901円」形式
     const amountMatch = body.match(
-      /ご利用金額[：:]\s*([\d,]+)\s*円/
+      /(?:ご利用金額|◇利用金額)[：:]\s*([\d,]+)\s*円/
     );
     if (!amountMatch) {
       console.warn('Amount not found in email body');
@@ -61,17 +63,21 @@ export function parseSMBCCardEmail(
     }
     const amount = parseInt(amountMatch[1].replace(/,/g, ''), 10);
 
-    // 店舗名を抽出（「ご利用店名：イオン〇〇店」形式）
+    // 店舗名を抽出
+    // パターン1: 「ご利用店名：イオン〇〇店」形式
+    // パターン2: 「◇利用先：NIKUNOHANAMASAPURASU NE」形式
     const merchantMatch = body.match(
-      /ご利用店名[：:]\s*(.+?)(?:\n|\r|$)/
+      /(?:ご利用店名|◇利用先)[：:]\s*(.+?)(?:\n|\r|$)/
     );
     const merchant = merchantMatch
       ? merchantMatch[1].trim()
       : '不明な店舗';
 
-    // 利用日時を抽出（「ご利用日時：2024/03/07 12:34」形式）
+    // 利用日時を抽出
+    // パターン1: 「ご利用日時：2024/03/07 12:34」形式
+    // パターン2: 「◇利用日：2026/03/14 19:20」形式
     const dateMatch = body.match(
-      /ご利用日時[：:]\s*(\d{4}\/\d{1,2}\/\d{1,2})\s*(\d{1,2}:\d{2})?/
+      /(?:ご利用日時|◇利用日)[：:]\s*(\d{4}\/\d{1,2}\/\d{1,2})\s*(\d{1,2}:\d{2})?/
     );
     let usedAt: Date;
     if (dateMatch) {
