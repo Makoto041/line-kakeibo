@@ -1896,13 +1896,21 @@ const requireAdminAuth = (req: Request, res: Response, next: express.NextFunctio
 // Gmail API 専用の Express Router（セキュリティのため分離）
 const gmailRouter = express.Router();
 
+// Admin API用のrate limiter
+const adminApiLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 30, // limit each IP to 30 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 /**
  * Gmail OAuth2認証URL取得エンドポイント
  * 初回セットアップ時に使用
  * stateパラメータを生成してCSRF攻撃を防止
  * Admin認証が必要
  */
-gmailRouter.get("/auth", requireAdminAuth, async (_req, res) => {
+gmailRouter.get("/auth", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
   try {
     const authUrl = await getAuthUrl(); // async - stateを生成・保存
     res.json({
@@ -1958,7 +1966,7 @@ gmailRouter.get("/callback", gmailCallbackLimiter as any, async (req, res) => {
  * Gmail Watch登録エンドポイント
  * Admin認証が必要
  */
-gmailRouter.post("/register-watch", requireAdminAuth, async (_req, res) => {
+gmailRouter.post("/register-watch", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
   try {
     const isConfigured = await isGmailAuthConfigured();
     if (!isConfigured) {
@@ -1983,7 +1991,7 @@ gmailRouter.post("/register-watch", requireAdminAuth, async (_req, res) => {
  * Gmail Watch状態確認エンドポイント
  * Admin認証が必要
  */
-gmailRouter.get("/status", requireAdminAuth, async (_req, res) => {
+gmailRouter.get("/status", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
   try {
     const status = await getWatchStatus();
     const isConfigured = await isGmailAuthConfigured();
@@ -2002,7 +2010,7 @@ gmailRouter.get("/status", requireAdminAuth, async (_req, res) => {
  * テスト用: 最新のメールを手動で処理
  * Admin認証が必要
  */
-gmailRouter.post("/process-latest", requireAdminAuth, async (_req, res) => {
+gmailRouter.post("/process-latest", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
   try {
     const result = await processLatestEmail();
     res.json(result);
