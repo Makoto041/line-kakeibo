@@ -2190,11 +2190,11 @@ gmailApp.use(express.json());
 gmailApp.use("/gmail", gmailRouter);
 
 // Gmail API を Firebase Functions としてエクスポート（LINE webhook とは分離）
-// LINE通知を送信するためLINE認証情報も必要
+// LINE通知を送信するためLINE認証情報、カテゴリ分類のためGEMINI_API_KEYも必要
 export const api = onRequest(
   {
     region: "us-central1",
-    secrets: ["ADMIN_SECRET", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET"],
+    secrets: ["ADMIN_SECRET", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY"],
   },
   gmailApp
 );
