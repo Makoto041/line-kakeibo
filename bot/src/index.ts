@@ -1772,7 +1772,7 @@ export const webhook = onRequest(
     memory: "512MiB", // Increased from 256MiB to handle image processing
     timeoutSeconds: 540, // Increased from 300s to 540s (9 minutes max)
     invoker: "public",
-    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "ADMIN_SECRET"],
+    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY"],
   },
   app
 );
@@ -1881,7 +1881,7 @@ const requireAdminAuth = (req: Request, res: Response, next: express.NextFunctio
 
   if (authHeader?.startsWith("Bearer ")) {
     providedSecret = authHeader.substring(7);
-  } else if (xAdminSecret) {
+  } else if (queryAdminSecret) {
     providedSecret = queryAdminSecret;
   }
 
@@ -1893,13 +1893,24 @@ const requireAdminAuth = (req: Request, res: Response, next: express.NextFunctio
   next();
 };
 
+// Gmail API 専用の Express Router（セキュリティのため分離）
+const gmailRouter = express.Router();
+
+// Admin API用のrate limiter
+const adminApiLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 30, // limit each IP to 30 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 /**
  * Gmail OAuth2認証URL取得エンドポイント
  * 初回セットアップ時に使用
  * stateパラメータを生成してCSRF攻撃を防止
  * Admin認証が必要
  */
-app.get("/gmail/auth", requireAdminAuth, async (_req, res) => {
+gmailRouter.get("/auth", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
   try {
     const authUrl = await getAuthUrl(); // async - stateを生成・保存
     res.json({
@@ -1928,7 +1939,9 @@ const gmailCallbackLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-app.get("/gmail/callback", requireAdminAuth, gmailCallbackLimiter, async (req, res) => {
+// コールバックはGoogleからリダイレクトされるためAdmin認証不要
+// stateパラメータによるCSRF保護で代替（handleOAuthCallback内で検証）
+gmailRouter.get("/callback", gmailCallbackLimiter as any, async (req, res) => {
   try {
     const code = req.query.code as string;
     const state = req.query.state as string;
@@ -1953,7 +1966,7 @@ app.get("/gmail/callback", requireAdminAuth, gmailCallbackLimiter, async (req, r
  * Gmail Watch登録エンドポイント
  * Admin認証が必要
  */
-app.post("/gmail/register-watch", requireAdminAuth, async (_req, res) => {
+gmailRouter.post("/register-watch", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
   try {
     const isConfigured = await isGmailAuthConfigured();
     if (!isConfigured) {
@@ -1978,7 +1991,7 @@ app.post("/gmail/register-watch", requireAdminAuth, async (_req, res) => {
  * Gmail Watch状態確認エンドポイント
  * Admin認証が必要
  */
-app.get("/gmail/status", requireAdminAuth, async (_req, res) => {
+gmailRouter.get("/status", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
   try {
     const status = await getWatchStatus();
     const isConfigured = await isGmailAuthConfigured();
@@ -1997,7 +2010,7 @@ app.get("/gmail/status", requireAdminAuth, async (_req, res) => {
  * テスト用: 最新のメールを手動で処理
  * Admin認証が必要
  */
-app.post("/gmail/process-latest", requireAdminAuth, async (_req, res) => {
+gmailRouter.post("/process-latest", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
   try {
     const result = await processLatestEmail();
     res.json(result);
@@ -2006,5 +2019,19 @@ app.post("/gmail/process-latest", requireAdminAuth, async (_req, res) => {
     res.status(500).json({ error: (error as Error).message });
   }
 });
+
+// Gmail API 専用の Express app を作成
+const gmailApp = express();
+gmailApp.use(express.json());
+gmailApp.use("/gmail", gmailRouter);
+
+// Gmail API を Firebase Functions としてエクスポート（LINE webhook とは分離）
+export const api = onRequest(
+  {
+    region: "us-central1",
+    secrets: ["ADMIN_SECRET", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
+  },
+  gmailApp
+);
 
 export default app;

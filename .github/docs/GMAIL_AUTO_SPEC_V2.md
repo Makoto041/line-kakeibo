@@ -313,12 +313,78 @@ bot/src/
 
 ### Step 1 完了条件
 
-- [ ] 三井住友ゴールドVISA（NL）の利用通知メールを自動検知
-- [ ] 既存のGemini分類でカテゴリを正しく分類
-- [ ] LINEグループに3ボタン付きFlexメッセージが届く
-- [ ] ボタン押下でFirestoreのstatusが更新される
-- [ ] 重複登録が発生しない
-- [ ] **既存のLINE入力機能が正常に動作する**
+| 条件 | ステータス | 備考 |
+|-----|---------|------|
+| 三井住友ゴールドVISA（NL）の利用通知メールを自動検知 | ✅ 実装済み | `gmail/parser.ts` で実装 |
+| 既存のGemini分類でカテゴリを正しく分類 | ✅ 実装済み | `handler.ts` で既存の `classifyExpenseWithGemini` を使用 |
+| LINEグループに3ボタン付きFlexメッセージが届く | ✅ 実装済み | `line/flexMessage.ts` で実装 |
+| ボタン押下でFirestoreのstatusが更新される | ✅ 実装済み | `line/postback.ts` で実装 |
+| 重複登録が発生しない | ✅ 実装済み | `gmailMessageId` で重複チェック |
+| **既存のLINE入力機能が正常に動作する** | ✅ 影響なし | 追加実装のみ、既存コード変更なし |
+
+### Step 1 セットアップ要件（未完了）
+
+以下の設定が動作確認前に必要:
+
+| 設定項目 | ステータス | 設定方法 |
+|---------|---------|---------|
+| GMAIL_CLIENT_ID | ❌ 未設定 | Firebase Secret Manager |
+| GMAIL_CLIENT_SECRET | ❌ 未設定 | Firebase Secret Manager |
+| ADMIN_SECRET | ❌ 未設定 | Firebase Secret Manager |
+| GMAIL_REDIRECT_URI | ❌ 未設定 | `bot/.env` ファイル |
+| LINE_GROUP_ID | ❌ 未設定 | `bot/.env` ファイル（通知先グループ） |
+| DEFAULT_GROUP_ID | ❌ 未設定 | `bot/.env` ファイル（Firestore用） |
+| Google Cloud Pub/Sub Topic | ❌ 未設定 | `gmail-notifications` トピック作成 |
+| Gmail OAuth2認証 | ❌ 未完了 | `/api/gmail/auth` エンドポイントで実行 |
+| Gmail Watch登録 | ❌ 未完了 | `/api/gmail/register-watch` エンドポイントで実行 |
+
+### セットアップ手順
+
+1. **Google Cloud Console で OAuth2 クライアント作成**
+   - APIs & Services > Credentials > Create Credentials > OAuth 2.0 Client ID
+   - Application type: Web application
+   - Authorized redirect URIs: `https://us-central1-<your-project>.cloudfunctions.net/api/gmail/callback`
+   - 例: `https://us-central1-line-kakeibo-0410.cloudfunctions.net/api/gmail/callback`
+
+2. **Firebase Secret Manager に設定**
+   ```bash
+   # 対話形式で設定
+   firebase functions:secrets:set GMAIL_CLIENT_ID
+   firebase functions:secrets:set GMAIL_CLIENT_SECRET
+
+   # ADMIN_SECRET は改行なしで設定（重要）
+   echo -n 'your-admin-secret' | firebase functions:secrets:set ADMIN_SECRET --data-file=-
+   ```
+
+3. **Pub/Sub トピック作成**
+   ```bash
+   gcloud pubsub topics create gmail-notifications
+   ```
+
+4. **環境変数設定（bot/.env ファイル）**
+
+   Firebase Functions v2 では `.env` ファイルを使用します:
+   ```bash
+   # bot/.env に追加
+   GMAIL_REDIRECT_URI=https://us-central1-<your-project>.cloudfunctions.net/api/gmail/callback
+   LINE_GROUP_ID=C...  # 通知先LINEグループID
+   DEFAULT_GROUP_ID=...  # FirestoreグループドキュメントID
+   ```
+
+5. **デプロイして OAuth2 認証実行**
+   ```bash
+   firebase deploy --only functions
+
+   # ブラウザで認証URLを取得（ADMIN_SECRET が必要）
+   curl "https://us-central1-<your-project>.cloudfunctions.net/api/gmail/auth?adminSecret=YOUR_ADMIN_SECRET"
+
+   # 返却されたauthUrlをブラウザで開いてGoogleアカウントで認証
+   ```
+
+6. **Gmail Watch 登録**
+   ```bash
+   curl -X POST "https://us-central1-<your-project>.cloudfunctions.net/api/gmail/register-watch?adminSecret=YOUR_ADMIN_SECRET"
+   ```
 
 ### 将来ステップ（オプション）
 
