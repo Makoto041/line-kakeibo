@@ -1,31 +1,64 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
 import Header from "../../components/Header";
 import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
+import { doc, getDoc } from "firebase/firestore";
+import { db, ensureFirebaseInitialized } from "../../lib/firebase";
 
+// Suspense boundary for useSearchParams
 export default function ExpensesPage() {
+  return (
+    <Suspense fallback={<ExpensesPageLoading />}>
+      <ExpensesPageContent />
+    </Suspense>
+  );
+}
+
+function ExpensesPageLoading() {
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-white shadow-sm">
+        <div className="container mx-auto px-4 py-4">
+          <div className="h-8 bg-gray-200 rounded animate-pulse w-32"></div>
+        </div>
+      </div>
+      <main className="container mx-auto px-4 py-8">
+        <div className="flex justify-center items-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function ExpensesPageContent() {
   const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
   const [currentMonth, setCurrentMonth] = useState(dayjs());
-  const [dateRange, setDateRange] = useState<{startDate: string; endDate: string} | null>(null);
+  // Initialize dateRange synchronously to avoid undefined→value transition causing double fetch
+  const [dateRange, setDateRange] = useState<{startDate: string; endDate: string}>(() => {
+    const range = getEffectiveDateRange(dayjs(), DEFAULT_SETTINGS);
+    return { startDate: range.startDate, endDate: range.endDate };
+  });
+  // Track whether date settings have been loaded (to avoid fetching before edit expense month is resolved)
+  const [dateSettingsLoaded, setDateSettingsLoaded] = useState(false);
+  // Track whether we've resolved the edit expense's month
+  const [editMonthResolved, setEditMonthResolved] = useState(false);
+  // Track whether the month was set for edit expense (used to defer editMonthResolved until dateRange updates)
+  const [editMonthSet, setEditMonthSet] = useState(false);
 
-  // URLからパラメータを取得
-  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
-  const lineIdFromUrl = urlParams.get('lineId');
-  const editExpenseId = urlParams.get('edit');
-  
-  console.log("=== EXPENSES PAGE DEBUG ===");
-  console.log("user?.uid:", user?.uid);
-  console.log("lineIdFromUrl:", lineIdFromUrl);
-  console.log("user object:", user);
-  
+  // URLからパラメータを取得（useSearchParamsでハイドレーション安全に取得）
+  const searchParams = useSearchParams();
+  const lineIdFromUrl = searchParams.get('lineId');
+  const editExpenseId = searchParams.get('edit');
+
   // LINE IDがある場合は直接それを使用、なければuser.uidを使用
   const effectiveUserId = lineIdFromUrl || user?.uid || null;
-  console.log("effectiveUserId:", effectiveUserId);
 
   // Load date settings from Firestore on mount
   useEffect(() => {
@@ -34,9 +67,47 @@ export default function ExpensesPage() {
         const settings = await getDateRangeSettings(effectiveUserId);
         setDateSettings(settings);
       }
+      setDateSettingsLoaded(true);
     };
     loadSettings();
   }, [effectiveUserId]);
+
+  // When edit param is present, fetch the expense by ID and navigate to its month
+  // so the expense is guaranteed to be in the date range
+  useEffect(() => {
+    if (!editExpenseId || !dateSettingsLoaded || editMonthResolved || editMonthSet) return;
+
+    const resolveEditExpenseMonth = async () => {
+      try {
+        ensureFirebaseInitialized();
+        if (!db) {
+          // No Firebase, mark as resolved directly
+          setEditMonthResolved(true);
+          return;
+        }
+        const expenseDoc = await getDoc(doc(db, 'expenses', editExpenseId));
+        if (expenseDoc.exists()) {
+          const data = expenseDoc.data();
+          if (data.date) {
+            const expenseDate = dayjs(data.date);
+            // Set currentMonth to the expense's date so date range calculation includes it
+            // (getEffectiveDateRange handles customStartDay correctly when given the actual date)
+            setCurrentMonth(expenseDate);
+            // Mark that month was set - editMonthResolved will be set after dateRange updates
+            setEditMonthSet(true);
+            return;
+          }
+        }
+        // No valid date found, mark as resolved
+        setEditMonthResolved(true);
+      } catch (err) {
+        console.error("Failed to fetch edit expense:", err);
+        setEditMonthResolved(true);
+      }
+    };
+
+    resolveEditExpenseMonth();
+  }, [editExpenseId, dateSettingsLoaded, editMonthResolved, editMonthSet]);
 
   // Calculate effective date range when settings or currentMonth changes
   useEffect(() => {
@@ -44,8 +115,18 @@ export default function ExpensesPage() {
     setDateRange({ startDate: range.startDate, endDate: range.endDate });
   }, [currentMonth, dateSettings]);
 
+  // Mark edit month as resolved AFTER dateRange has been updated
+  // This ensures we fetch with the correct date range, preventing double-fetch
+  useEffect(() => {
+    if (editMonthSet && !editMonthResolved) {
+      setEditMonthResolved(true);
+    }
+  }, [dateRange, editMonthSet, editMonthResolved]);
+
+  // Don't start fetching expenses until we've resolved the edit expense's month (if applicable)
+  const shouldFetch = editExpenseId ? editMonthResolved : true;
   const { expenses, loading, error, updateExpense, deleteExpense } =
-    useExpenses(effectiveUserId, 0, 500, dateRange?.startDate); // Use custom date range
+    useExpenses(shouldFetch ? effectiveUserId : null, 0, 500, dateRange.startDate);
   const [filter, setFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"date" | "amount">("date");
   const [editingExpense, setEditingExpense] = useState<string | null>(null);
@@ -286,7 +367,7 @@ export default function ExpensesPage() {
   }
 
 
-  if (authLoading) {
+  if (authLoading || (editExpenseId && !editMonthResolved)) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
