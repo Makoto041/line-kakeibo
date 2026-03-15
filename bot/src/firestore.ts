@@ -58,6 +58,7 @@ export interface Expense {
   date: string;             // YYYY-MM-DD format
   category: string;
   confirmed: boolean;
+  includeInTotal: boolean;  // 合計金額に含めるか（Gmail自動取得:true, LINE手入力:false）
   payerId: string;          // LINE User ID of the person who paid (defaults to lineId)
   payerDisplayName?: string; // Display name of the person who paid (defaults to userDisplayName)
   ocrText?: string;
