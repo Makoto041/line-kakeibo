@@ -2052,13 +2052,29 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
     const tokenData = tokenDoc.data();
 
     if (tokenData?.access_token) {
-      // Google側でトークンを無効化
+      // Google側でトークンを無効化（タイムアウト付き）
       try {
         const revokeUrl = `https://oauth2.googleapis.com/revoke?token=${tokenData.access_token}`;
-        await fetch(revokeUrl, { method: 'POST' });
-        console.log('Gmail token revoked on Google side');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒タイムアウト
+
+        const response = await fetch(revokeUrl, {
+          method: 'POST',
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          console.log('Gmail token revoked on Google side');
+        } else {
+          console.warn(`Failed to revoke token on Google side: HTTP ${response.status}`);
+        }
       } catch (revokeError) {
-        console.warn('Failed to revoke token on Google side (may already be invalid):', revokeError);
+        if (revokeError instanceof Error && revokeError.name === 'AbortError') {
+          console.warn('Token revocation timed out (5s)');
+        } else {
+          console.warn('Failed to revoke token on Google side (may already be invalid):', revokeError);
+        }
       }
     }
 
@@ -2149,6 +2165,21 @@ gmailRouter.post("/test-process", adminApiLimiter as any, requireAdminAuth, asyn
       }
     }
 
+    // 機密情報をマスク（カード番号、メールアドレス等）
+    const sanitizeBody = (text: string): string => {
+      return text
+        // カード番号（4桁-4桁-4桁-4桁 または 連続16桁）
+        .replace(/\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, '****-****-****-****')
+        // 下4桁以外をマスク（**** 1234 形式）
+        .replace(/\b\d{12,15}(\d{4})\b/g, '************$1')
+        // メールアドレス
+        .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '***@***.***')
+        // 電話番号（日本形式）
+        .replace(/\b0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{4}\b/g, '***-****-****')
+        // 口座番号（7-8桁の数字）
+        .replace(/\b\d{7,8}\b/g, '********');
+    };
+
     res.json({
       success: true,
       emailCount: messages.length,
@@ -2157,7 +2188,7 @@ gmailRouter.post("/test-process", adminApiLimiter as any, requireAdminAuth, asyn
         from,
         subject,
         date,
-        bodyPreview: body.substring(0, 500),
+        bodyPreview: sanitizeBody(body.substring(0, 500)),
       }
     });
   } catch (error) {
