@@ -171,7 +171,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     const lineGroupId = getDefaultLineGroupId();
 
     // 支出データを作成
-    // 初期状態ではincludeInTotal: falseにし、ユーザーが共同費/立替を選択した時にtrueにする
+    // Gmail自動取得は基本的に会計に含める（共同費として扱う）
     const expense: Partial<GmailExpense> = {
       lineId: GMAIL_SYSTEM_LINE_ID, // システムユーザーとして登録
       amount: parsed.amount,
@@ -179,7 +179,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       date: dayjs(parsed.usedAt).format('YYYY-MM-DD'),
       category,
       confirmed: false, // 未確認状態
-      includeInTotal: false, // 未確認の支出は合計に含めない
+      includeInTotal: true, // Gmail自動取得は基本的に会計に含める
       payerId: GMAIL_SYSTEM_LINE_ID,
       // グループ関連（ダッシュボード集計・立替精算に必要）
       groupId,
@@ -277,7 +277,7 @@ export async function processLatestEmail(): Promise<{
         date: dayjs(parsed.usedAt).format('YYYY-MM-DD'),
         category: categoryResult.category || 'その他',
         confirmed: false,
-        includeInTotal: false, // 未確認の支出は合計に含めない
+        includeInTotal: true, // Gmail自動取得は基本的に会計に含める
         payerId: GMAIL_SYSTEM_LINE_ID,
         // グループ関連（ダッシュボード集計・立替精算に必要）
         groupId: getDefaultGroupId(),
@@ -379,7 +379,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
     const lineGroupId = getDefaultLineGroupId();
 
     // 支出データを作成
-    // 初期状態ではincludeInTotal: falseにし、ユーザーが共同費/立替を選択した時にtrueにする
+    // Gmail自動取得は基本的に会計に含める（共同費として扱う）
     const expense: Partial<GmailExpense> = {
       lineId: GMAIL_SYSTEM_LINE_ID,
       amount: parsed.amount,
@@ -387,7 +387,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
       date: dayjs(parsed.usedAt).format('YYYY-MM-DD'),
       category,
       confirmed: false,
-      includeInTotal: false, // 未確認の支出は合計に含めない
+      includeInTotal: true, // Gmail自動取得は基本的に会計に含める
       payerId: GMAIL_SYSTEM_LINE_ID,
       groupId,
       lineGroupId,

@@ -620,6 +620,7 @@ async function processImageInBackground(
           date: dayjs().format("YYYY-MM-DD"),
           category: defaultCategory,
           confirmed: false,
+          includeInTotal: false, // LINE OCRは初期状態では会計に含めない
           payerId: event.source.userId, // デフォルトは入力者
           payerDisplayName: userDisplayName,
           ocrText: detectedText,
@@ -1526,6 +1527,7 @@ async function processExpenseInBackground(event: any, parsed: any) {
       date: parsed.date,
       category: finalCategory,
       confirmed: false, // 未確認状態で保存（ボタンで確認）
+      includeInTotal: false, // LINE手入力は初期状態では会計に含めない
       payerId: event.source.userId, // デフォルトは入力者
       payerDisplayName: userDisplayName,
       ocrText: "",
