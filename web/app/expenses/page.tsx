@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
@@ -10,7 +10,33 @@ import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_S
 import { doc, getDoc } from "firebase/firestore";
 import { db, ensureFirebaseInitialized } from "../../lib/firebase";
 
+// Suspense boundary for useSearchParams
 export default function ExpensesPage() {
+  return (
+    <Suspense fallback={<ExpensesPageLoading />}>
+      <ExpensesPageContent />
+    </Suspense>
+  );
+}
+
+function ExpensesPageLoading() {
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-white shadow-sm">
+        <div className="container mx-auto px-4 py-4">
+          <div className="h-8 bg-gray-200 rounded animate-pulse w-32"></div>
+        </div>
+      </div>
+      <main className="container mx-auto px-4 py-8">
+        <div className="flex justify-center items-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function ExpensesPageContent() {
   const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
   const [currentMonth, setCurrentMonth] = useState(dayjs());
