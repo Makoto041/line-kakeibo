@@ -1,4 +1,4 @@
-# LINE家計簿 自動化システム設計書 v2.1
+# LINE家計簿 自動化システム設計書 v2.2
 
 > line-kakeibo / Gmail連携 追加機能版
 
@@ -180,8 +180,23 @@ Flex Message通知（新規）
 | gmailMessageId | string | GmailメッセージID（重複チェック用） |
 | status | string | `pending` / `shared` / `personal` / `advance_pending` |
 | advanceBy | string | 立替者（立替時のみ） |
+| **includeInTotal** | **boolean** | **合計金額に含めるか** |
 
-### 5.3 新規: システムコレクション
+### 5.3 includeInTotalフィールドの初期値
+
+入力元によって初期値が異なる:
+
+| 入力元 | includeInTotal初期値 | 理由 |
+|--------|---------------------|------|
+| `gmail_auto` | `true` | Gmail自動取得は基本的に共同費として会計に含める |
+| `line_text` | `false` | 確認ボタンを押すまで含めない |
+| `line_ocr` | `false` | 確認ボタンを押すまで含めない |
+
+- Gmail自動取得: 共用カードからの取得なので、初期状態で会計に含める
+- LINE手入力: ユーザーが「共同費」「立替」ボタンを押すと `includeInTotal: true` に更新
+- 「個人費」を選択すると `includeInTotal: false` に設定
+
+### 5.4 新規: システムコレクション
 
 #### system/gmailToken
 
@@ -322,21 +337,24 @@ bot/src/
 | 重複登録が発生しない | ✅ 実装済み | `gmailMessageId` で重複チェック |
 | **既存のLINE入力機能が正常に動作する** | ✅ 影響なし | 追加実装のみ、既存コード変更なし |
 
-### Step 1 セットアップ要件（未完了）
+### Step 1 セットアップ要件
 
 以下の設定が動作確認前に必要:
 
 | 設定項目 | ステータス | 設定方法 |
 |---------|---------|---------|
-| GMAIL_CLIENT_ID | ❌ 未設定 | Firebase Secret Manager |
-| GMAIL_CLIENT_SECRET | ❌ 未設定 | Firebase Secret Manager |
-| ADMIN_SECRET | ❌ 未設定 | Firebase Secret Manager |
-| GMAIL_REDIRECT_URI | ❌ 未設定 | `bot/.env` ファイル |
-| LINE_GROUP_ID | ❌ 未設定 | `bot/.env` ファイル（通知先グループ） |
-| DEFAULT_GROUP_ID | ❌ 未設定 | `bot/.env` ファイル（Firestore用） |
-| Google Cloud Pub/Sub Topic | ❌ 未設定 | `gmail-notifications` トピック作成 |
-| Gmail OAuth2認証 | ❌ 未完了 | `/api/gmail/auth` エンドポイントで実行 |
-| Gmail Watch登録 | ❌ 未完了 | `/api/gmail/register-watch` エンドポイントで実行 |
+| GMAIL_CLIENT_ID | ✅ 設定済み | Firebase Secret Manager |
+| GMAIL_CLIENT_SECRET | ✅ 設定済み | Firebase Secret Manager |
+| ADMIN_SECRET | ✅ 設定済み | Firebase Secret Manager |
+| GEMINI_API_KEY | ✅ 設定済み | Firebase Secret Manager（カテゴリ分類用） |
+| LINE_CHANNEL_TOKEN | ✅ 設定済み | Firebase Secret Manager（LINE通知用） |
+| LINE_CHANNEL_SECRET | ✅ 設定済み | Firebase Secret Manager |
+| GMAIL_REDIRECT_URI | ✅ 設定済み | `bot/.env.local` ファイル |
+| LINE_GROUP_ID | ✅ 設定済み | `bot/.env.local` ファイル（通知先グループ） |
+| DEFAULT_GROUP_ID | ✅ 設定済み | `bot/.env.local` ファイル（Firestore用） |
+| Google Cloud Pub/Sub Topic | ✅ 設定済み | `gmail-notifications` トピック |
+| Gmail OAuth2認証 | ✅ 完了 | `/api/gmail/auth` エンドポイントで実行済み |
+| Gmail Watch登録 | ✅ 完了 | `/api/gmail/register-watch` エンドポイントで実行済み |
 
 ### セットアップ手順
 
@@ -396,22 +414,70 @@ bot/src/
 
 ---
 
-## 10. 注意事項
+## 10. Gmail API エンドポイント
 
-### 10.1 既存機能への影響
+Gmail管理用のAPIエンドポイント一覧:
+
+| メソッド | パス | 説明 | 認証 |
+|---------|-----|------|------|
+| GET | `/api/gmail/auth` | OAuth2認証URLを取得 | Admin |
+| GET | `/api/gmail/callback` | OAuth2コールバック（Googleからのリダイレクト先） | **不要** |
+| POST | `/api/gmail/register-watch` | Gmail Watch登録 | Admin |
+| GET | `/api/gmail/status` | Gmail連携ステータス確認 | Admin |
+| POST | `/api/gmail/process-latest` | 最新のSMBCカードメールを手動処理 | Admin |
+| POST | `/api/gmail/test-process` | SMBCカードメール内容をプレビュー | Admin |
+| POST | `/api/gmail/force-process/:messageId` | 指定メッセージIDを強制処理（冪等） | Admin |
+| POST | `/api/gmail/refresh-token` | トークン強制リフレッシュ | Admin |
+| DELETE | `/api/gmail/revoke` | トークン削除・再認証用 | Admin |
+
+> **注意**: `/api/gmail/callback` はGoogleからのOAuth2リダイレクト先のため、Admin認証は不要です。
+
+### 認証方法
+
+Admin認証が必要なエンドポイントは以下のいずれかで認証:
+
+```bash
+# Authorization ヘッダー
+curl -H "Authorization: Bearer YOUR_ADMIN_SECRET" https://...
+
+# クエリパラメータ
+curl "https://...?adminSecret=YOUR_ADMIN_SECRET"
+```
+
+### 使用例
+
+```bash
+# ステータス確認
+curl -H "Authorization: Bearer $ADMIN_SECRET" \
+  "https://us-central1-line-kakeibo-0410.cloudfunctions.net/api/gmail/status"
+
+# 最新メールを処理
+curl -X POST -H "Authorization: Bearer $ADMIN_SECRET" \
+  "https://us-central1-line-kakeibo-0410.cloudfunctions.net/api/gmail/process-latest"
+
+# トークン削除（再認証が必要になる）
+curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
+  "https://us-central1-line-kakeibo-0410.cloudfunctions.net/api/gmail/revoke"
+```
+
+---
+
+## 11. 注意事項
+
+### 11.1 既存機能への影響
 
 - **既存のLINE入力機能には一切変更を加えない**
 - Gmail自動取得は**追加機能**として実装
 - 既存の `saveExpense` 関数を再利用
 - 既存の Gemini 分類を再利用
 
-### 10.2 Gmail Watch制約
+### 11.2 Gmail Watch制約
 
 - Gmail Watchは7日間の有効期限あり
 - 6日ごとにCloud Schedulerで自動更新
 - トークンリフレッシュは自動化
 
-### 10.3 セキュリティ
+### 11.3 セキュリティ
 
 - OAuth2トークンはFirestore + Secret Managerで管理
 - 共用カード以外のメールは本文フィルタで完全排除
