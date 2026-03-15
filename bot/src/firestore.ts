@@ -308,6 +308,100 @@ export async function getMonthlyStats(lineId: string, year: number, month: numbe
   }
 }
 
+/**
+ * LINEグループまたはユーザーの月次集計を取得（家計簿コマンド用）
+ * includeInTotalを考慮した集計を返す
+ */
+export interface MonthlySummary {
+  totalAmount: number;           // 全支出合計
+  includedTotalAmount: number;   // includeInTotal: trueの合計
+  expenseCount: number;          // 全支出件数
+  includedExpenseCount: number;  // includeInTotal: trueの件数
+  categoryTotals: Array<{
+    category: string;
+    amount: number;
+  }>;
+  recentExpenses: Expense[];
+}
+
+export async function getMonthlyGroupSummary(
+  lineGroupId: string | undefined,
+  lineId: string,
+  year: number,
+  month: number,
+  recentLimit: number = 5
+): Promise<MonthlySummary> {
+  try {
+    const startDate = dayjs(`${year}-${month.toString().padStart(2, '0')}-01`).format('YYYY-MM-DD');
+    const endDate = dayjs(startDate).endOf('month').format('YYYY-MM-DD');
+
+    let expenses: Expense[] = [];
+
+    if (lineGroupId) {
+      // グループコンテキスト: lineGroupIdで取得
+      const snapshot = await getDb()
+        .collection('expenses')
+        .where('lineGroupId', '==', lineGroupId)
+        .where('date', '>=', startDate)
+        .where('date', '<=', endDate)
+        .get();
+
+      expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
+    } else {
+      // 個人コンテキスト: lineIdで取得
+      const snapshot = await getDb()
+        .collection('expenses')
+        .where('lineId', '==', lineId)
+        .where('date', '>=', startDate)
+        .where('date', '<=', endDate)
+        .get();
+
+      expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
+    }
+
+    // includeInTotalのデフォルト値を設定（既存データ互換性）
+    expenses = expenses.map(e => ({
+      ...e,
+      includeInTotal: e.includeInTotal ?? true,
+    }));
+
+    // 全体の集計
+    const totalAmount = expenses.reduce((sum, e) => sum + e.amount, 0);
+    const includedExpenses = expenses.filter(e => e.includeInTotal !== false);
+    const includedTotalAmount = includedExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+    // カテゴリ別集計（includeInTotal: trueのみ）
+    const categoryMap: Record<string, number> = {};
+    for (const expense of includedExpenses) {
+      const cat = expense.category || 'その他';
+      categoryMap[cat] = (categoryMap[cat] || 0) + expense.amount;
+    }
+
+    const categoryTotals = Object.entries(categoryMap)
+      .map(([category, amount]) => ({ category, amount }))
+      .sort((a, b) => b.amount - a.amount);
+
+    // 直近の支出（日付降順）
+    const sortedExpenses = [...expenses].sort((a, b) => {
+      const aTime = a.createdAt?.toMillis() || 0;
+      const bTime = b.createdAt?.toMillis() || 0;
+      return bTime - aTime;
+    });
+
+    return {
+      totalAmount,
+      includedTotalAmount,
+      expenseCount: expenses.length,
+      includedExpenseCount: includedExpenses.length,
+      categoryTotals,
+      recentExpenses: sortedExpenses.slice(0, recentLimit),
+    };
+  } catch (error) {
+    console.error('Error getting monthly group summary:', error);
+    throw error;
+  }
+}
+
 // UserLinks管理機能
 export async function createUserLink(appUid: string, lineId: string): Promise<void> {
   try {
