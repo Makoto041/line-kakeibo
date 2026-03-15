@@ -162,6 +162,25 @@ export async function isDuplicateExpense(gmailMessageId: string): Promise<boolea
 }
 
 /**
+ * gmailMessageIdから既存の支出IDを取得
+ * 存在しない場合はnullを返す
+ */
+export async function getExpenseIdByGmailMessageId(gmailMessageId: string): Promise<string | null> {
+  const db = getFirestore();
+  const snapshot = await db
+    .collection('expenses')
+    .where('gmailMessageId', '==', gmailMessageId)
+    .limit(1)
+    .get();
+
+  if (snapshot.empty) {
+    return null;
+  }
+
+  return snapshot.docs[0].id;
+}
+
+/**
  * 追加の重複チェック: 同日・同店舗・同金額
  * gmailMessageIdがない場合のフォールバック
  */

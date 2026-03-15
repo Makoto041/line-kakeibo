@@ -37,6 +37,7 @@ export {
   getFromAddress,
   isDuplicateExpense,
   isDuplicateByContent,
+  getExpenseIdByGmailMessageId,
 } from './parser';
 
 // Pub/Subハンドラー

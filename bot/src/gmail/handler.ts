@@ -14,6 +14,7 @@ import {
   decodeEmailBody,
   getFromAddress,
   isDuplicateExpense,
+  getExpenseIdByGmailMessageId,
 } from './parser';
 import {
   GmailPubSubPayload,
@@ -309,14 +310,27 @@ export async function processLatestEmail(): Promise<{
 }
 
 /**
- * テスト用: 指定したメッセージIDを強制処理（重複チェックをスキップ）
+ * テスト用: 指定したメッセージIDを強制処理（冪等: 既存の支出があればそれを返す）
  */
 export async function forceProcessMessage(messageId: string): Promise<{
   success: boolean;
   message: string;
   expenseId?: string;
+  alreadyExists?: boolean;
 }> {
   try {
+    // 冪等性: 既存の支出があればそれを返す（重複作成を防ぐ）
+    const existingExpenseId = await getExpenseIdByGmailMessageId(messageId);
+    if (existingExpenseId) {
+      console.log(`Expense already exists for messageId ${messageId}: ${existingExpenseId}`);
+      return {
+        success: true,
+        message: `Already processed (existing expense)`,
+        expenseId: existingExpenseId,
+        alreadyExists: true,
+      };
+    }
+
     const gmail = await getGmailClient();
 
     // メッセージの詳細を取得
@@ -386,7 +400,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
     const expenseId = await saveExpense(expense as any);
     console.log(`Expense saved from Gmail (force): ${expenseId}`);
 
-    // LINEグループに通知
+    // LINEグループに通知（新規作成時のみ）
     if (lineGroupId) {
       await sendCardUsageNotification(lineGroupId, {
         expenseId,
@@ -403,6 +417,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
       success: true,
       message: `Processed: ${parsed.merchant} ¥${parsed.amount}`,
       expenseId,
+      alreadyExists: false,
     };
   } catch (error) {
     console.error('forceProcessMessage error:', error);

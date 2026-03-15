@@ -2065,8 +2065,8 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
     // Firestoreからトークンを削除
     await db.collection('system').doc('gmailToken').delete();
 
-    // watchステータスもリセット
-    await db.collection('system').doc('gmailWatch').delete().catch(() => {});
+    // watchステータスもリセット（gmailStateが正しいドキュメント名）
+    await db.collection('system').doc('gmailState').delete().catch(() => {});
 
     res.json({
       success: true,
