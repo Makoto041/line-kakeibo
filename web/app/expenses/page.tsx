@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
 import Header from "../../components/Header";
@@ -22,11 +23,13 @@ export default function ExpensesPage() {
   const [dateSettingsLoaded, setDateSettingsLoaded] = useState(false);
   // Track whether we've resolved the edit expense's month
   const [editMonthResolved, setEditMonthResolved] = useState(false);
+  // Track whether the month was set for edit expense (used to defer editMonthResolved until dateRange updates)
+  const [editMonthSet, setEditMonthSet] = useState(false);
 
-  // URLからパラメータを取得
-  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
-  const lineIdFromUrl = urlParams.get('lineId');
-  const editExpenseId = urlParams.get('edit');
+  // URLからパラメータを取得（useSearchParamsでハイドレーション安全に取得）
+  const searchParams = useSearchParams();
+  const lineIdFromUrl = searchParams.get('lineId');
+  const editExpenseId = searchParams.get('edit');
 
   // LINE IDがある場合は直接それを使用、なければuser.uidを使用
   const effectiveUserId = lineIdFromUrl || user?.uid || null;
@@ -46,12 +49,13 @@ export default function ExpensesPage() {
   // When edit param is present, fetch the expense by ID and navigate to its month
   // so the expense is guaranteed to be in the date range
   useEffect(() => {
-    if (!editExpenseId || !dateSettingsLoaded || editMonthResolved) return;
+    if (!editExpenseId || !dateSettingsLoaded || editMonthResolved || editMonthSet) return;
 
     const resolveEditExpenseMonth = async () => {
       try {
         ensureFirebaseInitialized();
         if (!db) {
+          // No Firebase, mark as resolved directly
           setEditMonthResolved(true);
           return;
         }
@@ -63,22 +67,35 @@ export default function ExpensesPage() {
             // Set currentMonth to the expense's date so date range calculation includes it
             // (getEffectiveDateRange handles customStartDay correctly when given the actual date)
             setCurrentMonth(expenseDate);
+            // Mark that month was set - editMonthResolved will be set after dateRange updates
+            setEditMonthSet(true);
+            return;
           }
         }
+        // No valid date found, mark as resolved
+        setEditMonthResolved(true);
       } catch (err) {
         console.error("Failed to fetch edit expense:", err);
+        setEditMonthResolved(true);
       }
-      setEditMonthResolved(true);
     };
 
     resolveEditExpenseMonth();
-  }, [editExpenseId, dateSettingsLoaded, editMonthResolved]);
+  }, [editExpenseId, dateSettingsLoaded, editMonthResolved, editMonthSet]);
 
   // Calculate effective date range when settings or currentMonth changes
   useEffect(() => {
     const range = getEffectiveDateRange(currentMonth, dateSettings);
     setDateRange({ startDate: range.startDate, endDate: range.endDate });
   }, [currentMonth, dateSettings]);
+
+  // Mark edit month as resolved AFTER dateRange has been updated
+  // This ensures we fetch with the correct date range, preventing double-fetch
+  useEffect(() => {
+    if (editMonthSet && !editMonthResolved) {
+      setEditMonthResolved(true);
+    }
+  }, [dateRange, editMonthSet, editMonthResolved]);
 
   // Don't start fetching expenses until we've resolved the edit expense's month (if applicable)
   const shouldFetch = editExpenseId ? editMonthResolved : true;
