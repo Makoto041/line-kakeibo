@@ -276,6 +276,7 @@ export async function processLatestEmail(): Promise<{
         date: dayjs(parsed.usedAt).format('YYYY-MM-DD'),
         category: categoryResult.category || 'その他',
         confirmed: false,
+        includeInTotal: false, // 未確認の支出は合計に含めない
         payerId: GMAIL_SYSTEM_LINE_ID,
         // グループ関連（ダッシュボード集計・立替精算に必要）
         groupId: getDefaultGroupId(),
