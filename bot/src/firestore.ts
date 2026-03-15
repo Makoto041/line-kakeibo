@@ -182,6 +182,7 @@ export async function getExpensesSummary(lineId: string, limit: number = 5): Pro
         amount: data.amount || 0,
         description: data.description || 'Unknown',
         date: data.date || '',
+        includeInTotal: data.includeInTotal ?? true, // デフォルトはtrue（既存データ互換性）
         createdAt: data.createdAt
       } as Expense;
     });
@@ -202,6 +203,7 @@ export async function getExpensesSummary(lineId: string, limit: number = 5): Pro
             amount: data.amount || 0,
             description: data.description || 'Unknown',
             date: data.date || '',
+            includeInTotal: data.includeInTotal ?? true, // デフォルトはtrue（既存データ互換性）
             createdAt: data.createdAt
           } as Expense;
         });

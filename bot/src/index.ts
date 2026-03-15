@@ -768,21 +768,23 @@ async function handleTextMessage(event: any) {
 
         let replyText: string;
         if (expenses.length > 0) {
-          // Calculate total for quick summary
+          // Calculate total for quick summary (includeInTotal: true のみ)
           const total = expenses.reduce(
-            (sum: number, e: any) => sum + (e.amount || 0),
+            (sum: number, e: any) => sum + (e.includeInTotal !== false ? (e.amount || 0) : 0),
             0
           );
+          // 会計に含まれる支出数
+          const includedCount = expenses.filter((e: any) => e.includeInTotal !== false).length;
 
           replyText =
             `📊 ${contextText}の最近の支出:\n` +
             expenses
               .map(
                 (e: any, i: number) =>
-                  `${i + 1}. ${e.description} - ¥${e.amount.toLocaleString()}`
+                  `${i + 1}. ${e.description} - ¥${e.amount.toLocaleString()}${e.includeInTotal === false ? " (未確認)" : ""}`
               )
               .join("\n") +
-            `\n\n💰 合計: ¥${total.toLocaleString()}\n\n${
+            `\n\n💰 会計対象: ¥${total.toLocaleString()}${includedCount < expenses.length ? ` (${includedCount}件)` : ""}\n\n${
               isGroupContext
                 ? "👥 グループメンバーの全支出を確認できます"
                 : "個人の全支出を確認できます"
