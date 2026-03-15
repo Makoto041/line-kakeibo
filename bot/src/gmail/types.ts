@@ -89,6 +89,8 @@ export interface GmailExpenseExtension {
   status: ExpenseStatus;
   /** 立替者（立替の場合のみ） */
   advanceBy?: string;
+  /** 合計に含めるか（共同費/立替=true、個人費/未確認=false） */
+  includeInTotal: boolean;
 }
 
 /**

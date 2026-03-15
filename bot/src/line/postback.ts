@@ -70,9 +70,13 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
     }
 
     // ステータスを更新
+    // includeInTotal: 共同費/立替は合計に含める、個人費は含めない
+    const includeInTotal = action !== 'personal';
+
     const updateData: Record<string, any> = {
       status: newStatus,
       confirmed: true,
+      includeInTotal,
       updatedAt: new Date(),
     };
 
@@ -142,10 +146,11 @@ async function handleTextExpensePostback(
 
   switch (action) {
     case 'confirm':
-      // 確認済みにする
+      // 確認済みにする（共同費として合計に含める）
       await expenseRef.update({
         confirmed: true,
         status: 'shared',
+        includeInTotal: true,
         updatedAt: new Date(),
       });
       if (replyTarget) {
@@ -172,7 +177,7 @@ async function handleTextExpensePostback(
       break;
 
     case 'advance': {
-      // 立替として記録
+      // 立替として記録（合計に含める）
       const userId = event.source.userId;
       if (!userId) {
         console.error('Cannot process text expense advance: userId is missing', {
@@ -185,6 +190,7 @@ async function handleTextExpensePostback(
         status: 'advance_pending',
         advanceBy: userId,
         confirmed: true,
+        includeInTotal: true,
         updatedAt: new Date(),
       });
       if (replyTarget) {

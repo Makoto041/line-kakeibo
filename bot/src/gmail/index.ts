@@ -37,10 +37,12 @@ export {
   getFromAddress,
   isDuplicateExpense,
   isDuplicateByContent,
+  getExpenseIdByGmailMessageId,
 } from './parser';
 
 // Pub/Subハンドラー
 export {
   handleGmailPubSub,
   processLatestEmail,
+  forceProcessMessage,
 } from './handler';

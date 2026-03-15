@@ -76,14 +76,6 @@ jobs:
         cd bot
         npm run build
         
-    - name: Deploy to Firebase (Development)
-      uses: FirebaseExtended/action-hosting-deploy@v0
-      with:
-        repoToken: ${{ secrets.GITHUB_TOKEN }}
-        firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LINE_KAKEIBO_0410 }}
-        projectId: line-kakeibo-0410
-        channelId: develop
-        
     - name: Deploy to Vercel (Preview)
       uses: amondnet/vercel-action@v25
       id: vercel-deploy

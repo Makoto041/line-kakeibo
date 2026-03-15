@@ -2,6 +2,7 @@ import express, { Express, Request, Response } from "express";
 import { Client, middleware } from "@line/bot-sdk";
 import { ImageAnnotatorClient } from "@google-cloud/vision";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
 import dayjs from "dayjs";
 import dotenv from "dotenv";
 import { onRequest } from "firebase-functions/v2/https";
@@ -1805,6 +1806,8 @@ import {
   getWatchStatus,
   processLatestEmail,
   isGmailAuthConfigured,
+  getGmailClient,
+  forceProcessMessage,
 } from "./gmail";
 import {
   handlePostback,
@@ -1996,12 +1999,97 @@ gmailRouter.get("/status", adminApiLimiter as any, requireAdminAuth, async (_req
     const status = await getWatchStatus();
     const isConfigured = await isGmailAuthConfigured();
 
+    // デバッグ: Firestoreのトークンスコープを確認
+    const db = getFirestore();
+    const tokenDoc = await db.collection('system').doc('gmailToken').get();
+    const tokenData = tokenDoc.exists ? tokenDoc.data() : null;
+
     res.json({
       oauthConfigured: isConfigured,
+      tokenScope: tokenData?.scope || 'unknown',
       ...status,
     });
   } catch (error) {
     console.error("Failed to get watch status:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * トークンを強制リフレッシュ（デバッグ用）
+ */
+gmailRouter.post("/refresh-token", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
+  try {
+    const db = getFirestore();
+    const tokenDoc = await db.collection('system').doc('gmailToken').get();
+    const tokenData = tokenDoc.data();
+
+    if (!tokenData?.refresh_token) {
+      return res.status(400).json({ error: "No refresh token found" });
+    }
+
+    // 強制的にexpiry_dateを過去にしてリフレッシュをトリガー
+    await db.collection('system').doc('gmailToken').update({
+      expiry_date: 0,
+    });
+
+    res.json({ success: true, message: "Token marked as expired. Next API call will refresh it." });
+  } catch (error) {
+    console.error("Failed to refresh token:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * トークンを完全に削除して再認証を可能にする
+ * 古いスコープでのトークンをクリアする場合に使用
+ * Admin認証が必要
+ */
+gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
+  try {
+    const db = getFirestore();
+    const tokenDoc = await db.collection('system').doc('gmailToken').get();
+    const tokenData = tokenDoc.data();
+
+    if (tokenData?.access_token) {
+      // Google側でトークンを無効化（タイムアウト付き）
+      try {
+        const revokeUrl = `https://oauth2.googleapis.com/revoke?token=${tokenData.access_token}`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒タイムアウト
+
+        const response = await fetch(revokeUrl, {
+          method: 'POST',
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          console.log('Gmail token revoked on Google side');
+        } else {
+          console.warn(`Failed to revoke token on Google side: HTTP ${response.status}`);
+        }
+      } catch (revokeError) {
+        if (revokeError instanceof Error && revokeError.name === 'AbortError') {
+          console.warn('Token revocation timed out (5s)');
+        } else {
+          console.warn('Failed to revoke token on Google side (may already be invalid):', revokeError);
+        }
+      }
+    }
+
+    // Firestoreからトークンを削除
+    await db.collection('system').doc('gmailToken').delete();
+
+    // watchステータスもリセット（gmailStateが正しいドキュメント名）
+    await db.collection('system').doc('gmailState').delete().catch(() => {});
+
+    res.json({
+      success: true,
+      message: "Token revoked and deleted. Please re-authenticate via /api/gmail/auth"
+    });
+  } catch (error) {
+    console.error("Failed to revoke token:", error);
     res.status(500).json({ error: (error as Error).message });
   }
 });
@@ -2020,16 +2108,124 @@ gmailRouter.post("/process-latest", adminApiLimiter as any, requireAdminAuth, as
   }
 });
 
+/**
+ * テスト用: 過去のメールを強制的に再処理（重複チェックをスキップ）
+ * Admin認証が必要
+ */
+gmailRouter.post("/test-process", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
+  try {
+    const gmail = await getGmailClient();
+
+    // SMBCカードからのメールを検索
+    const listResponse = await gmail.users.messages.list({
+      userId: 'me',
+      maxResults: 5,
+      q: 'from:vpass.ne.jp OR from:smbc-card.com',
+    });
+
+    const messages = listResponse.data.messages || [];
+    if (messages.length === 0) {
+      return res.json({ success: false, message: "No SMBC card emails found in inbox" });
+    }
+
+    // 最初のメールの内容を取得して表示（処理はしない）
+    const msg = messages[0];
+    if (!msg.id) {
+      return res.json({ success: false, message: "Message ID not found" });
+    }
+
+    const messageResponse = await gmail.users.messages.get({
+      userId: 'me',
+      id: msg.id,
+      format: 'full',
+    });
+
+    const message = messageResponse.data;
+    const rawHeaders = message.payload?.headers || [];
+    const headers = rawHeaders
+      .filter((h): h is { name: string; value: string } =>
+        h.name !== null && h.name !== undefined &&
+        h.value !== null && h.value !== undefined
+      );
+
+    const from = headers.find((h: { name: string; value: string }) => h.name.toLowerCase() === 'from')?.value || '';
+    const subject = headers.find((h: { name: string; value: string }) => h.name.toLowerCase() === 'subject')?.value || '';
+    const date = headers.find((h: { name: string; value: string }) => h.name.toLowerCase() === 'date')?.value || '';
+
+    // body抽出（簡易版）
+    let body = '';
+    if (message.payload?.body?.data) {
+      body = Buffer.from(message.payload.body.data, 'base64').toString('utf-8');
+    } else if (message.payload?.parts) {
+      for (const part of message.payload.parts) {
+        if (part.mimeType === 'text/plain' && part.body?.data) {
+          body = Buffer.from(part.body.data, 'base64').toString('utf-8');
+          break;
+        }
+      }
+    }
+
+    // 機密情報をマスク（カード番号、メールアドレス等）
+    const sanitizeBody = (text: string): string => {
+      return text
+        // カード番号（4桁-4桁-4桁-4桁 または 連続16桁）
+        .replace(/\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, '****-****-****-****')
+        // 下4桁以外をマスク（**** 1234 形式）
+        .replace(/\b\d{12,15}(\d{4})\b/g, '************$1')
+        // メールアドレス
+        .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '***@***.***')
+        // 電話番号（日本形式）
+        .replace(/\b0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{4}\b/g, '***-****-****')
+        // 口座番号（7-8桁の数字）
+        .replace(/\b\d{7,8}\b/g, '********');
+    };
+
+    res.json({
+      success: true,
+      emailCount: messages.length,
+      latestEmail: {
+        id: msg.id,
+        from,
+        subject,
+        date,
+        bodyPreview: sanitizeBody(body.substring(0, 500)),
+      }
+    });
+  } catch (error) {
+    console.error("Failed to test process:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * テスト用: 指定したメッセージIDを強制処理（重複チェックをスキップしてLINE通知も送信）
+ * Admin認証が必要
+ */
+gmailRouter.post("/force-process/:messageId", adminApiLimiter as any, requireAdminAuth, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    if (!messageId) {
+      return res.status(400).json({ error: "messageId is required" });
+    }
+    const result = await forceProcessMessage(messageId);
+    res.json(result);
+  } catch (error) {
+    console.error("Failed to force process:", error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
 // Gmail API 専用の Express app を作成
 const gmailApp = express();
 gmailApp.use(express.json());
 gmailApp.use("/gmail", gmailRouter);
 
 // Gmail API を Firebase Functions としてエクスポート（LINE webhook とは分離）
+// LINE通知を送信するためLINE認証情報、カテゴリ分類のためGEMINI_API_KEYも必要
 export const api = onRequest(
   {
     region: "us-central1",
-    secrets: ["ADMIN_SECRET", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
+    secrets: ["ADMIN_SECRET", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY"],
   },
   gmailApp
 );
