@@ -152,19 +152,41 @@ const checkFirebaseConnection = (): boolean => {
 };
 
 // Firebase初期化を待機する関数
-const waitForFirebase = async (maxWaitMs: number = 5000): Promise<boolean> => {
+const waitForFirebase = async (maxWaitMs: number = 5000, signal?: AbortSignal): Promise<boolean> => {
   if (typeof window === 'undefined') return false;
+
+  // アボートされている場合は即座に終了
+  if (signal?.aborted) return false;
 
   // まず初期化を明示的に試みる
   ensureFirebaseInitialized();
 
+  // 初期化エラーがある場合は再試行しない
+  const status = getFirebaseStatus();
+  if (status.hasError) {
+    return false;
+  }
+
+  // 既に接続できている場合は即座に返す
+  if (checkFirebaseConnection()) {
+    return true;
+  }
+
   const startTime = Date.now();
   while (Date.now() - startTime < maxWaitMs) {
+    // アボートされた場合は終了
+    if (signal?.aborted) return false;
+
     if (checkFirebaseConnection()) {
       return true;
     }
-    // 初期化が完了していない場合は再試行
-    ensureFirebaseInitialized();
+
+    // 初期化エラーがない場合のみ再試行
+    const currentStatus = getFirebaseStatus();
+    if (!currentStatus.hasError && !currentStatus.isInitialized) {
+      ensureFirebaseInitialized();
+    }
+
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   return checkFirebaseConnection();
@@ -1006,7 +1028,8 @@ export function useGroupMembers(groupId: string | null) {
       // Firebase初期化を待機
       const isConnected = await waitForFirebase();
       if (!isConnected) {
-        setError('Firebaseに接続できません');
+        const status = getFirebaseStatus();
+        setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
         setLoading(false);
         return;
       }
@@ -1084,7 +1107,8 @@ export function useLineGroupMembers(lineGroupId: string | null) {
       // Firebase初期化を待機
       const isConnected = await waitForFirebase();
       if (!isConnected) {
-        setError('Firebaseに接続できません');
+        const status = getFirebaseStatus();
+        setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
         setLoading(false);
         return;
       }
