@@ -11,7 +11,6 @@ import { parseReceipt } from "./parser";
 import {
   saveExpense,
   getExpenses,
-  getExpensesSummary,
   createGroup,
   joinGroup,
   getUserGroups,
@@ -27,7 +26,15 @@ import {
   calculateSettlement,
   settleAdvances,
   AdvanceSummary,
+  // 月次サマリー
+  getMonthlyGroupSummary,
 } from "./firestore";
+import {
+  buildExpenseSummaryFlexMessage,
+  buildEmptyExpenseSummaryFlexMessage,
+  ExpenseSummaryInfo,
+} from "./line/flexMessage";
+import { getCategoryEmoji } from "./gmail/types";
 import { parseTextExpense } from "./textParser";
 import { resolveAppUidForExpense } from "./linkUserResolver";
 import { getClassificationStats, classifyExpenseWithGemini, isGeminiAvailable, findCategoryWithGemini } from "./geminiCategoryClassifier";
@@ -734,75 +741,83 @@ async function handleTextMessage(event: any) {
     if (text === "家計簿") {
       console.log(`=== COMMAND MATCHED: Processing 家計簿 command ===`);
       try {
-        // Get expenses data quickly with timeout using optimized function
-        const expensesPromise = getExpensesSummary(event.source.userId, 3); // Only 3 items for maximum speed
-        const timeoutPromise = new Promise(
-          (_, reject) =>
-            setTimeout(() => reject(new Error("Expenses fetch timeout")), 5000) // Increased timeout for better reliability
-        );
-
-        const expenses = (await Promise.race([
-          expensesPromise,
-          timeoutPromise,
-        ])) as any;
-
         const isGroupContext = event.source.type === "group";
+        const lineGroupId = isGroupContext ? event.source.groupId : undefined;
 
         // Generate appropriate URL based on context
         let webAppUrl;
         if (isGroupContext && event.source.groupId) {
-          // For group context, include lineGroupId parameter
           webAppUrl = `https://line-kakeibo.vercel.app?lineId=${encodeURIComponent(
             event.source.userId
           )}&lineGroupId=${encodeURIComponent(event.source.groupId)}`;
         } else {
-          // For personal context, only include lineId
           webAppUrl = `https://line-kakeibo.vercel.app?lineId=${encodeURIComponent(
             event.source.userId
           )}`;
         }
 
-        const contextText = isGroupContext
-          ? "👥 グループの家計簿"
-          : "個人の家計簿";
+        // 当月の集計データを取得
+        const now = dayjs();
+        const summaryPromise = getMonthlyGroupSummary(
+          lineGroupId,
+          event.source.userId,
+          now.year(),
+          now.month() + 1,
+          5
+        );
+        const timeoutPromise = new Promise(
+          (_, reject) =>
+            setTimeout(() => reject(new Error("Summary fetch timeout")), 8000)
+        );
 
-        let replyText: string;
-        if (expenses.length > 0) {
-          // Calculate total for quick summary
-          const total = expenses.reduce(
-            (sum: number, e: any) => sum + (e.amount || 0),
-            0
-          );
+        const summary = (await Promise.race([
+          summaryPromise,
+          timeoutPromise,
+        ])) as Awaited<ReturnType<typeof getMonthlyGroupSummary>>;
 
-          replyText =
-            `📊 ${contextText}の最近の支出:\n` +
-            expenses
-              .map(
-                (e: any, i: number) =>
-                  `${i + 1}. ${e.description} - ¥${e.amount.toLocaleString()}`
-              )
-              .join("\n") +
-            `\n\n💰 合計: ¥${total.toLocaleString()}\n\n${
-              isGroupContext
-                ? "👥 グループメンバーの全支出を確認できます"
-                : "個人の全支出を確認できます"
-            }\nWebアプリ：\n${webAppUrl}`;
+        if (summary.expenseCount === 0) {
+          // データなしの場合
+          const emptyMessage = buildEmptyExpenseSummaryFlexMessage(isGroupContext, webAppUrl);
+          await client.replyMessage(event.replyToken, emptyMessage);
         } else {
-          replyText = `📋 ${contextText}にまだ支出がありません\n\n💡 使い方:\n• レシート画像を送信\n• 「500 ランチ」のようにテキスト入力\n\n${
-            isGroupContext
-              ? "👥 グループメンバーの支出が自動で集計されます"
-              : "個人の家計簿を管理できます"
-          }\nWebアプリ：\n${webAppUrl}`;
-        }
+          // カテゴリ別データの整形
+          const totalIncluded = summary.includedTotalAmount || 1; // ゼロ除算防止
+          const categoryTotals = summary.categoryTotals.slice(0, 5).map(cat => ({
+            category: cat.category,
+            emoji: getCategoryEmoji(cat.category),
+            amount: cat.amount,
+            percentage: Math.round((cat.amount / totalIncluded) * 100),
+          }));
 
-        await client.replyMessage(event.replyToken, {
-          type: "text",
-          text: replyText,
-        });
+          // 直近の支出データの整形
+          const recentExpenses = summary.recentExpenses.map(exp => ({
+            description: exp.description || '不明',
+            amount: exp.amount,
+            category: exp.category || 'その他',
+            categoryEmoji: getCategoryEmoji(exp.category || 'その他'),
+            date: exp.date ? dayjs(exp.date).format('M/D') : '',
+            includeInTotal: exp.includeInTotal !== false,
+          }));
+
+          const summaryInfo: ExpenseSummaryInfo = {
+            isGroupContext,
+            webAppUrl,
+            monthlyTotal: summary.totalAmount,
+            monthlyIncludedTotal: summary.includedTotalAmount,
+            monthlyCount: summary.expenseCount,
+            monthlyIncludedCount: summary.includedExpenseCount,
+            monthLabel: `${now.month() + 1}月`,
+            recentExpenses,
+            categoryTotals,
+          };
+
+          const flexMessage = buildExpenseSummaryFlexMessage(summaryInfo);
+          await client.replyMessage(event.replyToken, flexMessage);
+        }
       } catch (error) {
         console.error("Error fetching expenses:", error);
 
-        // Fallback response
+        // Fallback response (テキストメッセージ)
         try {
           await client.replyMessage(event.replyToken, {
             type: "text",

@@ -442,3 +442,390 @@ export async function sendTextExpenseNotification(
   await client.pushMessage(targetId, message);
   console.log(`Text expense notification sent to ${targetId}`);
 }
+
+/**
+ * 家計簿サマリー用の情報
+ */
+export interface ExpenseSummaryInfo {
+  isGroupContext: boolean;
+  webAppUrl: string;
+  // 当月集計
+  monthlyTotal: number;
+  monthlyIncludedTotal: number;
+  monthlyCount: number;
+  monthlyIncludedCount: number;
+  monthLabel: string; // "3月"
+  // 直近の支出
+  recentExpenses: Array<{
+    description: string;
+    amount: number;
+    category: string;
+    categoryEmoji: string;
+    date: string;
+    includeInTotal: boolean;
+  }>;
+  // カテゴリ別集計（上位5件）
+  categoryTotals: Array<{
+    category: string;
+    emoji: string;
+    amount: number;
+    percentage: number;
+  }>;
+}
+
+/**
+ * 家計簿サマリーのFlex Messageを生成
+ */
+export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMessage {
+  const {
+    isGroupContext,
+    webAppUrl,
+    monthlyTotal,
+    monthlyIncludedTotal,
+    monthlyCount,
+    monthlyIncludedCount,
+    monthLabel,
+    recentExpenses,
+    categoryTotals,
+  } = info;
+
+  const contextText = isGroupContext ? '👥 グループ' : '📱 個人';
+  const pendingCount = monthlyCount - monthlyIncludedCount;
+
+  // プログレスバーの計算（予算13.6万円に対する割合）
+  const budget = 136000;
+  const progressPercent = Math.min(100, Math.round((monthlyIncludedTotal / budget) * 100));
+  const progressColor = progressPercent > 80 ? '#ff4444' : progressPercent > 60 ? '#ffbb33' : '#00C851';
+
+  // カテゴリ別の棒グラフ風表示
+  const categoryBars = categoryTotals.slice(0, 4).map(cat => ({
+    type: 'box' as const,
+    layout: 'horizontal' as const,
+    contents: [
+      {
+        type: 'text' as const,
+        text: `${cat.emoji}`,
+        size: 'sm' as const,
+        flex: 0,
+      },
+      {
+        type: 'box' as const,
+        layout: 'vertical' as const,
+        contents: [
+          {
+            type: 'box' as const,
+            layout: 'vertical' as const,
+            contents: [],
+            backgroundColor: '#1DB446',
+            height: '8px',
+            width: `${Math.max(5, cat.percentage)}%`,
+            cornerRadius: '4px',
+          },
+        ],
+        flex: 1,
+        margin: 'sm' as const,
+        justifyContent: 'center' as const,
+      },
+      {
+        type: 'text' as const,
+        text: `¥${cat.amount.toLocaleString()}`,
+        size: 'xs' as const,
+        color: '#888888',
+        align: 'end' as const,
+        flex: 0,
+      },
+    ],
+    margin: 'sm' as const,
+  }));
+
+  // 直近の支出リスト
+  const recentList = recentExpenses.slice(0, 3).map(exp => ({
+    type: 'box' as const,
+    layout: 'horizontal' as const,
+    contents: [
+      {
+        type: 'text' as const,
+        text: `${exp.categoryEmoji} ${exp.description}`,
+        size: 'sm' as const,
+        flex: 1,
+        wrap: false,
+        color: exp.includeInTotal ? '#333333' : '#aaaaaa',
+      },
+      {
+        type: 'text' as const,
+        text: exp.includeInTotal ? `¥${exp.amount.toLocaleString()}` : `(¥${exp.amount.toLocaleString()})`,
+        size: 'sm' as const,
+        align: 'end' as const,
+        color: exp.includeInTotal ? '#DD4444' : '#aaaaaa',
+        flex: 0,
+      },
+    ],
+    margin: 'sm' as const,
+  }));
+
+  const bubble: FlexBubble = {
+    type: 'bubble',
+    size: 'mega',
+    header: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        {
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
+            {
+              type: 'text',
+              text: `📊 ${contextText}の家計簿`,
+              weight: 'bold',
+              size: 'lg',
+              color: '#1DB446',
+              flex: 1,
+            },
+            {
+              type: 'text',
+              text: monthLabel,
+              size: 'sm',
+              color: '#888888',
+              align: 'end',
+            },
+          ],
+        },
+      ],
+      paddingAll: 'lg',
+      backgroundColor: '#F0FFF0',
+    },
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        // 月次合計
+        {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: '今月の支出',
+              size: 'xs',
+              color: '#888888',
+            },
+            {
+              type: 'text',
+              text: `¥${monthlyIncludedTotal.toLocaleString()}`,
+              weight: 'bold',
+              size: 'xxl',
+              color: '#333333',
+            },
+            // プログレスバー
+            {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'box',
+                  layout: 'vertical',
+                  contents: [],
+                  backgroundColor: progressColor,
+                  height: '6px',
+                  width: `${progressPercent}%`,
+                  cornerRadius: '3px',
+                },
+              ],
+              backgroundColor: '#EEEEEE',
+              height: '6px',
+              margin: 'sm',
+              cornerRadius: '3px',
+            },
+            {
+              type: 'text',
+              text: `予算 ¥${budget.toLocaleString()} の ${progressPercent}%`,
+              size: 'xs',
+              color: '#888888',
+              margin: 'sm',
+            },
+            // 未確認件数
+            ...(pendingCount > 0
+              ? [
+                  {
+                    type: 'text' as const,
+                    text: `※ 未確認 ${pendingCount}件 (¥${(monthlyTotal - monthlyIncludedTotal).toLocaleString()}) は含まず`,
+                    size: 'xs' as const,
+                    color: '#ff9800' as const,
+                    margin: 'sm' as const,
+                  },
+                ]
+              : []),
+          ],
+        },
+        // セパレーター
+        {
+          type: 'separator',
+          margin: 'lg',
+        },
+        // カテゴリ別
+        {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: 'カテゴリ別',
+              size: 'xs',
+              color: '#888888',
+              margin: 'lg',
+            },
+            ...categoryBars,
+          ],
+        },
+        // セパレーター
+        {
+          type: 'separator',
+          margin: 'lg',
+        },
+        // 直近の支出
+        {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: '直近の支出',
+              size: 'xs',
+              color: '#888888',
+              margin: 'lg',
+            },
+            ...recentList,
+          ],
+        },
+      ],
+      paddingAll: 'lg',
+    },
+    footer: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        {
+          type: 'button',
+          action: {
+            type: 'uri',
+            label: '📱 詳細をWebで見る',
+            uri: webAppUrl,
+          },
+          style: 'primary',
+          color: '#1DB446',
+          height: 'sm',
+        },
+      ],
+      paddingAll: 'md',
+    },
+  };
+
+  return {
+    type: 'flex',
+    altText: `📊 ${monthLabel}の支出: ¥${monthlyIncludedTotal.toLocaleString()}`,
+    contents: bubble,
+  };
+}
+
+/**
+ * 家計簿サマリー（データなし）のFlex Messageを生成
+ */
+export function buildEmptyExpenseSummaryFlexMessage(
+  isGroupContext: boolean,
+  webAppUrl: string
+): FlexMessage {
+  const contextText = isGroupContext ? '👥 グループ' : '📱 個人';
+
+  const bubble: FlexBubble = {
+    type: 'bubble',
+    size: 'kilo',
+    header: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        {
+          type: 'text',
+          text: `📊 ${contextText}の家計簿`,
+          weight: 'bold',
+          size: 'md',
+          color: '#1DB446',
+        },
+      ],
+      paddingAll: 'lg',
+      backgroundColor: '#F0FFF0',
+    },
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        {
+          type: 'text',
+          text: 'まだ支出がありません',
+          size: 'lg',
+          color: '#888888',
+          align: 'center',
+        },
+        {
+          type: 'text',
+          text: '💡 使い方',
+          size: 'sm',
+          color: '#333333',
+          margin: 'xl',
+          weight: 'bold',
+        },
+        {
+          type: 'text',
+          text: '• レシート画像を送信',
+          size: 'sm',
+          color: '#666666',
+          margin: 'sm',
+        },
+        {
+          type: 'text',
+          text: '• 「500 ランチ」のようにテキスト入力',
+          size: 'sm',
+          color: '#666666',
+          margin: 'sm',
+        },
+        ...(isGroupContext
+          ? [
+              {
+                type: 'text' as const,
+                text: '👥 グループメンバーの支出が自動で集計されます',
+                size: 'xs' as const,
+                color: '#888888',
+                margin: 'lg' as const,
+                wrap: true,
+              },
+            ]
+          : []),
+      ],
+      paddingAll: 'lg',
+    },
+    footer: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        {
+          type: 'button',
+          action: {
+            type: 'uri',
+            label: '📱 Webアプリを開く',
+            uri: webAppUrl,
+          },
+          style: 'primary',
+          color: '#1DB446',
+          height: 'sm',
+        },
+      ],
+      paddingAll: 'md',
+    },
+  };
+
+  return {
+    type: 'flex',
+    altText: `📊 ${contextText}の家計簿`,
+    contents: bubble,
+  };
+}
