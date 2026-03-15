@@ -192,8 +192,9 @@ Flex Message通知（新規）
 | `line_text` | `false` | 確認ボタンを押すまで含めない |
 | `line_ocr` | `false` | 確認ボタンを押すまで含めない |
 
-ユーザーがボタンで「共同費」「立替」を選択すると `includeInTotal: true` に更新される。
-「個人費」を選択すると `includeInTotal: false` のまま。
+- Gmail自動取得: 共用カードからの取得なので、初期状態で会計に含める
+- LINE手入力: ユーザーが「共同費」「立替」ボタンを押すと `includeInTotal: true` に更新
+- 「個人費」を選択すると `includeInTotal: false` に設定
 
 ### 5.4 新規: システムコレクション
 
@@ -415,23 +416,25 @@ bot/src/
 
 ## 10. Gmail API エンドポイント
 
-Gmail管理用のAPIエンドポイント一覧（すべてAdmin認証が必要）:
+Gmail管理用のAPIエンドポイント一覧:
 
-| メソッド | パス | 説明 |
-|---------|-----|------|
-| GET | `/api/gmail/auth` | OAuth2認証URLを取得 |
-| GET | `/api/gmail/callback` | OAuth2コールバック（Googleからのリダイレクト先） |
-| POST | `/api/gmail/register-watch` | Gmail Watch登録 |
-| GET | `/api/gmail/status` | Gmail連携ステータス確認 |
-| POST | `/api/gmail/process-latest` | 最新のSMBCカードメールを手動処理 |
-| POST | `/api/gmail/test-process` | SMBCカードメール内容をプレビュー |
-| POST | `/api/gmail/force-process/:messageId` | 指定メッセージIDを強制処理（冪等） |
-| POST | `/api/gmail/refresh-token` | トークン強制リフレッシュ |
-| DELETE | `/api/gmail/revoke` | トークン削除・再認証用 |
+| メソッド | パス | 説明 | 認証 |
+|---------|-----|------|------|
+| GET | `/api/gmail/auth` | OAuth2認証URLを取得 | Admin |
+| GET | `/api/gmail/callback` | OAuth2コールバック（Googleからのリダイレクト先） | **不要** |
+| POST | `/api/gmail/register-watch` | Gmail Watch登録 | Admin |
+| GET | `/api/gmail/status` | Gmail連携ステータス確認 | Admin |
+| POST | `/api/gmail/process-latest` | 最新のSMBCカードメールを手動処理 | Admin |
+| POST | `/api/gmail/test-process` | SMBCカードメール内容をプレビュー | Admin |
+| POST | `/api/gmail/force-process/:messageId` | 指定メッセージIDを強制処理（冪等） | Admin |
+| POST | `/api/gmail/refresh-token` | トークン強制リフレッシュ | Admin |
+| DELETE | `/api/gmail/revoke` | トークン削除・再認証用 | Admin |
+
+> **注意**: `/api/gmail/callback` はGoogleからのOAuth2リダイレクト先のため、Admin認証は不要です。
 
 ### 認証方法
 
-すべてのエンドポイントは以下のいずれかで認証:
+Admin認証が必要なエンドポイントは以下のいずれかで認証:
 
 ```bash
 # Authorization ヘッダー
