@@ -4,3 +4,43 @@ node_modules/
 yarn.lock
 .env
 .env.local
+.env.production
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.claude/
+
+# Build outputs
+dist/
+build/
+
+# Firebase
+.firebase/
+firebase-debug.log
+
+# Vercel
+.vercel/
+
+# Debug logs
+pglite-debug.log
+**/pglite-debug.log
+build.log
+
+# Credentials (never commit)
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.*.json
+!firebase.json
+!.firebaserc
+
+# Google Cloud SDK
+google-cloud-sdk/
+google-cloud-*.tar.gz
+
+# Base64 encoded secrets
+*.b64
