@@ -37,6 +37,7 @@ export {
   getFromAddress,
   isDuplicateExpense,
   isDuplicateByContent,
+  isDuplicateByTimestamp,
   getExpenseIdByGmailMessageId,
 } from './parser';
 

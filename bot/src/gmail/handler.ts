@@ -18,10 +18,9 @@ import {
 } from './parser';
 import {
   GmailPubSubPayload,
-  GmailExpense,
   getCategoryEmoji,
 } from './types';
-import { saveExpense } from '../firestore';
+import { saveGmailExpenseAtomic } from '../firestore';
 import { classifyExpenseWithGemini } from '../geminiCategoryClassifier';
 import { sendCardUsageNotification } from '../line/flexMessage';
 
@@ -172,7 +171,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
 
     // 支出データを作成
     // Gmail自動取得は基本的に会計に含める（共同費として扱う）
-    const expense: Partial<GmailExpense> = {
+    const expense = {
       lineId: GMAIL_SYSTEM_LINE_ID, // システムユーザーとして登録
       amount: parsed.amount,
       description: parsed.merchant,
@@ -185,13 +184,18 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       groupId,
       lineGroupId,
       // Gmail拡張フィールド
-      inputSource: 'gmail_auto',
+      inputSource: 'gmail_auto' as const,
       gmailMessageId: messageId,
-      status: 'pending', // 確認待ち
+      usedAt: parsed.usedAt, // カード利用日時（重複チェック用）
+      status: 'pending' as const,
     };
 
-    // Firestoreに保存
-    const expenseId = await saveExpense(expense as any);
+    // アトミックに重複チェック＋保存（並行処理での二重登録を防止）
+    const { expenseId, alreadyExists } = await saveGmailExpenseAtomic(expense as any);
+    if (alreadyExists) {
+      console.log(`Skipping duplicate (atomic): ${parsed.merchant} ¥${parsed.amount} (messageId: ${messageId}, existingId: ${expenseId})`);
+      return;
+    }
     console.log(`Expense saved from Gmail: ${expenseId}`);
 
     // LINEグループに通知
@@ -284,10 +288,13 @@ export async function processLatestEmail(): Promise<{
         lineGroupId: getDefaultLineGroupId(),
         inputSource: 'gmail_auto' as const,
         gmailMessageId: msg.id,
+        usedAt: parsed.usedAt, // カード利用日時（重複チェック用）
         status: 'pending' as const,
       };
 
-      const expenseId = await saveExpense(expense as any);
+      // アトミックに重複チェック＋保存
+      const { expenseId, alreadyExists } = await saveGmailExpenseAtomic(expense as any);
+      if (alreadyExists) continue;
 
       return {
         success: true,
@@ -380,7 +387,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
 
     // 支出データを作成
     // Gmail自動取得は基本的に会計に含める（共同費として扱う）
-    const expense: Partial<GmailExpense> = {
+    const expense = {
       lineId: GMAIL_SYSTEM_LINE_ID,
       amount: parsed.amount,
       description: parsed.merchant,
@@ -391,13 +398,23 @@ export async function forceProcessMessage(messageId: string): Promise<{
       payerId: GMAIL_SYSTEM_LINE_ID,
       groupId,
       lineGroupId,
-      inputSource: 'gmail_auto',
+      inputSource: 'gmail_auto' as const,
       gmailMessageId: messageId,
-      status: 'pending',
+      usedAt: parsed.usedAt, // カード利用日時（重複チェック用）
+      status: 'pending' as const,
     };
 
-    // Firestoreに保存
-    const expenseId = await saveExpense(expense as any);
+    // アトミックに重複チェック＋保存
+    const { expenseId, alreadyExists } = await saveGmailExpenseAtomic(expense as any);
+    if (alreadyExists) {
+      console.log(`Duplicate detected (atomic): ${parsed.merchant} ¥${parsed.amount} (existingId: ${expenseId})`);
+      return {
+        success: true,
+        message: `Duplicate (same content already exists)`,
+        expenseId,
+        alreadyExists: true,
+      };
+    }
     console.log(`Expense saved from Gmail (force): ${expenseId}`);
 
     // LINEグループに通知（新規作成時のみ）
