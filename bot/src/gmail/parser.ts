@@ -220,6 +220,9 @@ export async function isDuplicateByContent(
  * タイムスタンプを含めた重複チェック: 同日時・同店舗・同金額
  * 返信メールからの二重登録を防止しつつ、同日の複数決済を許可
  *
+ * 注意: Gmail自動取得（inputSource='gmail_auto'）の支出のみを対象にチェック
+ * 手動入力（現金・PayPay等）との重複は許可する
+ *
  * @param usedAt - 利用日時（フルタイムスタンプ）
  * @param merchant - 店舗名
  * @param amount - 金額
@@ -233,11 +236,12 @@ export async function isDuplicateByTimestamp(
   const db = getFirestore();
   const date = usedAt.toISOString().split('T')[0]; // YYYY-MM-DD
 
-  // 同じ日付で同じ金額の支出を検索
+  // 同じ日付で同じ金額のGmail自動取得の支出のみを検索
   const snapshot = await db
     .collection('expenses')
     .where('date', '==', date)
     .where('amount', '==', amount)
+    .where('inputSource', '==', 'gmail_auto')
     .get();
 
   // 店舗名とタイムスタンプをチェック
