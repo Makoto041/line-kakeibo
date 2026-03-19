@@ -14,6 +14,7 @@ import {
   decodeEmailBody,
   getFromAddress,
   isDuplicateExpense,
+  isDuplicateByContent,
   getExpenseIdByGmailMessageId,
 } from './parser';
 import {
@@ -159,6 +160,19 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       return;
     }
 
+    // コンテンツベースの重複チェック（同日・同店舗・同金額）
+    // 返信メールや引用を含むメールからの二重登録を防止
+    const dateStr = dayjs(parsed.usedAt).format('YYYY-MM-DD');
+    const isContentDuplicate = await isDuplicateByContent(
+      dateStr,
+      parsed.merchant,
+      parsed.amount
+    );
+    if (isContentDuplicate) {
+      console.log(`Skipping content duplicate: ${parsed.merchant} ¥${parsed.amount} on ${dateStr} (messageId: ${messageId})`);
+      return;
+    }
+
     // Geminiでカテゴリを分類
     const categoryResult = await classifyExpenseWithGemini(
       GMAIL_SYSTEM_LINE_ID,
@@ -265,6 +279,15 @@ export async function processLatestEmail(): Promise<{
       const parsed = parseSMBCCardEmail(msg.id, body);
       if (!parsed) continue;
 
+      // コンテンツベースの重複チェック
+      const dateStr = dayjs(parsed.usedAt).format('YYYY-MM-DD');
+      const isContentDuplicate = await isDuplicateByContent(
+        dateStr,
+        parsed.merchant,
+        parsed.amount
+      );
+      if (isContentDuplicate) continue;
+
       const categoryResult = await classifyExpenseWithGemini(
         GMAIL_SYSTEM_LINE_ID,
         parsed.merchant
@@ -364,6 +387,22 @@ export async function forceProcessMessage(messageId: string): Promise<{
       return {
         success: false,
         message: 'Failed to parse email',
+      };
+    }
+
+    // コンテンツベースの重複チェック（同日・同店舗・同金額）
+    const dateStr = dayjs(parsed.usedAt).format('YYYY-MM-DD');
+    const isContentDuplicate = await isDuplicateByContent(
+      dateStr,
+      parsed.merchant,
+      parsed.amount
+    );
+    if (isContentDuplicate) {
+      console.log(`Content duplicate detected: ${parsed.merchant} ¥${parsed.amount} on ${dateStr}`);
+      return {
+        success: true,
+        message: `Content duplicate (same merchant/amount/date already exists)`,
+        alreadyExists: true,
       };
     }
 
