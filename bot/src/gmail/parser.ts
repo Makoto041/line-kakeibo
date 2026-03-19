@@ -217,13 +217,13 @@ export async function isDuplicateByContent(
 }
 
 /**
- * タイムスタンプを含めた重複チェック: 同日時・同店舗・同金額
+ * 利用日時ベースの重複チェック: 同日時・同店舗・同金額
  * 返信メールからの二重登録を防止しつつ、同日の複数決済を許可
  *
  * 注意: Gmail自動取得（inputSource='gmail_auto'）の支出のみを対象にチェック
  * 手動入力（現金・PayPay等）との重複は許可する
  *
- * @param usedAt - 利用日時（フルタイムスタンプ）
+ * @param usedAt - カード利用日時（フルタイムスタンプ）
  * @param merchant - 店舗名
  * @param amount - 金額
  * @returns 重複している場合はtrue
@@ -244,7 +244,7 @@ export async function isDuplicateByTimestamp(
     .where('inputSource', '==', 'gmail_auto')
     .get();
 
-  // 店舗名とタイムスタンプをチェック
+  // 店舗名と利用日時をチェック
   for (const doc of snapshot.docs) {
     const data = doc.data();
     const existingMerchant = data.description || '';
@@ -257,17 +257,18 @@ export async function isDuplicateByTimestamp(
 
     if (!isSameMerchant) continue;
 
-    // createdAtがある場合、タイムスタンプも比較（5分以内なら重複とみなす）
-    if (data.createdAt) {
-      const existingCreatedAt = data.createdAt.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
-      const timeDiff = Math.abs(usedAt.getTime() - existingCreatedAt.getTime());
-      const fiveMinutes = 5 * 60 * 1000;
+    // usedAt（カード利用日時）を比較
+    if (data.usedAt) {
+      const existingUsedAt = data.usedAt.toDate ? data.usedAt.toDate() : new Date(data.usedAt);
+      // 同じ利用日時（1分以内）なら重複とみなす
+      const timeDiff = Math.abs(usedAt.getTime() - existingUsedAt.getTime());
+      const oneMinute = 60 * 1000;
 
-      if (timeDiff < fiveMinutes) {
+      if (timeDiff < oneMinute) {
         return true;
       }
     } else {
-      // createdAtがない場合は日付ベースでフォールバック（既存動作）
+      // usedAtがない古いデータの場合、同日・同店舗・同金額で重複とみなす（保守的）
       return true;
     }
   }

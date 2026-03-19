@@ -85,6 +85,8 @@ export interface GmailExpenseExtension {
   inputSource: InputSource;
   /** GmailメッセージID（重複チェック用） */
   gmailMessageId: string;
+  /** カード利用日時（重複チェック用） */
+  usedAt?: Date;
   /** ステータス */
   status: ExpenseStatus;
   /** 立替者（立替の場合のみ） */

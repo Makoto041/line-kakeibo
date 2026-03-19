@@ -200,6 +200,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       // Gmail拡張フィールド
       inputSource: 'gmail_auto',
       gmailMessageId: messageId,
+      usedAt: parsed.usedAt, // カード利用日時（重複チェック用）
       status: 'pending', // 確認待ち
     };
 
@@ -305,6 +306,7 @@ export async function processLatestEmail(): Promise<{
         lineGroupId: getDefaultLineGroupId(),
         inputSource: 'gmail_auto' as const,
         gmailMessageId: msg.id,
+        usedAt: parsed.usedAt, // カード利用日時（重複チェック用）
         status: 'pending' as const,
       };
 
@@ -429,6 +431,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
       lineGroupId,
       inputSource: 'gmail_auto',
       gmailMessageId: messageId,
+      usedAt: parsed.usedAt, // カード利用日時（重複チェック用）
       status: 'pending',
     };
 
