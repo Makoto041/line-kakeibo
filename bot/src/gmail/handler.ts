@@ -14,7 +14,7 @@ import {
   decodeEmailBody,
   getFromAddress,
   isDuplicateExpense,
-  isDuplicateByContent,
+  isDuplicateByTimestamp,
   getExpenseIdByGmailMessageId,
 } from './parser';
 import {
@@ -160,16 +160,15 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       return;
     }
 
-    // コンテンツベースの重複チェック（同日・同店舗・同金額）
-    // 返信メールや引用を含むメールからの二重登録を防止
-    const dateStr = dayjs(parsed.usedAt).format('YYYY-MM-DD');
-    const isContentDuplicate = await isDuplicateByContent(
-      dateStr,
+    // タイムスタンプベースの重複チェック（同日時・同店舗・同金額）
+    // 返信メールや引用を含むメールからの二重登録を防止しつつ、同日の複数決済は許可
+    const isContentDuplicate = await isDuplicateByTimestamp(
+      parsed.usedAt,
       parsed.merchant,
       parsed.amount
     );
     if (isContentDuplicate) {
-      console.log(`Skipping content duplicate: ${parsed.merchant} ¥${parsed.amount} on ${dateStr} (messageId: ${messageId})`);
+      console.log(`Skipping timestamp duplicate: ${parsed.merchant} ¥${parsed.amount} at ${parsed.usedAt.toISOString()} (messageId: ${messageId})`);
       return;
     }
 
@@ -279,10 +278,9 @@ export async function processLatestEmail(): Promise<{
       const parsed = parseSMBCCardEmail(msg.id, body);
       if (!parsed) continue;
 
-      // コンテンツベースの重複チェック
-      const dateStr = dayjs(parsed.usedAt).format('YYYY-MM-DD');
-      const isContentDuplicate = await isDuplicateByContent(
-        dateStr,
+      // タイムスタンプベースの重複チェック
+      const isContentDuplicate = await isDuplicateByTimestamp(
+        parsed.usedAt,
         parsed.merchant,
         parsed.amount
       );
@@ -390,18 +388,17 @@ export async function forceProcessMessage(messageId: string): Promise<{
       };
     }
 
-    // コンテンツベースの重複チェック（同日・同店舗・同金額）
-    const dateStr = dayjs(parsed.usedAt).format('YYYY-MM-DD');
-    const isContentDuplicate = await isDuplicateByContent(
-      dateStr,
+    // タイムスタンプベースの重複チェック（同日時・同店舗・同金額）
+    const isContentDuplicate = await isDuplicateByTimestamp(
+      parsed.usedAt,
       parsed.merchant,
       parsed.amount
     );
     if (isContentDuplicate) {
-      console.log(`Content duplicate detected: ${parsed.merchant} ¥${parsed.amount} on ${dateStr}`);
+      console.log(`Timestamp duplicate detected: ${parsed.merchant} ¥${parsed.amount} at ${parsed.usedAt.toISOString()}`);
       return {
         success: true,
-        message: `Content duplicate (same merchant/amount/date already exists)`,
+        message: `Timestamp duplicate (same merchant/amount/time already exists)`,
         alreadyExists: true,
       };
     }

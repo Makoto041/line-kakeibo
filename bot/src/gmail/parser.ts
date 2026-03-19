@@ -215,3 +215,58 @@ export async function isDuplicateByContent(
 
   return false;
 }
+
+/**
+ * タイムスタンプを含めた重複チェック: 同日時・同店舗・同金額
+ * 返信メールからの二重登録を防止しつつ、同日の複数決済を許可
+ *
+ * @param usedAt - 利用日時（フルタイムスタンプ）
+ * @param merchant - 店舗名
+ * @param amount - 金額
+ * @returns 重複している場合はtrue
+ */
+export async function isDuplicateByTimestamp(
+  usedAt: Date,
+  merchant: string,
+  amount: number
+): Promise<boolean> {
+  const db = getFirestore();
+  const date = usedAt.toISOString().split('T')[0]; // YYYY-MM-DD
+
+  // 同じ日付で同じ金額の支出を検索
+  const snapshot = await db
+    .collection('expenses')
+    .where('date', '==', date)
+    .where('amount', '==', amount)
+    .get();
+
+  // 店舗名とタイムスタンプをチェック
+  for (const doc of snapshot.docs) {
+    const data = doc.data();
+    const existingMerchant = data.description || '';
+
+    // 店舗名が類似しているかチェック
+    const isSameMerchant =
+      existingMerchant === merchant ||
+      existingMerchant.includes(merchant) ||
+      merchant.includes(existingMerchant);
+
+    if (!isSameMerchant) continue;
+
+    // createdAtがある場合、タイムスタンプも比較（5分以内なら重複とみなす）
+    if (data.createdAt) {
+      const existingCreatedAt = data.createdAt.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
+      const timeDiff = Math.abs(usedAt.getTime() - existingCreatedAt.getTime());
+      const fiveMinutes = 5 * 60 * 1000;
+
+      if (timeDiff < fiveMinutes) {
+        return true;
+      }
+    } else {
+      // createdAtがない場合は日付ベースでフォールバック（既存動作）
+      return true;
+    }
+  }
+
+  return false;
+}
