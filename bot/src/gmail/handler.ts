@@ -14,6 +14,7 @@ import {
   decodeEmailBody,
   getFromAddress,
   isDuplicateExpense,
+  isDuplicateByContent,
   getExpenseIdByGmailMessageId,
 } from './parser';
 import {
@@ -144,6 +145,18 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     const from = getFromAddress(headers);
     const body = decodeEmailBody(message.payload);
 
+    // 返信メールをスキップ（すぐちゃん等の返信による二重計上を防止）
+    const inReplyTo = headers.find(
+      (h: any) => h.name?.toLowerCase() === 'in-reply-to'
+    );
+    const subject = headers.find(
+      (h: any) => h.name?.toLowerCase() === 'subject'
+    )?.value || '';
+    if (inReplyTo?.value || /^Re:/i.test(subject)) {
+      console.log(`Skipping reply email: ${messageId} (subject: ${subject})`);
+      return;
+    }
+
     // 三井住友ゴールドVISA（NL）のメールかチェック
     if (!isSMBCGoldVISANL(from, body)) {
       console.log(`Not a SMBC Gold VISA NL notification: ${messageId}`);
@@ -156,6 +169,14 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     const parsed = parseSMBCCardEmail(messageId, body);
     if (!parsed) {
       console.warn(`Failed to parse email: ${messageId}`);
+      return;
+    }
+
+    // コンテンツベースの重複チェック（返信メール検出をすり抜けた場合のフォールバック）
+    const dateStr = dayjs(parsed.usedAt).format('YYYY-MM-DD');
+    const contentDuplicate = await isDuplicateByContent(dateStr, parsed.merchant, parsed.amount);
+    if (contentDuplicate) {
+      console.log(`Skipping content-duplicate: ${messageId} (${parsed.merchant} ¥${parsed.amount} on ${dateStr})`);
       return;
     }
 
