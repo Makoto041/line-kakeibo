@@ -107,24 +107,117 @@ export interface UserLink {
 export async function saveExpense(expense: Omit<Expense, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
   try {
     const now = Timestamp.now();
-    
+
     // Remove undefined values to avoid Firestore validation errors
     const cleanExpense = Object.fromEntries(
       Object.entries(expense).filter(([_, value]) => value !== undefined)
     );
-    
+
     const docRef = await getDb().collection('expenses').add({
       ...cleanExpense,
       createdAt: now,
       updatedAt: now
     });
-    
+
     console.log(`Expense saved with ID: ${docRef.id}, lineId: ${expense.lineId}`);
     return docRef.id;
   } catch (error) {
     console.error('Error saving expense:', error);
     throw error;
   }
+}
+
+/**
+ * Gmail自動取得用のアトミックな保存（重複チェック付き）
+ * gmailMessageIdまたはusedAt+merchant+amountで重複チェック
+ *
+ * @returns { expenseId, alreadyExists } - 保存または既存のID
+ */
+export async function saveGmailExpenseAtomic(
+  expense: Omit<Expense, 'id' | 'createdAt' | 'updatedAt'> & {
+    gmailMessageId: string;
+    usedAt?: Date;
+  }
+): Promise<{ expenseId: string; alreadyExists: boolean }> {
+  const db = getDb();
+
+  return db.runTransaction(async (transaction) => {
+    // 1. gmailMessageIdで重複チェック
+    const messageIdQuery = db.collection('expenses')
+      .where('gmailMessageId', '==', expense.gmailMessageId)
+      .limit(1);
+    const messageIdSnapshot = await transaction.get(messageIdQuery);
+
+    if (!messageIdSnapshot.empty) {
+      return {
+        expenseId: messageIdSnapshot.docs[0].id,
+        alreadyExists: true,
+      };
+    }
+
+    // 2. usedAt + merchant + amount で重複チェック（usedAtがある場合のみ）
+    if (expense.usedAt) {
+      const date = expense.usedAt.toISOString().split('T')[0];
+      const contentQuery = db.collection('expenses')
+        .where('date', '==', date)
+        .where('amount', '==', expense.amount)
+        .where('inputSource', '==', 'gmail_auto');
+      const contentSnapshot = await transaction.get(contentQuery);
+
+      for (const doc of contentSnapshot.docs) {
+        const data = doc.data();
+        const existingMerchant = data.description || '';
+        const merchant = expense.description;
+
+        // 店舗名が類似しているか
+        const isSameMerchant =
+          existingMerchant === merchant ||
+          existingMerchant.includes(merchant) ||
+          merchant.includes(existingMerchant);
+
+        if (!isSameMerchant) continue;
+
+        // usedAtが1分以内なら重複
+        if (data.usedAt) {
+          const existingUsedAt = data.usedAt.toDate ? data.usedAt.toDate() : new Date(data.usedAt);
+          const timeDiff = Math.abs(expense.usedAt.getTime() - existingUsedAt.getTime());
+          const oneMinute = 60 * 1000;
+
+          if (timeDiff < oneMinute) {
+            return {
+              expenseId: doc.id,
+              alreadyExists: true,
+            };
+          }
+        } else {
+          // usedAtがない古いデータは同日・同店舗・同金額で重複
+          return {
+            expenseId: doc.id,
+            alreadyExists: true,
+          };
+        }
+      }
+    }
+
+    // 3. 新規作成
+    const now = Timestamp.now();
+    const cleanExpense = Object.fromEntries(
+      Object.entries(expense).filter(([_, value]) => value !== undefined)
+    );
+
+    const newDocRef = db.collection('expenses').doc();
+    transaction.set(newDocRef, {
+      ...cleanExpense,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    console.log(`Expense saved with ID: ${newDocRef.id}, lineId: ${expense.lineId}`);
+    return {
+      expenseId: newDocRef.id,
+      alreadyExists: false,
+    };
+  });
 }
 
 // LINE IDベースのクエリに変更

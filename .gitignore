@@ -30,13 +30,13 @@ pglite-debug.log
 build.log
 
 # Credentials (never commit)
-*.json
-!package.json
-!package-lock.json
-!tsconfig.json
-!tsconfig.*.json
-!firebase.json
-!.firebaserc
+credentials.json
+**/credentials.json
+*.secret.json
+*.local.json
+kakeibo_service.json
+vision-key.json
+service-account*.json
 
 # Google Cloud SDK
 google-cloud-sdk/
