@@ -157,9 +157,9 @@ export async function saveGmailExpenseAtomic(
 
     // 2. usedAt + merchant + amount で重複チェック（usedAtがある場合のみ）
     if (expense.usedAt) {
-      const date = expense.usedAt.toISOString().split('T')[0];
+      // expense.dateを直接使用（保存時と同じ値で検索）
       const contentQuery = db.collection('expenses')
-        .where('date', '==', date)
+        .where('date', '==', expense.date)
         .where('amount', '==', expense.amount)
         .where('inputSource', '==', 'gmail_auto');
       const contentSnapshot = await transaction.get(contentQuery);

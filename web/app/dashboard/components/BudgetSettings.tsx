@@ -8,6 +8,7 @@ import { db } from '../../../lib/firebase'
 interface BudgetSettingsProps {
   userId: string
   onClose?: () => void
+  onSave?: () => void  // 保存成功時のコールバック
 }
 
 interface BudgetConfig {
@@ -66,7 +67,7 @@ function normalizeBudgetConfig(data: unknown): BudgetConfig {
   }
 }
 
-export default function BudgetSettings({ userId, onClose }: BudgetSettingsProps) {
+export default function BudgetSettings({ userId, onClose, onSave }: BudgetSettingsProps) {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [hasLoaded, setHasLoaded] = useState(false)
@@ -139,6 +140,8 @@ export default function BudgetSettings({ userId, onClose }: BudgetSettingsProps)
         updatedAt: new Date(),
       })
       setMessage({ type: 'success', text: '設定を保存しました' })
+      // 保存成功時にコールバックを呼び出し（ダッシュボードの予算データを更新）
+      onSave?.()
     } catch (error) {
       console.error('Error saving budget config:', error)
       setMessage({ type: 'error', text: '設定の保存に失敗しました' })
