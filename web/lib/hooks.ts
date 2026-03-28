@@ -1209,6 +1209,7 @@ export function useBudgetConfig(userId: string | null) {
   const [config, setConfig] = useState<BudgetConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
     if (!userId || userId === 'guest') {
@@ -1265,7 +1266,12 @@ export function useBudgetConfig(userId: string | null) {
     };
 
     fetchBudgetConfig();
-  }, [userId]);
+  }, [userId, refreshTrigger]);
 
-  return { config, loading, error };
+  // 手動で再取得するための関数
+  const refetch = () => {
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  return { config, loading, error, refetch };
 }

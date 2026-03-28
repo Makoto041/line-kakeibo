@@ -30,7 +30,7 @@ export default function DashboardPage() {
   )
 
   // Get budget config
-  const { config: budgetConfig, loading: budgetLoading } = useBudgetConfig(user?.uid || null)
+  const { config: budgetConfig, loading: budgetLoading, refetch: refetchBudget } = useBudgetConfig(user?.uid || null)
 
   // Get expenses for the expense list
   const { expenses, loading: expensesLoading, updateExpense, deleteExpense } = useExpenses(
@@ -256,7 +256,7 @@ export default function DashboardPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
           >
-            <BudgetSettings userId={user?.uid || ''} />
+            <BudgetSettings userId={user?.uid || ''} onSave={refetchBudget} />
           </motion.div>
         )}
       </motion.div>

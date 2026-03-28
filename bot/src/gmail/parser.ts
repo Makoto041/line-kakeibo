@@ -7,6 +7,7 @@
 
 import { ParsedCardNotification, SMBC_CARD_FILTER } from './types';
 import { getFirestore } from 'firebase-admin/firestore';
+import dayjs from 'dayjs';
 
 /**
  * メールが三井住友ゴールドVISA（NL）の利用通知かどうか判定
@@ -234,7 +235,8 @@ export async function isDuplicateByTimestamp(
   amount: number
 ): Promise<boolean> {
   const db = getFirestore();
-  const date = usedAt.toISOString().split('T')[0]; // YYYY-MM-DD
+  // 保存時と同じくdayjsを使用してローカルタイムゾーンで日付を正規化
+  const date = dayjs(usedAt).format('YYYY-MM-DD');
 
   // 同じ日付で同じ金額のGmail自動取得の支出のみを検索
   const snapshot = await db
