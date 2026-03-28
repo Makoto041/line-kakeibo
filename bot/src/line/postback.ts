@@ -306,7 +306,7 @@ async function handleShowCategorySelect(
   event: PostbackEvent,
   actionData: ExtendedPostbackActionData
 ): Promise<void> {
-  const { expenseId, currentCategory, source, merchant, amount } = actionData;
+  const { expenseId, source } = actionData;
 
   const replyTarget = event.source.type === 'group'
     ? (event.source as any).groupId
@@ -317,12 +317,28 @@ async function handleShowCategorySelect(
     return;
   }
 
+  // Firestoreから支出データを取得（300バイト制限対策）
+  const db = getFirestore();
+  const expenseRef = db.collection('expenses').doc(expenseId);
+  const expenseDoc = await expenseRef.get();
+
+  if (!expenseDoc.exists) {
+    console.warn('Expense not found for category select:', expenseId);
+    return;
+  }
+
+  const expenseData = expenseDoc.data();
+  if (!expenseData) {
+    console.warn('Expense data is empty for category select:', expenseId);
+    return;
+  }
+
   const carouselInfo: CategorySelectInfo = {
     expenseId,
-    currentCategory: currentCategory || 'その他',
+    currentCategory: expenseData.category || 'その他',
     source: source || 'gmail',
-    merchant: merchant || '不明',
-    amount: amount || 0,
+    merchant: expenseData.description || '不明',
+    amount: expenseData.amount || 0,
   };
 
   const carousel = buildCategorySelectCarousel(carouselInfo);

@@ -204,10 +204,7 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
             data: JSON.stringify({
               action: 'show_category_select',
               expenseId,
-              currentCategory: category,
               source: 'gmail',
-              merchant,
-              amount,
             }),
           },
           style: 'secondary',
@@ -460,10 +457,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
             data: JSON.stringify({
               action: 'show_category_select',
               expenseId,
-              currentCategory: category,
               source: 'text',
-              merchant: description,
-              amount,
             }),
           },
           style: 'secondary',
