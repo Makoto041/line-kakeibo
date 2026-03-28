@@ -35,5 +35,15 @@ service cloud.firestore {
     match /userSettings/{userId} {
       allow read, write: if true;
     }
+
+    // Budget settings collection
+    match /budgetSettings/{userId} {
+      allow read, write: if true;
+    }
+
+    // Date range settings collection
+    match /dateRangeSettings/{userId} {
+      allow read, write: if true;
+    }
   }
 }
