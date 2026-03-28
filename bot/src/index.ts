@@ -1,3 +1,4 @@
+// Version: 2026-03-28-2200 - Force redeploy
 import express, { Express, Request, Response } from "express";
 import { Client, middleware } from "@line/bot-sdk";
 import { ImageAnnotatorClient } from "@google-cloud/vision";
