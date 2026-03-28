@@ -23,6 +23,28 @@ const categoryInfo: Record<string, { emoji: string; name: string }> = {
   'その他': { emoji: '📦', name: 'その他' },
 }
 
+// 予算設定のカテゴリ名 → 支出データのカテゴリ名（正規化後）のマッピング
+// BudgetSettings uses: 娯楽費, 衣服費, 教育費, 医療費
+// categoryNormalization produces: 娯楽, 衣服, 教育, 医療・健康
+const budgetToExpenseCategory: Record<string, string[]> = {
+  '食費': ['食費'],
+  '日用品': ['日用品'],
+  '交通費': ['交通費'],
+  '娯楽費': ['娯楽費', '娯楽'],
+  '光熱費': ['光熱費'],
+  '通信費': ['通信費'],
+  '医療費': ['医療費', '医療・健康'],
+  '衣服費': ['衣服費', '衣服'],
+  '教育費': ['教育費', '教育'],
+  'その他': ['その他'],
+}
+
+// 予算カテゴリに対応する支出合計を取得
+function getActualSpending(budgetCategory: string, categoryTotals: Record<string, number>): number {
+  const mappedCategories = budgetToExpenseCategory[budgetCategory] || [budgetCategory]
+  return mappedCategories.reduce((sum, cat) => sum + (categoryTotals[cat] || 0), 0)
+}
+
 // 消費ペースを計算
 function calculatePace(actual: number, budget: number): { pace: 'good' | 'warning' | 'danger'; label: string } {
   const today = dayjs()
@@ -92,7 +114,7 @@ export default function BudgetProgressBar({ stats, budgetConfig }: BudgetProgres
     .map(([category, budget]) => ({
       category,
       budget,
-      actual: categoryTotals[category] || 0,
+      actual: getActualSpending(category, categoryTotals),
       info: categoryInfo[category] || { emoji: '📦', name: category },
     }))
     .sort((a, b) => {
