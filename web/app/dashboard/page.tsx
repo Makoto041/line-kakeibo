@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { useLineAuth, useMonthlyStats, useExpenses, Expense } from '../../lib/hooks'
+import { useLineAuth, useMonthlyStats, useExpenses, useBudgetConfig, Expense } from '../../lib/hooks'
 import dayjs from 'dayjs'
 import SummaryCards from './components/SummaryCards'
 import CategoryChart from './components/CategoryChart'
@@ -12,6 +12,7 @@ import ExpenseRatioChart from './components/ExpenseRatioChart'
 import ExpenseList from './components/ExpenseList'
 import EditExpenseModal from './components/EditExpenseModal'
 import BudgetSettings from './components/BudgetSettings'
+import BudgetProgressBar from './components/BudgetProgressBar'
 
 export default function DashboardPage() {
   const { user, loading: authLoading } = useLineAuth()
@@ -27,6 +28,9 @@ export default function DashboardPage() {
     currentDate.month() + 1,
     1 // Start from 1st of month
   )
+
+  // Get budget config
+  const { config: budgetConfig, loading: budgetLoading } = useBudgetConfig(user?.uid || null)
 
   // Get expenses for the expense list
   const { expenses, loading: expensesLoading, updateExpense, deleteExpense } = useExpenses(
@@ -56,7 +60,7 @@ export default function DashboardPage() {
     }
   }
 
-  const isLoading = authLoading || statsLoading || expensesLoading
+  const isLoading = authLoading || statsLoading || expensesLoading || budgetLoading
 
   // 支出編集ハンドラー
   const handleEditExpense = (expense: Expense) => {
@@ -172,6 +176,16 @@ export default function DashboardPage() {
               className="mb-6"
             >
               <BudgetAlert />
+            </motion.div>
+
+            {/* Budget Progress Bars */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.15 }}
+              className="mb-6"
+            >
+              <BudgetProgressBar stats={stats} budgetConfig={budgetConfig} />
             </motion.div>
 
             {/* Summary Cards */}
