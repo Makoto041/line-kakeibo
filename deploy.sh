@@ -17,9 +17,9 @@ fi
 
 echo "Vercel CLI およびプロジェクトリンクの確認が完了しました。"
 
-# サービスアカウントキー（Base64）の存在チェック
-if [ ! -f bot/sa.b64 ]; then
-  echo "Error: bot/sa.b64 が見つかりません。"
+# サービスアカウントキー（Base64）の存在・サイズ・読み取り権限チェック
+if [ ! -f bot/sa.b64 ] || [ ! -s bot/sa.b64 ] || [ ! -r bot/sa.b64 ]; then
+  echo "Error: bot/sa.b64 が見つからないか、空、または読み取り不可です。"
   echo ""
   echo "セットアップ方法:"
   echo "  1. Firebase Console > プロジェクト設定 > サービスアカウント"

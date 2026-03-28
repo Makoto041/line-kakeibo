@@ -165,7 +165,7 @@ export default function BudgetProgressBar({ stats, budgetConfig }: BudgetProgres
           {/* 日割り進捗ライン */}
           <div
             className="absolute top-0 bottom-0 w-0.5 bg-blue-500 z-10"
-            style={{ left: `${Math.min(idealProgress, 100)}%` }}
+            style={{ left: `${Math.min(idealProgress, 100)}%`, transform: 'translateX(-50%)' }}
             title={`今日の理想消費位置: ${idealProgress.toFixed(0)}%`}
           />
           {/* 実際の消費バー */}
@@ -188,7 +188,7 @@ export default function BudgetProgressBar({ stats, budgetConfig }: BudgetProgres
             ¥{totalActual.toLocaleString()} / ¥{monthlyBudget.toLocaleString()}
           </span>
           <span className={`font-medium ${totalRemaining >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-            残り: ¥{totalRemaining.toLocaleString()}
+            {totalRemaining >= 0 ? `残り ¥${totalRemaining.toLocaleString()}` : `超過 ¥${Math.abs(totalRemaining).toLocaleString()}`}
           </span>
         </div>
       </div>
@@ -231,7 +231,7 @@ export default function BudgetProgressBar({ stats, budgetConfig }: BudgetProgres
                   {/* 日割り進捗ライン */}
                   <div
                     className="absolute top-0 bottom-0 w-0.5 bg-blue-500 z-10"
-                    style={{ left: `${Math.min(idealProgress, 100)}%` }}
+                    style={{ left: `${Math.min(idealProgress, 100)}%`, transform: 'translateX(-50%)' }}
                   />
                   {/* 実際の消費バー */}
                   <motion.div

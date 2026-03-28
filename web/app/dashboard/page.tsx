@@ -30,7 +30,7 @@ export default function DashboardPage() {
   )
 
   // Get budget config
-  const { config: budgetConfig, loading: budgetLoading, refetch: refetchBudget } = useBudgetConfig(user?.uid || null)
+  const { config: budgetConfig, loading: budgetLoading, error: budgetError, refetch: refetchBudget } = useBudgetConfig(user?.uid || null)
 
   // Get expenses for the expense list
   const { expenses, loading: expensesLoading, updateExpense, deleteExpense } = useExpenses(
@@ -60,7 +60,7 @@ export default function DashboardPage() {
     }
   }
 
-  const isLoading = authLoading || statsLoading || expensesLoading || budgetLoading
+  const isLoading = authLoading || statsLoading || expensesLoading
 
   // 支出編集ハンドラー
   const handleEditExpense = (expense: Expense) => {
@@ -185,7 +185,29 @@ export default function DashboardPage() {
               transition={{ duration: 0.5, delay: 0.15 }}
               className="mb-6"
             >
-              <BudgetProgressBar stats={stats} budgetConfig={budgetConfig} />
+              {budgetLoading ? (
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
+                  <div className="animate-pulse">
+                    <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-4"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full mb-2"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
+                  </div>
+                </div>
+              ) : budgetError ? (
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
+                  <div className="text-center text-red-500">
+                    <p>予算設定の読み込みに失敗しました</p>
+                    <button
+                      onClick={refetchBudget}
+                      className="mt-2 text-sm text-primary hover:underline"
+                    >
+                      再試行
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <BudgetProgressBar stats={stats} budgetConfig={budgetConfig} />
+              )}
             </motion.div>
 
             {/* Summary Cards */}
