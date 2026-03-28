@@ -15,7 +15,19 @@ if [ ! -d .vercel ] || [ ! -s .vercel/project.json ]; then
   vercel link --yes
 fi
 
-echo "Vercel CLI およびプロジェクトリンクの確認が完了しました。" "Error: vercel CLI が見つかりません。'npm install -g vercel' でインストールしてください。"
+echo "Vercel CLI およびプロジェクトリンクの確認が完了しました。"
+
+# サービスアカウントキー（Base64）の存在チェック
+if [ ! -f bot/sa.b64 ]; then
+  echo "Error: bot/sa.b64 が見つかりません。"
+  echo ""
+  echo "セットアップ方法:"
+  echo "  1. Firebase Console > プロジェクト設定 > サービスアカウント"
+  echo "  2. 「新しい秘密鍵を生成」をクリック"
+  echo "  3. ダウンロードした JSON を Base64 エンコード:"
+  echo "     base64 -i path/to/serviceAccountKey.json > bot/sa.b64"
+  echo ""
+  echo "詳細は bot/sa.b64.example を参照してください。"
   exit 1
 fi
 
