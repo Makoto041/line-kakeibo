@@ -51,17 +51,32 @@ export interface LinkToken {
 // カテゴリー定義
 export const EXPENSE_CATEGORIES = [
   '食費',
-  '日用品', 
+  '日用品',
   '交通費',
   '医療費',
   '娯楽費',
   '衣服費',
   '教育費',
   '通信費',
+  '光熱費',
   'その他'
 ] as const;
 
 export type ExpenseCategory = typeof EXPENSE_CATEGORIES[number];
+
+// カテゴリ絵文字マッピング
+export const CATEGORY_EMOJI_MAP: Record<ExpenseCategory, string> = {
+  '食費': '🍽️',
+  '日用品': '🛒',
+  '交通費': '🚃',
+  '医療費': '💊',
+  '娯楽費': '🎮',
+  '衣服費': '👗',
+  '教育費': '📚',
+  '通信費': '📱',
+  '光熱費': '💡',
+  'その他': '📦',
+};
 
 // API レスポンス型
 export interface ApiResponse<T = any> {
