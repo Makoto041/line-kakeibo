@@ -4,16 +4,40 @@
  * カード利用通知・テキスト入力のボタン押下を処理
  */
 
-import { WebhookEvent, PostbackEvent } from '@line/bot-sdk';
+import { WebhookEvent, PostbackEvent, Client } from '@line/bot-sdk';
 import { getFirestore } from 'firebase-admin/firestore';
 import { PostbackActionData, ExpenseStatus } from '../gmail/types';
-import { sendStatusUpdateConfirmation, sendTextMessage } from './flexMessage';
+import { sendStatusUpdateConfirmation, sendTextMessage, buildCategorySelectCarousel, CategorySelectInfo } from './flexMessage';
 
 /**
  * 拡張されたPostbackアクションデータ
  */
 interface ExtendedPostbackActionData extends PostbackActionData {
   source?: 'gmail' | 'text';  // 入力元
+  currentCategory?: string;   // カテゴリ選択用
+  category?: string;          // 設定するカテゴリ
+  merchant?: string;          // 店舗名
+  amount?: number;            // 金額
+}
+
+// LINEクライアントの初期化
+let lineClient: Client | null = null;
+
+function getLineClient(): Client {
+  if (!lineClient) {
+    const channelAccessToken = process.env.LINE_CHANNEL_TOKEN;
+    const channelSecret = process.env.LINE_CHANNEL_SECRET;
+
+    if (!channelAccessToken || !channelSecret) {
+      throw new Error('LINE credentials not configured');
+    }
+
+    lineClient = new Client({
+      channelAccessToken,
+      channelSecret,
+    });
+  }
+  return lineClient;
 }
 
 /**
@@ -39,6 +63,18 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
     }
 
     const { action, expenseId, source } = actionData;
+
+    // カテゴリ選択表示の場合
+    if (action === 'show_category_select') {
+      await handleShowCategorySelect(event, actionData);
+      return;
+    }
+
+    // カテゴリ設定の場合
+    if (action === 'set_category') {
+      await handleSetCategory(event, actionData);
+      return;
+    }
 
     // テキスト入力からのPostbackの場合
     if (source === 'text') {
@@ -261,4 +297,86 @@ export function isTextExpensePostback(data: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * カテゴリ選択Carouselを表示
+ */
+async function handleShowCategorySelect(
+  event: PostbackEvent,
+  actionData: ExtendedPostbackActionData
+): Promise<void> {
+  const { expenseId, currentCategory, source, merchant, amount } = actionData;
+
+  const replyTarget = event.source.type === 'group'
+    ? (event.source as any).groupId
+    : event.source.userId;
+
+  if (!replyTarget) {
+    console.warn('Cannot determine reply target for category select');
+    return;
+  }
+
+  const carouselInfo: CategorySelectInfo = {
+    expenseId,
+    currentCategory: currentCategory || 'その他',
+    source: source || 'gmail',
+    merchant: merchant || '不明',
+    amount: amount || 0,
+  };
+
+  const carousel = buildCategorySelectCarousel(carouselInfo);
+  const client = getLineClient();
+
+  await client.pushMessage(replyTarget, carousel);
+  console.log(`Category select carousel sent for expense ${expenseId}`);
+}
+
+/**
+ * カテゴリを設定
+ */
+async function handleSetCategory(
+  event: PostbackEvent,
+  actionData: ExtendedPostbackActionData
+): Promise<void> {
+  const { expenseId, category } = actionData;
+
+  if (!category) {
+    console.warn('Category is missing in set_category action');
+    return;
+  }
+
+  const db = getFirestore();
+  const expenseRef = db.collection('expenses').doc(expenseId);
+  const expenseDoc = await expenseRef.get();
+
+  if (!expenseDoc.exists) {
+    console.warn('Expense not found:', expenseId);
+    return;
+  }
+
+  const expenseData = expenseDoc.data();
+  if (!expenseData) {
+    console.warn('Expense data is empty:', expenseId);
+    return;
+  }
+
+  // カテゴリを更新
+  await expenseRef.update({
+    category,
+    updatedAt: new Date(),
+  });
+
+  const replyTarget = event.source.type === 'group'
+    ? (event.source as any).groupId
+    : event.source.userId;
+
+  if (replyTarget) {
+    await sendTextMessage(
+      replyTarget,
+      `🏷️ カテゴリを「${category}」に変更しました\n${expenseData.description} ¥${expenseData.amount?.toLocaleString()}`
+    );
+  }
+
+  console.log(`Expense ${expenseId} category updated to ${category}`);
 }
