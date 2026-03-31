@@ -128,13 +128,18 @@ app.post("/webhook", async (req: Request, res: Response) => {
         console.log("Processing event:", event.type);
 
         if (event.type === "message" && event.message.type === "image") {
-          // 即座に受信確認レスポンス
+          // 即座に受信確認レスポンス（replyMessageを使用）
+          try {
+            await client.replyMessage(event.replyToken, {
+              type: "text",
+              text: "📸 画像を受信しました！処理中です...",
+            });
+          } catch (replyError) {
+            console.warn("Failed to send image receipt confirmation:", replyError);
+          }
+
           const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
-          await client.pushMessage(targetId, {
-            type: "text",
-            text: "📸 画像を受信しました！処理中です...",
-          });
-          
+
           // バックグラウンドで処理実行（ノンブロッキング）
           handleImageMessage(event).catch(error => {
             console.error("Image processing error:", error);
@@ -145,27 +150,17 @@ app.post("/webhook", async (req: Request, res: Response) => {
             }).catch(console.error);
           });
         } else if (event.type === "message" && event.message.type === "text") {
-          // テキスト処理も即座レスポンス
-          const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
-          
-          // 金額らしきテキストかチェック
-          const hasAmount = /\d+/.test(event.message.text);
-          if (hasAmount) {
-            await client.pushMessage(targetId, {
-              type: "text",
-              text: "💬 テキストを受信しました！処理中です...",
-            });
-          }
-          
+          // テキストメッセージの処理
+          // 注: handleTextMessage内でreplyMessageを使用するため、ここでは送信しない
+
           // バックグラウンドで処理実行
           handleTextMessage(event).catch(error => {
             console.error("Text processing error:", error);
-            if (hasAmount) {
-              client.pushMessage(targetId, {
-                type: "text",
-                text: "❌ テキスト処理中にエラーが発生しました。もう一度お試しください。",
-              }).catch(console.error);
-            }
+            const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
+            client.pushMessage(targetId, {
+              type: "text",
+              text: "❌ テキスト処理中にエラーが発生しました。もう一度お試しください。",
+            }).catch(console.error);
           });
         } else if (event.type === "postback") {
           // Postbackイベント処理
@@ -214,39 +209,29 @@ async function handleImageMessage(event: any) {
   const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB limit
   const MAX_PROCESSING_TIME = 30000; // 30 seconds
 
+  // 注: 受信確認メッセージはwebhookハンドラーで既に送信済み（pushMessage）
+  // ここではreplyMessageを使用しない（重複メッセージを防ぐため）
+
   try {
-    // Immediately acknowledge image received
-    try {
-      await client.replyMessage(event.replyToken, {
-        type: "text",
-        text: "画像を受信しました！レシートを解析中です...⏳",
-      });
-    } catch (replyError) {
-      console.error("Failed to send immediate reply for image:", replyError);
-    }
-
     // Process image in background (don't await)
-    processImageInBackground(event, MAX_IMAGE_SIZE, MAX_PROCESSING_TIME).catch(
-      (error) => {
-        console.error("Background image processing failed:", error);
-
-        // Send error notification to the source where message came from
-        const targetId =
-          event.source.type === "group"
-            ? event.source.groupId
-            : event.source.userId;
-        client
-          .pushMessage(targetId, {
-            type: "text",
-            text: "画像処理でエラーが発生しました。もう一度お試しください。",
-          })
-          .catch((pushError) =>
-            console.error("Failed to send error notification:", pushError)
-          );
-      }
-    );
+    await processImageInBackground(event, MAX_IMAGE_SIZE, MAX_PROCESSING_TIME);
   } catch (error) {
     console.error("Image message handling error:", error);
+
+    // Send error notification to the source where message came from
+    const targetId =
+      event.source.type === "group"
+        ? event.source.groupId
+        : event.source.userId;
+
+    try {
+      await client.pushMessage(targetId, {
+        type: "text",
+        text: "画像処理でエラーが発生しました。もう一度お試しください。",
+      });
+    } catch (pushError) {
+      console.error("Failed to send error notification:", pushError);
+    }
   }
 }
 
@@ -1235,44 +1220,59 @@ async function handleTextMessage(event: any) {
 
     // ⑥ テキスト登録
     console.log(`=== TEXT PROCESSING: Trying to parse as expense text ===`);
-    const parsed = await parseTextExpense(text);
+    const parsed = parseTextExpense(text);
     if (!parsed) {
       console.log(
-        `=== TEXT PROCESSING: Failed to parse as expense, sending help message ===`
+        `=== TEXT PROCESSING: Failed to parse as expense, ignoring ===`
       );
-      await client.replyMessage(event.replyToken, {
-        type: "text",
-        text: "💡 金額が見つかりませんでした。\n例: 「500 ランチ」「1200 交通費」",
-      });
+      // 金額が見つからない場合は無視（コマンドでもない一般的なテキスト）
+      // replyMessageを送らないことで、エラーを防ぐ
       return;
     }
 
     console.log(`=== TEXT PROCESSING: Successfully parsed expense:`, parsed);
 
-    // 即座に処理中のメッセージを返す（Flex Messageは後で送信）
-    // 注: replyTokenは既に「💬 テキストを受信しました！処理中です...」で使用済みの場合あり
-    // そのため、ここでは追加のreplyMessageは送信しない
+    // 即座に処理中のメッセージを返す
+    const targetId = event.source.type === "group"
+      ? event.source.groupId
+      : event.source.userId;
 
-    // Process expense registration in background (don't await)
-    processExpenseInBackground(event, parsed).catch((error) => {
+    try {
+      await client.replyMessage(event.replyToken, {
+        type: "text",
+        text: "💬 登録中です...",
+      });
+    } catch (replyError) {
+      console.warn("Failed to send processing confirmation:", replyError);
+    }
+
+    // Process expense registration
+    try {
+      await processExpenseInBackground(event, parsed);
+    } catch (error) {
       console.error("Background expense processing failed:", error);
-
-      // Send error notification to the source where message came from
-      const targetId =
-        event.source.type === "group"
-          ? event.source.groupId
-          : event.source.userId;
-      client
-        .pushMessage(targetId, {
-          type: "text",
-          text: "⚠️ 支出の保存で問題が発生しました。データが正しく記録されていない可能性があります。",
-        })
-        .catch((pushError) =>
-          console.error("Failed to send error notification:", pushError)
-        );
-    });
+      // Send error notification
+      await client.pushMessage(targetId, {
+        type: "text",
+        text: "⚠️ 支出の保存で問題が発生しました。データが正しく記録されていない可能性があります。",
+      }).catch((pushError) =>
+        console.error("Failed to send error notification:", pushError)
+      );
+    }
   } catch (error) {
     console.error("Text message handling error:", error);
+    // エラーが発生した場合、可能であればユーザーに通知
+    try {
+      const targetId = event.source.type === "group"
+        ? event.source.groupId
+        : event.source.userId;
+      await client.pushMessage(targetId, {
+        type: "text",
+        text: "⚠️ メッセージの処理中にエラーが発生しました。もう一度お試しください。",
+      });
+    } catch (notifyError) {
+      console.error("Failed to send error notification:", notifyError);
+    }
   }
 }
 
