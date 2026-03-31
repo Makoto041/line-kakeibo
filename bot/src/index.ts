@@ -108,8 +108,14 @@ try {
   console.warn("Vision API initialization error:", error);
 }
 
-// Express JSON middleware for parsing request bodies
-app.use(express.json({ limit: '10mb' }));
+// Express JSON middleware - skip /webhook so LINE SDK middleware can access raw body for signature verification
+app.use((req, res, next) => {
+  if (req.path === '/webhook') {
+    next();
+  } else {
+    express.json({ limit: '10mb' })(req, res, next);
+  }
+});
 
 app.use("/webhook", middleware(config));
 
@@ -2224,7 +2230,7 @@ gmailRouter.post("/force-process/:messageId", adminApiLimiter as any, requireAdm
     if (!messageId) {
       return res.status(400).json({ error: "messageId is required" });
     }
-    const result = await forceProcessMessage(messageId);
+    const result = await forceProcessMessage(messageId as string);
     res.json(result);
   } catch (error) {
     console.error("Failed to force process:", error);
