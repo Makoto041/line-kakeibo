@@ -136,12 +136,11 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
       type: 'box',
       layout: 'vertical',
       contents: [
-        // 上段: 共同費・個人費・立替ボタン
+        // 1段目: 共同費・個人費
         {
           type: 'box',
           layout: 'horizontal',
           contents: [
-            // 共同費ボタン
             {
               type: 'button',
               action: {
@@ -158,7 +157,6 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
               height: 'sm',
               flex: 1,
             },
-            // 個人費ボタン
             {
               type: 'button',
               action: {
@@ -175,7 +173,14 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
               flex: 1,
               margin: 'sm',
             },
-            // 立替ボタン
+          ],
+          spacing: 'sm',
+        },
+        // 2段目: 立替・カテゴリ変更
+        {
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
             {
               type: 'button',
               action: {
@@ -190,25 +195,25 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
               style: 'secondary',
               height: 'sm',
               flex: 1,
+            },
+            {
+              type: 'button',
+              action: {
+                type: 'postback',
+                label: `🏷️ ${category}`,
+                data: JSON.stringify({
+                  action: 'show_category_select',
+                  expenseId,
+                  source: 'gmail',
+                }),
+              },
+              style: 'secondary',
+              height: 'sm',
+              flex: 1,
               margin: 'sm',
             },
           ],
           spacing: 'sm',
-        },
-        // 下段: カテゴリを変更ボタン
-        {
-          type: 'button',
-          action: {
-            type: 'postback',
-            label: `🏷️ カテゴリを変更（現在: ${category}）`,
-            data: JSON.stringify({
-              action: 'show_category_select',
-              expenseId,
-              source: 'gmail',
-            }),
-          },
-          style: 'secondary',
-          height: 'sm',
           margin: 'sm',
         },
       ],
@@ -386,12 +391,11 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
       type: 'box',
       layout: 'vertical',
       contents: [
-        // 上段: OK・修正・立替ボタン
+        // 1段目: OK・修正
         {
           type: 'box',
           layout: 'horizontal',
           contents: [
-            // OKボタン
             {
               type: 'button',
               action: {
@@ -409,7 +413,6 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
               height: 'sm',
               flex: 1,
             },
-            // 修正ボタン
             {
               type: 'button',
               action: {
@@ -427,7 +430,14 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
               flex: 1,
               margin: 'sm',
             },
-            // 立替ボタン
+          ],
+          spacing: 'sm',
+        },
+        // 2段目: 立替・カテゴリ変更
+        {
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
             {
               type: 'button',
               action: {
@@ -443,25 +453,25 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
               style: 'secondary',
               height: 'sm',
               flex: 1,
+            },
+            {
+              type: 'button',
+              action: {
+                type: 'postback',
+                label: `🏷️ ${category}`,
+                data: JSON.stringify({
+                  action: 'show_category_select',
+                  expenseId,
+                  source: 'text',
+                }),
+              },
+              style: 'secondary',
+              height: 'sm',
+              flex: 1,
               margin: 'sm',
             },
           ],
           spacing: 'sm',
-        },
-        // 下段: カテゴリを変更ボタン
-        {
-          type: 'button',
-          action: {
-            type: 'postback',
-            label: `🏷️ カテゴリを変更（現在: ${category}）`,
-            data: JSON.stringify({
-              action: 'show_category_select',
-              expenseId,
-              source: 'text',
-            }),
-          },
-          style: 'secondary',
-          height: 'sm',
           margin: 'sm',
         },
       ],
@@ -537,7 +547,7 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
     categoryTotals,
   } = info;
 
-  const contextText = isGroupContext ? '👥 グループ' : '📱 個人';
+  const contextText = isGroupContext ? '👥' : '📱';
   const pendingCount = monthlyCount - monthlyIncludedCount;
 
   // プログレスバーの計算（予算13.6万円に対する割合）
@@ -783,7 +793,7 @@ export function buildEmptyExpenseSummaryFlexMessage(
   isGroupContext: boolean,
   webAppUrl: string
 ): FlexMessage {
-  const contextText = isGroupContext ? '👥 グループ' : '📱 個人';
+  const contextText = isGroupContext ? '👥' : '📱';
 
   const bubble: FlexBubble = {
     type: 'bubble',
