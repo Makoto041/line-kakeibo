@@ -1232,21 +1232,11 @@ async function handleTextMessage(event: any) {
 
     console.log(`=== TEXT PROCESSING: Successfully parsed expense:`, parsed);
 
-    // 即座に処理中のメッセージを返す
     const targetId = event.source.type === "group"
       ? event.source.groupId
       : event.source.userId;
 
-    try {
-      await client.replyMessage(event.replyToken, {
-        type: "text",
-        text: "💬 登録中です...",
-      });
-    } catch (replyError) {
-      console.warn("Failed to send processing confirmation:", replyError);
-    }
-
-    // Process expense registration
+    // Process expense registration（処理中メッセージは送信せず、完了時のFlex Messageのみ送信）
     try {
       await processExpenseInBackground(event, parsed);
     } catch (error) {
