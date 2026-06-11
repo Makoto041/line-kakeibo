@@ -35,6 +35,15 @@ interface ExpenseSummary {
   receiptUrl?: string;
 }
 
+function isSafeImageUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return ["blob:", "https:"].includes(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
+
 function AttachPageContent() {
   const searchParams = useSearchParams();
   const expenseId = searchParams.get("expenseId");
@@ -217,11 +226,13 @@ function AttachPageContent() {
                   添付済みのレシート
                 </h2>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={expense.receiptUrl}
-                  alt="添付済みレシート"
-                  className="w-full rounded-lg border border-gray-200"
-                />
+                {expense.receiptUrl && isSafeImageUrl(expense.receiptUrl) && (
+                  <img
+                    src={expense.receiptUrl}
+                    alt="添付済みレシート"
+                    className="w-full rounded-lg border border-gray-200"
+                  />
+                )}
                 {!replacing && (
                   <button
                     type="button"
@@ -264,7 +275,7 @@ function AttachPageContent() {
                   </span>
                 </button>
 
-                {previewUrl && (
+                {previewUrl && isSafeImageUrl(previewUrl) && (
                   <div>
                     <h3 className="text-sm font-medium text-gray-500 mb-2">
                       プレビュー
