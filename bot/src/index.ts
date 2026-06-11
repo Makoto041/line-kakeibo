@@ -1,14 +1,12 @@
 // Version: 2026-03-28-2200 - Force redeploy
 import express, { Express, Request, Response } from "express";
 import { Client, middleware } from "@line/bot-sdk";
-import { ImageAnnotatorClient } from "@google-cloud/vision";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import dayjs from "dayjs";
 import dotenv from "dotenv";
 import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { parseReceipt } from "./parser";
 import {
   saveExpense,
   getExpenses,
@@ -42,25 +40,6 @@ import { getClassificationStats, classifyExpenseWithGemini, isGeminiAvailable, f
 // Money Forward Me Import
 import { importMoneyForward } from "./importMoneyForward";
 import rateLimit from "express-rate-limit";
-
-// 新機能: 画像最適化とOCR精度向上
-import {
-  optimizeImageForOCR,
-  enhanceImageForOCR,
-  assessImageQuality,
-  getOptimalSettings,
-} from "./imageOptimizer";
-import {
-  enhancedParseReceipt,
-  autoClassifyCategory,
-  assessOCRConfidence,
-} from "./enhancedParser";
-import {
-  recordCostMetrics,
-  ProcessingTimer,
-  generateWeeklyReport,
-  CostMetrics,
-} from "./costMonitor";
 
 dotenv.config();
 
@@ -100,15 +79,6 @@ if (!getApps().length) {
   }
 }
 
-// Google Cloud Vision setup
-let visionClient: ImageAnnotatorClient | null = null;
-try {
-  // Use Application Default Credentials
-  visionClient = new ImageAnnotatorClient();
-} catch (error) {
-  console.warn("Vision API initialization error:", error);
-}
-
 // Express JSON middleware for parsing request bodies
 app.use(express.json({ limit: '10mb' }));
 
@@ -128,27 +98,15 @@ app.post("/webhook", async (req: Request, res: Response) => {
         console.log("Processing event:", event.type);
 
         if (event.type === "message" && event.message.type === "image") {
-          // 即座に受信確認レスポンス（replyMessageを使用）
+          // レシートOCR機能は廃止済み（replyMessageは無料）
           try {
             await client.replyMessage(event.replyToken, {
               type: "text",
-              text: "📸 画像を受信しました！処理中です...",
+              text: "📷 画像からの読み取り機能は終了しました。\nテキストで入力してください。\n例:「500 ランチ」「6/29 4800 家賃」",
             });
           } catch (replyError) {
-            console.warn("Failed to send image receipt confirmation:", replyError);
+            console.warn("Failed to send OCR discontinued notice:", replyError);
           }
-
-          const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
-
-          // バックグラウンドで処理実行（ノンブロッキング）
-          handleImageMessage(event).catch(error => {
-            console.error("Image processing error:", error);
-            // エラー時もユーザーに通知
-            client.pushMessage(targetId, {
-              type: "text",
-              text: "❌ 画像処理中にエラーが発生しました。もう一度お試しください。",
-            }).catch(console.error);
-          });
         } else if (event.type === "message" && event.message.type === "text") {
           // テキストメッセージの処理
           // 注: handleTextMessage内でreplyMessageを使用するため、ここでは送信しない
@@ -204,512 +162,6 @@ app.post("/webhook", async (req: Request, res: Response) => {
     res.status(500).end();
   }
 });
-
-async function handleImageMessage(event: any) {
-  const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB limit
-  const MAX_PROCESSING_TIME = 30000; // 30 seconds
-
-  // 注: 受信確認メッセージはwebhookハンドラーで既に送信済み（pushMessage）
-  // ここではreplyMessageを使用しない（重複メッセージを防ぐため）
-
-  try {
-    // Process image in background (don't await)
-    await processImageInBackground(event, MAX_IMAGE_SIZE, MAX_PROCESSING_TIME);
-  } catch (error) {
-    console.error("Image message handling error:", error);
-
-    // Send error notification to the source where message came from
-    const targetId =
-      event.source.type === "group"
-        ? event.source.groupId
-        : event.source.userId;
-
-    try {
-      await client.pushMessage(targetId, {
-        type: "text",
-        text: "画像処理でエラーが発生しました。もう一度お試しください。",
-      });
-    } catch (pushError) {
-      console.error("Failed to send error notification:", pushError);
-    }
-  }
-}
-
-async function processImageInBackground(
-  event: any,
-  MAX_IMAGE_SIZE: number,
-  MAX_PROCESSING_TIME: number
-) {
-  // コスト監視用タイマー開始
-  const processingTimer = new ProcessingTimer();
-
-  try {
-    console.log("Starting background image processing...");
-
-    const messageId = event.message.id;
-
-    try {
-      // Get image content with size monitoring
-      console.log("Starting image download...");
-      const stream = await client.getMessageContent(messageId);
-      let buffer = Buffer.alloc(0);
-      let totalSize = 0;
-
-      for await (const chunk of stream) {
-        totalSize += chunk.length;
-
-        // Check size limit
-        if (totalSize > MAX_IMAGE_SIZE) {
-          throw new Error(
-            `Image too large: ${totalSize} bytes (max: ${MAX_IMAGE_SIZE} bytes)`
-          );
-        }
-
-        buffer = Buffer.concat([buffer, chunk]);
-      }
-
-      console.log(`Image downloaded successfully: ${totalSize} bytes`);
-
-      // 新機能: 画像品質チェック
-      const qualityCheck = await assessImageQuality(buffer);
-      if (!qualityCheck.isGoodQuality) {
-        console.log("Image quality issues detected:", qualityCheck.issues);
-
-        // 品質問題があっても処理は続行するが、ユーザーにフィードバック
-        const targetId =
-          event.source.type === "group"
-            ? event.source.groupId
-            : event.source.userId;
-        await client.pushMessage(targetId, {
-          type: "text",
-          text: `📸 画像を受信しましたが、以下の点で改善できます：\n${qualityCheck.recommendations.join(
-            "\n"
-          )}\n\n処理を続行しています...`,
-        });
-      }
-
-      // 新機能: 画像最適化パイプライン (コスト削減 60-70%)
-      console.log("=== STARTING IMAGE OPTIMIZATION ===");
-      const optimizationSettings = getOptimalSettings();
-      const optimizedImage = await optimizeImageForOCR(
-        buffer,
-        optimizationSettings
-      );
-
-      console.log(
-        `Compression achieved: ${optimizedImage.compressionRatio.toFixed(
-          1
-        )}% reduction`
-      );
-      console.log(
-        `Original: ${(optimizedImage.originalSize / 1024 / 1024).toFixed(
-          2
-        )}MB → Optimized: ${(
-          optimizedImage.optimizedSize /
-          1024 /
-          1024
-        ).toFixed(2)}MB`
-      );
-
-      // 新機能: OCR精度向上のための画像強化
-      console.log("=== STARTING IMAGE ENHANCEMENT ===");
-      const enhancedBuffer = await enhanceImageForOCR(optimizedImage.buffer);
-
-      // OCR processing
-      if (!visionClient) {
-        await client.pushMessage(event.source.userId, {
-          type: "text",
-          text: "OCR機能が利用できません。設定を確認してください。",
-        });
-        return;
-      }
-
-      // 最適化された画像でVision API呼び出し (大幅なコスト削減)
-      console.log("Starting optimized OCR processing...");
-      const ocrPromise = visionClient.textDetection({
-        image: { content: enhancedBuffer }, // 最適化された画像を使用
-      });
-
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error("OCR processing timeout")),
-          MAX_PROCESSING_TIME
-        )
-      );
-
-      const [result] = (await Promise.race([
-        ocrPromise,
-        timeoutPromise,
-      ])) as any;
-
-      const detectedText = result.textAnnotations?.[0]?.description || "";
-
-      if (detectedText) {
-        // 新機能: 高度なレシート解析エンジンと自動カテゴリー分類
-        console.log("=== USING ENHANCED RECEIPT PARSER ===");
-        const parsedData = enhancedParseReceipt(detectedText);
-
-        // OCR信頼度評価
-        const confidenceResult = assessOCRConfidence(detectedText, parsedData);
-        const confidenceScore = confidenceResult.confidence;
-        console.log(
-          `OCR Confidence Score: ${(confidenceScore * 100).toFixed(1)}%`
-        );
-        if (confidenceResult.issues.length > 0) {
-          console.log("OCR Issues:", confidenceResult.issues);
-        }
-
-        // 低信頼度の場合、フォールバック処理
-        if (confidenceScore < 0.5) {
-          console.log("Low confidence score, using fallback parser");
-          const fallbackData = parseReceipt(detectedText);
-          // より良い結果を採用
-          if (fallbackData.total > parsedData.total) {
-            Object.assign(parsedData, fallbackData);
-          }
-        }
-
-        // Determine group context and user display name
-        let activeGroup = null;
-        let userDisplayName = null; // Will be set based on context
-        let lineGroupId = null;
-
-        // Check if this is from a LINE group
-        if (event.source.type === "group") {
-          lineGroupId = event.source.groupId;
-          console.log(`Group context detected: ${lineGroupId}`);
-
-          // Try multiple methods to get user profile
-          try {
-            console.log(`=== IMAGE PROFILE DEBUG: Trying to get user profile from LINE group. GroupId: ${lineGroupId}, UserId: ${event.source.userId} ===`);
-            
-            // Method 1: Try getGroupMemberProfile with retry
-            let profile = null;
-            let attempt = 0;
-            const maxAttempts = 3;
-            
-            while (attempt < maxAttempts && !profile) {
-              attempt++;
-              console.log(`Profile fetch attempt ${attempt}/${maxAttempts}`);
-              
-              try {
-                const profilePromise = client.getGroupMemberProfile(
-                  lineGroupId,
-                  event.source.userId
-                );
-                const timeout = attempt === 1 ? 3000 : 5000; // Longer timeout for retries
-                const timeoutPromise = new Promise((_, reject) =>
-                  setTimeout(() => reject(new Error(`Profile timeout (attempt ${attempt})`)), timeout)
-                );
-                profile = await Promise.race([profilePromise, timeoutPromise]);
-                console.log(`Group member profile obtained on attempt ${attempt}:`, profile);
-                break;
-              } catch (groupProfileError) {
-                console.warn(`getGroupMemberProfile failed on attempt ${attempt}:`, groupProfileError);
-                
-                if (attempt === maxAttempts) {
-                  // Method 2: Try regular getProfile as final fallback
-                  try {
-                    console.log("Trying individual getProfile as final fallback");
-                    const individualProfilePromise = client.getProfile(event.source.userId);
-                    const timeoutPromise = new Promise((_, reject) =>
-                      setTimeout(() => reject(new Error("Individual profile timeout")), 5000)
-                    );
-                    profile = await Promise.race([individualProfilePromise, timeoutPromise]);
-                    console.log("Individual profile obtained as final fallback:", profile);
-                  } catch (individualProfileError) {
-                    console.warn("getProfile also failed:", individualProfileError);
-                  }
-                } else {
-                  // Wait before retry
-                  await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-              }
-            }
-
-            if (profile && (profile as any).displayName) {
-              userDisplayName = (profile as any).displayName;
-              console.log(`User display name set to: ${userDisplayName}`);
-            } else {
-              // グループでプロファイル取得に失敗した場合はエラーとして処理
-              console.error(`GROUP PROFILE ERROR: Failed to get user profile for group member ${event.source.userId}`);
-              const targetId = event.source.groupId;
-              await client.pushMessage(targetId, {
-                type: "text",
-                text: "⚠️ ユーザー情報の取得に失敗しました。\n\nしばらく待ってから再度お試しください。\n\n問題が継続する場合は、LINEアプリを再起動してください。"
-              });
-              return; // 処理を中断
-            }
-
-            // Find or create group for this LINE group
-            const groupId = await findOrCreateLineGroup(
-              lineGroupId,
-              event.source.userId,
-              userDisplayName
-            );
-            const groups = await getUserGroups(event.source.userId);
-            activeGroup = groups.find((g) => g.id === groupId);
-            console.log("Successfully set up LINE group context");
-          } catch (error) {
-            console.error("Failed to get any user profile:", error);
-            
-            // グループでプロファイル取得に失敗した場合はエラーとして処理
-            const targetId = event.source.groupId;
-            await client.pushMessage(targetId, {
-              type: "text",
-              text: "⚠️ ユーザー情報の取得に失敗しました。\n\nしばらく待ってから再度お試しください。\n\n問題が継続する場合は、LINEアプリを再起動してください。"
-            });
-            return; // 処理を中断
-          }
-        } else {
-          // Individual chat
-          console.log("Individual chat context detected");
-
-          // Try to get profile with retry logic
-          let profile = null;
-          let attempt = 0;
-          const maxAttempts = 3;
-
-          while (attempt < maxAttempts && !profile) {
-            attempt++;
-            console.log(`=== IMAGE PROFILE DEBUG: Individual profile attempt ${attempt}/${maxAttempts}. UserId: ${event.source.userId} ===`);
-
-            try {
-              const timeout = attempt === 1 ? 3000 : 5000; // Longer timeout for retries
-              const profilePromise = client.getProfile(event.source.userId);
-              const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error(`Profile timeout (attempt ${attempt})`)), timeout)
-              );
-
-              profile = (await Promise.race([
-                profilePromise,
-                timeoutPromise,
-              ])) as any;
-
-              if (profile && (profile as any).displayName) {
-                userDisplayName = (profile as any).displayName;
-                console.log(`Individual user display name: ${userDisplayName} (attempt ${attempt})`);
-                break;
-              }
-            } catch (profileError) {
-              console.warn(`Individual profile fetch failed on attempt ${attempt}:`, profileError);
-
-              if (attempt < maxAttempts) {
-                // Wait before retry
-                await new Promise(resolve => setTimeout(resolve, 1000));
-              }
-            }
-          }
-
-          // プロファイル取得に完全に失敗した場合はエラーとして処理
-          if (!profile || !(profile as any).displayName) {
-            console.error(`INDIVIDUAL PROFILE ERROR: Failed to get user profile after ${maxAttempts} attempts for ${event.source.userId}`);
-            const targetId = event.source.userId;
-            await client.pushMessage(targetId, {
-              type: "text",
-              text: "⚠️ ユーザー情報の取得に失敗しました。\n\nしばらく待ってから再度お試しください。\n\n問題が継続する場合は、LINEアプリを再起動してください。"
-            });
-            return; // 処理を中断（データは書き込まない）
-          }
-
-          // Check if user has any groups
-          const userGroups = await getUserGroups(event.source.userId);
-          activeGroup = userGroups.length > 0 ? userGroups[0] : null;
-        }
-
-        // Resolve appUid for this lineId
-        console.log(
-          `=== APPUID DEBUG: Resolving appUid for lineId: ${event.source.userId} ===`
-        );
-        let appUid = null;
-        try {
-          appUid = await resolveAppUidForExpense(event.source.userId);
-          console.log(`=== APPUID DEBUG: Resolved appUid: ${appUid} ===`);
-        } catch (appUidError) {
-          console.error("Failed to resolve appUid:", appUidError);
-          // フォールバックとしてlineIdを使用
-          appUid = event.source.userId;
-          console.log(`=== APPUID DEBUG: Using lineId as fallback appUid: ${appUid} ===`);
-        }
-        
-        if (!appUid) {
-          console.error("Failed to resolve appUid for expense creation, using lineId");
-          appUid = event.source.userId;
-        }
-
-        // userDisplayNameのチェックは既にリトライ処理内で行っているため、ここでは不要
-        console.log(`=== IMAGE FINAL USER DEBUG: Final userDisplayName: ${userDisplayName} ===`);
-
-        // Get category using AI classification
-        let defaultCategory = "その他";
-        try {
-          console.log(
-            `=== CATEGORY DEBUG RECEIPT: Getting category for receipt ===`
-          );
-
-          // レシート画像の場合、商品名と店舗名からカテゴリーをAIで推測
-          const itemsText = parsedData.items.map((i) => i.name).join(", ");
-          const descriptionForAI = itemsText || parsedData.storeName || "レシート";
-
-          console.log(`=== GEMINI CATEGORY: Classifying "${descriptionForAI}" ===`);
-
-          // Gemini + ユーザーデフォルトを並列取得
-          const [geminiResult, userSettingsResult] = await Promise.allSettled([
-            classifyExpenseWithGemini(event.source.userId, descriptionForAI),
-            getUserSettings(event.source.userId)
-          ]);
-
-          // Gemini結果を優先使用（閾値0.4で精度向上）
-          if (geminiResult.status === 'fulfilled') {
-            const result = geminiResult.value;
-            if (result && result.category && result.confidence >= 0.4) {
-              defaultCategory = result.category;
-              console.log(
-                `=== GEMINI CATEGORY SUCCESS: ${defaultCategory} (confidence: ${result.confidence}) ===`
-              );
-            }
-          }
-
-          // Geminiが失敗またはlow confidenceの場合、ユーザーデフォルトまたはルールベースを使用
-          if (defaultCategory === "その他") {
-            if (userSettingsResult.status === 'fulfilled') {
-              const userSettings = userSettingsResult.value;
-              if (userSettings?.defaultCategory) {
-                defaultCategory = userSettings.defaultCategory;
-                console.log(
-                  `=== CATEGORY DEBUG RECEIPT: Using user default category: ${defaultCategory} ===`
-                );
-              } else {
-                // フォールバック: ルールベース分類
-                const autoCategory = autoClassifyCategory(
-                  itemsText,
-                  parsedData.storeName
-                );
-                if (autoCategory !== "その他") {
-                  defaultCategory = autoCategory;
-                  console.log(
-                    `=== AUTO CATEGORY: Classified as ${autoCategory} based on rules ===`
-                  );
-                }
-              }
-            }
-          }
-        } catch (error) {
-          console.log(
-            "=== CATEGORY DEBUG RECEIPT: Failed to classify category, using default:",
-            error
-          );
-        }
-
-        // Create expense object
-        const expense = {
-          lineId: event.source.userId,
-          appUid: appUid,
-          groupId: activeGroup?.id,
-          lineGroupId,
-          userDisplayName,
-          amount: parsedData.total,
-          description: parsedData.storeName || "レシート",
-          date: dayjs().format("YYYY-MM-DD"),
-          category: defaultCategory,
-          confirmed: false,
-          includeInTotal: false, // LINE OCRは初期状態では会計に含めない
-          payerId: event.source.userId, // デフォルトは入力者
-          payerDisplayName: userDisplayName,
-          ocrText: detectedText,
-          items: parsedData.items,
-        };
-
-        // Save expense
-        console.log(`=== SAVING EXPENSE WITH APPUID: ${expense.appUid} ===`);
-        const expenseId = await saveExpense(expense);
-        console.log(
-          `Expense saved with ID: ${expenseId} for lineId: ${event.source.userId}, appUid: ${expense.appUid}`
-        );
-
-        // Send final result to the source where message came from
-        const targetId =
-          event.source.type === "group"
-            ? event.source.groupId
-            : event.source.userId;
-        const isGroupContext = event.source.type === "group";
-
-        // Generate appropriate URL based on context
-        let webAppUrl;
-        if (isGroupContext && lineGroupId) {
-          // For group context, include lineGroupId parameter
-          webAppUrl = `https://line-kakeibo.vercel.app?lineId=${encodeURIComponent(
-            event.source.userId
-          )}&lineGroupId=${encodeURIComponent(lineGroupId)}`;
-        } else {
-          // For personal context, only include lineId
-          webAppUrl = `https://line-kakeibo.vercel.app?lineId=${encodeURIComponent(
-            event.source.userId
-          )}`;
-        }
-
-        const contextText = isGroupContext
-          ? "👥 グループの家計簿に追加されました"
-          : "個人の家計簿に追加されました";
-        const replyText = `✅ レシート登録完了！📝\n金額: ¥${parsedData.total.toLocaleString()}\n店舗: ${
-          parsedData.storeName
-        }\n\n${contextText}\n\nWebアプリで確認・編集：\n${webAppUrl}`;
-
-        await client.pushMessage(targetId, {
-          type: "text",
-          text: replyText,
-        });
-
-        // 新機能: コストメトリクスの記録
-        const costMetrics: CostMetrics = {
-          timestamp: new Date(),
-          visionApiCalls: 1,
-          processingTimeMs: processingTimer.elapsed(),
-          imageSizeKB: totalSize / 1024,
-          optimizedSizeKB: optimizedImage.optimizedSize / 1024,
-          compressionRatio: optimizedImage.compressionRatio,
-          ocrSuccess: true,
-          confidenceScore: confidenceScore,
-        };
-        recordCostMetrics(costMetrics);
-        console.log(
-          `=== COST METRICS RECORDED: Processing time ${processingTimer.elapsed()}ms, Saved ${optimizedImage.compressionRatio.toFixed(
-            1
-          )}% ===`
-        );
-      } else {
-        const targetId =
-          event.source.type === "group"
-            ? event.source.groupId
-            : event.source.userId;
-        await client.pushMessage(targetId, {
-          type: "text",
-          text: "レシートの文字を読み取れませんでした。別の画像をお試しください。",
-        });
-
-        // 失敗時のメトリクス記録
-        const costMetrics: CostMetrics = {
-          timestamp: new Date(),
-          visionApiCalls: 1,
-          processingTimeMs: processingTimer.elapsed(),
-          imageSizeKB: totalSize / 1024,
-          optimizedSizeKB: optimizedImage.optimizedSize / 1024,
-          compressionRatio: optimizedImage.compressionRatio,
-          ocrSuccess: false,
-          confidenceScore: 0,
-          errorType: "no_text_detected",
-        };
-        recordCostMetrics(costMetrics);
-      }
-    } catch (error) {
-      console.error("Background image processing error:", error);
-      throw error; // Re-throw to trigger error notification
-    }
-  } catch (error) {
-    console.error("Background image processing error:", error);
-    throw error; // Re-throw to trigger error notification
-  }
-}
 
 async function handleTextMessage(event: any) {
   try {
@@ -1695,18 +1147,12 @@ app.get("/health", async (_req: Request, res: Response) => {
       throw new Error("LINE credentials not configured");
     }
 
-    // Check Vision API
-    if (!visionClient) {
-      console.warn("Vision API client not available");
-    }
-
     res.status(200).json({
       status: "healthy",
       timestamp: new Date().toISOString(),
       version: "2.0.0",
       services: {
         lineClient: !!client,
-        visionClient: !!visionClient,
         credentials: !!process.env.LINE_CHANNEL_TOKEN,
         geminiApi: isGeminiAvailable(),
       },
@@ -2225,7 +1671,7 @@ gmailRouter.post("/force-process/:messageId", adminApiLimiter as any, requireAdm
     if (!messageId) {
       return res.status(400).json({ error: "messageId is required" });
     }
-    const result = await forceProcessMessage(messageId);
+    const result = await forceProcessMessage(messageId as string);
     res.json(result);
   } catch (error) {
     console.error("Failed to force process:", error);
