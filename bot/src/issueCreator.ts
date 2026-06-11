@@ -50,7 +50,7 @@ export async function analyzeFeedbackWithGemini(
       return null;
     }
 
-    const model = client.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = client.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const prompt = `あなたはソフトウェア開発プロジェクトの要件アナリストです。LINE家計簿botのユーザーから寄せられた以下のフィードバック（要望・改善・不具合報告）を分析し、GitHub Issueとして起票するための情報をJSON形式で出力してください。
 
