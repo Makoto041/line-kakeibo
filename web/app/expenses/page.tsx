@@ -1037,6 +1037,17 @@ function ExpensesPageContent() {
                             合計から除外
                           </span>
                         )}
+                        {expense.receiptUrl && (
+                          <a
+                            href={expense.receiptUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-amber-100 text-amber-800 text-xs font-medium px-2.5 py-0.5 rounded hover:bg-amber-200 transition-colors cursor-pointer"
+                            title="レシート画像を開く"
+                          >
+                            📎 レシート
+                          </a>
+                        )}
                       </div>
 
                       {/* Items details */}

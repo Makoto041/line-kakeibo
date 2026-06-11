@@ -2225,7 +2225,7 @@ gmailRouter.post("/force-process/:messageId", adminApiLimiter as any, requireAdm
     if (!messageId) {
       return res.status(400).json({ error: "messageId is required" });
     }
-    const result = await forceProcessMessage(messageId);
+    const result = await forceProcessMessage(messageId as string);
     res.json(result);
   } catch (error) {
     console.error("Failed to force process:", error);

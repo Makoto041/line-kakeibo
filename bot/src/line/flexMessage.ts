@@ -216,6 +216,18 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
           spacing: 'sm',
           margin: 'sm',
         },
+        // 3段目: レシート添付
+        {
+          type: 'button',
+          action: {
+            type: 'uri',
+            label: '📎 レシート添付',
+            uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
+          },
+          style: 'secondary',
+          height: 'sm',
+          margin: 'sm',
+        },
       ],
       paddingAll: 'md',
       spacing: 'sm',
@@ -472,6 +484,18 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
             },
           ],
           spacing: 'sm',
+          margin: 'sm',
+        },
+        // 3段目: レシート添付
+        {
+          type: 'button',
+          action: {
+            type: 'uri',
+            label: '📎 レシート添付',
+            uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
+          },
+          style: 'secondary',
+          height: 'sm',
           margin: 'sm',
         },
       ],
