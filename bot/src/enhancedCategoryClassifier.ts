@@ -101,7 +101,7 @@ export async function classifyWithContext(
     const learningPatterns = buildLearningPatterns(userFeedbackHistory);
     const contextHints = buildContextHints(context);
     
-    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = client.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const prompt = `
 あなたは日本の家計簿のカテゴリ分類の専門家です。以下の支出情報を最も適切なカテゴリに分類してください。
@@ -323,7 +323,7 @@ export async function batchClassify(
   try {
     const availableCategories = await getAllUserCategories(lineId);
     const categoryNames = availableCategories.map(cat => cat.name);
-    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = client.getGenerativeModel({ model: "gemini-2.5-flash" });
     
     const prompt = `
 以下の複数の支出を適切なカテゴリに分類してください。

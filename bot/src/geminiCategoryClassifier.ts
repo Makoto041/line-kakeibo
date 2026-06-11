@@ -150,7 +150,7 @@ export async function classifyExpenseWithGemini(
     }
     
     // Geminiモデルを取得
-    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = client.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     // Few-shot学習形式の高精度プロンプト
     const prompt = `あなたは家計簿の支出分類の専門家です。以下の支出内容を最も適切なカテゴリに正確に分類してください。
