@@ -39,6 +39,7 @@ import { getCategoryEmoji } from "./gmail/types";
 import { parseTextExpense } from "./textParser";
 import { resolveAppUidForExpense } from "./linkUserResolver";
 import { getClassificationStats, classifyExpenseWithGemini, isGeminiAvailable, findCategoryWithGemini } from "./geminiCategoryClassifier";
+import { createIssueFromFeedback } from "./issueCreator";
 // Money Forward Me Import
 import { importMoneyForward } from "./importMoneyForward";
 import rateLimit from "express-rate-limit";
@@ -820,6 +821,47 @@ async function handleTextMessage(event: any) {
           });
         } catch (replyError) {
           console.error("Failed to send fallback reply:", replyError);
+        }
+      }
+      return;
+    }
+
+    // ②' フィードバック（要望・改善・不具合報告）からのIssue自動起票コマンド
+    const feedbackPrefixes = ["要望", "改善", "不具合", "フィードバック"];
+    let feedbackText: string | null = null;
+    for (const prefix of feedbackPrefixes) {
+      // 半角スペース・全角スペースの両方に対応
+      if (text.startsWith(`${prefix} `) || text.startsWith(`${prefix}　`)) {
+        feedbackText = text.slice(prefix.length + 1).trim();
+        break;
+      }
+    }
+    if (feedbackText !== null) {
+      console.log(
+        `=== FEEDBACK COMMAND MATCHED: Creating GitHub issue from feedback: "${feedbackText}" ===`
+      );
+      if (!feedbackText) {
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: "💡 フィードバック内容を入力してください。\n例: 「要望 月別のグラフが見たい」\n「不具合 レシートが読み取れない」",
+        });
+        return;
+      }
+      try {
+        const result = await createIssueFromFeedback(feedbackText);
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: result.message,
+        });
+      } catch (error) {
+        console.error("Error creating issue from feedback:", error);
+        try {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "❌ Issueの作成に失敗しました。\n時間をおいてもう一度お試しください。",
+          });
+        } catch (replyError) {
+          console.error("Failed to send feedback error reply:", replyError);
         }
       }
       return;
@@ -1791,7 +1833,7 @@ export const webhook = onRequest(
     memory: "512MiB", // Increased from 256MiB to handle image processing
     timeoutSeconds: 540, // Increased from 300s to 540s (9 minutes max)
     invoker: "public",
-    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY"],
+    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "GITHUB_TOKEN"],
   },
   app
 );
@@ -2225,7 +2267,7 @@ gmailRouter.post("/force-process/:messageId", adminApiLimiter as any, requireAdm
     if (!messageId) {
       return res.status(400).json({ error: "messageId is required" });
     }
-    const result = await forceProcessMessage(messageId);
+    const result = await forceProcessMessage(messageId as string);
     res.json(result);
   } catch (error) {
     console.error("Failed to force process:", error);
