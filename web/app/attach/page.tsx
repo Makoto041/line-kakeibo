@@ -52,13 +52,11 @@ function AttachPageContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [hasPreview, setHasPreview] = useState(false);
+  const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadDone, setUploadDone] = useState(false);
   const [replacing, setReplacing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const previewImgRef = useRef<HTMLImageElement>(null);
-  const previewBlobUrl = useRef<string | null>(null);
 
   // 支出データの取得
   useEffect(() => {
@@ -116,15 +114,13 @@ function AttachPageContent() {
     setError(null);
     setSelectedFile(file);
 
-    if (previewBlobUrl.current) {
-      URL.revokeObjectURL(previewBlobUrl.current);
-    }
-    const blobUrl = URL.createObjectURL(file);
-    previewBlobUrl.current = blobUrl;
-    if (previewImgRef.current) {
-      previewImgRef.current.src = blobUrl;
-    }
-    setHasPreview(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setPreviewDataUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   // アップロード処理
@@ -160,11 +156,7 @@ function AttachPageContent() {
       setUploadDone(true);
       setReplacing(false);
       setSelectedFile(null);
-      if (previewBlobUrl.current) {
-        URL.revokeObjectURL(previewBlobUrl.current);
-        previewBlobUrl.current = null;
-      }
-      setHasPreview(false);
+      setPreviewDataUrl(null);
     } catch (err) {
       console.error("Upload failed:", err);
       setError(
@@ -282,17 +274,19 @@ function AttachPageContent() {
                   </span>
                 </button>
 
-                <div style={{ display: hasPreview ? undefined : "none" }}>
-                  <h3 className="text-sm font-medium text-gray-500 mb-2">
-                    プレビュー
-                  </h3>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    ref={previewImgRef}
-                    alt="選択した画像のプレビュー"
-                    className="w-full rounded-lg border border-gray-200"
-                  />
-                </div>
+                {previewDataUrl && (
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500 mb-2">
+                      プレビュー
+                    </h3>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={previewDataUrl}
+                      alt="選択した画像のプレビュー"
+                      className="w-full rounded-lg border border-gray-200"
+                    />
+                  </div>
+                )}
 
                 <button
                   type="button"
@@ -313,11 +307,7 @@ function AttachPageContent() {
                     onClick={() => {
                       setReplacing(false);
                       setSelectedFile(null);
-                      if (previewBlobUrl.current) {
-                        URL.revokeObjectURL(previewBlobUrl.current);
-                        previewBlobUrl.current = null;
-                      }
-                      setHasPreview(false);
+                      setPreviewDataUrl(null);
                     }}
                     className="w-full bg-white text-gray-600 border border-gray-300 px-4 py-3 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
                   >
