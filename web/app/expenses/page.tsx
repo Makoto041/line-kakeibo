@@ -20,7 +20,8 @@ export default function ExpensesPage() {
 
 function ExpensesPageLoading() {
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="liquid-bg" aria-hidden="true" />
       <div className="w-8 h-8 border-2 border-emerald-200 border-t-emerald-600 rounded-full animate-spin" />
     </div>
   );
@@ -183,7 +184,8 @@ function ExpensesPageContent() {
 
   if (authLoading || (editExpenseId && !editMonthResolved)) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="liquid-bg" aria-hidden="true" />
         <div className="w-8 h-8 border-2 border-emerald-200 border-t-emerald-600 rounded-full animate-spin" />
       </div>
     );
@@ -262,11 +264,11 @@ function ExpensesPageContent() {
     <AppShell getUrlWithLineId={getUrlWithLineId} title="支出一覧">
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
         {/* Month navigation + summary */}
-        <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+        <div className="glass-hero rounded-3xl p-5">
           <div className="flex items-center justify-between mb-3">
             <button
               onClick={() => setCurrentMonth(prev => prev.subtract(1, 'month'))}
-              className="w-9 h-9 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 transition-colors"
+              className="pressable glass-inset w-9 h-9 flex items-center justify-center rounded-full text-gray-500"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -277,7 +279,7 @@ function ExpensesPageContent() {
             </h2>
             <button
               onClick={() => setCurrentMonth(prev => prev.add(1, 'month'))}
-              className="w-9 h-9 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 transition-colors"
+              className="pressable glass-inset w-9 h-9 flex items-center justify-center rounded-full text-gray-500"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -306,8 +308,8 @@ function ExpensesPageContent() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border transition-colors ${
-              filter !== 'all' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-gray-200 text-gray-600'
+            className={`pressable flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm transition-colors ${
+              filter !== 'all' ? 'glass-accent text-emerald-700' : 'glass-card text-gray-600'
             }`}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -317,7 +319,7 @@ function ExpensesPageContent() {
           </button>
           <button
             onClick={() => setSortBy(sortBy === "date" ? "amount" : "date")}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm bg-white border border-gray-200 text-gray-600 transition-colors"
+            className="pressable glass-card flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm text-gray-600 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
@@ -328,7 +330,7 @@ function ExpensesPageContent() {
 
         {/* Filter panel */}
         {showFilters && (
-          <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 space-y-3">
+          <div className="glass-card rounded-2xl p-4 space-y-3">
             <div className="flex flex-wrap gap-2">
               {[
                 { value: "all", label: "すべて" },
@@ -339,10 +341,10 @@ function ExpensesPageContent() {
                 <button
                   key={opt.value}
                   onClick={() => setFilter(opt.value)}
-                  className={`px-3 py-1 rounded-full text-sm transition-colors ${
+                  className={`pressable px-3 py-1.5 rounded-full text-sm transition-colors ${
                     filter === opt.value
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      ? 'bg-emerald-600/90 text-white shadow-sm'
+                      : 'glass-inset text-gray-600'
                   }`}
                 >
                   {opt.label}
@@ -358,7 +360,7 @@ function ExpensesPageContent() {
             <div className="w-6 h-6 border-2 border-emerald-200 border-t-emerald-600 rounded-full animate-spin" />
           </div>
         ) : error ? (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+          <div className="glass-card rounded-2xl p-4 border-red-200/60">
             <p className="text-red-700 text-sm">{error}</p>
           </div>
         ) : sortedExpenses.length === 0 ? (
@@ -380,7 +382,7 @@ function ExpensesPageContent() {
                     ¥{exps.filter(e => e.includeInTotal).reduce((s, e) => s + e.amount, 0).toLocaleString()}
                   </p>
                 </div>
-                <div className="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-50">
+                <div className="glass-card rounded-2xl divide-y divide-white/40 overflow-hidden">
                   {exps.map(expense => (
                     <ExpenseRow
                       key={expense.id}
@@ -404,7 +406,7 @@ function ExpensesPageContent() {
           </div>
         ) : (
           /* Flat list (amount sort) */
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-50">
+          <div className="glass-card rounded-2xl divide-y divide-white/40 overflow-hidden">
             {sortedExpenses.map(expense => (
               <ExpenseRow
                 key={expense.id}
@@ -455,34 +457,34 @@ function ExpenseRow({
 
   if (isEditing) {
     return (
-      <div id={`expense-${expense.id}`} className="p-4 bg-emerald-50/50 space-y-4">
+      <div id={`expense-${expense.id}`} className="p-4 glass-accent space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-500 mb-1">説明</label>
             <input type="text" name="description" value={editForm.description} onChange={onEditChange}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+              className="w-full border border-white/60 rounded-xl px-3 py-2 text-sm bg-white/70 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">金額</label>
             <input type="number" name="amount" value={editForm.amount} onChange={onEditChange}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+              className="w-full border border-white/60 rounded-xl px-3 py-2 text-sm bg-white/70 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">日付</label>
             <input type="date" name="date" value={editForm.date} onChange={onEditChange}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+              className="w-full border border-white/60 rounded-xl px-3 py-2 text-sm bg-white/70 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">カテゴリ</label>
             <select name="category" value={editForm.category} onChange={onEditChange}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+              className="w-full border border-white/60 rounded-xl px-3 py-2 text-sm bg-white/70 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
               {ALL_CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_ICONS[c] || ""} {c}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">支払い者</label>
             <select name="payerId" value={editForm.payerId} onChange={onEditChange}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+              className="w-full border border-white/60 rounded-xl px-3 py-2 text-sm bg-white/70 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
               {availableMembers.map(m => (
                 <option key={m.lineId} value={m.lineId}>{m.displayName}</option>
               ))}
@@ -496,11 +498,11 @@ function ExpenseRow({
         </div>
         <div className="flex gap-2">
           <button onClick={onEditSave}
-            className="flex-1 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors">
+            className="pressable flex-1 bg-emerald-600/90 text-white px-4 py-2.5 rounded-full text-sm font-medium shadow-sm hover:bg-emerald-600 transition-colors">
             保存
           </button>
           <button onClick={onEditCancel}
-            className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors">
+            className="pressable glass-inset px-4 py-2.5 rounded-full text-sm font-medium text-gray-600 transition-colors">
             キャンセル
           </button>
         </div>
@@ -525,9 +527,9 @@ function ExpenseRow({
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-50 transition-colors"
+        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/50 transition-colors"
       >
-        <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 text-base">
+        <div className="glass-inset w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-base">
           {icon}
         </div>
         <div className="flex-1 min-w-0">
@@ -546,7 +548,7 @@ function ExpenseRow({
       {expanded && (
         <div className="px-4 pb-3 space-y-3">
           {expense.items && expense.items.length > 0 && (
-            <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+            <div className="glass-inset rounded-xl p-3 space-y-1">
               {expense.items.map((item, i) => (
                 <div key={i} className="flex justify-between text-xs">
                   <span className="text-gray-600">{item.name}</span>
@@ -557,19 +559,19 @@ function ExpenseRow({
           )}
           <div className="flex gap-2">
             <button onClick={onToggleInclude}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              className={`pressable px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
                 expense.includeInTotal
-                  ? 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
-                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                  ? 'bg-amber-100/70 text-amber-700'
+                  : 'glass-accent text-emerald-700'
               }`}>
               {expense.includeInTotal ? '除外する' : '含める'}
             </button>
             <button onClick={onEditStart}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors">
+              className="pressable glass-inset px-3 py-1.5 rounded-full text-xs font-medium text-gray-600 transition-colors">
               編集
             </button>
             <button onClick={onDelete}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-600 hover:bg-red-50 transition-colors">
+              className="pressable px-3 py-1.5 rounded-full text-xs font-medium text-red-600 hover:bg-red-50/70 transition-colors">
               削除
             </button>
           </div>

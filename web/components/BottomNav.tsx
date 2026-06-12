@@ -46,28 +46,30 @@ export default function BottomNav({ getUrlWithLineId }: BottomNavProps) {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden">
-      <div className="bg-white/95 backdrop-blur-lg border-t border-gray-200 shadow-[0_-1px_3px_rgba(0,0,0,0.05)]">
-        <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-2">
-          {items.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex flex-col items-center justify-center w-full h-full gap-0.5 transition-colors ${
-                item.isActive
-                  ? 'text-emerald-600'
-                  : 'text-gray-400 active:text-gray-600'
-              }`}
-            >
-              {item.icon(item.isActive)}
-              <span className={`text-[10px] font-medium ${item.isActive ? 'text-emerald-600' : 'text-gray-400'}`}>
-                {item.label}
-              </span>
-            </Link>
-          ))}
+    <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden pointer-events-none">
+      <div className="flex justify-center px-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        {/* Floating glass pill */}
+        <div className="glass-strong rounded-full pointer-events-auto">
+          <div className="flex items-center gap-1 px-2 py-1.5">
+            {items.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`pressable flex flex-col items-center justify-center gap-0.5 w-[4.5rem] py-1.5 rounded-full transition-colors ${
+                  item.isActive
+                    ? 'glass-accent text-emerald-700'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {item.icon(item.isActive)}
+                <span className="text-[10px] font-medium">
+                  {item.label}
+                </span>
+              </Link>
+            ))}
+          </div>
         </div>
       </div>
-      <div className="h-[env(safe-area-inset-bottom)] bg-white" />
     </nav>
   );
 }

@@ -49,52 +49,55 @@ export default function AppShell({ children, getUrlWithLineId, title }: AppShell
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Desktop sidebar */}
-      <aside className="hidden md:flex md:w-56 md:flex-col md:fixed md:inset-y-0 bg-white border-r border-gray-200">
-        <div className="flex flex-col flex-1 overflow-y-auto">
-          <div className="px-4 py-5 border-b border-gray-100">
-            <h1 className="text-lg font-bold text-gray-900 tracking-tight">
-              <span className="text-emerald-600">Kakeibo</span>
-            </h1>
-            <p className="text-xs text-gray-400 mt-0.5">LINE家計簿</p>
-          </div>
-          <nav className="flex-1 px-3 py-4 space-y-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  item.isActive
-                    ? 'bg-emerald-50 text-emerald-700'
-                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                }`}
-              >
-                {item.icon}
-                {item.label}
-              </Link>
-            ))}
-          </nav>
+    <div className="min-h-screen">
+      {/* Ambient liquid background */}
+      <div className="liquid-bg" aria-hidden="true" />
+
+      {/* Desktop floating glass sidebar */}
+      <aside className="hidden md:flex md:flex-col fixed left-4 top-4 bottom-4 w-56 glass-strong rounded-3xl z-40 overflow-hidden">
+        <div className="px-5 py-6">
+          <h1 className="text-lg font-bold text-gray-900 tracking-tight">
+            <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent">Kakeibo</span>
+          </h1>
+          <p className="text-xs text-gray-500 mt-0.5">LINE家計簿</p>
         </div>
+        <nav className="flex-1 px-3 space-y-1.5">
+          {navItems.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`pressable flex items-center gap-3 px-3.5 py-2.5 rounded-2xl text-sm font-medium transition-colors ${
+                item.isActive
+                  ? 'glass-accent text-emerald-700'
+                  : 'text-gray-600 hover:bg-white/40'
+              }`}
+            >
+              {item.icon}
+              {item.label}
+            </Link>
+          ))}
+        </nav>
       </aside>
 
-      {/* Mobile header */}
-      <header className="md:hidden sticky top-0 z-40 bg-white/95 backdrop-blur-sm border-b border-gray-200">
-        <div className="flex items-center h-12 px-4">
-          <h1 className="text-base font-bold text-gray-900">
-            {title || <><span className="text-emerald-600">Kakeibo</span></>}
-          </h1>
+      {/* Mobile glass header */}
+      <header className="md:hidden sticky top-0 z-40">
+        <div className="glass-strong border-x-0 border-t-0 rounded-none">
+          <div className="flex items-center h-12 px-4">
+            <h1 className="text-base font-bold text-gray-900">
+              {title || <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent">Kakeibo</span>}
+            </h1>
+          </div>
         </div>
       </header>
 
       {/* Main content */}
-      <main className="md:pl-56">
-        <div className="pb-20 md:pb-0">
+      <main className="md:pl-64">
+        <div className="pb-28 md:pb-8">
           {children}
         </div>
       </main>
 
-      {/* Mobile bottom navigation */}
+      {/* Mobile floating bottom navigation */}
       <BottomNav getUrlWithLineId={getUrlWithLineId} />
     </div>
   );

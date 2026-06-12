@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 :root {
-  --background: #f9fafb;
-  --foreground: #111827;
+  --background: #eef1f6;
+  --foreground: #0f172a;
 }
 
 body {
@@ -23,4 +23,89 @@ body {
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+/* ===== Liquid Glass Design System ===== */
+
+/* Ambient gradient backdrop - the color that shows through the glass */
+.liquid-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(40% 35% at 15% 10%, rgba(52, 211, 153, 0.18), transparent 70%),
+    radial-gradient(45% 40% at 85% 15%, rgba(96, 165, 250, 0.16), transparent 70%),
+    radial-gradient(50% 45% at 50% 95%, rgba(167, 139, 250, 0.12), transparent 70%),
+    linear-gradient(180deg, #f1f4f9 0%, #e9edf5 100%);
+}
+
+/* Primary glass surface - cards */
+.glass-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.55));
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow:
+    0 4px 24px -8px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+/* Stronger glass - navigation, floating elements */
+.glass-strong {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.68));
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow:
+    0 8px 32px -8px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* Subtle glass - nested surfaces inside cards */
+.glass-inset {
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+/* Accent glass - emerald tinted */
+.glass-accent {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.16), rgba(16, 185, 129, 0.08));
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+/* Tactile press feedback */
+.pressable {
+  transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.4, 1), box-shadow 0.15s ease;
+}
+.pressable:active {
+  transform: scale(0.97);
+}
+
+/* Specular highlight sweep on hero card */
+.glass-hero {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.58));
+  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 8px 40px -12px rgba(15, 23, 42, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.glass-hero::before {
+  content: '';
+  position: absolute;
+  top: -60%;
+  left: -30%;
+  width: 80%;
+  height: 200%;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.35) 50%, transparent 70%);
+  transform: rotate(10deg);
+  pointer-events: none;
 }
