@@ -1,8 +1,11 @@
 node_modules/
 .next/
+out/
 *.tsbuildinfo
 yarn.lock
 .env
 .env.local
+.env.production
 bot/dist/
 .claude/worktrees/
+next-env.d.ts
