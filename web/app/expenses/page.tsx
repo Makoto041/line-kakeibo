@@ -4,13 +4,12 @@ import React, { useState, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
-import Header from "../../components/Header";
+import AppShell from "../../components/AppShell";
 import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
 import { db, ensureFirebaseInitialized } from "../../lib/firebase";
 
-// Suspense boundary for useSearchParams
 export default function ExpensesPage() {
   return (
     <Suspense fallback={<ExpensesPageLoading />}>
@@ -21,46 +20,49 @@ export default function ExpensesPage() {
 
 function ExpensesPageLoading() {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-white shadow-sm">
-        <div className="container mx-auto px-4 py-4">
-          <div className="h-8 bg-gray-200 rounded animate-pulse w-32"></div>
-        </div>
-      </div>
-      <main className="container mx-auto px-4 py-8">
-        <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
-        </div>
-      </main>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="w-8 h-8 border-2 border-emerald-200 border-t-emerald-600 rounded-full animate-spin" />
     </div>
   );
 }
+
+const CATEGORY_ICONS: Record<string, string> = {
+  "食費": "🍽",
+  "交通費": "🚃",
+  "日用品": "🛒",
+  "娯楽": "🎮",
+  "衣服": "👕",
+  "医療・健康": "💊",
+  "教育": "📚",
+  "通信費": "📱",
+  "光熱費": "💡",
+  "美容・理容": "💇",
+  "住居費": "🏠",
+  "その他": "📌",
+};
+
+const ALL_CATEGORIES = [
+  "食費", "交通費", "日用品", "娯楽", "衣服",
+  "医療・健康", "教育", "通信費", "光熱費", "美容・理容", "その他",
+];
 
 function ExpensesPageContent() {
   const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
   const [currentMonth, setCurrentMonth] = useState(dayjs());
-  // Initialize dateRange synchronously to avoid undefined→value transition causing double fetch
   const [dateRange, setDateRange] = useState<{startDate: string; endDate: string}>(() => {
     const range = getEffectiveDateRange(dayjs(), DEFAULT_SETTINGS);
     return { startDate: range.startDate, endDate: range.endDate };
   });
-  // Track whether date settings have been loaded (to avoid fetching before edit expense month is resolved)
   const [dateSettingsLoaded, setDateSettingsLoaded] = useState(false);
-  // Track whether we've resolved the edit expense's month
   const [editMonthResolved, setEditMonthResolved] = useState(false);
-  // Track whether the month was set for edit expense (used to defer editMonthResolved until dateRange updates)
   const [editMonthSet, setEditMonthSet] = useState(false);
 
-  // URLからパラメータを取得（useSearchParamsでハイドレーション安全に取得）
   const searchParams = useSearchParams();
   const lineIdFromUrl = searchParams.get('lineId');
   const editExpenseId = searchParams.get('edit');
-
-  // LINE IDがある場合は直接それを使用、なければuser.uidを使用
   const effectiveUserId = lineIdFromUrl || user?.uid || null;
 
-  // Load date settings from Firestore on mount
   useEffect(() => {
     const loadSettings = async () => {
       if (effectiveUserId && effectiveUserId !== 'guest') {
@@ -72,84 +74,55 @@ function ExpensesPageContent() {
     loadSettings();
   }, [effectiveUserId]);
 
-  // When edit param is present, fetch the expense by ID and navigate to its month
-  // so the expense is guaranteed to be in the date range
   useEffect(() => {
     if (!editExpenseId || !dateSettingsLoaded || editMonthResolved || editMonthSet) return;
-
     const resolveEditExpenseMonth = async () => {
       try {
         ensureFirebaseInitialized();
-        if (!db) {
-          // No Firebase, mark as resolved directly
-          setEditMonthResolved(true);
-          return;
-        }
+        if (!db) { setEditMonthResolved(true); return; }
         const expenseDoc = await getDoc(doc(db, 'expenses', editExpenseId));
         if (expenseDoc.exists()) {
           const data = expenseDoc.data();
           if (data.date) {
-            const expenseDate = dayjs(data.date);
-            // Set currentMonth to the expense's date so date range calculation includes it
-            // (getEffectiveDateRange handles customStartDay correctly when given the actual date)
-            setCurrentMonth(expenseDate);
-            // Mark that month was set - editMonthResolved will be set after dateRange updates
+            setCurrentMonth(dayjs(data.date));
             setEditMonthSet(true);
             return;
           }
         }
-        // No valid date found, mark as resolved
         setEditMonthResolved(true);
-      } catch (err) {
-        console.error("Failed to fetch edit expense:", err);
+      } catch {
         setEditMonthResolved(true);
       }
     };
-
     resolveEditExpenseMonth();
   }, [editExpenseId, dateSettingsLoaded, editMonthResolved, editMonthSet]);
 
-  // Calculate effective date range when settings or currentMonth changes
   useEffect(() => {
     const range = getEffectiveDateRange(currentMonth, dateSettings);
     setDateRange({ startDate: range.startDate, endDate: range.endDate });
   }, [currentMonth, dateSettings]);
 
-  // Mark edit month as resolved AFTER dateRange has been updated
-  // This ensures we fetch with the correct date range, preventing double-fetch
   useEffect(() => {
-    if (editMonthSet && !editMonthResolved) {
-      setEditMonthResolved(true);
-    }
+    if (editMonthSet && !editMonthResolved) setEditMonthResolved(true);
   }, [dateRange, editMonthSet, editMonthResolved]);
 
-  // Don't start fetching expenses until we've resolved the edit expense's month (if applicable)
   const shouldFetch = editExpenseId ? editMonthResolved : true;
   const { expenses, loading, error, updateExpense, deleteExpense } =
     useExpenses(shouldFetch ? effectiveUserId : null, 0, 500, dateRange.startDate);
+
   const [filter, setFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"date" | "amount">("date");
   const [editingExpense, setEditingExpense] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{
-    amount: number;
-    description: string;
-    date: string;
-    category: string;
-    includeInTotal: boolean;
-    payerId: string;
-    payerDisplayName: string;
-  }>({ amount: 0, description: "", date: "", category: "", includeInTotal: true, payerId: "", payerDisplayName: "" });
-  // Flag to prevent re-triggering edit mode after user closes the editor
+  const [editForm, setEditForm] = useState({
+    amount: 0, description: "", date: "", category: "", includeInTotal: true, payerId: "", payerDisplayName: "",
+  });
   const [editConsumed, setEditConsumed] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
 
-  // URLのeditパラメータで指定された支出を自動的に編集モードで開く
-  // Note: This effect must be after the useState/useExpenses declarations to avoid TDZ
   useEffect(() => {
-    // Only trigger once per editExpenseId - don't re-trigger after user cancels
     if (editExpenseId && expenses.length > 0 && !editingExpense && !editConsumed) {
       const expenseToEdit = expenses.find(e => e.id === editExpenseId);
       if (expenseToEdit) {
-        console.log("Auto-opening edit mode for expense:", editExpenseId);
         setEditingExpense(expenseToEdit.id);
         setEditForm({
           amount: expenseToEdit.amount,
@@ -160,225 +133,63 @@ function ExpensesPageContent() {
           payerId: expenseToEdit.payerId || expenseToEdit.lineId,
           payerDisplayName: expenseToEdit.payerDisplayName || expenseToEdit.userDisplayName || "",
         });
-        // Mark as consumed to prevent re-triggering
         setEditConsumed(true);
-        // スクロールして表示
         setTimeout(() => {
-          const element = document.getElementById(`expense-${editExpenseId}`);
-          element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          document.getElementById(`expense-${editExpenseId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 100);
       }
     }
   }, [editExpenseId, expenses, editingExpense, editConsumed]);
-  
-  // Get group members for the expense being edited
+
   const editingExpenseData = editingExpense ? expenses.find(e => e.id === editingExpense) : null;
   const editingGroupId = editingExpenseData?.groupId || null;
   const editingLineGroupId = editingExpenseData?.lineGroupId || null;
-  
-  // Try both group ID and LINE group ID based member fetching
-  const { members: groupMembers, loading: membersLoading, error: membersError } = useGroupMembers(editingGroupId);
-  const { members: lineGroupMembers, loading: lineGroupMembersLoading } = useLineGroupMembers(editingLineGroupId);
-  
-  // Get all users who have ever created expenses (across all groups)
-  // 入力者と支払い者の両方を含める
+  const { members: groupMembers } = useGroupMembers(editingGroupId);
+  const { members: lineGroupMembers } = useLineGroupMembers(editingLineGroupId);
+
   const allHistoricalUsers = useMemo(() => {
     const usersMap = new Map();
-
-    console.log("=== allHistoricalUsers 生成中 ===");
-    console.log("総支出件数:", expenses.length);
-
-    expenses.forEach((expense, index) => {
-      console.log(`支出[${index}]:`, {
-        id: expense.id,
-        lineId: expense.lineId,
-        userDisplayName: expense.userDisplayName,
-        payerId: expense.payerId,
-        payerDisplayName: expense.payerDisplayName
-      });
-
-      // 入力者を追加
+    expenses.forEach(expense => {
       if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
-        console.log(`入力者追加: ${expense.lineId} -> ${expense.userDisplayName}`);
-        usersMap.set(expense.lineId, {
-          lineId: expense.lineId,
-          displayName: expense.userDisplayName
-        });
+        usersMap.set(expense.lineId, { lineId: expense.lineId, displayName: expense.userDisplayName });
       }
-
-      // 支払い者を追加（入力者と異なる場合）
-      if (expense.payerId && expense.payerDisplayName &&
-          expense.payerDisplayName !== "個人" &&
-          expense.payerId !== expense.lineId) {
-        console.log(`支払い者追加: ${expense.payerId} -> ${expense.payerDisplayName}`);
-        usersMap.set(expense.payerId, {
-          lineId: expense.payerId,
-          displayName: expense.payerDisplayName
-        });
+      if (expense.payerId && expense.payerDisplayName && expense.payerDisplayName !== "個人" && expense.payerId !== expense.lineId) {
+        usersMap.set(expense.payerId, { lineId: expense.payerId, displayName: expense.payerDisplayName });
       }
     });
-
-    const result = Array.from(usersMap.values());
-    console.log("allHistoricalUsers 結果:", result);
-    return result;
-  }, [expenses]);
-  
-  // Get users who have expense history in this specific group
-  // 入力者と支払い者の両方を含める
-  const groupExpenseUsers = useMemo(() => {
-    if (!editingExpenseData) return [];
-
-    const groupFilter = editingExpenseData.groupId
-      ? (e: Expense) => e.groupId === editingExpenseData.groupId
-      : editingExpenseData.lineGroupId
-      ? (e: Expense) => e.lineGroupId === editingExpenseData.lineGroupId
-      : () => false;
-
-    const usersMap = new Map();
-
-    expenses
-      .filter(groupFilter)
-      .forEach(expense => {
-        // 入力者を追加
-        if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
-          usersMap.set(expense.lineId, {
-            lineId: expense.lineId,
-            displayName: expense.userDisplayName
-          });
-        }
-
-        // 支払い者を追加（入力者と異なる場合）
-        if (expense.payerId && expense.payerDisplayName &&
-            expense.payerDisplayName !== "個人" &&
-            expense.payerId !== expense.lineId) {
-          usersMap.set(expense.payerId, {
-            lineId: expense.payerId,
-            displayName: expense.payerDisplayName
-          });
-        }
-      });
-
     return Array.from(usersMap.values());
-  }, [expenses, editingExpenseData]);
-  
-  // Combine all available users: formal group members, group history users, and all historical users
-  // 支出履歴のdisplayNameを優先（より正確な名前が入っている）
+  }, [expenses]);
+
   const availableMembers = useMemo(() => {
     const formalMembers = groupMembers.length > 0 ? groupMembers : lineGroupMembers;
     const combinedMap = new Map();
-
-    // Priority 1: Add formal group members (メンバーシップ情報として追加)
-    formalMembers.forEach(member => {
-      combinedMap.set(member.lineId, {
-        lineId: member.lineId,
-        displayName: member.displayName,
-        source: 'group'
-      });
-    });
-
-    // Priority 2: Add/Update users from this group's expense history
-    // 支出履歴のdisplayNameで上書き（より正確）
-    groupExpenseUsers.forEach(user => {
-      const existing = combinedMap.get(user.lineId);
-      if (existing) {
-        // 既存のグループメンバーがいる場合、displayNameだけ更新
-        combinedMap.set(user.lineId, {
-          ...existing,
-          displayName: user.displayName, // 支出履歴の名前を優先
-          source: 'group' // グループメンバーとして保持
-        });
-      } else {
-        // 新規追加
-        combinedMap.set(user.lineId, {
-          lineId: user.lineId,
-          displayName: user.displayName,
-          source: 'group-history'
-        });
+    formalMembers.forEach(member => combinedMap.set(member.lineId, { lineId: member.lineId, displayName: member.displayName, source: 'group' }));
+    const groupExpenses = editingExpenseData
+      ? expenses.filter(e => editingExpenseData.groupId ? e.groupId === editingExpenseData.groupId : editingExpenseData.lineGroupId ? e.lineGroupId === editingExpenseData.lineGroupId : false)
+      : [];
+    groupExpenses.forEach(expense => {
+      if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
+        const existing = combinedMap.get(expense.lineId);
+        combinedMap.set(expense.lineId, { lineId: expense.lineId, displayName: expense.userDisplayName, source: existing ? 'group' : 'group-history' });
       }
     });
-
-    // Priority 3: Add/Update all historical users (from any group)
     allHistoricalUsers.forEach(user => {
-      const existing = combinedMap.get(user.lineId);
-      if (existing) {
-        // 既存のユーザーがいる場合、displayNameが「メンバー」なら更新
-        if (existing.displayName === 'メンバー' || existing.displayName.startsWith('Unknown_')) {
-          combinedMap.set(user.lineId, {
-            ...existing,
-            displayName: user.displayName
-          });
-        }
-      } else {
-        // 新規追加
-        combinedMap.set(user.lineId, {
-          lineId: user.lineId,
-          displayName: user.displayName,
-          source: 'all-history'
-        });
+      if (!combinedMap.has(user.lineId)) {
+        combinedMap.set(user.lineId, { ...user, source: 'all-history' });
       }
     });
-
     return Array.from(combinedMap.values());
-  }, [groupMembers, lineGroupMembers, groupExpenseUsers, allHistoricalUsers]);
-  
-  // Debug logging - より詳細な情報を追加
-  if (editingExpense) {
-    console.log("=== EXPENSE EDITING DEBUG (詳細版) ===");
-    console.log("編集中の支出ID:", editingExpense);
-    console.log("全支出データ数:", expenses.length);
-    console.log("全支出データ（最初の5件）:", expenses.slice(0, 5).map(e => ({
-      id: e.id,
-      userDisplayName: e.userDisplayName,
-      groupId: e.groupId,
-      lineGroupId: e.lineGroupId,
-      lineId: e.lineId,
-      payerId: e.payerId,
-      payerDisplayName: e.payerDisplayName
-    })));
-    
-    console.log("--- 編集中の支出データ ---");
-    console.log("EditingExpenseData:", editingExpenseData);
-    console.log("EditingGroupId:", editingGroupId);
-    console.log("EditingLineGroupId:", editingLineGroupId);
-    
-    console.log("--- ユーザー取得結果 ---");
-    console.log("GroupMembers (正式メンバー):", groupMembers);
-    console.log("LineGroupMembers (LINEグループメンバー):", lineGroupMembers);
-    console.log("GroupExpenseUsers (このグループの履歴):", groupExpenseUsers);
-    console.log("AllHistoricalUsers (全履歴ユーザー):", allHistoricalUsers);
-    console.log("AvailableMembers (最終的な選択肢):", availableMembers);
-    
-    console.log("--- ローディング状態 ---");
-    console.log("MembersLoading:", membersLoading);
-    console.log("LineGroupMembersLoading:", lineGroupMembersLoading);
-    console.log("MembersError:", membersError);
-    
-    // 選択肢の詳細を表示
-    console.log("--- 選択肢の内訳 ---");
-    const groupCount = availableMembers.filter(m => m.source === 'group').length;
-    const groupHistoryCount = availableMembers.filter(m => m.source === 'group-history').length;
-    const allHistoryCount = availableMembers.filter(m => m.source === 'all-history').length;
-    console.log(`グループメンバー: ${groupCount}人`);
-    console.log(`このグループの履歴: ${groupHistoryCount}人`);
-    console.log(`他グループの履歴: ${allHistoryCount}人`);
-    console.log(`合計: ${availableMembers.length}人`);
-    
-    console.log("=== END DEBUG ===");
-  }
-
+  }, [groupMembers, lineGroupMembers, expenses, editingExpenseData, allHistoricalUsers]);
 
   if (authLoading || (editExpenseId && !editMonthResolved)) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">読み込み中...</p>
-        </div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="w-8 h-8 border-2 border-emerald-200 border-t-emerald-600 rounded-full animate-spin" />
       </div>
     );
   }
 
-  const filteredExpenses = expenses.filter((expense) => {
+  const filteredExpenses = expenses.filter(expense => {
     if (filter === "all") return true;
     if (filter === "included") return expense.includeInTotal;
     if (filter === "excluded") return !expense.includeInTotal;
@@ -386,761 +197,384 @@ function ExpensesPageContent() {
   });
 
   const sortedExpenses = [...filteredExpenses].sort((a, b) => {
-    if (sortBy === "date") {
-      return dayjs(b.date).valueOf() - dayjs(a.date).valueOf();
-    }
+    if (sortBy === "date") return dayjs(b.date).valueOf() - dayjs(a.date).valueOf();
     return b.amount - a.amount;
   });
 
-  const categories = [...new Set(expenses.map((e) => e.category))];
-  const allCategories = [
-    "食費",
-    "交通費",
-    "日用品",
-    "娯楽",
-    "衣服",
-    "医療・健康",
-    "教育",
-    "通信費",
-    "光熱費",
-    "美容・理容",
-    "その他",
-  ];
+  const categories = [...new Set(expenses.map(e => e.category))];
+  const totalIncluded = filteredExpenses.filter(e => e.includeInTotal).reduce((sum, e) => sum + e.amount, 0);
 
-  // Calculate individual person totals based on payer
   const personTotals = filteredExpenses.reduce((acc, expense) => {
-    // 支払い者ベースで集計
     const payerId = expense.payerId || expense.lineId;
-    // payerDisplayNameを最優先で使用（userDisplayNameは使わない）
     let payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
-
-    // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
-    if (payerName === 'メンバー' || payerName === '個人' || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
-      const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
-      if (historicalUser) {
-        payerName = historicalUser.displayName;
-      }
+    if (['メンバー', '個人'].includes(payerName) || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
+      const hist = allHistoricalUsers.find(u => u.lineId === payerId);
+      if (hist) payerName = hist.displayName;
     }
-
-    // 承認済みの項目のみ合計に含める
-    if (expense.includeInTotal) {
-      acc[payerName] = (acc[payerName] || 0) + expense.amount;
-    }
+    if (expense.includeInTotal) acc[payerName] = (acc[payerName] || 0) + expense.amount;
     return acc;
   }, {} as Record<string, number>);
-
-  const sortedPersonTotals = Object.entries(personTotals).sort(
-    (a, b) => b[1] - a[1]
-  );
-
-  // Debug log for person totals
-  console.log("Person totals:", personTotals);
-  console.log(
-    "Filtered expenses:",
-    filteredExpenses.map((e) => ({
-      userDisplayName: e.userDisplayName,
-      amount: e.amount,
-      description: e.description,
-    }))
-  );
-
+  const sortedPersonTotals = Object.entries(personTotals).sort((a, b) => b[1] - a[1]);
 
   const handleEditStart = (expense: Expense) => {
-    console.log("Edit button clicked for expense:", expense.id);
-    console.log("Original expense data:", expense);
-    
     setEditingExpense(expense.id);
-    const formData = {
-      amount: expense.amount,
-      description: expense.description,
-      date: expense.date,
-      category: expense.category,
-      includeInTotal: expense.includeInTotal,
+    setEditForm({
+      amount: expense.amount, description: expense.description, date: expense.date,
+      category: expense.category, includeInTotal: expense.includeInTotal,
       payerId: expense.payerId || expense.lineId,
       payerDisplayName: expense.payerDisplayName || expense.userDisplayName || "",
-    };
-    
-    console.log("Setting edit form data:", formData);
-    setEditForm(formData);
-  };
-
-  const handleEditCancel = () => {
-    setEditingExpense(null);
-    setEditForm({
-      amount: 0,
-      description: "",
-      date: "",
-      category: "",
-      includeInTotal: true,
-      payerId: "",
-      payerDisplayName: "",
     });
   };
 
   const handleEditSave = async (id: string) => {
     try {
-      console.log("=== SAVE DEBUG ===");
-      console.log("Saving expense with data:", {
-        id,
-        editForm,
-        originalExpense: editingExpenseData
-      });
-      
-      const updateData = {
-        ...editForm,
-        updatedAt: new Date(),
-      };
-      
-      console.log("Update data being sent:", updateData);
-      
-      await updateExpense(id, updateData);
-      console.log("Save successful");
+      await updateExpense(id, { ...editForm, updatedAt: new Date() });
       setEditingExpense(null);
     } catch (error) {
-      console.error("保存エラー:", error);
       alert(`保存に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
     }
   };
 
-  const handleEditInputChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
-  ) => {
+  const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
     if (name === "payerId") {
-      // 支払い者IDが変更されたら、対応する表示名も更新
-      const selectedMember = availableMembers.find(member => member.lineId === value);
-      const selectedFromHistory = expenses.find(expense => expense.lineId === value);
-      const displayName = selectedMember?.displayName || selectedFromHistory?.userDisplayName || value;
-      
-      setEditForm((prev) => ({
-        ...prev,
-        payerId: value,
-        payerDisplayName: displayName,
-      }));
+      const member = availableMembers.find(m => m.lineId === value);
+      const fromExpenses = expenses.find(exp => exp.lineId === value);
+      setEditForm(prev => ({ ...prev, payerId: value, payerDisplayName: member?.displayName || fromExpenses?.userDisplayName || value }));
     } else {
-      setEditForm((prev) => ({
-        ...prev,
-        [name]: type === "number" ? Number(value) : value,
-      }));
+      setEditForm(prev => ({ ...prev, [name]: type === "number" ? Number(value) : value }));
     }
   };
 
-  const handleEditCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setEditForm((prev) => ({
-      ...prev,
-      includeInTotal: e.target.checked,
-    }));
+  const groupExpensesByDate = (exps: typeof sortedExpenses) => {
+    const groups: Record<string, typeof sortedExpenses> = {};
+    exps.forEach(e => {
+      const key = e.date;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(e);
+    });
+    return Object.entries(groups).sort(([a], [b]) => dayjs(b).valueOf() - dayjs(a).valueOf());
   };
 
-  const handleDeleteExpense = async (id: string) => {
-    console.log("handleDeleteExpense called with id:", id);
-    if (confirm("この支出を削除しますか？")) {
-      try {
-        console.log("Attempting to delete expense:", id);
-        await deleteExpense(id);
-        console.log("Expense deleted successfully:", id);
-      } catch (error) {
-        console.error("Error deleting expense:", error);
-        alert("エラーが発生しました");
-      }
-    }
-  };
+  const dateGroups = sortBy === "date" ? groupExpensesByDate(sortedExpenses) : null;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 relative overflow-hidden">
-      {/* Glassmorphism background effects */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-20 left-10 w-72 h-72 bg-gradient-to-r from-blue-300/20 to-purple-300/20 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob pointer-events-none"></div>
-        <div className="absolute top-40 right-10 w-72 h-72 bg-gradient-to-r from-purple-300/20 to-pink-300/20 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000 pointer-events-none"></div>
-        <div className="absolute -bottom-8 left-20 w-72 h-72 bg-gradient-to-r from-pink-300/20 to-orange-300/20 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000 pointer-events-none"></div>
-      </div>
-      <Header 
-        title="支出一覧" 
-        getUrlWithLineId={getUrlWithLineId}
-        currentPage="expenses"
-      />
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Filters - Compact Style */}
-        <div className="bg-white/90 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-4 mb-6">
-          <div className="flex flex-wrap items-center gap-4 justify-between">
-            <div className="flex flex-wrap gap-4">
-              <div className="min-w-0">
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  📂 フィルター
-                </label>
-                <select
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="all">すべて</option>
-                  <option value="included">合計に含む</option>
-                  <option value="excluded">合計から除外</option>
-                  {categories.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="min-w-0">
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  🔄 並び順
-                </label>
-                <select
-                  value={sortBy}
-                  onChange={(e) =>
-                    setSortBy(e.target.value as "date" | "amount")
-                  }
-                  className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="date">日付順</option>
-                  <option value="amount">金額順</option>
-                </select>
-              </div>
-
-              <div className="min-w-0">
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  📅 期間
-                </label>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentMonth(prev => prev.subtract(1, 'month'))}
-                    className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    title="前月"
-                  >
-                    ◀
-                  </button>
-                  <div className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm whitespace-nowrap">
-                    {getDisplayTitle(currentMonth, dateSettings)}
-                  </div>
-                  <button
-                    onClick={() => setCurrentMonth(prev => prev.add(1, 'month'))}
-                    className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    title="次月"
-                  >
-                    ▶
-                  </button>
-                </div>
-              </div>
+    <AppShell getUrlWithLineId={getUrlWithLineId} title="支出一覧">
+      <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
+        {/* Month navigation + summary */}
+        <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+          <div className="flex items-center justify-between mb-3">
+            <button
+              onClick={() => setCurrentMonth(prev => prev.subtract(1, 'month'))}
+              className="w-9 h-9 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <h2 className="text-lg font-semibold text-gray-900">
+              {getDisplayTitle(currentMonth, dateSettings)}
+            </h2>
+            <button
+              onClick={() => setCurrentMonth(prev => prev.add(1, 'month'))}
+              className="w-9 h-9 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <div>
+              <p className="text-2xl font-bold text-gray-900 tabular-nums">¥{totalIncluded.toLocaleString()}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{filteredExpenses.length}件の支出</p>
             </div>
-            {sortedPersonTotals.length > 0 && (
-                <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {sortedPersonTotals.map(([personName, total]) => (
-                    <div
-                      key={personName}
-                      className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-4 border border-green-200"
-                    >
-                      <div className="text-center">
-                        <div className="text-sm font-medium text-gray-700 mb-1">
-                          {personName}
-                        </div>
-                        <div className="text-xl font-bold text-green-600">
-                          ¥{total.toLocaleString()}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {
-                            filteredExpenses.filter((e) => {
-                              const payerId = e.payerId || e.lineId;
-                              // payerDisplayNameを最優先で使用
-                              let expensePayerName = e.payerDisplayName || e.userDisplayName || "個人";
-
-                              // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
-                              if (expensePayerName === 'メンバー' || expensePayerName === '個人' || expensePayerName.startsWith('Unknown_') || expensePayerName.startsWith('User_')) {
-                                const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
-                                if (historicalUser) {
-                                  expensePayerName = historicalUser.displayName;
-                                }
-                              }
-
-                              return expensePayerName === personName;
-                            }).length
-                          }
-                          件
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+            {sortedPersonTotals.length > 1 && (
+              <div className="flex gap-3">
+                {sortedPersonTotals.map(([name, total]) => (
+                  <div key={name} className="text-right">
+                    <p className="text-xs text-gray-400">{name}</p>
+                    <p className="text-sm font-semibold text-gray-700 tabular-nums">¥{total.toLocaleString()}</p>
+                  </div>
+                ))}
+              </div>
             )}
-
-            <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-4 border border-blue-200">
-              <div className="text-center">
-                <div className="text-xs font-medium text-gray-600 mb-1">
-                  💼 合計
-                </div>
-                <div className="text-lg font-bold text-blue-800">
-                  {filteredExpenses.length}件
-                </div>
-                <div className="text-2xl font-black text-red-600 my-1">
-                  ¥
-                  {filteredExpenses
-                    .filter(e => e.includeInTotal) // 合計に含むもののみ
-                    .reduce((sum, e) => sum + e.amount, 0)
-                    .toLocaleString()}
-                </div>
-                <div className="text-xs text-gray-500">合計総支出額</div>
-                {filteredExpenses.some(e => !e.includeInTotal) && (
-                  <div className="text-xs text-yellow-600 mt-1">
-                    除外: {filteredExpenses.filter(e => !e.includeInTotal).length}件
-                  </div>
-                )}
-                
-              </div>
-            </div>
           </div>
         </div>
 
-        {/* Individual Person Totals */}
-        {/* {sortedPersonTotals.length > 0 && (
-          <div className="bg-white/90 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-4 mb-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              👥 個人別合計
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {sortedPersonTotals.map(([personName, total]) => (
-                <div
-                  key={personName}
-                  className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-4 border border-green-200"
+        {/* Filter bar */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border transition-colors ${
+              filter !== 'all' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-gray-200 text-gray-600'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
+            </svg>
+            フィルター{filter !== 'all' ? ' (1)' : ''}
+          </button>
+          <button
+            onClick={() => setSortBy(sortBy === "date" ? "amount" : "date")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm bg-white border border-gray-200 text-gray-600 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
+            </svg>
+            {sortBy === "date" ? "日付順" : "金額順"}
+          </button>
+        </div>
+
+        {/* Filter panel */}
+        {showFilters && (
+          <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {[
+                { value: "all", label: "すべて" },
+                { value: "included", label: "合計に含む" },
+                { value: "excluded", label: "除外" },
+                ...categories.map(c => ({ value: c, label: c })),
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setFilter(opt.value)}
+                  className={`px-3 py-1 rounded-full text-sm transition-colors ${
+                    filter === opt.value
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
                 >
-                  <div className="text-center">
-                    <div className="text-sm font-medium text-gray-700 mb-1">
-                      {personName}
-                    </div>
-                    <div className="text-xl font-bold text-green-600">
-                      ¥{total.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {
-                        filteredExpenses.filter(
-                          (e) => (e.userDisplayName || "個人") === personName
-                        ).length
-                      }
-                      件
-                    </div>
-                  </div>
-                </div>
+                  {opt.label}
+                </button>
               ))}
             </div>
           </div>
-        )} */}
+        )}
 
+        {/* Expense list */}
         {loading ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">データを読み込み中...</p>
+          <div className="flex justify-center py-12">
+            <div className="w-6 h-6 border-2 border-emerald-200 border-t-emerald-600 rounded-full animate-spin" />
           </div>
         ) : error ? (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-red-800">{error}</p>
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+            <p className="text-red-700 text-sm">{error}</p>
           </div>
         ) : sortedExpenses.length === 0 ? (
-          <div className="bg-white rounded-lg shadow-sm border p-12 text-center">
-            <div className="text-gray-400 mb-4">
-              <svg
-                className="w-16 h-16 mx-auto"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
-            </div>
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">
-              支出データがありません
-            </h3>
-            <p className="text-gray-600">
-              {filter === "all"
-                ? "LINEでレシートを送信して始めましょう！"
-                : "選択した条件に一致する支出がありません"}
+          <div className="text-center py-12">
+            <p className="text-gray-400 text-sm">
+              {filter === "all" ? "この期間に支出はありません" : "条件に一致する支出がありません"}
             </p>
           </div>
-        ) : (
+        ) : dateGroups ? (
+          /* Date-grouped list */
           <div className="space-y-4">
-            {sortedExpenses.map((expense) => (
-              <div
-                key={expense.id}
-                id={`expense-${expense.id}`}
-                className={`bg-white rounded-xl shadow-sm border hover:shadow-md transition-shadow duration-200 overflow-hidden ${
-                  !expense.includeInTotal
-                    ? "border-l-4 border-l-yellow-400 bg-gradient-to-r from-yellow-50 to-white"
-                    : "border-l-4 border-l-green-400 bg-gradient-to-r from-green-50 to-white"
-                } ${editingExpense === expense.id ? "ring-2 ring-blue-500" : ""}`}
-              >
-                <div className="p-4 sm:p-6">
-                  {editingExpense === expense.id ? (
-                    // Edit form
-                    <div className="space-y-6 bg-gray-50 rounded-lg p-4">
-                      <h4 className="text-lg font-semibold text-gray-900 border-b border-gray-200 pb-2">
-                        支出の編集
-                      </h4>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="sm:col-span-2">
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            説明
-                          </label>
-                          <input
-                            type="text"
-                            name="description"
-                            value={editForm.description}
-                            onChange={handleEditInputChange}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="例: ランチ代"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            金額 (円)
-                          </label>
-                          <input
-                            type="number"
-                            name="amount"
-                            value={editForm.amount}
-                            onChange={handleEditInputChange}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="1000"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            日付
-                          </label>
-                          <input
-                            type="date"
-                            name="date"
-                            value={editForm.date}
-                            onChange={handleEditInputChange}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            カテゴリ
-                          </label>
-                          <select
-                            name="category"
-                            value={editForm.category}
-                            onChange={handleEditInputChange}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          >
-                            {allCategories.map((category) => (
-                              <option key={category} value={category}>
-                                {category}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="sm:col-span-2">
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            💳 支払い者
-                          </label>
-                          <select
-                            name="payerId"
-                            value={editForm.payerId}
-                            onChange={handleEditInputChange}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          >
-                            {/* availableMembersが空の場合、現在の支出リストから直接ユーザーを生成 */}
-                            {availableMembers.length === 0 ? (
-                              // フォールバック: 現在表示中の支出からユーザーを抽出
-                              (() => {
-                                console.log("=== フォールバック処理 ===");
-                                console.log("availableMembers.length:", availableMembers.length);
-                                console.log("expenses.length:", expenses.length);
-                                
-                                const fallbackUsers = new Map();
-                                expenses.forEach(exp => {
-                                  if (exp.lineId !== editingExpenseData?.lineId && exp.userDisplayName && exp.userDisplayName !== "個人") {
-                                    fallbackUsers.set(exp.lineId, exp.userDisplayName);
-                                  }
-                                });
-                                
-                                // 支出データもない場合は、サンプルユーザーを追加（テスト用）
-                                if (fallbackUsers.size === 0) {
-                                  console.log("支出データなし - サンプルユーザーを追加");
-                                  fallbackUsers.set("sample1", "田中太郎");
-                                  fallbackUsers.set("sample2", "佐藤花子");
-                                  fallbackUsers.set("sample3", "鈴木一郎");
-                                }
-                                
-                                console.log("フォールバックユーザー:", Array.from(fallbackUsers.entries()));
-                                return Array.from(fallbackUsers.entries()).map(([lineId, displayName]) => (
-                                  <option key={lineId} value={lineId}>
-                                    {displayName} {lineId.startsWith('sample') ? '(テスト)' : '(支出履歴から)'}
-                                  </option>
-                                ));
-                              })()
-                            ) : (
-                              // 通常: availableMembersから選択肢を生成（自分も含める）
-                              availableMembers
-                                .map((member) => {
-                                  let label = '';
-                                  switch(member.source) {
-                                    case 'group':
-                                      label = '(グループメンバー)';
-                                      break;
-                                    case 'group-history':
-                                      label = '(このグループ)';
-                                      break;
-                                    case 'all-history':
-                                      label = '(他グループ)';
-                                      break;
-                                    default:
-                                      label = '';
-                                  }
-                                  return (
-                                    <option key={member.lineId} value={member.lineId}>
-                                      {member.displayName} {label}
-                                    </option>
-                                  );
-                                })
-                            )}
-                              
-                            {/* 既存の支払い者が上記に含まれていない場合は追加 */}
-                            {editForm.payerId && 
-                             editForm.payerId !== editingExpenseData?.lineId &&
-                             !availableMembers.some(member => member.lineId === editForm.payerId) &&
-                             !expenses.some(expense => expense.lineId === editForm.payerId) && (
-                              <option key={editForm.payerId} value={editForm.payerId}>
-                                {editForm.payerDisplayName || "不明なユーザー"}
-                              </option>
-                            )}
-                          </select>
-                          <p className="text-xs text-gray-500 mt-1">
-                            デフォルトは入力者と同じです
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center bg-white rounded-lg p-3 border border-gray-200">
-                        <input
-                          type="checkbox"
-                          name="includeInTotal"
-                          checked={editForm.includeInTotal}
-                          onChange={handleEditCheckboxChange}
-                          className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                        />
-                        <label className="ml-3 text-sm font-medium text-gray-700">
-                          合計に含める
-                        </label>
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row gap-4 pt-4">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            console.log(
-                              "Save button clicked for expense:",
-                              expense.id
-                            );
-                            handleEditSave(expense.id);
-                          }}
-                          className="bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1 cursor-pointer"
-                          style={{ pointerEvents: "auto" }}
-                        >
-                          <span className="text-sm">💾</span>
-                          保存
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            console.log("Cancel button clicked");
-                            handleEditCancel();
-                          }}
-                          className="bg-gray-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-600 transition-colors flex items-center gap-1 cursor-pointer"
-                          style={{ pointerEvents: "auto" }}
-                        >
-                          <span className="text-sm">❌</span>
-                          キャンセル
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    // Display mode
-                    <div className="space-y-4">
-                      {/* Header with title and amount */}
-                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-lg font-semibold text-gray-900 mb-2 break-words">
-                            {expense.description}
-                          </h3>
-                          <p className="text-sm text-gray-600">
-                            {dayjs(expense.date).format("YYYY年M月D日 (ddd)")}
-                          </p>
-                        </div>
-
-                        <div className="flex-shrink-0">
-                          <p className="text-xl sm:text-2xl font-bold text-red-600 text-right">
-                            ¥{expense.amount.toLocaleString()}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Tags */}
-                      <div className="flex flex-wrap gap-2">
-                        <span className="bg-gray-100 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                          {expense.category}
-                        </span>
-                        {expense.userDisplayName &&
-                          expense.userDisplayName !== "個人" && (
-                            <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                              👤 入力者: {expense.userDisplayName}
-                            </span>
-                          )}
-                        {(() => {
-                          // 支払い者の名前を取得（payerDisplayNameを最優先）
-                          const payerId = expense.payerId || expense.lineId;
-                          let payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
-                          const isDefaultPayer = !expense.payerId || expense.payerId === expense.lineId;
-
-                          // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
-                          if (payerName === 'メンバー' || payerName === '個人' || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
-                            const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
-                            if (historicalUser) {
-                              payerName = historicalUser.displayName;
-                            }
-                          }
-
-                          return payerName !== "個人" && (
-                            <span className={`text-xs font-medium px-2.5 py-0.5 rounded ${
-                              isDefaultPayer
-                                ? "bg-green-100 text-green-800"
-                                : "bg-purple-100 text-purple-800"
-                            }`}>
-                              💳 支払い者: {payerName}
-                            </span>
-                          );
-                        })()}
-                        {expense.lineGroupId && (
-                          <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                            📱 LINEグループ
-                          </span>
-                        )}
-                        {!expense.includeInTotal && (
-                          <span className="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                            合計から除外
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Items details */}
-                      {expense.items && expense.items.length > 0 && (
-                        <details className="group">
-                          <summary className="cursor-pointer text-blue-600 hover:text-blue-800 text-sm font-medium list-none">
-                            <div className="flex items-center gap-1">
-                              <span className="group-open:rotate-90 transform transition-transform duration-200">
-                                ▶
-                              </span>
-                              商品詳細 ({expense.items.length}点)
-                            </div>
-                          </summary>
-                          <div className="mt-3 bg-gray-50 rounded-lg p-3">
-                            <ul className="space-y-2">
-                              {expense.items.map((item, index) => (
-                                <li
-                                  key={index}
-                                  className="flex justify-between items-center text-sm"
-                                >
-                                  <span className="text-gray-700 flex-1 min-w-0 mr-2 break-words">
-                                    {item.name}
-                                  </span>
-                                  <span className="text-gray-900 font-medium flex-shrink-0">
-                                    ¥{item.price.toLocaleString()}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        </details>
-                      )}
-
-                      {/* Action buttons */}
-                      <div
-                        className="flex flex-wrap gap-2 pt-3 border-t border-gray-100"
-                        style={{ position: "relative", zIndex: 10 }}
-                      >
-                        {/* 合計に含める/除外する切り替えボタン */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            console.log("Toggle include in total clicked");
-                            updateExpense(expense.id, { includeInTotal: !expense.includeInTotal });
-                          }}
-                          className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer ${
-                            expense.includeInTotal 
-                              ? "bg-green-500 text-white hover:bg-green-600"
-                              : "bg-gray-500 text-white hover:bg-gray-600"
-                          }`}
-                          style={{ pointerEvents: "auto" }}
-                        >
-                          <span className="text-sm">
-                            {expense.includeInTotal ? "✓" : "✗"}
-                          </span>
-                          {expense.includeInTotal ? "合計に含む" : "合計から除外"}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            console.log(
-                              "Edit button clicked for expense:",
-                              expense.id
-                            );
-                            handleEditStart(expense);
-                          }}
-                          className="bg-blue-500 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors flex items-center gap-1 cursor-pointer"
-                          style={{ pointerEvents: "auto" }}
-                        >
-                          <span className="text-sm">✏️</span>
-                          編集
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            console.log(
-                              "Delete button clicked for expense:",
-                              expense.id
-                            );
-                            handleDeleteExpense(expense.id);
-                          }}
-                          className="bg-red-500 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-red-600 transition-colors flex items-center gap-1 cursor-pointer"
-                          style={{ pointerEvents: "auto" }}
-                        >
-                          <span className="text-sm">🗑️</span>
-                          削除
-                        </button>
-                      </div>
-                    </div>
-                  )}
+            {dateGroups.map(([date, exps]) => (
+              <div key={date}>
+                <div className="flex items-center justify-between px-1 mb-2">
+                  <p className="text-xs font-medium text-gray-400">
+                    {dayjs(date).format("M月D日 (ddd)")}
+                  </p>
+                  <p className="text-xs text-gray-400 tabular-nums">
+                    ¥{exps.filter(e => e.includeInTotal).reduce((s, e) => s + e.amount, 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-50">
+                  {exps.map(expense => (
+                    <ExpenseRow
+                      key={expense.id}
+                      expense={expense}
+                      isEditing={editingExpense === expense.id}
+                      editForm={editForm}
+                      onEditStart={() => handleEditStart(expense)}
+                      onEditSave={() => handleEditSave(expense.id)}
+                      onEditCancel={() => setEditingExpense(null)}
+                      onEditChange={handleEditInputChange}
+                      onCheckboxChange={(e) => setEditForm(prev => ({ ...prev, includeInTotal: e.target.checked }))}
+                      onToggleInclude={() => updateExpense(expense.id, { includeInTotal: !expense.includeInTotal })}
+                      onDelete={() => { if (confirm("この支出を削除しますか？")) deleteExpense(expense.id); }}
+                      availableMembers={availableMembers}
+                      allHistoricalUsers={allHistoricalUsers}
+                    />
+                  ))}
                 </div>
               </div>
             ))}
           </div>
+        ) : (
+          /* Flat list (amount sort) */
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-50">
+            {sortedExpenses.map(expense => (
+              <ExpenseRow
+                key={expense.id}
+                expense={expense}
+                isEditing={editingExpense === expense.id}
+                editForm={editForm}
+                onEditStart={() => handleEditStart(expense)}
+                onEditSave={() => handleEditSave(expense.id)}
+                onEditCancel={() => setEditingExpense(null)}
+                onEditChange={handleEditInputChange}
+                onCheckboxChange={(e) => setEditForm(prev => ({ ...prev, includeInTotal: e.target.checked }))}
+                onToggleInclude={() => updateExpense(expense.id, { includeInTotal: !expense.includeInTotal })}
+                onDelete={() => { if (confirm("この支出を削除しますか？")) deleteExpense(expense.id); }}
+                availableMembers={availableMembers}
+                allHistoricalUsers={allHistoricalUsers}
+                showDate
+              />
+            ))}
+          </div>
         )}
-      </main>
+      </div>
+    </AppShell>
+  );
+}
+
+interface ExpenseRowProps {
+  expense: Expense;
+  isEditing: boolean;
+  editForm: { amount: number; description: string; date: string; category: string; includeInTotal: boolean; payerId: string; payerDisplayName: string };
+  onEditStart: () => void;
+  onEditSave: () => void;
+  onEditCancel: () => void;
+  onEditChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => void;
+  onCheckboxChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onToggleInclude: () => void;
+  onDelete: () => void;
+  availableMembers: Array<{ lineId: string; displayName: string; source?: string }>;
+  allHistoricalUsers: Array<{ lineId: string; displayName: string }>;
+  showDate?: boolean;
+}
+
+function ExpenseRow({
+  expense, isEditing, editForm,
+  onEditStart, onEditSave, onEditCancel, onEditChange, onCheckboxChange,
+  onToggleInclude, onDelete, availableMembers, allHistoricalUsers, showDate,
+}: ExpenseRowProps) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (isEditing) {
+    return (
+      <div id={`expense-${expense.id}`} className="p-4 bg-emerald-50/50 space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-gray-500 mb-1">説明</label>
+            <input type="text" name="description" value={editForm.description} onChange={onEditChange}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">金額</label>
+            <input type="number" name="amount" value={editForm.amount} onChange={onEditChange}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">日付</label>
+            <input type="date" name="date" value={editForm.date} onChange={onEditChange}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">カテゴリ</label>
+            <select name="category" value={editForm.category} onChange={onEditChange}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+              {ALL_CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_ICONS[c] || ""} {c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">支払い者</label>
+            <select name="payerId" value={editForm.payerId} onChange={onEditChange}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+              {availableMembers.map(m => (
+                <option key={m.lineId} value={m.lineId}>{m.displayName}</option>
+              ))}
+            </select>
+          </div>
+          <div className="sm:col-span-2 flex items-center gap-2">
+            <input type="checkbox" checked={editForm.includeInTotal} onChange={onCheckboxChange}
+              className="h-4 w-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500" />
+            <span className="text-sm text-gray-600">合計に含める</span>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={onEditSave}
+            className="flex-1 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors">
+            保存
+          </button>
+          <button onClick={onEditCancel}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors">
+            キャンセル
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const payerId = expense.payerId || expense.lineId;
+  let payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
+  if (['メンバー', '個人'].includes(payerName) || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
+    const hist = allHistoricalUsers.find(u => u.lineId === payerId);
+    if (hist) payerName = hist.displayName;
+  }
+
+  const icon = CATEGORY_ICONS[expense.category] || "📌";
+
+  return (
+    <div
+      id={`expense-${expense.id}`}
+      className={`${!expense.includeInTotal ? 'opacity-50' : ''}`}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-50 transition-colors"
+      >
+        <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 text-base">
+          {icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-gray-900 truncate">{expense.description}</p>
+          <p className="text-xs text-gray-400">
+            {showDate && <>{dayjs(expense.date).format("M/D")} · </>}
+            {expense.category}
+            {payerName !== "個人" && <> · {payerName}</>}
+          </p>
+        </div>
+        <p className="text-sm font-semibold text-gray-900 tabular-nums flex-shrink-0">
+          ¥{expense.amount.toLocaleString()}
+        </p>
+      </button>
+
+      {expanded && (
+        <div className="px-4 pb-3 space-y-3">
+          {expense.items && expense.items.length > 0 && (
+            <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+              {expense.items.map((item, i) => (
+                <div key={i} className="flex justify-between text-xs">
+                  <span className="text-gray-600">{item.name}</span>
+                  <span className="text-gray-900 tabular-nums">¥{item.price.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button onClick={onToggleInclude}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                expense.includeInTotal
+                  ? 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
+                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+              }`}>
+              {expense.includeInTotal ? '除外する' : '含める'}
+            </button>
+            <button onClick={onEditStart}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors">
+              編集
+            </button>
+            <button onClick={onDelete}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-600 hover:bg-red-50 transition-colors">
+              削除
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
