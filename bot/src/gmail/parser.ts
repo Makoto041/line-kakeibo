@@ -7,6 +7,7 @@
 
 import { ParsedCardNotification, SMBC_CARD_FILTER } from './types';
 import { getFirestore } from 'firebase-admin/firestore';
+import dayjs from 'dayjs';
 
 /**
  * メールが三井住友ゴールドVISA（NL）の利用通知かどうか判定
@@ -209,6 +210,67 @@ export async function isDuplicateByContent(
       existingMerchant.includes(merchant) ||
       merchant.includes(existingMerchant)
     ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * 利用日時ベースの重複チェック: 同日時・同店舗・同金額
+ * 返信メールからの二重登録を防止しつつ、同日の複数決済を許可
+ *
+ * 注意: Gmail自動取得（inputSource='gmail_auto'）の支出のみを対象にチェック
+ * 手動入力（現金・PayPay等）との重複は許可する
+ *
+ * @param usedAt - カード利用日時（フルタイムスタンプ）
+ * @param merchant - 店舗名
+ * @param amount - 金額
+ * @returns 重複している場合はtrue
+ */
+export async function isDuplicateByTimestamp(
+  usedAt: Date,
+  merchant: string,
+  amount: number
+): Promise<boolean> {
+  const db = getFirestore();
+  // 保存時と同じくdayjsを使用してローカルタイムゾーンで日付を正規化
+  const date = dayjs(usedAt).format('YYYY-MM-DD');
+
+  // 同じ日付で同じ金額のGmail自動取得の支出のみを検索
+  const snapshot = await db
+    .collection('expenses')
+    .where('date', '==', date)
+    .where('amount', '==', amount)
+    .where('inputSource', '==', 'gmail_auto')
+    .get();
+
+  // 店舗名と利用日時をチェック
+  for (const doc of snapshot.docs) {
+    const data = doc.data();
+    const existingMerchant = data.description || '';
+
+    // 店舗名が類似しているかチェック
+    const isSameMerchant =
+      existingMerchant === merchant ||
+      existingMerchant.includes(merchant) ||
+      merchant.includes(existingMerchant);
+
+    if (!isSameMerchant) continue;
+
+    // usedAt（カード利用日時）を比較
+    if (data.usedAt) {
+      const existingUsedAt = data.usedAt.toDate ? data.usedAt.toDate() : new Date(data.usedAt);
+      // 同じ利用日時（1分以内）なら重複とみなす
+      const timeDiff = Math.abs(usedAt.getTime() - existingUsedAt.getTime());
+      const oneMinute = 60 * 1000;
+
+      if (timeDiff < oneMinute) {
+        return true;
+      }
+    } else {
+      // usedAtがない古いデータの場合、同日・同店舗・同金額で重複とみなす（保守的）
       return true;
     }
   }

@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getAuth, signInAnonymously, UserCredential } from 'firebase/auth';
+import { getStorage } from 'firebase/storage';
 
 // Firebase設定の型定義
 interface FirebaseConfig {
@@ -58,6 +59,7 @@ const validateConfig = (): { isValid: boolean; errors: string[] } => {
 let app: ReturnType<typeof initializeApp> | undefined;
 let db: ReturnType<typeof getFirestore> | undefined;
 let auth: ReturnType<typeof getAuth> | undefined;
+let storage: ReturnType<typeof getStorage> | undefined;
 
 // 初期化処理
 const initializeFirebase = () => {
@@ -119,7 +121,10 @@ const initializeFirebase = () => {
     
     // Auth初期化
     auth = getAuth(app);
-    
+
+    // Storage初期化
+    storage = getStorage(app);
+
     isInitialized = true;
     
     // 接続テスト（開発環境のみ）
@@ -222,4 +227,4 @@ export const retryFirebaseInitialization = () => {
 };
 
 // エクスポート
-export { db, auth, app, testFirebaseConnection };
+export { db, auth, app, storage, testFirebaseConnection };

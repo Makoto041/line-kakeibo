@@ -134,57 +134,98 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
     },
     footer: {
       type: 'box',
-      layout: 'horizontal',
+      layout: 'vertical',
       contents: [
-        // 共同費ボタン
+        // 1段目: 共同費・個人費
         {
-          type: 'button',
-          action: {
-            type: 'postback',
-            label: '✅ 共同費',
-            data: JSON.stringify({
-              action: 'shared',
-              expenseId,
-            }),
-            displayText: '✅ 共同費として記録',
-          },
-          style: 'primary',
-          color: '#00C851',
-          height: 'sm',
-          flex: 1,
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
+            {
+              type: 'button',
+              action: {
+                type: 'postback',
+                label: '✅ 共同費',
+                data: JSON.stringify({
+                  action: 'shared',
+                  expenseId,
+                }),
+                displayText: '✅ 共同費として記録',
+              },
+              style: 'primary',
+              color: '#00C851',
+              height: 'sm',
+              flex: 1,
+            },
+            {
+              type: 'button',
+              action: {
+                type: 'postback',
+                label: '👤 個人費',
+                data: JSON.stringify({
+                  action: 'personal',
+                  expenseId,
+                }),
+                displayText: '👤 個人費として除外',
+              },
+              style: 'secondary',
+              height: 'sm',
+              flex: 1,
+              margin: 'sm',
+            },
+          ],
+          spacing: 'sm',
         },
-        // 個人費ボタン
+        // 2段目: 立替・カテゴリ変更
         {
-          type: 'button',
-          action: {
-            type: 'postback',
-            label: '👤 個人費',
-            data: JSON.stringify({
-              action: 'personal',
-              expenseId,
-            }),
-            displayText: '👤 個人費として除外',
-          },
-          style: 'secondary',
-          height: 'sm',
-          flex: 1,
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
+            {
+              type: 'button',
+              action: {
+                type: 'postback',
+                label: '↩️ 立替',
+                data: JSON.stringify({
+                  action: 'advance',
+                  expenseId,
+                }),
+                displayText: '↩️ 立替として記録',
+              },
+              style: 'secondary',
+              height: 'sm',
+              flex: 1,
+            },
+            {
+              type: 'button',
+              action: {
+                type: 'postback',
+                label: `🏷️ ${category}`,
+                data: JSON.stringify({
+                  action: 'show_category_select',
+                  expenseId,
+                  source: 'gmail',
+                }),
+              },
+              style: 'secondary',
+              height: 'sm',
+              flex: 1,
+              margin: 'sm',
+            },
+          ],
+          spacing: 'sm',
           margin: 'sm',
         },
-        // 立替ボタン
+        // 3段目: レシート添付
         {
           type: 'button',
           action: {
-            type: 'postback',
-            label: '↩️ 立替',
-            data: JSON.stringify({
-              action: 'advance',
-              expenseId,
-            }),
-            displayText: '↩️ 立替として記録',
+            type: 'uri',
+            label: '📎 レシート添付',
+            uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
           },
           style: 'secondary',
           height: 'sm',
-          flex: 1,
           margin: 'sm',
         },
       ],
@@ -360,60 +401,101 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     },
     footer: {
       type: 'box',
-      layout: 'horizontal',
+      layout: 'vertical',
       contents: [
-        // OKボタン
+        // 1段目: OK・修正
         {
-          type: 'button',
-          action: {
-            type: 'postback',
-            label: '✅ OK',
-            data: JSON.stringify({
-              action: 'confirm',
-              expenseId,
-              source: 'text',
-            }),
-            displayText: '✅ 登録を確認しました',
-          },
-          style: 'primary',
-          color: '#00C851',
-          height: 'sm',
-          flex: 1,
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
+            {
+              type: 'button',
+              action: {
+                type: 'postback',
+                label: '✅ OK',
+                data: JSON.stringify({
+                  action: 'confirm',
+                  expenseId,
+                  source: 'text',
+                }),
+                displayText: '✅ 登録を確認しました',
+              },
+              style: 'primary',
+              color: '#00C851',
+              height: 'sm',
+              flex: 1,
+            },
+            {
+              type: 'button',
+              action: {
+                type: 'postback',
+                label: '✏️ 修正',
+                data: JSON.stringify({
+                  action: 'edit',
+                  expenseId,
+                  source: 'text',
+                }),
+                displayText: '✏️ 修正が必要です',
+              },
+              style: 'secondary',
+              height: 'sm',
+              flex: 1,
+              margin: 'sm',
+            },
+          ],
+          spacing: 'sm',
         },
-        // 修正ボタン
+        // 2段目: 立替・カテゴリ変更
         {
-          type: 'button',
-          action: {
-            type: 'postback',
-            label: '✏️ 修正',
-            data: JSON.stringify({
-              action: 'edit',
-              expenseId,
-              source: 'text',
-            }),
-            displayText: '✏️ 修正が必要です',
-          },
-          style: 'secondary',
-          height: 'sm',
-          flex: 1,
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
+            {
+              type: 'button',
+              action: {
+                type: 'postback',
+                label: '↩️ 立替',
+                data: JSON.stringify({
+                  action: 'advance',
+                  expenseId,
+                  source: 'text',
+                }),
+                displayText: '↩️ 立替として記録',
+              },
+              style: 'secondary',
+              height: 'sm',
+              flex: 1,
+            },
+            {
+              type: 'button',
+              action: {
+                type: 'postback',
+                label: `🏷️ ${category}`,
+                data: JSON.stringify({
+                  action: 'show_category_select',
+                  expenseId,
+                  source: 'text',
+                }),
+              },
+              style: 'secondary',
+              height: 'sm',
+              flex: 1,
+              margin: 'sm',
+            },
+          ],
+          spacing: 'sm',
           margin: 'sm',
         },
-        // 立替ボタン
+        // 3段目: レシート添付
         {
           type: 'button',
           action: {
-            type: 'postback',
-            label: '↩️ 立替',
-            data: JSON.stringify({
-              action: 'advance',
-              expenseId,
-              source: 'text',
-            }),
-            displayText: '↩️ 立替として記録',
+            type: 'uri',
+            label: '📎 レシート添付',
+            uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
           },
           style: 'secondary',
           height: 'sm',
-          flex: 1,
           margin: 'sm',
         },
       ],
@@ -431,16 +513,33 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
 
 /**
  * テキスト入力登録完了通知を送信
+ *
+ * replyTokenが渡された場合はreplyMessage（無料・月200通制限の対象外）で送信し、
+ * 失敗時（トークン期限切れ・使用済み等）のみpushMessageにフォールバックする
  */
 export async function sendTextExpenseNotification(
   targetId: string,
-  info: TextExpenseInfo
+  info: TextExpenseInfo,
+  replyToken?: string
 ): Promise<void> {
   const client = getLineClient();
   const message = buildTextExpenseFlexMessage(info);
 
+  if (replyToken) {
+    try {
+      await client.replyMessage(replyToken, message);
+      console.log(`Text expense notification sent via replyMessage (free) to ${targetId}`);
+      return;
+    } catch (replyError) {
+      console.warn(
+        "replyMessage failed (token expired or already used), falling back to pushMessage:",
+        replyError
+      );
+    }
+  }
+
   await client.pushMessage(targetId, message);
-  console.log(`Text expense notification sent to ${targetId}`);
+  console.log(`Text expense notification sent via pushMessage to ${targetId}`);
 }
 
 /**
@@ -489,7 +588,7 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
     categoryTotals,
   } = info;
 
-  const contextText = isGroupContext ? '👥 グループ' : '📱 個人';
+  const contextText = isGroupContext ? '👥' : '📱';
   const pendingCount = monthlyCount - monthlyIncludedCount;
 
   // プログレスバーの計算（予算13.6万円に対する割合）
@@ -735,7 +834,7 @@ export function buildEmptyExpenseSummaryFlexMessage(
   isGroupContext: boolean,
   webAppUrl: string
 ): FlexMessage {
-  const contextText = isGroupContext ? '👥 グループ' : '📱 個人';
+  const contextText = isGroupContext ? '👥' : '📱';
 
   const bubble: FlexBubble = {
     type: 'bubble',
@@ -827,5 +926,117 @@ export function buildEmptyExpenseSummaryFlexMessage(
     type: 'flex',
     altText: `📊 ${contextText}の家計簿`,
     contents: bubble,
+  };
+}
+
+/**
+ * カテゴリ選択用の情報
+ */
+export interface CategorySelectInfo {
+  expenseId: string;
+  currentCategory: string;
+  source: 'gmail' | 'text';
+  merchant: string;
+  amount: number;
+}
+
+// カテゴリ絵文字マッピング
+const CATEGORY_EMOJI: Record<string, string> = {
+  '食費': '🍽️',
+  '日用品': '🛒',
+  '交通費': '🚃',
+  '医療費': '💊',
+  '娯楽費': '🎮',
+  '衣服費': '👗',
+  '教育費': '📚',
+  '通信費': '📱',
+  '光熱費': '💡',
+  'その他': '📦',
+};
+
+// カテゴリ一覧
+const CATEGORIES = [
+  '食費', '日用品', '交通費', '医療費', '娯楽費',
+  '衣服費', '教育費', '通信費', '光熱費', 'その他'
+];
+
+/**
+ * カテゴリ選択CarouselのFlex Messageを生成
+ */
+export function buildCategorySelectCarousel(info: CategorySelectInfo): FlexMessage {
+  const { expenseId, currentCategory, source, merchant, amount } = info;
+
+  // 各カテゴリのbubbleを生成
+  const bubbles: FlexBubble[] = CATEGORIES.map((categoryName) => {
+    const isCurrentCategory = categoryName === currentCategory;
+    const emoji = CATEGORY_EMOJI[categoryName] || '📦';
+
+    return {
+      type: 'bubble',
+      size: 'nano',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        contents: [
+          {
+            type: 'text',
+            text: emoji,
+            size: 'xxl',
+            align: 'center',
+          },
+          {
+            type: 'text',
+            text: categoryName,
+            weight: 'bold',
+            size: 'sm',
+            align: 'center',
+            margin: 'sm',
+          },
+          {
+            type: 'text',
+            text: `¥${amount.toLocaleString()}`,
+            size: 'xs',
+            color: '#888888',
+            align: 'center',
+            margin: 'xs',
+          },
+        ],
+        backgroundColor: isCurrentCategory ? '#E1F5EE' : undefined,
+        paddingAll: 'md',
+        justifyContent: 'center',
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        contents: [
+          {
+            type: 'button',
+            action: {
+              type: 'postback',
+              label: isCurrentCategory ? '✓ 選択中' : 'これにする',
+              data: JSON.stringify({
+                action: 'set_category',
+                expenseId,
+                category: categoryName,
+                source,
+              }),
+            },
+            style: isCurrentCategory ? 'primary' : 'secondary',
+            color: isCurrentCategory ? '#1D9E75' : undefined,
+            height: 'sm',
+          },
+        ],
+        paddingAll: 'sm',
+      },
+    };
+  });
+
+  return {
+    type: 'flex',
+    altText: `🏷️ カテゴリを選択: ${merchant}`,
+    contents: {
+      type: 'carousel',
+      contents: bubbles,
+    },
   };
 }

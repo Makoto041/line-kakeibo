@@ -78,6 +78,7 @@ export interface Expense {
   advanceSettledAt?: FirestoreTimestamp; // 精算日時
   paymentMethod?: string;         // 支払い方法（cash, paypay, card）
   gmailMessageId?: string;        // Gmail自動取得時のメッセージID
+  receiptUrl?: string;            // レシート画像のURL（Firebase Storage）
   createdAt?: FirestoreTimestamp;
   updatedAt?: FirestoreTimestamp;
 }
@@ -1188,4 +1189,90 @@ export function useLineGroupMembers(lineGroupId: string | null) {
   }, [lineGroupId]);
 
   return { members, loading, error };
+}
+
+// 予算設定インターフェース
+export interface BudgetConfig {
+  monthlyBudget: number;
+  categoryBudgets: Record<string, number>;
+  alertThreshold: number;
+}
+
+// デフォルトの予算設定
+const defaultBudgetConfig: BudgetConfig = {
+  monthlyBudget: 200000,
+  categoryBudgets: {},
+  alertThreshold: 20,
+};
+
+// Firestoreから予算設定を取得するフック
+export function useBudgetConfig(userId: string | null) {
+  const [config, setConfig] = useState<BudgetConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  useEffect(() => {
+    if (!userId || userId === 'guest') {
+      setConfig(defaultBudgetConfig);
+      setLoading(false);
+      return;
+    }
+
+    const fetchBudgetConfig = async () => {
+      const isConnected = await waitForFirebase();
+      if (!isConnected) {
+        const status = getFirebaseStatus();
+        setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError(null);
+
+        if (!db) {
+          throw new Error('Firestoreデータベースが利用できません');
+        }
+
+        const docRef = doc(db, 'budgetSettings', userId);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setConfig({
+            monthlyBudget: typeof data.monthlyBudget === 'number' && data.monthlyBudget > 0
+              ? data.monthlyBudget
+              : defaultBudgetConfig.monthlyBudget,
+            categoryBudgets: data.categoryBudgets && typeof data.categoryBudgets === 'object'
+              ? data.categoryBudgets
+              : {},
+            alertThreshold: typeof data.alertThreshold === 'number'
+              ? data.alertThreshold
+              : defaultBudgetConfig.alertThreshold,
+          });
+        } else {
+          setConfig(defaultBudgetConfig);
+        }
+        setError(null);
+      } catch (err) {
+        const errorMessage = handleFirestoreError(err);
+        console.error('Error fetching budget config:', err);
+        setError(errorMessage);
+        setConfig(defaultBudgetConfig);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchBudgetConfig();
+  }, [userId, refreshTrigger]);
+
+  // 手動で再取得するための関数
+  const refetch = () => {
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  return { config, loading, error, refetch };
 }

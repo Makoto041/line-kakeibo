@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { useLineAuth, useMonthlyStats, useExpenses, Expense } from '../../lib/hooks'
+import { useLineAuth, useMonthlyStats, useExpenses, useBudgetConfig, Expense } from '../../lib/hooks'
 import dayjs from 'dayjs'
 import SummaryCards from './components/SummaryCards'
 import CategoryChart from './components/CategoryChart'
@@ -12,6 +12,7 @@ import ExpenseRatioChart from './components/ExpenseRatioChart'
 import ExpenseList from './components/ExpenseList'
 import EditExpenseModal from './components/EditExpenseModal'
 import BudgetSettings from './components/BudgetSettings'
+import BudgetProgressBar from './components/BudgetProgressBar'
 
 export default function DashboardPage() {
   const { user, loading: authLoading } = useLineAuth()
@@ -27,6 +28,9 @@ export default function DashboardPage() {
     currentDate.month() + 1,
     1 // Start from 1st of month
   )
+
+  // Get budget config
+  const { config: budgetConfig, loading: budgetLoading, error: budgetError, refetch: refetchBudget } = useBudgetConfig(user?.uid || null)
 
   // Get expenses for the expense list
   const { expenses, loading: expensesLoading, updateExpense, deleteExpense } = useExpenses(
@@ -174,6 +178,38 @@ export default function DashboardPage() {
               <BudgetAlert />
             </motion.div>
 
+            {/* Budget Progress Bars */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.15 }}
+              className="mb-6"
+            >
+              {budgetLoading ? (
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
+                  <div className="animate-pulse">
+                    <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-4"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full mb-2"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
+                  </div>
+                </div>
+              ) : budgetError ? (
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
+                  <div className="text-center text-red-500">
+                    <p>予算設定の読み込みに失敗しました</p>
+                    <button
+                      onClick={refetchBudget}
+                      className="mt-2 text-sm text-primary hover:underline"
+                    >
+                      再試行
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <BudgetProgressBar stats={stats} budgetConfig={budgetConfig} />
+              )}
+            </motion.div>
+
             {/* Summary Cards */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -242,7 +278,7 @@ export default function DashboardPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
           >
-            <BudgetSettings userId={user?.uid || ''} />
+            <BudgetSettings userId={user?.uid || ''} onSave={refetchBudget} />
           </motion.div>
         )}
       </motion.div>

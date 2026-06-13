@@ -1,0 +1,14 @@
+# Firebase Service Account Key (Base64 encoded)
+#
+# このファイルは sa.b64 のテンプレートです。
+# 実際のデプロイ時には、Firebase サービスアカウントキーを
+# Base64 エンコードしたものを bot/sa.b64 として配置してください。
+#
+# 生成方法:
+# 1. Firebase Console > プロジェクト設定 > サービスアカウント
+# 2. 「新しい秘密鍵を生成」をクリック
+# 3. ダウンロードした JSON ファイルを Base64 エンコード:
+#    base64 -i path/to/serviceAccountKey.json > bot/sa.b64
+#
+# 注意: sa.b64 は .gitignore で除外されているため、
+#       リポジトリにコミットされません（セキュリティ上正しい動作）

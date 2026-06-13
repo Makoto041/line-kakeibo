@@ -85,6 +85,8 @@ export interface GmailExpenseExtension {
   inputSource: InputSource;
   /** GmailメッセージID（重複チェック用） */
   gmailMessageId: string;
+  /** カード利用日時（重複チェック用） */
+  usedAt?: Date;
   /** ステータス */
   status: ExpenseStatus;
   /** 立替者（立替の場合のみ） */
@@ -108,7 +110,7 @@ export type GmailExpense = Expense & GmailExpenseExtension;
  */
 export interface PostbackActionData {
   /** アクション種別 */
-  action: 'shared' | 'personal' | 'advance' | 'confirm' | 'edit';
+  action: 'shared' | 'personal' | 'advance' | 'confirm' | 'edit' | 'show_category_select' | 'set_category';
   /** 対象の支出ID */
   expenseId: string;
 }
