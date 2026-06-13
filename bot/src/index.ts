@@ -138,29 +138,18 @@ app.post("/webhook", async (req: Request, res: Response) => {
             console.warn("Failed to send image receipt confirmation:", replyError);
           }
 
-          const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
-
           // バックグラウンドで処理実行（ノンブロッキング）
+          // 注: エラー時のユーザー通知はhandleImageMessage内で行うため、
+          // ここでは送信しない（エラーpushの重複を防ぎ、月200通のpush制限を節約）
           handleImageMessage(event).catch(error => {
             console.error("Image processing error:", error);
-            // エラー時もユーザーに通知
-            client.pushMessage(targetId, {
-              type: "text",
-              text: "❌ 画像処理中にエラーが発生しました。もう一度お試しください。",
-            }).catch(console.error);
           });
         } else if (event.type === "message" && event.message.type === "text") {
           // テキストメッセージの処理
-          // 注: handleTextMessage内でreplyMessageを使用するため、ここでは送信しない
-
-          // バックグラウンドで処理実行
+          // 注: handleTextMessage内でreplyMessage（無料）を使用するため、ここでは送信しない
+          // エラー時のユーザー通知もhandleTextMessage内で行う（エラーpushの重複を防ぐ）
           handleTextMessage(event).catch(error => {
             console.error("Text processing error:", error);
-            const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
-            client.pushMessage(targetId, {
-              type: "text",
-              text: "❌ テキスト処理中にエラーが発生しました。もう一度お試しください。",
-            }).catch(console.error);
           });
         } else if (event.type === "postback") {
           // Postbackイベント処理
@@ -209,8 +198,9 @@ async function handleImageMessage(event: any) {
   const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB limit
   const MAX_PROCESSING_TIME = 30000; // 30 seconds
 
-  // 注: 受信確認メッセージはwebhookハンドラーで既に送信済み（pushMessage）
-  // ここではreplyMessageを使用しない（重複メッセージを防ぐため）
+  // 注: 受信確認メッセージはwebhookハンドラーで既に送信済み（replyMessage・無料）
+  // OCR処理は時間がかかりreplyTokenの有効期限（約1分）を超える可能性があるため、
+  // 完了通知・エラー通知はpushMessageを使用する
 
   try {
     // Process image in background (don't await)
@@ -1232,23 +1222,16 @@ async function handleTextMessage(event: any) {
 
     console.log(`=== TEXT PROCESSING: Successfully parsed expense:`, parsed);
 
-    // 即座に処理中のメッセージを返す
+    // 注: 中間メッセージ（「💬 登録中です...」）は送信しない。
+    // replyTokenを最終のFlex Message通知に温存し、replyMessage（無料）で
+    // 送信することでpushMessage（月200通制限）の消費を1通節約する
     const targetId = event.source.type === "group"
       ? event.source.groupId
       : event.source.userId;
 
-    try {
-      await client.replyMessage(event.replyToken, {
-        type: "text",
-        text: "💬 登録中です...",
-      });
-    } catch (replyError) {
-      console.warn("Failed to send processing confirmation:", replyError);
-    }
-
     // Process expense registration
     try {
-      await processExpenseInBackground(event, parsed);
+      await processExpenseInBackground(event, parsed, event.replyToken);
     } catch (error) {
       console.error("Background expense processing failed:", error);
       // Send error notification
@@ -1280,7 +1263,11 @@ async function handleTextMessage(event: any) {
 const userProfileCache = new Map<string, { profile: any; groups: any[]; timestamp: number }>();
 const CACHE_TTL = 15 * 60 * 1000; // 15分
 
-async function processExpenseInBackground(event: any, parsed: any) {
+async function processExpenseInBackground(
+  event: any,
+  parsed: any,
+  replyToken?: string
+) {
   try {
     console.log("Starting optimized background expense processing...");
 
@@ -1496,10 +1483,24 @@ async function processExpenseInBackground(event: any, parsed: any) {
       console.error(`PROFILE ERROR (${context}): Failed to get user profile for ${event.source.userId}`, profileFetchError);
 
       const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
-      await client.pushMessage(targetId, {
-        type: "text",
+      const profileErrorMessage = {
+        type: "text" as const,
         text: "⚠️ ユーザー情報の取得に失敗しました。\n\nしばらく待ってから再度お試しください。\n\n問題が継続する場合は、LINEアプリを再起動してください。"
-      });
+      };
+
+      // replyToken（無料）を優先使用し、失敗時のみpushMessageにフォールバック
+      let errorNotified = false;
+      if (replyToken) {
+        try {
+          await client.replyMessage(replyToken, profileErrorMessage);
+          errorNotified = true;
+        } catch (replyError) {
+          console.warn("replyMessage failed for profile error, falling back to pushMessage:", replyError);
+        }
+      }
+      if (!errorNotified) {
+        await client.pushMessage(targetId, profileErrorMessage);
+      }
       return; // 処理を中断（データは書き込まない）
     }
     
@@ -1604,7 +1605,9 @@ async function processExpenseInBackground(event: any, parsed: any) {
         payerName: userDisplayName,
       };
 
-      await sendTextExpenseNotification(targetId, textExpenseInfo);
+      // replyToken（無料・月200通制限の対象外）を優先使用し、
+      // 期限切れ等で失敗した場合のみpushMessageにフォールバック
+      await sendTextExpenseNotification(targetId, textExpenseInfo, replyToken);
     }
 
     console.log("Background expense processing completed successfully");
@@ -2225,7 +2228,7 @@ gmailRouter.post("/force-process/:messageId", adminApiLimiter as any, requireAdm
     if (!messageId) {
       return res.status(400).json({ error: "messageId is required" });
     }
-    const result = await forceProcessMessage(messageId);
+    const result = await forceProcessMessage(messageId as string);
     res.json(result);
   } catch (error) {
     console.error("Failed to force process:", error);
