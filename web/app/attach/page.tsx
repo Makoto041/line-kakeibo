@@ -7,7 +7,6 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
 import dayjs from "dayjs";
 
-// Suspense boundary for useSearchParams（ビルドエラー防止）
 export default function AttachPage() {
   return (
     <Suspense fallback={<AttachPageLoading />}>
@@ -18,10 +17,11 @@ export default function AttachPage() {
 
 function AttachPageLoading() {
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-        <p className="mt-4 text-gray-600">読み込み中...</p>
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="liquid-bg" aria-hidden="true" />
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-8 h-8 border-2 border-emerald-200 border-t-emerald-600 rounded-full animate-spin" />
+        <p className="text-sm text-gray-400">読み込み中...</p>
       </div>
     </div>
   );
@@ -58,7 +58,6 @@ function AttachPageContent() {
   const [replacing, setReplacing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 支出データの取得
   useEffect(() => {
     const fetchExpense = async () => {
       if (!expenseId) {
@@ -101,7 +100,6 @@ function AttachPageContent() {
     fetchExpense();
   }, [expenseId]);
 
-  // ファイル選択時の処理
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -123,7 +121,6 @@ function AttachPageContent() {
     reader.readAsDataURL(file);
   };
 
-  // アップロード処理
   const handleUpload = async () => {
     if (!selectedFile || !expenseId) return;
 
@@ -136,7 +133,6 @@ function AttachPageContent() {
         throw new Error("Firebaseの初期化に失敗しました。");
       }
 
-      // パス: receipts/{expenseId}/{timestamp}_{filename}
       const timestamp = Date.now();
       const safeName = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const storageRef = ref(storage, `receipts/${expenseId}/${timestamp}_${safeName}`);
@@ -146,7 +142,6 @@ function AttachPageContent() {
       });
       const downloadUrl = await getDownloadURL(storageRef);
 
-      // 支出ドキュメントに receiptUrl を保存
       await updateDoc(doc(db, "expenses", expenseId), {
         receiptUrl: downloadUrl,
         updatedAt: new Date(),
@@ -176,144 +171,160 @@ function AttachPageContent() {
   const showUploadForm = !hasReceipt || replacing;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
-      <div className="bg-white shadow-sm">
-        <div className="max-w-lg mx-auto px-4 py-4">
-          <h1 className="text-xl font-bold text-gray-900">📎 レシート添付</h1>
-        </div>
-      </div>
+    <div className="min-h-screen">
+      <div className="liquid-bg" aria-hidden="true" />
 
-      <main className="max-w-lg mx-auto px-4 py-6 space-y-6">
+      {/* Glass header */}
+      <header className="sticky top-0 z-40">
+        <div className="glass-strong border-x-0 border-t-0 rounded-none">
+          <div className="flex items-center h-12 px-4 max-w-lg mx-auto">
+            <div className="flex items-center gap-2">
+              <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+              </svg>
+              <h1 className="text-base font-bold text-gray-900">レシート添付</h1>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-lg mx-auto px-4 py-6 space-y-5">
+        {/* Error message */}
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-red-800 text-sm">{error}</p>
+          <div className="glass-card rounded-2xl px-4 py-3 text-sm font-medium text-center text-red-700 border-red-200/50">
+            {error}
           </div>
         )}
 
         {expense && (
           <>
-            {/* 支出概要 */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-              <h2 className="text-sm font-medium text-gray-500 mb-3">対象の支出</h2>
-              <p className="text-lg font-semibold text-gray-900 break-words">
-                {expense.description}
-              </p>
-              <p className="text-2xl font-bold text-red-600 mt-1">
+            {/* Expense summary - hero card */}
+            <div className="glass-hero rounded-3xl p-5">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">対象の支出</p>
+              <p className="text-base font-semibold text-gray-900 break-words">{expense.description}</p>
+              <p className="text-3xl font-bold text-gray-900 mt-1 tabular-nums tracking-tight">
                 ¥{expense.amount.toLocaleString()}
               </p>
-              <p className="text-sm text-gray-600 mt-1">
-                {expense.date
-                  ? dayjs(expense.date).format("YYYY年M月D日")
-                  : "日付不明"}
-                {expense.category ? ` ・ ${expense.category}` : ""}
-              </p>
+              <div className="flex items-center gap-2 mt-3">
+                <span className="glass-inset rounded-full px-3 py-1 text-xs text-gray-500">
+                  {expense.date
+                    ? dayjs(expense.date).format("YYYY年M月D日")
+                    : "日付不明"}
+                </span>
+                {expense.category && (
+                  <span className="glass-accent rounded-full px-3 py-1 text-xs text-emerald-700">
+                    {expense.category}
+                  </span>
+                )}
+              </div>
             </div>
 
-            {/* アップロード完了メッセージ */}
+            {/* Upload success message */}
             {uploadDone && (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <p className="text-green-800 text-sm font-medium">
-                  ✅ レシートを添付しました！このページは閉じて構いません。
-                </p>
+              <div className="glass-accent rounded-2xl px-4 py-3 text-sm font-medium text-center text-emerald-700">
+                レシートを添付しました！このページは閉じて構いません。
               </div>
             )}
 
-            {/* 既存レシートのプレビュー */}
+            {/* Existing receipt preview */}
             {hasReceipt && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-                <h2 className="text-sm font-medium text-gray-500 mb-3">
-                  添付済みのレシート
-                </h2>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                {expense.receiptUrl && isSafeImageUrl(expense.receiptUrl) && (
-                  <img
-                    src={expense.receiptUrl}
-                    alt="添付済みレシート"
-                    className="w-full rounded-lg border border-gray-200"
-                  />
-                )}
-                {!replacing && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReplacing(true);
-                      setUploadDone(false);
-                    }}
-                    className="mt-4 w-full bg-gray-500 text-white px-4 py-3 rounded-lg text-sm font-medium hover:bg-gray-600 transition-colors"
-                  >
-                    🔄 レシートを差し替える
-                  </button>
-                )}
+              <div className="glass-card rounded-3xl overflow-hidden">
+                <div className="px-5 pt-4 pb-3">
+                  <p className="text-xs font-medium text-gray-500">添付済みのレシート</p>
+                </div>
+                <div className="px-5 pb-5">
+                  {expense.receiptUrl && isSafeImageUrl(expense.receiptUrl) && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={expense.receiptUrl}
+                      alt="添付済みレシート"
+                      className="w-full rounded-2xl"
+                    />
+                  )}
+                  {!replacing && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReplacing(true);
+                        setUploadDone(false);
+                      }}
+                      className="pressable mt-4 w-full bg-gray-500/80 text-white py-3 rounded-full text-sm font-medium hover:bg-gray-600/80 transition-colors"
+                    >
+                      レシートを差し替える
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
-            {/* アップロードフォーム */}
+            {/* Upload form */}
             {showUploadForm && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-4">
-                <h2 className="text-sm font-medium text-gray-500">
-                  {hasReceipt ? "新しいレシートを選択" : "レシート画像を選択"}
-                </h2>
+              <div className="glass-card rounded-3xl overflow-hidden">
+                <div className="px-5 pt-4 pb-3">
+                  <p className="text-xs font-medium text-gray-500">
+                    {hasReceipt ? "新しいレシートを選択" : "レシート画像を選択"}
+                  </p>
+                </div>
 
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
+                <div className="px-5 pb-5 space-y-4">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
 
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                >
-                  <span className="text-3xl block mb-2">📷</span>
-                  <span className="text-sm text-gray-600">
-                    タップして撮影 / 画像を選択
-                  </span>
-                </button>
-
-                {previewDataUrl && (
-                  <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-2">
-                      プレビュー
-                    </h3>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={previewDataUrl}
-                      alt="選択した画像のプレビュー"
-                      className="w-full rounded-lg border border-gray-200"
-                    />
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  onClick={handleUpload}
-                  disabled={!selectedFile || uploading}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
-                    !selectedFile || uploading
-                      ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                      : "bg-blue-600 text-white hover:bg-blue-700"
-                  }`}
-                >
-                  {uploading ? "アップロード中..." : "⬆️ アップロードする"}
-                </button>
-
-                {replacing && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setReplacing(false);
-                      setSelectedFile(null);
-                      setPreviewDataUrl(null);
-                    }}
-                    className="w-full bg-white text-gray-600 border border-gray-300 px-4 py-3 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="pressable w-full glass-inset border-2 border-dashed border-white/60 rounded-2xl p-6 text-center hover:bg-white/50 transition-colors"
                   >
-                    キャンセル
+                    <div className="glass-accent w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <svg className="w-7 h-7 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
+                      </svg>
+                    </div>
+                    <p className="text-sm text-gray-600 font-medium">タップして撮影 / 画像を選択</p>
                   </button>
-                )}
+
+                  {previewDataUrl && (
+                    <div className="glass-inset rounded-2xl p-3">
+                      <p className="text-xs font-medium text-gray-500 mb-2">プレビュー</p>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={previewDataUrl}
+                        alt="選択した画像のプレビュー"
+                        className="w-full rounded-xl"
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleUpload}
+                    disabled={!selectedFile || uploading}
+                    className="pressable w-full bg-emerald-600/90 text-white py-3 rounded-full text-sm font-medium shadow-sm hover:bg-emerald-600 disabled:opacity-50 transition-colors"
+                  >
+                    {uploading ? "アップロード中..." : "アップロードする"}
+                  </button>
+
+                  {replacing && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReplacing(false);
+                        setSelectedFile(null);
+                        setPreviewDataUrl(null);
+                      }}
+                      className="pressable w-full glass-card py-3 rounded-full text-sm font-medium text-gray-600 hover:bg-white/60 transition-colors"
+                    >
+                      キャンセル
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </>
