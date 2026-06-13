@@ -7,6 +7,7 @@ import { getDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, D
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import Header from '../../components/Header';
+import PreviewModeBanner from '../../components/PreviewModeBanner';
 import dayjs from 'dayjs';
 
 // 予算設定インターフェース
@@ -211,6 +212,8 @@ export default function Settings() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
       <Header title="設定" getUrlWithLineId={getUrlWithLineId} currentPage="settings" />
+
+      {(user.uid === 'guest' || user.isAnonymous) && <PreviewModeBanner />}
 
       <main className="max-w-2xl mx-auto px-4 py-6 pb-24">
         {/* Message */}

@@ -1,11 +1,14 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useLineAuth, useMonthlyStats, useBudgetConfig, ExpenseStats, BudgetConfig } from '../lib/hooks';
 import { CategoryPieChart, DailyLineChart } from '../components/Charts';
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
 import Header from '../components/Header';
+import PreviewModeBanner from '../components/PreviewModeBanner';
+import GuestGuide from '../components/GuestGuide';
+import { getSampleStats } from '../lib/sampleData';
 import dayjs from 'dayjs';
 import { db } from '../lib/firebase';
 
@@ -264,6 +267,9 @@ export default function Dashboard() {
 
   const { config: budgetConfig, loading: budgetLoading, error: budgetError, refetch: refetchBudget } = useBudgetConfig(user?.uid || null);
 
+  // ゲスト（プレビュー）モード用のサンプル統計データ
+  const sampleStats = useMemo(() => getSampleStats(), []);
+
   useEffect(() => {
     if (typeof window !== 'undefined' && !db) {
       setFirebaseError(true);
@@ -343,8 +349,14 @@ export default function Dashboard() {
     );
   }
 
-  const totalExpense = stats?.totalAmount || 0;
-  const expenseCount = stats?.expenseCount || 0;
+  // ゲスト（プレビュー）モード判定: lineIdなしで開かれた場合
+  const isGuest = user?.uid === 'guest' || user?.isAnonymous === true;
+
+  // ゲストモード時はサンプルデータを表示してアプリの見た目を体験できるようにする
+  const displayStats = isGuest ? sampleStats : stats;
+
+  const totalExpense = displayStats?.totalAmount || 0;
+  const expenseCount = displayStats?.expenseCount || 0;
   const days = dayjs(effectiveRange.endDate).diff(dayjs(effectiveRange.startDate), 'day') + 1;
   const dailyAverage = totalExpense > 0 ? Math.round(totalExpense / days) : 0;
 
@@ -355,6 +367,8 @@ export default function Dashboard() {
         getUrlWithLineId={getUrlWithLineId}
         currentPage="dashboard"
       />
+
+      {isGuest && <PreviewModeBanner />}
 
       <main className="max-w-4xl mx-auto px-4 py-6 pb-24">
         {/* Date Navigation */}
@@ -410,6 +424,19 @@ export default function Dashboard() {
           </div>
         ) : (
           <>
+            {/* Sample Data Notice (Guest Mode) */}
+            {isGuest && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-4 flex justify-center"
+              >
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-100 text-violet-700 ring-1 ring-violet-200 text-xs font-medium">
+                  ✨ 以下はサンプルデータです — 実際の画面イメージをお試しいただけます
+                </span>
+              </motion.div>
+            )}
+
             {/* Summary Cards */}
             <div className="grid grid-cols-3 gap-3 mb-6">
               <SummaryCard
@@ -459,12 +486,12 @@ export default function Dashboard() {
               </div>
             ) : (
               <div className="mb-6">
-                <BudgetProgress stats={stats} budgetConfig={budgetConfig} />
+                <BudgetProgress stats={displayStats} budgetConfig={budgetConfig} />
               </div>
             )}
 
             {/* Charts */}
-            {stats && stats.totalAmount > 0 ? (
+            {displayStats && displayStats.totalAmount > 0 ? (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
@@ -472,7 +499,7 @@ export default function Dashboard() {
                   transition={{ delay: 0.3 }}
                   className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-5"
                 >
-                  <CategoryPieChart data={stats.categoryTotals} />
+                  <CategoryPieChart data={displayStats.categoryTotals} />
                 </motion.div>
 
                 <motion.div
@@ -482,7 +509,7 @@ export default function Dashboard() {
                   className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-5"
                 >
                   <DailyLineChart
-                    data={stats.dailyTotals}
+                    data={displayStats.dailyTotals}
                     startDate={effectiveRange.startDate}
                     endDate={effectiveRange.endDate}
                     mode={dateSettings.mode}
@@ -513,6 +540,18 @@ export default function Dashboard() {
                     <li>3. 自動で読み取り・保存</li>
                   </ol>
                 </div>
+              </motion.div>
+            )}
+
+            {/* Guest Usage Guide */}
+            {isGuest && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.4 }}
+                className="mt-6"
+              >
+                <GuestGuide />
               </motion.div>
             )}
 

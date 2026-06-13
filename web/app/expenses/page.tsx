@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
 import Header from "../../components/Header";
+import PreviewModeBanner from "../../components/PreviewModeBanner";
+import GuestGuide from "../../components/GuestGuide";
 import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
@@ -59,6 +61,9 @@ function ExpensesPageContent() {
 
   // LINE IDがある場合は直接それを使用、なければuser.uidを使用
   const effectiveUserId = lineIdFromUrl || user?.uid || null;
+
+  // ゲスト（プレビュー）モード判定: lineIdなしで開かれた場合
+  const isGuest = !lineIdFromUrl && (user?.uid === 'guest' || user?.isAnonymous === true);
 
   // Load date settings from Firestore on mount
   useEffect(() => {
@@ -554,11 +559,13 @@ function ExpensesPageContent() {
         <div className="absolute top-40 right-10 w-72 h-72 bg-gradient-to-r from-purple-300/20 to-pink-300/20 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000 pointer-events-none"></div>
         <div className="absolute -bottom-8 left-20 w-72 h-72 bg-gradient-to-r from-pink-300/20 to-orange-300/20 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000 pointer-events-none"></div>
       </div>
-      <Header 
-        title="支出一覧" 
+      <Header
+        title="支出一覧"
         getUrlWithLineId={getUrlWithLineId}
         currentPage="expenses"
       />
+
+      {isGuest && <PreviewModeBanner />}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Filters - Compact Style */}
@@ -737,31 +744,51 @@ function ExpensesPageContent() {
             <p className="text-red-800">{error}</p>
           </div>
         ) : sortedExpenses.length === 0 ? (
-          <div className="bg-white rounded-lg shadow-sm border p-12 text-center">
-            <div className="text-gray-400 mb-4">
-              <svg
-                className="w-16 h-16 mx-auto"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
+          isGuest ? (
+            // ゲスト（プレビュー）モード: 使い方ガイドを表示
+            <div className="max-w-2xl mx-auto space-y-6">
+              <div className="bg-white/90 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-6 sm:p-8 text-center">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-green-100 to-emerald-100 flex items-center justify-center text-3xl">
+                  📒
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                  ここにあなたの支出が一覧表示されます
+                </h3>
+                <p className="text-sm text-gray-600 leading-relaxed">
+                  いまはプレビューモードのためデータがありません。
+                  <br className="hidden sm:block" />
+                  LINEボットから届くリンクで開くと、記録した支出の確認・編集ができます。
+                </p>
+              </div>
+              <GuestGuide />
             </div>
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">
-              支出データがありません
-            </h3>
-            <p className="text-gray-600">
-              {filter === "all"
-                ? "LINEでレシートを送信して始めましょう！"
-                : "選択した条件に一致する支出がありません"}
-            </p>
-          </div>
+          ) : (
+            <div className="bg-white rounded-lg shadow-sm border p-12 text-center">
+              <div className="text-gray-400 mb-4">
+                <svg
+                  className="w-16 h-16 mx-auto"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                支出データがありません
+              </h3>
+              <p className="text-gray-600">
+                {filter === "all"
+                  ? "LINEでレシートを送信して始めましょう！"
+                  : "選択した条件に一致する支出がありません"}
+              </p>
+            </div>
+          )
         ) : (
           <div className="space-y-4">
             {sortedExpenses.map((expense) => (
