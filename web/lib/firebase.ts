@@ -19,7 +19,7 @@ const config: FirebaseConfig = {
   apiKey: (process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "").trim(),
   authDomain: (process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "line-kakeibo-0410.firebaseapp.com").trim(),
   projectId: (process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "line-kakeibo-0410").trim(),
-  storageBucket: (process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "line-kakeibo-0410.appspot.com").trim(),
+  storageBucket: (process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "line-kakeibo-0410.firebasestorage.app").trim(),
   messagingSenderId: (process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "440748785600").trim(),
   appId: (process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "").trim(),
   measurementId: (process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || "G-PLNC7GY160").trim(),
