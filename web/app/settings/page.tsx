@@ -296,7 +296,7 @@ export default function Settings() {
                   step="5"
                   value={budgetConfig.alertThreshold}
                   onChange={(e) => setBudgetConfig(prev => ({ ...prev, alertThreshold: parseInt(e.target.value) }))}
-                  className="flex-1"
+                  className="h-2 flex-1 cursor-pointer accent-accent"
                 />
                 <span className="w-14 text-center font-semibold text-fg">
                   {budgetConfig.alertThreshold}%
@@ -370,7 +370,7 @@ export default function Settings() {
                   value="monthly"
                   checked={dateSettings.mode === 'monthly'}
                   onChange={(e) => setDateSettings({ ...dateSettings, mode: e.target.value as DateRangeSettings['mode'] })}
-                  className="h-4 w-4 text-accent focus:ring-ring"
+                  className="h-4 w-4 accent-accent"
                 />
                 <span className="ml-3 text-sm text-fg">月単位で表示</span>
               </label>
@@ -382,7 +382,7 @@ export default function Settings() {
                   value="customStart"
                   checked={dateSettings.mode === 'customStart'}
                   onChange={(e) => setDateSettings({ ...dateSettings, mode: e.target.value as DateRangeSettings['mode'] })}
-                  className="h-4 w-4 text-accent focus:ring-ring"
+                  className="h-4 w-4 accent-accent"
                 />
                 <span className="ml-3 text-sm text-fg">指定日を月初として表示</span>
               </label>
@@ -394,7 +394,7 @@ export default function Settings() {
                   value="custom"
                   checked={dateSettings.mode === 'custom'}
                   onChange={(e) => setDateSettings({ ...dateSettings, mode: e.target.value as DateRangeSettings['mode'] })}
-                  className="h-4 w-4 text-accent focus:ring-ring"
+                  className="h-4 w-4 accent-accent"
                 />
                 <span className="ml-3 text-sm text-fg">期間を指定して表示</span>
               </label>
