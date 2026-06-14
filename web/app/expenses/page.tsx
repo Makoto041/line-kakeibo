@@ -1076,7 +1076,7 @@ function ExpensesPageContent() {
                           </a>
                         ) : (
                           <a
-                            href={`/attach?expenseId=${expense.id}${lineIdFromUrl ? `&lineId=${encodeURIComponent(lineIdFromUrl)}` : ""}`}
+                            href={`/attach?expenseId=${encodeURIComponent(expense.id)}`}
                             className="bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-0.5 rounded hover:bg-gray-200 transition-colors cursor-pointer"
                             title="レシートを添付"
                           >
