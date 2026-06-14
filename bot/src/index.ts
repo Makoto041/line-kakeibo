@@ -112,7 +112,11 @@ app.post("/webhook", async (req: Request, res: Response) => {
           // テキストメッセージの処理
           // 注: handleTextMessage内でreplyMessage（無料）を使用するため、ここでは送信しない
           // エラー時のユーザー通知もhandleTextMessage内で行う（エラーpushの重複を防ぐ）
-          handleTextMessage(event).catch(error => {
+          //
+          // 重要: 必ず await する。2nd-gen関数(Cloud Run)は HTTP 応答(res.end)後に
+          // インスタンスのCPUが凍結されるため、fire-and-forgetだと返信前に処理が止まり、
+          // 解凍時には replyToken が失効して返信が届かない。await して応答前に返信を送る。
+          await handleTextMessage(event).catch(error => {
             console.error("Text processing error:", error);
           });
         } else if (event.type === "postback") {
@@ -1286,10 +1290,8 @@ export const webhook = onRequest(
     memory: "512MiB", // Increased from 256MiB to handle image processing
     timeoutSeconds: 540, // Increased from 300s to 540s (9 minutes max)
     invoker: "public",
-    // GITHUB_TOKEN は未登録のためデプロイがブロックされていた。GitHub Issue自動作成は
-    // 未設定でも安全に「未設定」メッセージを返す実装のため、ここでは宣言しない。
-    // （Issue連携を使う場合は GITHUB_TOKEN シークレットを登録のうえ再追加する）
-    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY"],
+    // GITHUB_TOKEN: LINEフィードバック→GitHub Issue自動作成に使用（issueCreator）。
+    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "GITHUB_TOKEN"],
   },
   app
 );
