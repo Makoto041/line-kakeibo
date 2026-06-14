@@ -1104,44 +1104,42 @@ function ExpensesPageContent() {
                       onChange={handleEditInputChange}
                       className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      {availableMembers.length === 0 ? (
-                        (() => {
-                          const fallbackUsers = new Map<string, string>();
+                      {(() => {
+                        // 候補を重複排除で構築し、現在の支払い者と入力者を必ず含める
+                        // （選択中の値に対応する option が消えて意図しない支払い者へ
+                        // 変わってしまうのを防ぐ）。
+                        const map = new Map<string, string>();
+                        if (editingExpenseData?.lineId) {
+                          map.set(
+                            editingExpenseData.lineId,
+                            `${editingExpenseData.userDisplayName || "入力者"}（入力者）`,
+                          );
+                        }
+                        if (availableMembers.length > 0) {
+                          availableMembers.forEach((member) => {
+                            const label =
+                              member.source === "group" ? "（グループメンバー）"
+                              : member.source === "group-history" ? "（このグループ）"
+                              : member.source === "all-history" ? "（他グループ）"
+                              : "";
+                            if (!map.has(member.lineId)) map.set(member.lineId, `${member.displayName}${label}`);
+                          });
+                        } else {
                           expenses.forEach((exp) => {
-                            if (exp.lineId !== editingExpenseData?.lineId && exp.userDisplayName && exp.userDisplayName !== "個人") {
-                              fallbackUsers.set(exp.lineId, exp.userDisplayName);
+                            if (exp.userDisplayName && exp.userDisplayName !== "個人" && !map.has(exp.lineId)) {
+                              map.set(exp.lineId, `${exp.userDisplayName}（支出履歴から）`);
                             }
                           });
-                          return Array.from(fallbackUsers.entries()).map(([lineId, displayName]) => (
-                            <option key={lineId} value={lineId}>
-                              {displayName}（支出履歴から）
-                            </option>
-                          ));
-                        })()
-                      ) : (
-                        availableMembers.map((member) => {
-                          let label = '';
-                          switch (member.source) {
-                            case 'group': label = '（グループメンバー）'; break;
-                            case 'group-history': label = '（このグループ）'; break;
-                            case 'all-history': label = '（他グループ）'; break;
-                            default: label = '';
-                          }
-                          return (
-                            <option key={member.lineId} value={member.lineId}>
-                              {member.displayName} {label}
-                            </option>
-                          );
-                        })
-                      )}
-                      {editForm.payerId &&
-                        editForm.payerId !== editingExpenseData?.lineId &&
-                        !availableMembers.some((member) => member.lineId === editForm.payerId) &&
-                        !expenses.some((exp) => exp.lineId === editForm.payerId) && (
-                          <option key={editForm.payerId} value={editForm.payerId}>
-                            {editForm.payerDisplayName || "不明なユーザー"}
+                        }
+                        if (editForm.payerId && !map.has(editForm.payerId)) {
+                          map.set(editForm.payerId, editForm.payerDisplayName || "不明なユーザー");
+                        }
+                        return Array.from(map.entries()).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
                           </option>
-                        )}
+                        ));
+                      })()}
                     </select>
                     <p className="mt-1 text-xs text-muted">デフォルトは入力者と同じです</p>
                   </div>
