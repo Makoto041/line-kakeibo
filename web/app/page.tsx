@@ -21,6 +21,7 @@ import { getCategoryVisual } from '../lib/categoryVisuals';
 import PreviewModeBanner from '../components/PreviewModeBanner';
 import GuestGuide from '../components/GuestGuide';
 import { getSampleStats } from '../lib/sampleData';
+import { getCached, setCached, hasCached } from '../lib/swrCache';
 import dayjs from 'dayjs';
 import { db } from '../lib/firebase';
 
@@ -211,9 +212,13 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
 /* ------------------------------- Page ----------------------------------- */
 export default function Dashboard() {
   const { user, loading: authLoading } = useLineAuth();
+  const dsCacheKey = user?.uid ? `dateSettings:${user.uid}` : '';
   const [currentDate, setCurrentDate] = useState(dayjs());
-  const [dateSettings, setDateSettings] = useState<DateRangeSettings>({ mode: 'monthly' });
-  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [dateSettings, setDateSettings] = useState<DateRangeSettings>(
+    () => (dsCacheKey && getCached<DateRangeSettings>(dsCacheKey)) || { mode: 'monthly' }
+  );
+  // 設定がキャッシュ済みなら全画面スピナーを出さない（再訪時の点滅防止）
+  const [settingsLoading, setSettingsLoading] = useState(() => !(dsCacheKey && hasCached(dsCacheKey)));
   const [firebaseError, setFirebaseError] = useState(false);
 
   const { config: budgetConfig, loading: budgetLoading, error: budgetError, refetch: refetchBudget } =
@@ -231,12 +236,22 @@ export default function Dashboard() {
         setSettingsLoading(false);
         return;
       }
-      try {
+      const key = `dateSettings:${user.uid}`;
+      const cached = getCached<DateRangeSettings>(key);
+      // キャッシュがあれば即表示して裏で再取得（スピナーを出さない）
+      if (cached) {
+        setDateSettings(cached);
+        setSettingsLoading(false);
+      } else {
         setSettingsLoading(true);
-        setDateSettings(await getDateRangeSettings(user.uid));
+      }
+      try {
+        const fresh = await getDateRangeSettings(user.uid);
+        setCached(key, fresh);
+        setDateSettings(fresh);
       } catch (e) {
         console.error('Failed to load date settings:', e);
-        setDateSettings({ mode: 'monthly' });
+        if (!cached) setDateSettings({ mode: 'monthly' });
       } finally {
         setSettingsLoading(false);
       }

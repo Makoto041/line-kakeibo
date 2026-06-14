@@ -10,6 +10,7 @@ import { db } from '../../lib/firebase';
 import PreviewModeBanner from '../../components/PreviewModeBanner';
 import { getCategoryVisual } from '../../lib/categoryVisuals';
 import { CANONICAL_CATEGORIES } from '../../lib/categoryNormalization';
+import { getCached, setCached } from '../../lib/swrCache';
 import dayjs from 'dayjs';
 
 // 予算設定インターフェース
@@ -56,19 +57,25 @@ function normalizeBudgetConfig(data: unknown): BudgetConfig {
 export default function Settings() {
   const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
 
+  // 再訪時の全画面スピナーを避けるためのキャッシュキー
+  const dsCacheKey = user?.uid ? `dateSettings:${user.uid}` : '';
+  const sbCacheKey = user?.uid ? `settingsBudget:${user.uid}` : '';
+  const cachedDate = dsCacheKey ? getCached<DateRangeSettings>(dsCacheKey) : undefined;
+  const cachedBudget = sbCacheKey ? getCached<BudgetConfig>(sbCacheKey) : undefined;
+
   // 期間設定
-  const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
-  const [tempStartDate, setTempStartDate] = useState('');
-  const [tempEndDate, setTempEndDate] = useState('');
-  const [tempStartDay, setTempStartDay] = useState(1);
+  const [dateSettings, setDateSettings] = useState<DateRangeSettings>(cachedDate || DEFAULT_SETTINGS);
+  const [tempStartDate, setTempStartDate] = useState(cachedDate?.startDate || '');
+  const [tempEndDate, setTempEndDate] = useState(cachedDate?.endDate || '');
+  const [tempStartDay, setTempStartDay] = useState(cachedDate?.customStartDay || 1);
 
   // 予算設定
-  const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(defaultBudgetConfig);
-  const [budgetHasLoaded, setBudgetHasLoaded] = useState(false);
+  const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(cachedBudget || defaultBudgetConfig);
+  const [budgetHasLoaded, setBudgetHasLoaded] = useState(!!cachedBudget);
   const [budgetLoadError, setBudgetLoadError] = useState(false);
 
-  // 共通
-  const [loading, setLoading] = useState(true);
+  // 共通（date・budget ともキャッシュ済みならスピナーを出さない）
+  const [loading, setLoading] = useState(!(cachedDate && cachedBudget));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'period' | 'budget'>('budget');
@@ -80,12 +87,15 @@ export default function Settings() {
         return;
       }
 
+      // キャッシュがあれば即表示し、裏で再取得（スピナーを出さない）
+      const hadCache = !!(getCached(`dateSettings:${user.uid}`) && getCached(`settingsBudget:${user.uid}`));
       try {
-        setLoading(true);
+        if (!hadCache) setLoading(true);
 
         // 期間設定の読み込み
         await migrateLocalToFirestore(user.uid);
         const loadedDateSettings = await getDateRangeSettings(user.uid);
+        setCached(`dateSettings:${user.uid}`, loadedDateSettings);
         setDateSettings(loadedDateSettings);
         setTempStartDate(loadedDateSettings.startDate || '');
         setTempEndDate(loadedDateSettings.endDate || '');
@@ -97,6 +107,7 @@ export default function Settings() {
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
             const normalizedConfig = normalizeBudgetConfig(docSnap.data());
+            setCached(`settingsBudget:${user.uid}`, normalizedConfig);
             setBudgetConfig(normalizedConfig);
           }
           setBudgetHasLoaded(true);
@@ -129,6 +140,8 @@ export default function Settings() {
 
     await saveDateRangeSettings(user.uid, newSettings);
     setDateSettings(newSettings);
+    // 保存後はキャッシュも更新（ホーム/再訪時に最新を即表示）
+    setCached(`dateSettings:${user.uid}`, newSettings);
   };
 
   const saveBudgetSettingsHandler = async () => {
@@ -149,6 +162,9 @@ export default function Settings() {
       ...budgetConfig,
       updatedAt: new Date(),
     });
+    // 保存後はキャッシュも更新（settings再訪・ホームの予算表示に即反映）
+    setCached(`settingsBudget:${user.uid}`, budgetConfig);
+    setCached(`budget:${user.uid}`, budgetConfig);
   };
 
   const handleSaveAll = async () => {
