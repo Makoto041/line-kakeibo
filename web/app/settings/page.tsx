@@ -9,6 +9,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import PreviewModeBanner from '../../components/PreviewModeBanner';
 import { getCategoryVisual } from '../../lib/categoryVisuals';
+import { CANONICAL_CATEGORIES } from '../../lib/categoryNormalization';
 import dayjs from 'dayjs';
 
 // 予算設定インターフェース
@@ -24,18 +25,9 @@ const defaultBudgetConfig: BudgetConfig = {
   alertThreshold: 20,
 };
 
-const defaultCategories = [
-  { id: 'food', name: '食費' },
-  { id: 'daily', name: '日用品' },
-  { id: 'transport', name: '交通費' },
-  { id: 'entertainment', name: '娯楽費' },
-  { id: 'utility', name: '光熱費' },
-  { id: 'communication', name: '通信費' },
-  { id: 'medical', name: '医療費' },
-  { id: 'clothing', name: '衣服費' },
-  { id: 'education', name: '教育費' },
-  { id: 'other', name: 'その他' },
-];
+// カテゴリ別予算の項目は正準カテゴリ（bot/分類器・支出データと統一）。
+// 予算は category.name をキーに保存するため、名称を揃えることで実支出と突き合う。
+const defaultCategories = CANONICAL_CATEGORIES.map((name) => ({ id: name, name }));
 
 function normalizeBudgetConfig(data: unknown): BudgetConfig {
   const raw = data as Partial<BudgetConfig> | undefined;
@@ -325,7 +317,7 @@ export default function Settings() {
                     <span className={`grid h-7 w-7 flex-shrink-0 place-items-center rounded-lg ${v.bg} ${v.fg}`}>
                       <Icon className="h-4 w-4" strokeWidth={2.1} />
                     </span>
-                    <span className="w-16 truncate text-sm text-fg">{category.name}</span>
+                    <span className="w-24 truncate text-sm text-fg">{category.name}</span>
                     <div className="relative flex-1">
                       <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted">¥</span>
                       <input
