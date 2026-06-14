@@ -304,7 +304,12 @@ export default function Dashboard() {
       : null;
 
   const prevTotal = isGuest ? 0 : prevStats?.totalAmount || 0;
-  const momPct = prevTotal > 0 ? Math.round(((totalExpense - prevTotal) / prevTotal) * 100) : null;
+  // 固定のカスタム期間では getEffectiveDateRange が prevDate を無視し、前期間が
+  // 現在と同一になる（＝自分自身と比較して常に0%）。その場合は前月比を出さない。
+  const momPct =
+    dateSettings.mode !== 'custom' && prevTotal > 0
+      ? Math.round(((totalExpense - prevTotal) / prevTotal) * 100)
+      : null;
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-5 md:px-8 md:py-7">
