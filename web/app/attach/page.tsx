@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Paperclip, Check, RefreshCw, Camera, Upload, Image as ImageIcon } from "lucide-react";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
 import { isSafeImageUrl } from "../../lib/imageUrl";
 import { compressImage } from "../../lib/imageCompress";
@@ -45,10 +45,19 @@ function AttachPageContent() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadDone, setUploadDone] = useState(false);
   const [replacing, setReplacing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  // アンマウント後の setState を防ぐ（アップロードはバックグラウンドで継続する）
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // 支出データの取得
   useEffect(() => {
@@ -115,11 +124,14 @@ function AttachPageContent() {
     reader.readAsDataURL(file);
   };
 
-  // アップロード処理
+  // アップロード処理（バックグラウンド／進捗表示）。
+  // resumable アップロードで進捗を表示し、完了時に Firestore へ receiptUrl を保存する。
+  // 完了処理はReactのマウント状態に依存しないため、ページを離れても継続する。
   const handleUpload = async () => {
     if (!selectedFile || !expenseId) return;
 
     setUploading(true);
+    setUploadProgress(0);
     setError(null);
 
     try {
@@ -142,30 +154,61 @@ function AttachPageContent() {
       const timestamp = Date.now();
       const safeName = uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const storageRef = ref(storage, `receipts/${expenseId}/${timestamp}_${safeName}`);
+      const targetExpenseId = expenseId;
 
-      await uploadBytes(storageRef, uploadFile, {
+      const task = uploadBytesResumable(storageRef, uploadFile, {
         contentType: uploadFile.type,
       });
-      const downloadUrl = await getDownloadURL(storageRef);
 
-      // 支出ドキュメントに receiptUrl を保存
-      await updateDoc(doc(db, "expenses", expenseId), {
-        receiptUrl: downloadUrl,
-        updatedAt: new Date(),
-      });
-
-      setExpense((prev) => (prev ? { ...prev, receiptUrl: downloadUrl } : prev));
-      setUploadDone(true);
-      setReplacing(false);
-      setSelectedFile(null);
-      setPreviewDataUrl(null);
+      task.on(
+        "state_changed",
+        (snapshot) => {
+          const pct = snapshot.totalBytes
+            ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
+            : 0;
+          if (mountedRef.current) setUploadProgress(pct);
+        },
+        (err) => {
+          console.error("Upload failed:", err);
+          if (mountedRef.current) {
+            setError(
+              "アップロードに失敗しました。" +
+                (err instanceof Error ? ` (${err.message})` : "")
+            );
+            setUploading(false);
+          }
+        },
+        async () => {
+          // 完了: ダウンロードURL取得 → Firestore保存（バックグラウンドでも実行される）
+          try {
+            const downloadUrl = await getDownloadURL(task.snapshot.ref);
+            await updateDoc(doc(db!, "expenses", targetExpenseId), {
+              receiptUrl: downloadUrl,
+              updatedAt: new Date(),
+            });
+            if (mountedRef.current) {
+              setExpense((prev) => (prev ? { ...prev, receiptUrl: downloadUrl } : prev));
+              setUploadDone(true);
+              setReplacing(false);
+              setSelectedFile(null);
+              setPreviewDataUrl(null);
+              setUploading(false);
+            }
+          } catch (err) {
+            console.error("Failed to finalize upload:", err);
+            if (mountedRef.current) {
+              setError("アップロードの保存に失敗しました。");
+              setUploading(false);
+            }
+          }
+        }
+      );
     } catch (err) {
       console.error("Upload failed:", err);
       setError(
         "アップロードに失敗しました。" +
           (err instanceof Error ? ` (${err.message})` : "")
       );
-    } finally {
       setUploading(false);
     }
   };
@@ -321,8 +364,22 @@ function AttachPageContent() {
                   className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-3 text-sm font-medium text-accent-fg transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <Upload className="h-4 w-4" />
-                  {uploading ? "アップロード中..." : "アップロードする"}
+                  {uploading ? `アップロード中... ${uploadProgress}%` : "アップロードする"}
                 </button>
+
+                {uploading && (
+                  <div className="space-y-1.5">
+                    <div className="relative h-1.5 overflow-hidden rounded-full bg-fg/10">
+                      <div
+                        className="h-full rounded-full bg-accent transition-[width] duration-200"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
+                    </div>
+                    <p className="text-center text-xs text-muted">
+                      バックグラウンドで送信中です。このページを離れても続行されます。
+                    </p>
+                  </div>
+                )}
 
                 {replacing && (
                   <button
