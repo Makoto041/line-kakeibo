@@ -20,6 +20,8 @@ import {
   Send,
   ListChecks,
   Link2 as LinkIcon,
+  RefreshCw,
+  ExternalLink,
 } from "lucide-react";
 import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
@@ -27,6 +29,7 @@ import PreviewModeBanner from "../../components/PreviewModeBanner";
 import GuestGuide from "../../components/GuestGuide";
 import { getCategoryVisual } from "../../lib/categoryVisuals";
 import { CANONICAL_CATEGORIES } from "../../lib/categoryNormalization";
+import { isSafeImageUrl, toSafeImageUrl } from "../../lib/imageUrl";
 import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
@@ -146,6 +149,8 @@ function ExpensesPageContent() {
   const [filter, setFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"date" | "amount">("date");
   const [editingExpense, setEditingExpense] = useState<string | null>(null);
+  // レシートのインラインプレビュー（新規タブで開かずモーダル表示）
+  const [receiptPreview, setReceiptPreview] = useState<{ url: string; expenseId: string } | null>(null);
   // Edit drawer accessibility: panel ref, latest-close ref, and the element to
   // restore focus to when the drawer closes.
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -971,18 +976,24 @@ function ExpensesPageContent() {
                           編集
                         </button>
 
-                        {/* レシート: 編集の隣に並べて発見しやすく */}
+                        {/* レシート: 編集の隣に並べて発見しやすく。新規タブではなくアプリ内でプレビュー */}
                         {expense.receiptUrl ? (
-                          <a
-                            href={expense.receiptUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              // URLを正規化し https/blob のみ採用（XSS対策・CodeQLサニタイズ）
+                              const safe = toSafeImageUrl(expense.receiptUrl);
+                              if (safe) setReceiptPreview({ url: safe, expenseId: expense.id });
+                            }}
                             className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-amber-500/12 px-3 py-2 text-sm font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
-                            title="レシート画像を開く"
+                            style={{ pointerEvents: "auto" }}
+                            title="レシートを表示"
                           >
                             <Paperclip className="h-4 w-4" />
                             レシート
-                          </a>
+                          </button>
                         ) : (
                           <a
                             href={`/attach?expenseId=${encodeURIComponent(expense.id)}`}
@@ -1177,6 +1188,70 @@ function ExpensesPageContent() {
                     キャンセル
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* レシートのインラインプレビュー（新規タブで開かず、その場で表示＋差し替え） */}
+        {receiptPreview && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="レシートプレビュー"
+          >
+            <div
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => setReceiptPreview(null)}
+              aria-hidden
+            />
+            <div className="glass-strong relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl shadow-glass">
+              <div className="flex items-center justify-between border-b border-line/60 px-4 py-3">
+                <h2 className="flex items-center gap-1.5 text-sm font-semibold text-fg">
+                  <Paperclip className="h-4 w-4 text-amber-500" />
+                  レシート
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setReceiptPreview(null)}
+                  className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-fg/5"
+                  aria-label="閉じる"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto bg-fg/[0.03] p-3">
+                {isSafeImageUrl(receiptPreview.url) ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={receiptPreview.url}
+                    alt="レシート"
+                    className="mx-auto max-h-[60vh] w-auto rounded-lg object-contain"
+                  />
+                ) : (
+                  <p className="py-10 text-center text-sm text-muted">画像を表示できません</p>
+                )}
+              </div>
+              <div className="flex gap-2 border-t border-line/60 p-3">
+                <a
+                  href={`/attach?expenseId=${encodeURIComponent(receiptPreview.expenseId)}${lineIdFromUrl ? `&lineId=${encodeURIComponent(lineIdFromUrl)}` : ""}`}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent/12 px-4 py-2.5 text-sm font-medium text-accent transition-colors hover:bg-accent/20"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  差し替え
+                </a>
+                {isSafeImageUrl(receiptPreview.url) && (
+                  <a
+                    href={receiptPreview.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-1.5 rounded-lg border border-line bg-card px-4 py-2.5 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    新しいタブ
+                  </a>
+                )}
               </div>
             </div>
           </div>

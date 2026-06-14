@@ -6,6 +6,7 @@ import { Paperclip, Check, RefreshCw, Camera, Upload, Image as ImageIcon } from 
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
+import { isSafeImageUrl } from "../../lib/imageUrl";
 import dayjs from "dayjs";
 
 // Suspense boundary for useSearchParams（ビルドエラー防止）
@@ -31,15 +32,6 @@ interface ExpenseSummary {
   date: string;
   category?: string;
   receiptUrl?: string;
-}
-
-function isSafeImageUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return ["blob:", "https:"].includes(parsed.protocol);
-  } catch {
-    return false;
-  }
 }
 
 function AttachPageContent() {
