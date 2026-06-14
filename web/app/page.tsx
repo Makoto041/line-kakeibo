@@ -5,7 +5,6 @@ import { motion } from 'framer-motion';
 import { useLineAuth, useMonthlyStats, useBudgetConfig, ExpenseStats, BudgetConfig } from '../lib/hooks';
 import { CategoryPieChart, DailyLineChart } from '../components/Charts';
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
-import Header from '../components/Header';
 import PreviewModeBanner from '../components/PreviewModeBanner';
 import GuestGuide from '../components/GuestGuide';
 import { getSampleStats } from '../lib/sampleData';
@@ -259,7 +258,7 @@ function SummaryCard({
 }
 
 export default function Dashboard() {
-  const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
+  const { user, loading: authLoading } = useLineAuth();
   const [currentDate, setCurrentDate] = useState(dayjs());
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>({ mode: 'monthly' });
   const [settingsLoading, setSettingsLoading] = useState(true);
@@ -362,12 +361,6 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
-      <Header
-        title="家計簿"
-        getUrlWithLineId={getUrlWithLineId}
-        currentPage="dashboard"
-      />
-
       {isGuest && <PreviewModeBanner />}
 
       <main className="max-w-4xl mx-auto px-4 py-6 pb-24">
