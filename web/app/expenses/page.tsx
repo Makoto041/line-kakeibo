@@ -763,205 +763,7 @@ function ExpensesPageContent() {
                 } ${editingExpense === expense.id ? "ring-2 ring-ring" : ""}`}
               >
                 <div className="p-4 sm:p-5">
-                  {editingExpense === expense.id ? (
-                    // Edit form
-                    <div className="space-y-5 rounded-xl bg-fg/[0.03] p-4">
-                      <h4 className="border-b border-line pb-2 text-base font-semibold text-fg">
-                        支出の編集
-                      </h4>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="sm:col-span-2">
-                          <label className="mb-2 block text-sm font-medium text-fg">
-                            説明
-                          </label>
-                          <input
-                            type="text"
-                            name="description"
-                            value={editForm.description}
-                            onChange={handleEditInputChange}
-                            className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            placeholder="例: ランチ代"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="mb-2 block text-sm font-medium text-fg">
-                            金額 (円)
-                          </label>
-                          <input
-                            type="number"
-                            name="amount"
-                            value={editForm.amount}
-                            onChange={handleEditInputChange}
-                            className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            placeholder="1000"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="mb-2 block text-sm font-medium text-fg">
-                            日付
-                          </label>
-                          <input
-                            type="date"
-                            name="date"
-                            value={editForm.date}
-                            onChange={handleEditInputChange}
-                            className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="mb-2 block text-sm font-medium text-fg">
-                            カテゴリ
-                          </label>
-                          <select
-                            name="category"
-                            value={editForm.category}
-                            onChange={handleEditInputChange}
-                            className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            {allCategories.map((category) => (
-                              <option key={category} value={category}>
-                                {category}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="sm:col-span-2">
-                          <label className="mb-2 flex items-center gap-1.5 text-sm font-medium text-fg">
-                            <CreditCard className="h-4 w-4 text-muted" />
-                            支払い者
-                          </label>
-                          <select
-                            name="payerId"
-                            value={editForm.payerId}
-                            onChange={handleEditInputChange}
-                            className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            {/* availableMembersが空の場合、現在の支出リストから直接ユーザーを生成 */}
-                            {availableMembers.length === 0 ? (
-                              // フォールバック: 現在表示中の支出からユーザーを抽出
-                              (() => {
-                                console.log("=== フォールバック処理 ===");
-                                console.log("availableMembers.length:", availableMembers.length);
-                                console.log("expenses.length:", expenses.length);
-                                
-                                const fallbackUsers = new Map();
-                                expenses.forEach(exp => {
-                                  if (exp.lineId !== editingExpenseData?.lineId && exp.userDisplayName && exp.userDisplayName !== "個人") {
-                                    fallbackUsers.set(exp.lineId, exp.userDisplayName);
-                                  }
-                                });
-                                
-                                // 支出データもない場合は、サンプルユーザーを追加（テスト用）
-                                if (fallbackUsers.size === 0) {
-                                  console.log("支出データなし - サンプルユーザーを追加");
-                                  fallbackUsers.set("sample1", "田中太郎");
-                                  fallbackUsers.set("sample2", "佐藤花子");
-                                  fallbackUsers.set("sample3", "鈴木一郎");
-                                }
-                                
-                                console.log("フォールバックユーザー:", Array.from(fallbackUsers.entries()));
-                                return Array.from(fallbackUsers.entries()).map(([lineId, displayName]) => (
-                                  <option key={lineId} value={lineId}>
-                                    {displayName} {lineId.startsWith('sample') ? '(テスト)' : '(支出履歴から)'}
-                                  </option>
-                                ));
-                              })()
-                            ) : (
-                              // 通常: availableMembersから選択肢を生成（自分も含める）
-                              availableMembers
-                                .map((member) => {
-                                  let label = '';
-                                  switch(member.source) {
-                                    case 'group':
-                                      label = '(グループメンバー)';
-                                      break;
-                                    case 'group-history':
-                                      label = '(このグループ)';
-                                      break;
-                                    case 'all-history':
-                                      label = '(他グループ)';
-                                      break;
-                                    default:
-                                      label = '';
-                                  }
-                                  return (
-                                    <option key={member.lineId} value={member.lineId}>
-                                      {member.displayName} {label}
-                                    </option>
-                                  );
-                                })
-                            )}
-                              
-                            {/* 既存の支払い者が上記に含まれていない場合は追加 */}
-                            {editForm.payerId && 
-                             editForm.payerId !== editingExpenseData?.lineId &&
-                             !availableMembers.some(member => member.lineId === editForm.payerId) &&
-                             !expenses.some(expense => expense.lineId === editForm.payerId) && (
-                              <option key={editForm.payerId} value={editForm.payerId}>
-                                {editForm.payerDisplayName || "不明なユーザー"}
-                              </option>
-                            )}
-                          </select>
-                          <p className="mt-1 text-xs text-muted">
-                            デフォルトは入力者と同じです
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center rounded-lg border border-line bg-card p-3">
-                        <input
-                          type="checkbox"
-                          name="includeInTotal"
-                          checked={editForm.includeInTotal}
-                          onChange={handleEditCheckboxChange}
-                          className="h-4 w-4 rounded border-line accent-accent"
-                        />
-                        <label className="ml-3 text-sm font-medium text-fg">
-                          合計に含める
-                        </label>
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row gap-4 pt-4">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            console.log(
-                              "Save button clicked for expense:",
-                              expense.id
-                            );
-                            handleEditSave(expense.id);
-                          }}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg transition-colors hover:opacity-90"
-                          style={{ pointerEvents: "auto" }}
-                        >
-                          <Save className="h-4 w-4" />
-                          保存
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            console.log("Cancel button clicked");
-                            handleEditCancel();
-                          }}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-card px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
-                          style={{ pointerEvents: "auto" }}
-                        >
-                          <X className="h-4 w-4" />
-                          キャンセル
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    // Display mode
+                    {/* Display mode (editing happens in the drawer below) */}
                     <div className="space-y-4">
                       {/* Header with title and amount */}
                       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
@@ -1147,10 +949,170 @@ function ExpensesPageContent() {
                         </button>
                       </div>
                     </div>
-                  )}
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Edit drawer — mobile: bottom sheet / desktop: right side drawer */}
+        {editingExpense && (
+          <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="支出の編集">
+            <button
+              type="button"
+              aria-label="閉じる"
+              onClick={handleEditCancel}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <div className="glass-strong relative z-10 ml-auto flex w-full animate-fade-up flex-col overflow-y-auto p-5 shadow-glass-lg max-sm:mt-auto max-sm:max-h-[88vh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl">
+              <div className="space-y-5">
+                <div className="flex items-center justify-between border-b border-line pb-3">
+                  <h4 className="text-base font-semibold text-fg">支出の編集</h4>
+                  <button
+                    type="button"
+                    aria-label="閉じる"
+                    onClick={handleEditCancel}
+                    className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-fg/5 hover:text-fg"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <label className="mb-2 block text-sm font-medium text-fg">説明</label>
+                    <input
+                      type="text"
+                      name="description"
+                      value={editForm.description}
+                      onChange={handleEditInputChange}
+                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      placeholder="例: ランチ代"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-fg">金額 (円)</label>
+                    <input
+                      type="number"
+                      name="amount"
+                      value={editForm.amount}
+                      onChange={handleEditInputChange}
+                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      placeholder="1000"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-fg">日付</label>
+                    <input
+                      type="date"
+                      name="date"
+                      value={editForm.date}
+                      onChange={handleEditInputChange}
+                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-fg">カテゴリ</label>
+                    <select
+                      name="category"
+                      value={editForm.category}
+                      onChange={handleEditInputChange}
+                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {allCategories.map((category) => (
+                        <option key={category} value={category}>{category}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="mb-2 flex items-center gap-1.5 text-sm font-medium text-fg">
+                      <CreditCard className="h-4 w-4 text-muted" />
+                      支払い者
+                    </label>
+                    <select
+                      name="payerId"
+                      value={editForm.payerId}
+                      onChange={handleEditInputChange}
+                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {availableMembers.length === 0 ? (
+                        (() => {
+                          const fallbackUsers = new Map<string, string>();
+                          expenses.forEach((exp) => {
+                            if (exp.lineId !== editingExpenseData?.lineId && exp.userDisplayName && exp.userDisplayName !== "個人") {
+                              fallbackUsers.set(exp.lineId, exp.userDisplayName);
+                            }
+                          });
+                          return Array.from(fallbackUsers.entries()).map(([lineId, displayName]) => (
+                            <option key={lineId} value={lineId}>
+                              {displayName}（支出履歴から）
+                            </option>
+                          ));
+                        })()
+                      ) : (
+                        availableMembers.map((member) => {
+                          let label = '';
+                          switch (member.source) {
+                            case 'group': label = '（グループメンバー）'; break;
+                            case 'group-history': label = '（このグループ）'; break;
+                            case 'all-history': label = '（他グループ）'; break;
+                            default: label = '';
+                          }
+                          return (
+                            <option key={member.lineId} value={member.lineId}>
+                              {member.displayName} {label}
+                            </option>
+                          );
+                        })
+                      )}
+                      {editForm.payerId &&
+                        editForm.payerId !== editingExpenseData?.lineId &&
+                        !availableMembers.some((member) => member.lineId === editForm.payerId) &&
+                        !expenses.some((exp) => exp.lineId === editForm.payerId) && (
+                          <option key={editForm.payerId} value={editForm.payerId}>
+                            {editForm.payerDisplayName || "不明なユーザー"}
+                          </option>
+                        )}
+                    </select>
+                    <p className="mt-1 text-xs text-muted">デフォルトは入力者と同じです</p>
+                  </div>
+                </div>
+
+                <label className="flex cursor-pointer items-center rounded-lg border border-line bg-card p-3">
+                  <input
+                    type="checkbox"
+                    name="includeInTotal"
+                    checked={editForm.includeInTotal}
+                    onChange={handleEditCheckboxChange}
+                    className="h-4 w-4 rounded border-line accent-accent"
+                  />
+                  <span className="ml-3 text-sm font-medium text-fg">合計に含める</span>
+                </label>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => editingExpense && handleEditSave(editingExpense)}
+                    className="flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-3 text-sm font-medium text-accent-fg transition-colors hover:opacity-90"
+                  >
+                    <Save className="h-4 w-4" />
+                    保存
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleEditCancel}
+                    className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line bg-card px-4 py-3 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
+                  >
+                    <X className="h-4 w-4" />
+                    キャンセル
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </main>
