@@ -26,6 +26,65 @@ function getLineClient(): Client {
   return lineClient;
 }
 
+// ============================================
+// アイコン（lucide風の静的PNGをWebから配信）
+// ============================================
+
+/** アイコンPNGの配信ベースURL（web/public/icons/*.png）。HTTPSのみLINEで表示可。 */
+const ICON_BASE = 'https://line-kakeibo.vercel.app/icons';
+
+/** アイコンキー → 配信URL */
+export function iconUrl(key: string): string {
+  return `${ICON_BASE}/${key}.png`;
+}
+
+/**
+ * カテゴリ名 → アイコンキー
+ * 正規化名・旧表記（〜費）の揺れを吸収する。未知カテゴリは cat-other。
+ */
+const CATEGORY_ICON_KEY: Record<string, string> = {
+  食費: 'cat-food',
+  交通費: 'cat-transport',
+  日用品: 'cat-daily',
+  日用品費: 'cat-daily',
+  娯楽: 'cat-fun',
+  娯楽費: 'cat-fun',
+  趣味: 'cat-fun',
+  衣服: 'cat-clothes',
+  衣服費: 'cat-clothes',
+  被服費: 'cat-clothes',
+  '医療・健康': 'cat-health',
+  医療: 'cat-health',
+  医療費: 'cat-health',
+  健康: 'cat-health',
+  教育: 'cat-education',
+  教育費: 'cat-education',
+  光熱費: 'cat-utility',
+  水道光熱費: 'cat-utility',
+  住居費: 'cat-housing',
+  家賃: 'cat-housing',
+  保険: 'cat-insurance',
+  保険料: 'cat-insurance',
+  税金: 'cat-tax',
+  美容: 'cat-beauty',
+  美容費: 'cat-beauty',
+  通信費: 'cat-comm',
+  サブスク: 'cat-subscription',
+  サブスクリプション: 'cat-subscription',
+  プレゼント: 'cat-gift',
+  ギフト: 'cat-gift',
+  旅行: 'cat-travel',
+  ペット: 'cat-pet',
+  貯金: 'cat-savings',
+  その他: 'cat-other',
+};
+
+/** カテゴリ名からアイコンURLを取得（未知カテゴリはその他アイコン） */
+export function categoryIconUrl(categoryName: string): string {
+  const key = CATEGORY_ICON_KEY[categoryName?.trim()] ?? 'cat-other';
+  return iconUrl(key);
+}
+
 /**
  * カード利用通知の情報
  */
@@ -60,14 +119,20 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
     size: 'kilo',
     header: {
       type: 'box',
-      layout: 'vertical',
+      layout: 'baseline',
       contents: [
+        {
+          type: 'icon',
+          url: iconUrl('credit-card'),
+          size: 'md',
+        },
         {
           type: 'text',
           text: 'カード利用を記録',
           weight: 'bold',
           size: 'md',
           color: '#10B981',
+          margin: 'sm',
         },
       ],
       paddingAll: 'lg',
@@ -100,11 +165,23 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
           layout: 'horizontal',
           contents: [
             {
-              type: 'text',
-              text: `${category}`,
-              size: 'sm',
-              color: '#64748B',
+              type: 'box',
+              layout: 'baseline',
               flex: 1,
+              contents: [
+                {
+                  type: 'icon',
+                  url: categoryIconUrl(category),
+                  size: 'sm',
+                },
+                {
+                  type: 'text',
+                  text: `${category}`,
+                  size: 'sm',
+                  color: '#64748B',
+                  margin: 'sm',
+                },
+              ],
             },
             {
               type: 'text',
@@ -316,14 +393,20 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     size: 'kilo',
     header: {
       type: 'box',
-      layout: 'vertical',
+      layout: 'baseline',
       contents: [
+        {
+          type: 'icon',
+          url: iconUrl('receipt'),
+          size: 'md',
+        },
         {
           type: 'text',
           text: '支出を登録しました',
           weight: 'bold',
           size: 'md',
           color: '#10B981',
+          margin: 'sm',
         },
       ],
       paddingAll: 'lg',
@@ -356,11 +439,23 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
           layout: 'horizontal',
           contents: [
             {
-              type: 'text',
-              text: `${category}`,
-              size: 'sm',
-              color: '#64748B',
+              type: 'box',
+              layout: 'baseline',
               flex: 1,
+              contents: [
+                {
+                  type: 'icon',
+                  url: categoryIconUrl(category),
+                  size: 'sm',
+                },
+                {
+                  type: 'text',
+                  text: `${category}`,
+                  size: 'sm',
+                  color: '#64748B',
+                  margin: 'sm',
+                },
+              ],
             },
             {
               type: 'text',
@@ -602,10 +697,11 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
     layout: 'horizontal' as const,
     contents: [
       {
-        type: 'text' as const,
-        text: `${cat.emoji}`,
-        size: 'sm' as const,
+        type: 'image' as const,
+        url: categoryIconUrl(cat.category),
+        size: '16px' as const,
         flex: 0,
+        align: 'center' as const,
       },
       {
         type: 'box' as const,
@@ -622,7 +718,7 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
           },
         ],
         flex: 1,
-        margin: 'sm' as const,
+        margin: 'md' as const,
         justifyContent: 'center' as const,
       },
       {
@@ -674,12 +770,24 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
           layout: 'horizontal',
           contents: [
             {
-              type: 'text',
-              text: `${contextText}の家計簿`,
-              weight: 'bold',
-              size: 'lg',
-              color: '#10B981',
+              type: 'box',
+              layout: 'baseline',
               flex: 1,
+              contents: [
+                {
+                  type: 'icon',
+                  url: iconUrl('wallet'),
+                  size: 'md',
+                },
+                {
+                  type: 'text',
+                  text: `${contextText}の家計簿`,
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#10B981',
+                  margin: 'sm',
+                },
+              ],
             },
             {
               type: 'text',
@@ -841,14 +949,20 @@ export function buildEmptyExpenseSummaryFlexMessage(
     size: 'kilo',
     header: {
       type: 'box',
-      layout: 'vertical',
+      layout: 'baseline',
       contents: [
+        {
+          type: 'icon',
+          url: iconUrl('wallet'),
+          size: 'md',
+        },
         {
           type: 'text',
           text: `${contextText}の家計簿`,
           weight: 'bold',
           size: 'md',
           color: '#10B981',
+          margin: 'sm',
         },
       ],
       paddingAll: 'lg',
@@ -940,20 +1054,6 @@ export interface CategorySelectInfo {
   amount: number;
 }
 
-// カテゴリ絵文字マッピング
-const CATEGORY_EMOJI: Record<string, string> = {
-  '食費': '',
-  '日用品': '',
-  '交通費': '',
-  '医療費': '',
-  '娯楽費': '',
-  '衣服費': '',
-  '教育費': '',
-  '通信費': '',
-  '光熱費': '',
-  'その他': '',
-};
-
 // カテゴリ一覧
 const CATEGORIES = [
   '食費', '日用品', '交通費', '医療費', '娯楽費',
@@ -969,7 +1069,6 @@ export function buildCategorySelectCarousel(info: CategorySelectInfo): FlexMessa
   // 各カテゴリのbubbleを生成
   const bubbles: FlexBubble[] = CATEGORIES.map((categoryName) => {
     const isCurrentCategory = categoryName === currentCategory;
-    const emoji = CATEGORY_EMOJI[categoryName] || '';
 
     return {
       type: 'bubble',
@@ -979,9 +1078,9 @@ export function buildCategorySelectCarousel(info: CategorySelectInfo): FlexMessa
         layout: 'vertical',
         contents: [
           {
-            type: 'text',
-            text: emoji,
-            size: 'xxl',
+            type: 'image',
+            url: categoryIconUrl(categoryName),
+            size: '36px',
             align: 'center',
           },
           {
