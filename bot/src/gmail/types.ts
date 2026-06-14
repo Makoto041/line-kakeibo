@@ -186,5 +186,7 @@ export const CATEGORY_EMOJI_MAP: Record<string, string> = {
  * カテゴリ名から絵文字を取得
  */
 export function getCategoryEmoji(categoryName: string): string {
-  return CATEGORY_EMOJI_MAP[categoryName] || '📝';
+  // 絵文字は使用しない方針のため空文字を返す（呼び出し側の互換性のため関数は残す）。
+  void categoryName;
+  return '';
 }
