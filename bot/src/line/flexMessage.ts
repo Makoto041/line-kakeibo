@@ -4,7 +4,7 @@
  * カード利用通知用のリッチなメッセージを生成
  */
 
-import { Client, FlexMessage, FlexBubble } from '@line/bot-sdk';
+import { Client, FlexMessage, FlexBubble, FlexComponent } from '@line/bot-sdk';
 
 // LINEクライアントの初期化
 let lineClient: Client | null = null;
@@ -83,6 +83,55 @@ const CATEGORY_ICON_KEY: Record<string, string> = {
 export function categoryIconUrl(categoryName: string): string {
   const key = CATEGORY_ICON_KEY[categoryName?.trim()] ?? 'cat-other';
   return iconUrl(key);
+}
+
+/**
+ * アイコン付きのボタン（LINEの button はアイコンを内包できないため box で代替）。
+ * variant: 'primary'（emerald強調）/ 'secondary'（ニュートラル）/ 'muted'（無効風）
+ */
+function iconActionButton(opts: {
+  iconKey?: string;
+  iconImageUrl?: string;
+  label: string;
+  action: Record<string, unknown>;
+  variant?: 'primary' | 'secondary' | 'muted';
+  flex?: number;
+}): FlexComponent {
+  const variant = opts.variant ?? 'secondary';
+  const palette =
+    variant === 'primary'
+      ? { bg: '#D1FAE5', text: '#065F46' }
+      : variant === 'muted'
+      ? { bg: '#E2E8F0', text: '#64748B' }
+      : { bg: '#F1F5F9', text: '#334155' };
+  const url = opts.iconImageUrl ?? iconUrl(opts.iconKey || 'check');
+  const button = {
+    type: 'box',
+    layout: 'horizontal',
+    action: opts.action,
+    backgroundColor: palette.bg,
+    cornerRadius: '8px',
+    paddingAll: 'md',
+    spacing: 'sm',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(opts.flex !== undefined ? { flex: opts.flex } : {}),
+    contents: [
+      { type: 'image', url, size: '18px', flex: 0 },
+      {
+        type: 'text',
+        text: opts.label,
+        size: 'sm',
+        weight: 'bold',
+        color: palette.text,
+        flex: 0,
+        margin: 'sm',
+        gravity: 'center',
+        align: 'center',
+      },
+    ],
+  };
+  return button as unknown as FlexComponent;
 }
 
 /**
@@ -218,38 +267,29 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
           type: 'box',
           layout: 'horizontal',
           contents: [
-            {
-              type: 'button',
+            iconActionButton({
+              iconKey: 'users',
+              label: '共同費',
+              variant: 'primary',
+              flex: 1,
               action: {
                 type: 'postback',
                 label: '共同費',
-                data: JSON.stringify({
-                  action: 'shared',
-                  expenseId,
-                }),
+                data: JSON.stringify({ action: 'shared', expenseId }),
                 displayText: '共同費として記録',
               },
-              style: 'primary',
-              color: '#10B981',
-              height: 'sm',
+            }),
+            iconActionButton({
+              iconKey: 'user',
+              label: '個人費',
               flex: 1,
-            },
-            {
-              type: 'button',
               action: {
                 type: 'postback',
                 label: '個人費',
-                data: JSON.stringify({
-                  action: 'personal',
-                  expenseId,
-                }),
+                data: JSON.stringify({ action: 'personal', expenseId }),
                 displayText: '個人費として除外',
               },
-              style: 'secondary',
-              height: 'sm',
-              flex: 1,
-              margin: 'sm',
-            },
+            }),
           ],
           spacing: 'sm',
         },
@@ -258,23 +298,21 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
           type: 'box',
           layout: 'horizontal',
           contents: [
-            {
-              type: 'button',
+            iconActionButton({
+              iconKey: 'credit-card',
+              label: '立替',
+              flex: 1,
               action: {
                 type: 'postback',
                 label: '立替',
-                data: JSON.stringify({
-                  action: 'advance',
-                  expenseId,
-                }),
+                data: JSON.stringify({ action: 'advance', expenseId }),
                 displayText: '立替として記録',
               },
-              style: 'secondary',
-              height: 'sm',
+            }),
+            iconActionButton({
+              iconImageUrl: categoryIconUrl(category),
+              label: `${category}`,
               flex: 1,
-            },
-            {
-              type: 'button',
               action: {
                 type: 'postback',
                 label: `${category}`,
@@ -284,27 +322,21 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
                   source: 'gmail',
                 }),
               },
-              style: 'secondary',
-              height: 'sm',
-              flex: 1,
-              margin: 'sm',
-            },
+            }),
           ],
           spacing: 'sm',
           margin: 'sm',
         },
         // 3段目: レシート添付
-        {
-          type: 'button',
+        iconActionButton({
+          iconKey: 'paperclip',
+          label: 'レシート添付',
           action: {
             type: 'uri',
             label: 'レシート添付',
             uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
           },
-          style: 'secondary',
-          height: 'sm',
-          margin: 'sm',
-        },
+        }),
       ],
       paddingAll: 'md',
       spacing: 'sm',
@@ -503,40 +535,29 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
           type: 'box',
           layout: 'horizontal',
           contents: [
-            {
-              type: 'button',
+            iconActionButton({
+              iconKey: 'check',
+              label: 'OK',
+              variant: 'primary',
+              flex: 1,
               action: {
                 type: 'postback',
                 label: 'OK',
-                data: JSON.stringify({
-                  action: 'confirm',
-                  expenseId,
-                  source: 'text',
-                }),
+                data: JSON.stringify({ action: 'confirm', expenseId, source: 'text' }),
                 displayText: '登録を確認しました',
               },
-              style: 'primary',
-              color: '#10B981',
-              height: 'sm',
+            }),
+            iconActionButton({
+              iconKey: 'pencil',
+              label: '修正',
               flex: 1,
-            },
-            {
-              type: 'button',
               action: {
                 type: 'postback',
                 label: '修正',
-                data: JSON.stringify({
-                  action: 'edit',
-                  expenseId,
-                  source: 'text',
-                }),
+                data: JSON.stringify({ action: 'edit', expenseId, source: 'text' }),
                 displayText: '修正が必要です',
               },
-              style: 'secondary',
-              height: 'sm',
-              flex: 1,
-              margin: 'sm',
-            },
+            }),
           ],
           spacing: 'sm',
         },
@@ -545,24 +566,21 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
           type: 'box',
           layout: 'horizontal',
           contents: [
-            {
-              type: 'button',
+            iconActionButton({
+              iconKey: 'credit-card',
+              label: '立替',
+              flex: 1,
               action: {
                 type: 'postback',
                 label: '立替',
-                data: JSON.stringify({
-                  action: 'advance',
-                  expenseId,
-                  source: 'text',
-                }),
+                data: JSON.stringify({ action: 'advance', expenseId, source: 'text' }),
                 displayText: '立替として記録',
               },
-              style: 'secondary',
-              height: 'sm',
+            }),
+            iconActionButton({
+              iconImageUrl: categoryIconUrl(category),
+              label: `${category}`,
               flex: 1,
-            },
-            {
-              type: 'button',
               action: {
                 type: 'postback',
                 label: `${category}`,
@@ -572,27 +590,21 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
                   source: 'text',
                 }),
               },
-              style: 'secondary',
-              height: 'sm',
-              flex: 1,
-              margin: 'sm',
-            },
+            }),
           ],
           spacing: 'sm',
           margin: 'sm',
         },
         // 3段目: レシート添付
-        {
-          type: 'button',
+        iconActionButton({
+          iconKey: 'paperclip',
+          label: 'レシート添付',
           action: {
             type: 'uri',
             label: 'レシート添付',
             uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
           },
-          style: 'secondary',
-          height: 'sm',
-          margin: 'sm',
-        },
+        }),
       ],
       paddingAll: 'md',
       spacing: 'sm',
@@ -649,6 +661,7 @@ export interface ExpenseSummaryInfo {
   monthlyCount: number;
   monthlyIncludedCount: number;
   monthLabel: string; // "3月"
+  monthlyBudget?: number; // 月次予算（未設定時はデフォルト）
   // 直近の支出
   recentExpenses: Array<{
     description: string;
@@ -681,13 +694,14 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
     monthLabel,
     recentExpenses,
     categoryTotals,
+    monthlyBudget,
   } = info;
 
   const contextText = isGroupContext ? 'グループ' : 'あなた';
   const pendingCount = monthlyCount - monthlyIncludedCount;
 
-  // プログレスバーの計算（予算13.6万円に対する割合）
-  const budget = 136000;
+  // プログレスバーの計算（設定された月次予算に対する割合。未設定時は20万円）
+  const budget = monthlyBudget && monthlyBudget > 0 ? monthlyBudget : 200000;
   const progressPercent = Math.min(100, Math.round((monthlyIncludedTotal / budget) * 100));
   const progressColor = progressPercent > 80 ? '#F43F5E' : progressPercent > 60 ? '#F59E0B' : '#10B981';
 
@@ -912,17 +926,16 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
       type: 'box',
       layout: 'vertical',
       contents: [
-        {
-          type: 'button',
+        iconActionButton({
+          iconKey: 'external-link',
+          label: '詳細をWebで見る',
+          variant: 'primary',
           action: {
             type: 'uri',
             label: '詳細をWebで見る',
             uri: webAppUrl,
           },
-          style: 'primary',
-          color: '#10B981',
-          height: 'sm',
-        },
+        }),
       ],
       paddingAll: 'md',
     },
@@ -1020,17 +1033,16 @@ export function buildEmptyExpenseSummaryFlexMessage(
       type: 'box',
       layout: 'vertical',
       contents: [
-        {
-          type: 'button',
+        iconActionButton({
+          iconKey: 'external-link',
+          label: 'Webアプリを開く',
+          variant: 'primary',
           action: {
             type: 'uri',
             label: 'Webアプリを開く',
             uri: webAppUrl,
           },
-          style: 'primary',
-          color: '#10B981',
-          height: 'sm',
-        },
+        }),
       ],
       paddingAll: 'md',
     },
@@ -1108,8 +1120,10 @@ export function buildCategorySelectCarousel(info: CategorySelectInfo): FlexMessa
         type: 'box',
         layout: 'vertical',
         contents: [
-          {
-            type: 'button',
+          iconActionButton({
+            iconKey: 'check',
+            label: isCurrentCategory ? '選択中' : 'これにする',
+            variant: isCurrentCategory ? 'primary' : 'secondary',
             action: {
               type: 'postback',
               label: isCurrentCategory ? '選択中' : 'これにする',
@@ -1120,10 +1134,7 @@ export function buildCategorySelectCarousel(info: CategorySelectInfo): FlexMessa
                 source,
               }),
             },
-            style: isCurrentCategory ? 'primary' : 'secondary',
-            color: isCurrentCategory ? '#059669' : undefined,
-            height: 'sm',
-          },
+          }),
         ],
         paddingAll: 'sm',
       },
