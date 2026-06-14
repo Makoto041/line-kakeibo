@@ -112,7 +112,11 @@ app.post("/webhook", async (req: Request, res: Response) => {
           // テキストメッセージの処理
           // 注: handleTextMessage内でreplyMessage（無料）を使用するため、ここでは送信しない
           // エラー時のユーザー通知もhandleTextMessage内で行う（エラーpushの重複を防ぐ）
-          handleTextMessage(event).catch(error => {
+          //
+          // 重要: 必ず await する。2nd-gen関数(Cloud Run)は HTTP 応答(res.end)後に
+          // インスタンスのCPUが凍結されるため、fire-and-forgetだと返信前に処理が止まり、
+          // 解凍時には replyToken が失効して返信が届かない。await して応答前に返信を送る。
+          await handleTextMessage(event).catch(error => {
             console.error("Text processing error:", error);
           });
         } else if (event.type === "postback") {
