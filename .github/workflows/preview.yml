@@ -1,139 +1,20 @@
 name: Preview Deployment
 
+# プレビューデプロイも Vercel の Git 連携がネイティブに作成する（PR ごとに
+# プレビューURLを発行）。以前の `vercel build` + `vercel deploy --prebuilt` は
+# 非エクスポート構成＋npm workspaces で失敗するため廃止し、本ワークフローは
+# 意図的に no-op（チェックは緑のまま）。
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-env:
-  NODE_VERSION: '20'
+permissions:
+  contents: read
 
 jobs:
   preview-deploy:
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      deployments: write
-    env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
     steps:
-      - name: Check Vercel token
-        id: check-token
-        run: |
-          if [ -z "$VERCEL_TOKEN" ]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "::notice::VERCEL_TOKEN is not set, skipping preview deployment"
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Checkout code
-        if: steps.check-token.outputs.skip != 'true'
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        if: steps.check-token.outputs.skip != 'true'
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Create deployment
-        if: steps.check-token.outputs.skip != 'true'
-        uses: actions/github-script@v8
-        id: deployment
-        with:
-          script: |
-            const deployment = await github.rest.repos.createDeployment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: context.payload.pull_request.head.sha,
-              environment: 'preview',
-              auto_merge: false,
-              required_contexts: [],
-              description: `Preview deployment for PR #${context.payload.pull_request.number}`
-            });
-            return deployment.data.id;
-
-      - name: Install Vercel CLI
-        if: steps.check-token.outputs.skip != 'true'
-        run: npm install -g vercel@latest
-
-      - name: Pull Vercel environment
-        if: steps.check-token.outputs.skip != 'true'
-        working-directory: ./web
-        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
-
-      - name: Build project
-        if: steps.check-token.outputs.skip != 'true'
-        working-directory: ./web
-        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
-
-      - name: Deploy to Vercel Preview
-        if: steps.check-token.outputs.skip != 'true'
-        id: deploy
-        working-directory: ./web
-        run: |
-          DEPLOYMENT_URL=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
-          echo "url=${DEPLOYMENT_URL}" >> $GITHUB_OUTPUT
-          echo "Preview deployed to: ${DEPLOYMENT_URL}"
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
-      - name: Update deployment status
-        if: steps.check-token.outputs.skip != 'true'
-        uses: actions/github-script@v8
-        with:
-          script: |
-            await github.rest.repos.createDeploymentStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              deployment_id: ${{ steps.deployment.outputs.result }},
-              state: 'success',
-              environment_url: '${{ steps.deploy.outputs.url }}',
-              description: 'Deployment successful'
-            });
-
-      - name: Comment PR
-        if: steps.check-token.outputs.skip != 'true'
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const comment = `## 🔍 Preview Deployment Ready!
-            
-            Your preview deployment is available at: ${{ steps.deploy.outputs.url }}
-            
-            | Status | Preview | Updated |
-            |--------|---------|---------|
-            | ✅ Ready | [Visit Preview](${{ steps.deploy.outputs.url }}) | ${new Date().toISOString()} |
-            
-            This preview will be automatically updated with new commits.`;
-            
-            // Find and update existing comment or create new one
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number
-            });
-            
-            const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && 
-              comment.body.includes('Preview Deployment Ready')
-            );
-            
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                body: comment
-              });
-            }
+      - name: Handled by Vercel Git integration
+        run: echo "Preview deploys are handled natively by the Vercel Git integration. This workflow is intentionally a no-op."

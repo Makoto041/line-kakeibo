@@ -1,5 +1,11 @@
 name: Vercel Deployment
 
+# Vercel へのデプロイは Vercel の Git 連携（GitHub App）がネイティブに実行する。
+# 以前はここで `vercel build` + `vercel deploy --prebuilt` を ./web 配下で実行して
+# いたが、npm workspaces のホイストにより非エクスポートの Next サーバランタイムを
+# 同梱できず失敗していた（server.runtime.prod.js ENOENT）。
+# Git 連携に一本化したため、本ワークフローは意図的に no-op（チェックは緑のまま）。
+
 on:
   push:
     branches:
@@ -9,130 +15,13 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-env:
-  NODE_VERSION: '20'
-  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   deploy:
     name: Deploy to Vercel
     runs-on: ubuntu-latest
-    env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-
     steps:
-    - name: Check Vercel token
-      id: check-token
-      run: |
-        if [ -z "$VERCEL_TOKEN" ]; then
-          echo "skip=true" >> $GITHUB_OUTPUT
-          echo "::notice::VERCEL_TOKEN is not set, skipping Vercel deployment"
-        else
-          echo "skip=false" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Checkout code
-      if: steps.check-token.outputs.skip != 'true'
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      if: steps.check-token.outputs.skip != 'true'
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        cache: 'npm'
-
-    - name: Install Vercel CLI
-      if: steps.check-token.outputs.skip != 'true'
-      run: npm install -g vercel@latest
-
-    - name: Determine environment
-      if: steps.check-token.outputs.skip != 'true'
-      id: env
-      run: |
-        if [[ "${{ github.ref }}" == "refs/heads/master" || "${{ github.ref }}" == "refs/heads/main" ]]; then
-          echo "environment=production" >> $GITHUB_OUTPUT
-          echo "prod_flag=--prod" >> $GITHUB_OUTPUT
-        else
-          echo "environment=preview" >> $GITHUB_OUTPUT
-          echo "prod_flag=" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Pull Vercel Environment Information
-      if: steps.check-token.outputs.skip != 'true'
-      run: vercel pull --yes --environment=${{ steps.env.outputs.environment }} --token=${{ secrets.VERCEL_TOKEN }}
-      working-directory: ./web
-
-    - name: Build Project Artifacts
-      if: steps.check-token.outputs.skip != 'true'
-      run: vercel build ${{ steps.env.outputs.prod_flag }} --token=${{ secrets.VERCEL_TOKEN }}
-      working-directory: ./web
-
-    - name: Deploy Project Artifacts to Vercel
-      if: steps.check-token.outputs.skip != 'true'
-      id: deploy
-      run: |
-        if [[ "${{ github.ref }}" == "refs/heads/master" || "${{ github.ref }}" == "refs/heads/main" ]]; then
-          OUTPUT=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
-        else
-          OUTPUT=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
-        fi
-        echo "url=$OUTPUT" >> $GITHUB_OUTPUT
-        echo "🚀 Deployed to: $OUTPUT"
-      working-directory: ./web
-
-    - name: Comment on PR
-      if: github.event_name == 'pull_request' && steps.check-token.outputs.skip != 'true'
-      uses: actions/github-script@v7
-      env:
-        DEPLOY_URL: ${{ steps.deploy.outputs.url }}
-        BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-        GIT_REF: ${{ github.ref }}
-      with:
-        script: |
-          const url = process.env.DEPLOY_URL || '';
-          const branchName = process.env.BRANCH_NAME || 'unknown';
-          const gitRef = process.env.GIT_REF || '';
-          const environment = gitRef === 'refs/heads/develop' ? 'Development' : 'Preview';
-
-          // Find existing comment
-          const { data: comments } = await github.rest.issues.listComments({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-          });
-
-          const botComment = comments.find(comment =>
-            comment.user.type === 'Bot' && comment.body.includes('Vercel Preview URL')
-          );
-
-          const body = `### 🔗 Vercel ${environment} URL
-
-          🚀 **Deployment Status:** ✅ Success
-          🌐 **URL:** ${url}
-          📦 **Branch:** \`${branchName}\`
-          🕐 **Deployed at:** ${new Date().toISOString()}
-
-          ---
-          _This comment is automatically updated on each deployment._`;
-
-          if (botComment) {
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: botComment.id,
-              body
-            });
-          } else {
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body
-            });
-          }
+      - name: Handled by Vercel Git integration
+        run: echo "Vercel deploys are handled natively by the Vercel Git integration. This workflow is intentionally a no-op."
