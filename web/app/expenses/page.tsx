@@ -570,102 +570,80 @@ function ExpensesPageContent() {
       )}
 
       <main>
-        {/* Filters & totals — only shown once there is data to operate on,
-            so the first-run / empty state can lead with guidance instead. */}
-        {expenses.length > 0 && (
+        {/* Controls — period navigation is ALWAYS visible so users can move
+            between months even when the current period has no expenses.
+            Filter/sort and totals only appear once there is data. */}
         <div className="glass mb-4 rounded-2xl p-4 shadow-glass">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex flex-wrap gap-4">
-              <div className="min-w-0">
-                <label className="mb-1 block text-xs font-medium text-muted">
-                  フィルター
-                </label>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* Period navigation (always) */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setCurrentMonth(prev => prev.subtract(1, 'month'))}
+                className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-card text-muted transition-colors hover:bg-fg/5 hover:text-fg"
+                aria-label="前の期間"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <div className="whitespace-nowrap rounded-lg border border-line bg-card px-3 py-2 text-sm font-medium text-fg">
+                {getDisplayTitle(currentMonth, dateSettings)}
+              </div>
+              <button
+                onClick={() => setCurrentMonth(prev => prev.add(1, 'month'))}
+                className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-card text-muted transition-colors hover:bg-fg/5 hover:text-fg"
+                aria-label="次の期間"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Filter & sort (only with data) */}
+            {expenses.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
                 <select
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
+                  aria-label="フィルター"
                   className="rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="all">すべて</option>
                   <option value="included">合計に含む</option>
                   <option value="excluded">合計から除外</option>
                   {categories.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
+                    <option key={category} value={category}>{category}</option>
                   ))}
                 </select>
-              </div>
-
-              <div className="min-w-0">
-                <label className="mb-1 block text-xs font-medium text-muted">
-                  並び順
-                </label>
                 <select
                   value={sortBy}
-                  onChange={(e) =>
-                    setSortBy(e.target.value as "date" | "amount")
-                  }
+                  onChange={(e) => setSortBy(e.target.value as "date" | "amount")}
+                  aria-label="並び順"
                   className="rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="date">日付順</option>
                   <option value="amount">金額順</option>
                 </select>
               </div>
+            )}
+          </div>
 
-              <div className="min-w-0">
-                <label className="mb-1 block text-xs font-medium text-muted">
-                  期間
-                </label>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => setCurrentMonth(prev => prev.subtract(1, 'month'))}
-                    className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-card text-muted transition-colors hover:bg-fg/5 hover:text-fg"
-                    aria-label="前の期間"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                  <div className="whitespace-nowrap rounded-lg border border-line bg-card px-3 py-2 text-sm font-medium text-fg">
-                    {getDisplayTitle(currentMonth, dateSettings)}
-                  </div>
-                  <button
-                    onClick={() => setCurrentMonth(prev => prev.add(1, 'month'))}
-                    className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-card text-muted transition-colors hover:bg-fg/5 hover:text-fg"
-                    aria-label="次の期間"
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-            {sortedPersonTotals.length > 0 && (
-                <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          {/* Totals (only with data) */}
+          {expenses.length > 0 && (
+            <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-stretch">
+              {sortedPersonTotals.length > 0 && (
+                <div className="grid flex-1 grid-cols-3 gap-3 lg:grid-cols-4">
                   {sortedPersonTotals.map(([personName, total]) => (
-                    <div
-                      key={personName}
-                      className="rounded-xl border border-line bg-fg/[0.02] p-4"
-                    >
+                    <div key={personName} className="rounded-xl border border-line bg-fg/[0.02] p-3">
                       <div className="text-center">
-                        <div className="mb-1 truncate text-sm font-medium text-fg">
-                          {personName}
-                        </div>
-                        <div className="text-xl font-bold tabular-nums text-accent">
-                          ¥{total.toLocaleString()}
-                        </div>
+                        <div className="mb-1 truncate text-sm font-medium text-fg">{personName}</div>
+                        <div className="text-lg font-bold tabular-nums text-accent">¥{total.toLocaleString()}</div>
                         <div className="text-xs text-muted">
                           {
                             filteredExpenses.filter((e) => {
                               const payerId = e.payerId || e.lineId;
-                              // payerDisplayNameを最優先で使用
                               let expensePayerName = e.payerDisplayName || e.userDisplayName || "個人";
-
-                              // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
                               if (expensePayerName === 'メンバー' || expensePayerName === '個人' || expensePayerName.startsWith('Unknown_') || expensePayerName.startsWith('User_')) {
                                 const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
-                                if (historicalUser) {
-                                  expensePayerName = historicalUser.displayName;
-                                }
+                                if (historicalUser) { expensePayerName = historicalUser.displayName; }
                               }
-
                               return expensePayerName === personName;
                             }).length
                           }
@@ -675,35 +653,29 @@ function ExpensesPageContent() {
                     </div>
                   ))}
                 </div>
-            )}
+              )}
 
-            <div className="rounded-xl border border-accent/20 bg-accent/[0.06] p-4">
-              <div className="text-center">
-                <div className="mb-1 inline-flex items-center gap-1.5 text-xs font-medium text-muted">
-                  <Wallet className="h-3.5 w-3.5" />
-                  合計
-                </div>
-                <div className="text-sm font-semibold text-fg">
-                  {filteredExpenses.length}件
-                </div>
-                <div className="my-1 text-2xl font-black tabular-nums text-fg">
-                  ¥
-                  {filteredExpenses
-                    .filter(e => e.includeInTotal) // 合計に含むもののみ
-                    .reduce((sum, e) => sum + e.amount, 0)
-                    .toLocaleString()}
-                </div>
-                <div className="text-xs text-muted">合計総支出額</div>
-                {filteredExpenses.some(e => !e.includeInTotal) && (
-                  <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                    除外: {filteredExpenses.filter(e => !e.includeInTotal).length}件
+              <div className="rounded-xl border border-accent/20 bg-accent/[0.06] p-4 sm:w-48">
+                <div className="text-center">
+                  <div className="mb-1 inline-flex items-center gap-1.5 text-xs font-medium text-muted">
+                    <Wallet className="h-3.5 w-3.5" />
+                    合計
                   </div>
-                )}
+                  <div className="text-sm font-semibold text-fg">{filteredExpenses.length}件</div>
+                  <div className="my-1 text-2xl font-black tabular-nums text-fg">
+                    ¥{filteredExpenses.filter(e => e.includeInTotal).reduce((sum, e) => sum + e.amount, 0).toLocaleString()}
+                  </div>
+                  <div className="text-xs text-muted">合計総支出額</div>
+                  {filteredExpenses.some(e => !e.includeInTotal) && (
+                    <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                      除外: {filteredExpenses.filter(e => !e.includeInTotal).length}件
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
-        )}
 
         {loading ? (
           <div className="py-16 text-center">
@@ -741,10 +713,10 @@ function ExpensesPageContent() {
                   <MessageCircle className="h-7 w-7" strokeWidth={1.9} />
                 </span>
                 <h3 className="text-lg font-semibold text-fg">
-                  まだ支出がありません
+                  この期間に支出はありません
                 </h3>
                 <p className="mt-1.5 text-sm text-muted">
-                  LINEに送るだけで、ここに支出が記録されていきます。
+                  上の矢印で他の月を確認できます。LINEに送ると、ここに支出が記録されます。
                 </p>
               </div>
 
