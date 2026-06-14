@@ -121,10 +121,44 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
   const categoryTotals = stats?.categoryTotals || {};
   const { categoryBudgets, monthlyBudget } = budgetConfig;
 
-  const cats = Object.entries(categoryBudgets)
-    .filter(([, b]) => b > 0)
-    .map(([category, budget]) => ({ category, budget, actual: getActualSpending(category, categoryTotals) }))
-    .sort((a, b) => b.actual / b.budget - a.actual / a.budget);
+  // 予算>0 のカテゴリに加え、実支出があるカテゴリも表示する
+  // （予算0でも記録があれば出す）。
+  const rowsMap = new Map<string, { category: string; budget: number; actual: number }>();
+
+  // 1) 正準カテゴリ: 予算あり or 実支出あり
+  Object.keys(budgetToExpenseCategory).forEach((category) => {
+    const budget = categoryBudgets[category] || 0;
+    const actual = getActualSpending(category, categoryTotals);
+    if (budget > 0 || actual > 0) rowsMap.set(category, { category, budget, actual });
+  });
+
+  // 2) エイリアスに無いカスタム/旧表記の支出カテゴリも拾う
+  const aliasClaimed = new Set<string>();
+  Object.values(budgetToExpenseCategory).forEach((arr) => arr.forEach((a) => aliasClaimed.add(a)));
+  Object.entries(categoryTotals).forEach(([category, amt]) => {
+    if (amt > 0 && !aliasClaimed.has(category) && !rowsMap.has(category)) {
+      rowsMap.set(category, { category, budget: categoryBudgets[category] || 0, actual: amt });
+    }
+  });
+
+  // 3) 予算>0 だが上で拾えていない旧キーも残す（後方互換）
+  Object.keys(categoryBudgets).forEach((category) => {
+    if (categoryBudgets[category] > 0 && !rowsMap.has(category)) {
+      rowsMap.set(category, {
+        category,
+        budget: categoryBudgets[category],
+        actual: getActualSpending(category, categoryTotals),
+      });
+    }
+  });
+
+  const cats = Array.from(rowsMap.values()).sort((a, b) => {
+    // 予算ありを使用率の高い順に上へ、予算なし(0)は実支出の多い順で下へ
+    const ra = a.budget > 0 ? a.actual / a.budget : -1;
+    const rb = b.budget > 0 ? b.actual / b.budget : -1;
+    if (rb !== ra) return rb - ra;
+    return b.actual - a.actual;
+  });
 
   const totalActual = stats?.totalAmount || 0;
   const totalPct = monthlyBudget > 0 ? (totalActual / monthlyBudget) * 100 : 0;
@@ -170,11 +204,12 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
 
       {/* Category budgets */}
       {cats.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted">カテゴリ別予算が未設定です</p>
+        <p className="py-6 text-center text-sm text-muted">記録がまだありません</p>
       ) : (
         <ul className="mt-4 space-y-3.5">
-          {cats.slice(0, 5).map(({ category, budget, actual }) => {
-            const pct = budget > 0 ? (actual / budget) * 100 : 0;
+          {cats.map(({ category, budget, actual }) => {
+            const hasBudget = budget > 0;
+            const pct = hasBudget ? (actual / budget) * 100 : 0;
             const remaining = budget - actual;
             const v = getCategoryVisual(category);
             const Icon = v.icon;
@@ -186,20 +221,26 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
                   </span>
                   <span className="text-sm font-medium text-fg">{category}</span>
                   <span className="ml-auto tabular-nums text-xs text-muted">
-                    {yen(actual)} / {yen(budget)}
+                    {hasBudget ? `${yen(actual)} / ${yen(budget)}` : yen(actual)}
                   </span>
                 </div>
-                <div className="relative h-1.5 overflow-hidden rounded-full bg-fg/10">
-                  <div
-                    className={`h-full rounded-full ${progressColor(pct)} transition-[width] duration-500`}
-                    style={{ width: `${Math.min(pct, 100)}%` }}
-                  />
-                </div>
-                <div className="mt-1 text-right text-xs">
-                  <span className={remaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
-                    {remaining >= 0 ? `残 ${yen(remaining)}` : `超 ${yen(Math.abs(remaining))}`}
-                  </span>
-                </div>
+                {hasBudget ? (
+                  <>
+                    <div className="relative h-1.5 overflow-hidden rounded-full bg-fg/10">
+                      <div
+                        className={`h-full rounded-full ${progressColor(pct)} transition-[width] duration-500`}
+                        style={{ width: `${Math.min(pct, 100)}%` }}
+                      />
+                    </div>
+                    <div className="mt-1 text-right text-xs">
+                      <span className={remaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
+                        {remaining >= 0 ? `残 ${yen(remaining)}` : `超 ${yen(Math.abs(remaining))}`}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-1 text-right text-[11px] text-muted">予算未設定</div>
+                )}
               </li>
             );
           })}
