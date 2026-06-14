@@ -26,7 +26,7 @@ import type { Expense } from "../../lib/hooks";
 import PreviewModeBanner from "../../components/PreviewModeBanner";
 import GuestGuide from "../../components/GuestGuide";
 import { getCategoryVisual } from "../../lib/categoryVisuals";
-import { CANONICAL_CATEGORIES, normalizeCategoryName } from "../../lib/categoryNormalization";
+import { CANONICAL_CATEGORIES } from "../../lib/categoryNormalization";
 import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
@@ -470,14 +470,15 @@ function ExpensesPageContent() {
   // カテゴリ編集の選択肢は正準カテゴリ（bot/分類器と統一）。
   // データ内の既存カテゴリや編集中の現在値も取り込み、未知カテゴリでも
   // 先頭（食費）に勝手に落ちないようにする。
-  const allCategories = useMemo(() => {
+  // 注: この関数は早期returnより後ろにあるため、Hook(useMemo)ではなく純粋計算で構築する。
+  const allCategories = (() => {
     const set = new Set<string>(CANONICAL_CATEGORIES);
     categories.forEach((c) => {
       if (c) set.add(c);
     });
     if (editForm.category) set.add(editForm.category);
     return Array.from(set);
-  }, [categories, editForm.category]);
+  })();
 
   // Calculate individual person totals based on payer
   const personTotals = filteredExpenses.reduce((acc, expense) => {
