@@ -1064,7 +1064,7 @@ function ExpensesPageContent() {
                             合計から除外
                           </span>
                         )}
-                        {expense.receiptUrl && (
+                        {expense.receiptUrl ? (
                           <a
                             href={expense.receiptUrl}
                             target="_blank"
@@ -1073,6 +1073,14 @@ function ExpensesPageContent() {
                             title="レシート画像を開く"
                           >
                             📎 レシート
+                          </a>
+                        ) : (
+                          <a
+                            href={`/attach?expenseId=${encodeURIComponent(expense.id)}`}
+                            className="bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-0.5 rounded hover:bg-gray-200 transition-colors cursor-pointer"
+                            title="レシートを添付"
+                          >
+                            📎 レシート添付
                           </a>
                         )}
                       </div>
