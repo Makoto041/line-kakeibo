@@ -562,7 +562,7 @@ function ExpensesPageContent() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-5 md:px-8 md:py-7">
+    <div className="mx-auto w-full max-w-5xl px-4 py-5 md:px-8 md:py-7">
       {isGuest && (
         <div className="mb-4">
           <PreviewModeBanner />
