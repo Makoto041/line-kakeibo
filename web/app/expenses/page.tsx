@@ -898,26 +898,11 @@ function ExpensesPageContent() {
                             合計から除外
                           </span>
                         )}
-                        {expense.receiptUrl ? (
-                          <a
-                            href={expense.receiptUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 rounded-md bg-amber-500/12 px-2 py-0.5 text-xs font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
-                            title="レシート画像を開く"
-                          >
+                        {expense.receiptUrl && (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/12 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
                             <Paperclip className="h-3 w-3" />
-                            レシート
-                          </a>
-                        ) : (
-                          <a
-                            href={`/attach?expenseId=${encodeURIComponent(expense.id)}`}
-                            className="inline-flex items-center gap-1 rounded-md bg-fg/5 px-2 py-0.5 text-xs font-medium text-muted transition-colors hover:bg-fg/10"
-                            title="レシートを添付"
-                          >
-                            <Paperclip className="h-3 w-3" />
-                            添付
-                          </a>
+                            レシートあり
+                          </span>
                         )}
                       </div>
 
@@ -990,6 +975,29 @@ function ExpensesPageContent() {
                           <Pencil className="h-4 w-4" />
                           編集
                         </button>
+
+                        {/* レシート: 編集の隣に並べて発見しやすく */}
+                        {expense.receiptUrl ? (
+                          <a
+                            href={expense.receiptUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-amber-500/12 px-3 py-2 text-sm font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+                            title="レシート画像を開く"
+                          >
+                            <Paperclip className="h-4 w-4" />
+                            レシート
+                          </a>
+                        ) : (
+                          <a
+                            href={`/attach?expenseId=${encodeURIComponent(expense.id)}`}
+                            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-card px-3 py-2 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
+                            title="レシートを添付"
+                          >
+                            <Paperclip className="h-4 w-4" />
+                            レシート添付
+                          </a>
+                        )}
 
                         <button
                           type="button"
