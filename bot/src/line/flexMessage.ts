@@ -191,12 +191,12 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
       type: 'box',
       layout: 'vertical',
       contents: [
-        // 店舗名
+        // 店舗名（テキスト入力版の支出カードと表記・サイズを統一）
         {
           type: 'text',
           text: merchant,
           weight: 'bold',
-          size: 'xl',
+          size: 'lg',
           wrap: true,
         },
         // 金額
@@ -204,9 +204,9 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
           type: 'text',
           text: `¥${amount.toLocaleString()}`,
           weight: 'bold',
-          size: 'xxl',
+          size: 'xl',
           color: '#0F172A',
-          margin: 'md',
+          margin: 'sm',
         },
         // カテゴリと日付
         {
