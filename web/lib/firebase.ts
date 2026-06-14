@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getAuth, signInAnonymously, UserCredential } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 
@@ -104,7 +104,15 @@ const initializeFirebase = () => {
     }
     
     // Firestore初期化
-    db = getFirestore(app);
+    // WebView/プロキシ/拡張機能などでWebChannelストリーミングがブロックされると
+    // "Failed to get document because the client is offline" になる。
+    // 自動でロングポーリングへフォールバックさせて接続性を確保する。
+    try {
+      db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+    } catch {
+      // 既に初期化済み（HMR等での二重初期化）の場合は既存インスタンスを再利用
+      db = getFirestore(app);
+    }
     
     // Emulator接続（開発環境のみ）
     if (process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true') {
