@@ -2,11 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { Wallet, CalendarRange } from 'lucide-react';
 import { useLineAuth } from '../../lib/hooks';
 import { getDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, DEFAULT_SETTINGS, type DateRangeSettings } from '../../lib/dateSettings';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import PreviewModeBanner from '../../components/PreviewModeBanner';
+import { getCategoryVisual } from '../../lib/categoryVisuals';
 import dayjs from 'dayjs';
 
 // 予算設定インターフェース
@@ -23,16 +25,16 @@ const defaultBudgetConfig: BudgetConfig = {
 };
 
 const defaultCategories = [
-  { id: 'food', name: '食費', emoji: '🍽️' },
-  { id: 'daily', name: '日用品', emoji: '🛒' },
-  { id: 'transport', name: '交通費', emoji: '🚃' },
-  { id: 'entertainment', name: '娯楽費', emoji: '🎮' },
-  { id: 'utility', name: '光熱費', emoji: '💡' },
-  { id: 'communication', name: '通信費', emoji: '📱' },
-  { id: 'medical', name: '医療費', emoji: '🏥' },
-  { id: 'clothing', name: '衣服費', emoji: '👕' },
-  { id: 'education', name: '教育費', emoji: '📚' },
-  { id: 'other', name: 'その他', emoji: '📦' },
+  { id: 'food', name: '食費' },
+  { id: 'daily', name: '日用品' },
+  { id: 'transport', name: '交通費' },
+  { id: 'entertainment', name: '娯楽費' },
+  { id: 'utility', name: '光熱費' },
+  { id: 'communication', name: '通信費' },
+  { id: 'medical', name: '医療費' },
+  { id: 'clothing', name: '衣服費' },
+  { id: 'education', name: '教育費' },
+  { id: 'other', name: 'その他' },
 ];
 
 function normalizeBudgetConfig(data: unknown): BudgetConfig {
@@ -182,10 +184,10 @@ export default function Settings() {
 
   if (authLoading || loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-gray-100">
+      <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
-          <div className="w-10 h-10 border-3 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p className="mt-4 text-sm text-gray-500">読み込み中...</p>
+          <div className="mx-auto h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+          <p className="mt-3 text-sm text-muted">読み込み中...</p>
         </div>
       </div>
     );
@@ -193,13 +195,13 @@ export default function Settings() {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-gray-100">
-        <div className="text-center max-w-md p-8 bg-white rounded-2xl shadow-lg">
-          <h1 className="text-xl font-bold text-gray-900 mb-2">ログインが必要です</h1>
-          <p className="text-gray-600 text-sm mb-4">設定を変更するにはログインしてください</p>
+      <div className="mx-auto flex min-h-[60vh] max-w-md items-center px-4">
+        <div className="glass w-full rounded-2xl p-8 text-center shadow-glass">
+          <h1 className="text-lg font-semibold text-fg">ログインが必要です</h1>
+          <p className="mt-1.5 text-sm text-muted">設定を変更するにはログインしてください</p>
           <a
             href={getUrlWithLineId('/')}
-            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+            className="mt-4 inline-flex items-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg transition-colors hover:opacity-90"
           >
             ホームに戻る
           </a>
@@ -209,10 +211,14 @@ export default function Settings() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
-      {(user.uid === 'guest' || user.isAnonymous) && <PreviewModeBanner />}
+    <div className="mx-auto w-full max-w-2xl px-4 py-5 md:px-8 md:py-7">
+      {(user.uid === 'guest' || user.isAnonymous) && (
+        <div className="mb-4">
+          <PreviewModeBanner />
+        </div>
+      )}
 
-      <main className="max-w-2xl mx-auto px-4 py-6 pb-24">
+      <main>
         {/* Message */}
         {message && (
           <motion.div
@@ -220,8 +226,8 @@ export default function Settings() {
             animate={{ opacity: 1, y: 0 }}
             className={`mb-4 p-3 rounded-xl text-sm ${
               message.type === 'success'
-                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                : 'bg-rose-50 text-rose-700 border border-rose-200'
+                ? 'border border-emerald-500/20 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300'
+                : 'border border-rose-500/20 bg-rose-500/12 text-rose-700 dark:text-rose-300'
             }`}
           >
             {message.text}
@@ -229,26 +235,28 @@ export default function Settings() {
         )}
 
         {/* Tab Navigation */}
-        <div className="flex gap-2 mb-6 bg-white/80 backdrop-blur-sm rounded-xl p-1 shadow-sm border border-gray-100">
+        <div className="glass mb-5 flex gap-1 rounded-2xl p-1 shadow-glass">
           <button
             onClick={() => setActiveTab('budget')}
-            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors ${
               activeTab === 'budget'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-gray-600 hover:bg-gray-100'
+                ? 'bg-accent text-accent-fg shadow-sm'
+                : 'text-muted hover:bg-fg/5 hover:text-fg'
             }`}
           >
-            💰 予算設定
+            <Wallet className="h-4 w-4" />
+            予算設定
           </button>
           <button
             onClick={() => setActiveTab('period')}
-            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors ${
               activeTab === 'period'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-gray-600 hover:bg-gray-100'
+                ? 'bg-accent text-accent-fg shadow-sm'
+                : 'text-muted hover:bg-fg/5 hover:text-fg'
             }`}
           >
-            📅 期間設定
+            <CalendarRange className="h-4 w-4" />
+            期間設定
           </button>
         </div>
 
@@ -260,10 +268,10 @@ export default function Settings() {
             className="space-y-4"
           >
             {/* Monthly Budget */}
-            <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-5">
-              <h3 className="text-sm font-semibold text-gray-900 mb-3">月間予算総額</h3>
+            <div className="glass rounded-2xl shadow-glass p-5">
+              <h3 className="text-sm font-semibold text-fg mb-3">月間予算総額</h3>
               <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">¥</span>
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">¥</span>
                 <input
                   type="number"
                   value={budgetConfig.monthlyBudget}
@@ -272,14 +280,14 @@ export default function Settings() {
                     const value = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
                     setBudgetConfig(prev => ({ ...prev, monthlyBudget: value }));
                   }}
-                  className="w-full pl-8 pr-4 py-3 rounded-xl border border-gray-200 text-lg font-bold text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full rounded-xl border border-line bg-card py-3 pl-8 pr-4 text-lg font-bold text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
             </div>
 
             {/* Alert Threshold */}
-            <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-5">
-              <h3 className="text-sm font-semibold text-gray-900 mb-3">予算残り警告</h3>
+            <div className="glass rounded-2xl shadow-glass p-5">
+              <h3 className="text-sm font-semibold text-fg mb-3">予算残り警告</h3>
               <div className="flex items-center gap-4">
                 <input
                   type="range"
@@ -290,31 +298,36 @@ export default function Settings() {
                   onChange={(e) => setBudgetConfig(prev => ({ ...prev, alertThreshold: parseInt(e.target.value) }))}
                   className="flex-1"
                 />
-                <span className="w-14 text-center font-semibold text-gray-900">
+                <span className="w-14 text-center font-semibold text-fg">
                   {budgetConfig.alertThreshold}%
                 </span>
               </div>
-              <p className="text-xs text-gray-500 mt-2">
+              <p className="text-xs text-muted mt-2">
                 残り予算が{budgetConfig.alertThreshold}%（¥{Math.round(budgetConfig.monthlyBudget * budgetConfig.alertThreshold / 100).toLocaleString()}）を下回ると警告
               </p>
             </div>
 
             {/* Category Budgets */}
-            <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-5">
+            <div className="glass rounded-2xl shadow-glass p-5">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-sm font-semibold text-gray-900">カテゴリ別予算</h3>
-                <span className={`text-xs ${categoryBudgetTotal > budgetConfig.monthlyBudget ? 'text-rose-500' : 'text-gray-500'}`}>
+                <h3 className="text-sm font-semibold text-fg">カテゴリ別予算</h3>
+                <span className={`text-xs ${categoryBudgetTotal > budgetConfig.monthlyBudget ? 'text-rose-500' : 'text-muted'}`}>
                   合計: ¥{categoryBudgetTotal.toLocaleString()}
                 </span>
               </div>
 
               <div className="space-y-3">
-                {defaultCategories.map((category) => (
+                {defaultCategories.map((category) => {
+                  const v = getCategoryVisual(category.name);
+                  const Icon = v.icon;
+                  return (
                   <div key={category.id} className="flex items-center gap-3">
-                    <span className="text-lg w-7">{category.emoji}</span>
-                    <span className="w-16 text-sm text-gray-700 truncate">{category.name}</span>
-                    <div className="flex-1 relative">
-                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">¥</span>
+                    <span className={`grid h-7 w-7 flex-shrink-0 place-items-center rounded-lg ${v.bg} ${v.fg}`}>
+                      <Icon className="h-4 w-4" strokeWidth={2.1} />
+                    </span>
+                    <span className="w-16 truncate text-sm text-fg">{category.name}</span>
+                    <div className="relative flex-1">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted">¥</span>
                       <input
                         type="number"
                         placeholder="0"
@@ -329,11 +342,12 @@ export default function Settings() {
                             },
                           }));
                         }}
-                        className="w-full pl-7 pr-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className="w-full rounded-lg border border-line bg-card py-2 pl-7 pr-3 text-sm text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       />
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </motion.div>
@@ -344,89 +358,89 @@ export default function Settings() {
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-5"
+            className="glass rounded-2xl shadow-glass p-5"
           >
-            <h3 className="text-sm font-semibold text-gray-900 mb-4">表示期間の設定</h3>
+            <h3 className="text-sm font-semibold text-fg mb-4">表示期間の設定</h3>
 
             <div className="space-y-3">
-              <label className="flex items-center p-3 rounded-xl border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors">
+              <label className="flex cursor-pointer items-center rounded-xl border border-line p-3 transition-colors hover:bg-fg/5">
                 <input
                   type="radio"
                   name="mode"
                   value="monthly"
                   checked={dateSettings.mode === 'monthly'}
                   onChange={(e) => setDateSettings({ ...dateSettings, mode: e.target.value as DateRangeSettings['mode'] })}
-                  className="w-4 h-4 text-blue-600"
+                  className="h-4 w-4 text-accent focus:ring-ring"
                 />
-                <span className="ml-3 text-sm text-gray-700">月単位で表示</span>
+                <span className="ml-3 text-sm text-fg">月単位で表示</span>
               </label>
 
-              <label className="flex items-center p-3 rounded-xl border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors">
+              <label className="flex cursor-pointer items-center rounded-xl border border-line p-3 transition-colors hover:bg-fg/5">
                 <input
                   type="radio"
                   name="mode"
                   value="customStart"
                   checked={dateSettings.mode === 'customStart'}
                   onChange={(e) => setDateSettings({ ...dateSettings, mode: e.target.value as DateRangeSettings['mode'] })}
-                  className="w-4 h-4 text-blue-600"
+                  className="h-4 w-4 text-accent focus:ring-ring"
                 />
-                <span className="ml-3 text-sm text-gray-700">指定日を月初として表示</span>
+                <span className="ml-3 text-sm text-fg">指定日を月初として表示</span>
               </label>
 
-              <label className="flex items-center p-3 rounded-xl border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors">
+              <label className="flex cursor-pointer items-center rounded-xl border border-line p-3 transition-colors hover:bg-fg/5">
                 <input
                   type="radio"
                   name="mode"
                   value="custom"
                   checked={dateSettings.mode === 'custom'}
                   onChange={(e) => setDateSettings({ ...dateSettings, mode: e.target.value as DateRangeSettings['mode'] })}
-                  className="w-4 h-4 text-blue-600"
+                  className="h-4 w-4 text-accent focus:ring-ring"
                 />
-                <span className="ml-3 text-sm text-gray-700">期間を指定して表示</span>
+                <span className="ml-3 text-sm text-fg">期間を指定して表示</span>
               </label>
             </div>
 
             {dateSettings.mode === 'customStart' && (
-              <div className="mt-4 p-4 bg-blue-50 rounded-xl">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+              <div className="mt-4 rounded-xl bg-accent/[0.06] p-4">
+                <label className="mb-2 block text-sm font-medium text-fg">
                   月初日として扱う日付
                 </label>
                 <select
                   value={tempStartDay}
                   onChange={(e) => setTempStartDay(parseInt(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {Array.from({ length: 28 }, (_, i) => i + 1).map(day => (
                     <option key={day} value={day}>{day}日</option>
                   ))}
                 </select>
-                <p className="mt-2 text-xs text-gray-600">
+                <p className="mt-2 text-xs text-muted">
                   例：25日を選択すると、25日〜翌月24日を1ヶ月として表示
                 </p>
               </div>
             )}
 
             {dateSettings.mode === 'custom' && (
-              <div className="mt-4 p-4 bg-blue-50 rounded-xl space-y-3">
+              <div className="mt-4 rounded-xl bg-accent/[0.06] p-4 space-y-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">開始日</label>
+                  <label className="mb-2 block text-sm font-medium text-fg">開始日</label>
                   <input
                     type="date"
                     value={tempStartDate}
                     onChange={(e) => setTempStartDate(e.target.value)}
                     max={tempEndDate || dayjs().format('YYYY-MM-DD')}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                    className="w-full rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">終了日</label>
+                  <label className="mb-2 block text-sm font-medium text-fg">終了日</label>
                   <input
                     type="date"
                     value={tempEndDate}
                     onChange={(e) => setTempEndDate(e.target.value)}
                     min={tempStartDate}
                     max={dayjs().format('YYYY-MM-DD')}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                    className="w-full rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 </div>
               </div>
@@ -444,7 +458,7 @@ export default function Settings() {
           <button
             onClick={handleSaveAll}
             disabled={saving}
-            className="w-full py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+            className="w-full rounded-xl bg-accent py-3 font-medium text-accent-fg shadow-sm transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? '保存中...' : '設定を保存'}
           </button>

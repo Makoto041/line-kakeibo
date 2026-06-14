@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { MessageCircle, Check } from 'lucide-react';
 
 const STEPS: Array<{
   title: string;
@@ -14,7 +15,7 @@ const STEPS: Array<{
     title: 'トークで支出を送信',
     description: (
       <>
-        「<span className="font-semibold text-gray-800">500 ランチ</span>
+        「<span className="font-semibold text-fg">500 ランチ</span>
         」のように金額と内容を送るだけで、カテゴリも自動で分類して記録されます。
         レシート画像の送信にも対応しています。
       </>
@@ -39,58 +40,55 @@ const COMMANDS: Array<{ command: string; description: string }> = [
  */
 export default function GuestGuide({ className = '' }: { className?: string }) {
   return (
-    <div
-      className={`bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-5 sm:p-6 ${className}`}
-    >
-      <h2 className="text-lg font-semibold text-gray-900 mb-1 flex items-center gap-2">
-        <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-white text-sm">
-          💬
+    <div className={`glass rounded-2xl p-5 shadow-glass sm:p-6 ${className}`}>
+      <h2 className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-fg">
+        <span className="grid h-8 w-8 place-items-center rounded-xl bg-accent text-accent-fg">
+          <MessageCircle className="h-[18px] w-[18px]" strokeWidth={2.2} />
         </span>
         LINE家計簿の使い方
       </h2>
-      <p className="text-xs text-gray-500 mb-5">
+      <p className="mb-5 text-xs text-muted">
         LINEのトークに送るだけで、自動で家計簿がつけられます
       </p>
 
       {/* Steps */}
-      <ol className="space-y-4 mb-6">
+      <ol className="mb-6 space-y-4">
         {STEPS.map((step, index) => (
           <li key={step.title} className="flex gap-3">
-            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-sm font-bold flex items-center justify-center">
+            <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-accent/12 text-sm font-bold text-accent">
               {index + 1}
             </span>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-800">{step.title}</p>
-              <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{step.description}</p>
+              <p className="text-sm font-semibold text-fg">{step.title}</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted">{step.description}</p>
             </div>
           </li>
         ))}
       </ol>
 
-      {/* LINE風トークのイメージ */}
-      <div className="rounded-xl bg-[#8cabd8]/20 p-4 mb-6">
-        <p className="text-[10px] font-medium text-gray-500 mb-2">トークのイメージ</p>
+      {/* トークのイメージ */}
+      <div className="mb-6 rounded-xl bg-fg/[0.03] p-4">
+        <p className="mb-2 text-[10px] font-medium text-muted">トークのイメージ</p>
         <div className="space-y-2">
           <div className="flex justify-end">
-            <span className="inline-block max-w-[80%] bg-[#8de055] text-gray-900 text-xs rounded-2xl rounded-tr-sm px-3 py-2 shadow-sm">
+            <span className="inline-block max-w-[80%] rounded-2xl rounded-tr-sm bg-accent px-3 py-2 text-xs text-accent-fg shadow-sm">
               500 ランチ
             </span>
           </div>
           <div className="flex justify-start">
-            <span className="inline-block max-w-[80%] bg-white text-gray-700 text-xs rounded-2xl rounded-tl-sm px-3 py-2 shadow-sm">
-              ✅ 記録しました
-              <br />
-              🍽️ 食費 / ¥500 / ランチ
+            <span className="inline-flex max-w-[80%] items-center gap-1.5 rounded-2xl rounded-tl-sm bg-card px-3 py-2 text-xs text-fg shadow-sm">
+              <Check className="h-3.5 w-3.5 text-accent" />
+              記録しました：食費 / ¥500 / ランチ
             </span>
           </div>
           <div className="flex justify-end">
-            <span className="inline-block max-w-[80%] bg-[#8de055] text-gray-900 text-xs rounded-2xl rounded-tr-sm px-3 py-2 shadow-sm">
+            <span className="inline-block max-w-[80%] rounded-2xl rounded-tr-sm bg-accent px-3 py-2 text-xs text-accent-fg shadow-sm">
               家計簿
             </span>
           </div>
           <div className="flex justify-start">
-            <span className="inline-block max-w-[80%] bg-white text-gray-700 text-xs rounded-2xl rounded-tl-sm px-3 py-2 shadow-sm">
-              📊 今月の集計と専用リンクをお届けします
+            <span className="inline-block max-w-[80%] rounded-2xl rounded-tl-sm bg-card px-3 py-2 text-xs text-fg shadow-sm">
+              今月の集計と専用リンクをお届けします
             </span>
           </div>
         </div>
@@ -98,17 +96,17 @@ export default function GuestGuide({ className = '' }: { className?: string }) {
 
       {/* Commands */}
       <div>
-        <p className="text-xs font-medium text-gray-600 mb-2">便利なコマンド</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <p className="mb-2 text-xs font-medium text-muted">便利なコマンド</p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {COMMANDS.map((item) => (
             <div
               key={item.command}
-              className="flex items-center gap-2 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2"
+              className="flex items-center gap-2 rounded-lg border border-line bg-fg/[0.02] px-3 py-2"
             >
-              <code className="flex-shrink-0 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5">
+              <code className="flex-shrink-0 rounded border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-xs font-semibold text-accent">
                 {item.command}
               </code>
-              <span className="text-xs text-gray-500 leading-tight">{item.description}</span>
+              <span className="text-xs leading-tight text-muted">{item.description}</span>
             </div>
           ))}
         </div>

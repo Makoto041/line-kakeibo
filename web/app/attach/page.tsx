@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import { Paperclip, Check, RefreshCw, Camera, Upload } from "lucide-react";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
@@ -18,11 +19,8 @@ export default function AttachPage() {
 
 function AttachPageLoading() {
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-        <p className="mt-4 text-gray-600">読み込み中...</p>
-      </div>
+    <div className="flex min-h-dvh items-center justify-center">
+      <div className="h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" />
     </div>
   );
 }
@@ -176,32 +174,35 @@ function AttachPageContent() {
   const showUploadForm = !hasReceipt || replacing;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
-      <div className="bg-white shadow-sm">
-        <div className="max-w-lg mx-auto px-4 py-4">
-          <h1 className="text-xl font-bold text-gray-900">📎 レシート添付</h1>
+    <div className="min-h-dvh">
+      <header className="glass-bar sticky top-0 z-10 border-b border-line/60">
+        <div className="mx-auto flex max-w-lg items-center gap-2 px-4 py-4">
+          <span className="grid h-8 w-8 place-items-center rounded-xl bg-accent text-accent-fg">
+            <Paperclip className="h-[18px] w-[18px]" strokeWidth={2.2} />
+          </span>
+          <h1 className="text-lg font-semibold tracking-tight text-fg">レシート添付</h1>
         </div>
-      </div>
+      </header>
 
-      <main className="max-w-lg mx-auto px-4 py-6 space-y-6">
+      <main className="mx-auto max-w-lg space-y-4 px-4 py-6">
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-red-800 text-sm">{error}</p>
+          <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.06] p-4">
+            <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
           </div>
         )}
 
         {expense && (
           <>
             {/* 支出概要 */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-              <h2 className="text-sm font-medium text-gray-500 mb-3">対象の支出</h2>
-              <p className="text-lg font-semibold text-gray-900 break-words">
+            <div className="glass rounded-2xl p-5 shadow-glass">
+              <h2 className="mb-3 text-sm font-medium text-muted">対象の支出</h2>
+              <p className="break-words text-lg font-semibold text-fg">
                 {expense.description}
               </p>
-              <p className="text-2xl font-bold text-red-600 mt-1">
+              <p className="mt-1 text-2xl font-bold tabular-nums text-fg">
                 ¥{expense.amount.toLocaleString()}
               </p>
-              <p className="text-sm text-gray-600 mt-1">
+              <p className="mt-1 text-sm text-muted">
                 {expense.date
                   ? dayjs(expense.date).format("YYYY年M月D日")
                   : "日付不明"}
@@ -211,17 +212,16 @@ function AttachPageContent() {
 
             {/* アップロード完了メッセージ */}
             {uploadDone && (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <p className="text-green-800 text-sm font-medium">
-                  ✅ レシートを添付しました！このページは閉じて構いません。
-                </p>
+              <div className="flex items-start gap-2 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.08] p-4 text-emerald-700 dark:text-emerald-300">
+                <Check className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2.4} />
+                <p className="text-sm font-medium">レシートを添付しました。このページは閉じて構いません。</p>
               </div>
             )}
 
             {/* 既存レシートのプレビュー */}
             {hasReceipt && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-                <h2 className="text-sm font-medium text-gray-500 mb-3">
+              <div className="glass rounded-2xl p-5 shadow-glass">
+                <h2 className="mb-3 text-sm font-medium text-muted">
                   添付済みのレシート
                 </h2>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -229,7 +229,7 @@ function AttachPageContent() {
                   <img
                     src={expense.receiptUrl}
                     alt="添付済みレシート"
-                    className="w-full rounded-lg border border-gray-200"
+                    className="w-full rounded-lg border border-line"
                   />
                 )}
                 {!replacing && (
@@ -239,9 +239,10 @@ function AttachPageContent() {
                       setReplacing(true);
                       setUploadDone(false);
                     }}
-                    className="mt-4 w-full bg-gray-500 text-white px-4 py-3 rounded-lg text-sm font-medium hover:bg-gray-600 transition-colors"
+                    className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg border border-line bg-card px-4 py-3 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
                   >
-                    🔄 レシートを差し替える
+                    <RefreshCw className="h-4 w-4" />
+                    レシートを差し替える
                   </button>
                 )}
               </div>
@@ -249,8 +250,8 @@ function AttachPageContent() {
 
             {/* アップロードフォーム */}
             {showUploadForm && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-4">
-                <h2 className="text-sm font-medium text-gray-500">
+              <div className="glass space-y-4 rounded-2xl p-5 shadow-glass">
+                <h2 className="text-sm font-medium text-muted">
                   {hasReceipt ? "新しいレシートを選択" : "レシート画像を選択"}
                 </h2>
 
@@ -266,24 +267,26 @@ function AttachPageContent() {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-full border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                  className="flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line p-6 text-center transition-colors hover:border-accent hover:bg-accent/[0.04]"
                 >
-                  <span className="text-3xl block mb-2">📷</span>
-                  <span className="text-sm text-gray-600">
+                  <span className="grid h-12 w-12 place-items-center rounded-2xl bg-accent/12 text-accent">
+                    <Camera className="h-6 w-6" strokeWidth={1.9} />
+                  </span>
+                  <span className="text-sm text-muted">
                     タップして撮影 / 画像を選択
                   </span>
                 </button>
 
                 {previewDataUrl && (
                   <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-2">
+                    <h3 className="mb-2 text-sm font-medium text-muted">
                       プレビュー
                     </h3>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={previewDataUrl}
                       alt="選択した画像のプレビュー"
-                      className="w-full rounded-lg border border-gray-200"
+                      className="w-full rounded-lg border border-line"
                     />
                   </div>
                 )}
@@ -292,13 +295,10 @@ function AttachPageContent() {
                   type="button"
                   onClick={handleUpload}
                   disabled={!selectedFile || uploading}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
-                    !selectedFile || uploading
-                      ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                      : "bg-blue-600 text-white hover:bg-blue-700"
-                  }`}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-3 text-sm font-medium text-accent-fg transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {uploading ? "アップロード中..." : "⬆️ アップロードする"}
+                  <Upload className="h-4 w-4" />
+                  {uploading ? "アップロード中..." : "アップロードする"}
                 </button>
 
                 {replacing && (
@@ -309,7 +309,7 @@ function AttachPageContent() {
                       setSelectedFile(null);
                       setPreviewDataUrl(null);
                     }}
-                    className="w-full bg-white text-gray-600 border border-gray-300 px-4 py-3 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                    className="w-full rounded-lg border border-line bg-card px-4 py-3 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
                   >
                     キャンセル
                   </button>
