@@ -698,40 +698,6 @@ function ExpensesPageContent() {
           </div>
         </div>
 
-        {/* Individual Person Totals */}
-        {/* {sortedPersonTotals.length > 0 && (
-          <div className="bg-white/90 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-4 mb-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              👥 個人別合計
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {sortedPersonTotals.map(([personName, total]) => (
-                <div
-                  key={personName}
-                  className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-4 border border-green-200"
-                >
-                  <div className="text-center">
-                    <div className="text-sm font-medium text-gray-700 mb-1">
-                      {personName}
-                    </div>
-                    <div className="text-xl font-bold text-green-600">
-                      ¥{total.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {
-                        filteredExpenses.filter(
-                          (e) => (e.userDisplayName || "個人") === personName
-                        ).length
-                      }
-                      件
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )} */}
-
         {loading ? (
           <div className="py-16 text-center">
             <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
@@ -942,7 +908,7 @@ function ExpensesPageContent() {
                           name="includeInTotal"
                           checked={editForm.includeInTotal}
                           onChange={handleEditCheckboxChange}
-                          className="h-4 w-4 rounded border-line text-accent focus:ring-ring"
+                          className="h-4 w-4 rounded border-line accent-accent"
                         />
                         <label className="ml-3 text-sm font-medium text-fg">
                           合計に含める
