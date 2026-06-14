@@ -26,6 +26,7 @@ import type { Expense } from "../../lib/hooks";
 import PreviewModeBanner from "../../components/PreviewModeBanner";
 import GuestGuide from "../../components/GuestGuide";
 import { getCategoryVisual } from "../../lib/categoryVisuals";
+import { CANONICAL_CATEGORIES, normalizeCategoryName } from "../../lib/categoryNormalization";
 import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
@@ -466,19 +467,17 @@ function ExpensesPageContent() {
   });
 
   const categories = [...new Set(expenses.map((e) => e.category))];
-  const allCategories = [
-    "食費",
-    "交通費",
-    "日用品",
-    "娯楽",
-    "衣服",
-    "医療・健康",
-    "教育",
-    "通信費",
-    "光熱費",
-    "美容・理容",
-    "その他",
-  ];
+  // カテゴリ編集の選択肢は正準カテゴリ（bot/分類器と統一）。
+  // データ内の既存カテゴリや編集中の現在値も取り込み、未知カテゴリでも
+  // 先頭（食費）に勝手に落ちないようにする。
+  const allCategories = useMemo(() => {
+    const set = new Set<string>(CANONICAL_CATEGORIES);
+    categories.forEach((c) => {
+      if (c) set.add(c);
+    });
+    if (editForm.category) set.add(editForm.category);
+    return Array.from(set);
+  }, [categories, editForm.category]);
 
   // Calculate individual person totals based on payer
   const personTotals = filteredExpenses.reduce((acc, expense) => {
@@ -493,6 +492,11 @@ function ExpensesPageContent() {
       if (historicalUser) {
         payerName = historicalUser.displayName;
       }
+    }
+
+    // クレジットカード通知（Gmail自動取得）由来は「クレジットカード」としてまとめる
+    if (expense.inputSource === 'gmail_auto') {
+      payerName = 'クレジットカード';
     }
 
     // 承認済みの項目のみ合計に含める
@@ -876,9 +880,17 @@ function ExpensesPageContent() {
                             }
                           }
 
+                          // クレジットカード通知（Gmail自動取得）由来は明示的に表示
+                          const isCardSource = expense.inputSource === 'gmail_auto';
+                          if (isCardSource) {
+                            payerName = 'クレジットカード';
+                          }
+
                           return payerName !== "個人" && (
                             <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${
-                              isDefaultPayer
+                              isCardSource
+                                ? "bg-sky-500/12 text-sky-600 dark:text-sky-400"
+                                : isDefaultPayer
                                 ? "bg-fg/5 text-muted"
                                 : "bg-violet-500/12 text-violet-600 dark:text-violet-400"
                             }`}>
