@@ -216,6 +216,18 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
           spacing: 'sm',
           margin: 'sm',
         },
+        // 3段目: レシート添付
+        {
+          type: 'button',
+          action: {
+            type: 'uri',
+            label: '📎 レシート添付',
+            uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
+          },
+          style: 'secondary',
+          height: 'sm',
+          margin: 'sm',
+        },
       ],
       paddingAll: 'md',
       spacing: 'sm',
@@ -474,6 +486,18 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
           spacing: 'sm',
           margin: 'sm',
         },
+        // 3段目: レシート添付
+        {
+          type: 'button',
+          action: {
+            type: 'uri',
+            label: '📎 レシート添付',
+            uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
+          },
+          style: 'secondary',
+          height: 'sm',
+          margin: 'sm',
+        },
       ],
       paddingAll: 'md',
       spacing: 'sm',
@@ -489,16 +513,33 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
 
 /**
  * テキスト入力登録完了通知を送信
+ *
+ * replyTokenが渡された場合はreplyMessage（無料・月200通制限の対象外）で送信し、
+ * 失敗時（トークン期限切れ・使用済み等）のみpushMessageにフォールバックする
  */
 export async function sendTextExpenseNotification(
   targetId: string,
-  info: TextExpenseInfo
+  info: TextExpenseInfo,
+  replyToken?: string
 ): Promise<void> {
   const client = getLineClient();
   const message = buildTextExpenseFlexMessage(info);
 
+  if (replyToken) {
+    try {
+      await client.replyMessage(replyToken, message);
+      console.log(`Text expense notification sent via replyMessage (free) to ${targetId}`);
+      return;
+    } catch (replyError) {
+      console.warn(
+        "replyMessage failed (token expired or already used), falling back to pushMessage:",
+        replyError
+      );
+    }
+  }
+
   await client.pushMessage(targetId, message);
-  console.log(`Text expense notification sent to ${targetId}`);
+  console.log(`Text expense notification sent via pushMessage to ${targetId}`);
 }
 
 /**

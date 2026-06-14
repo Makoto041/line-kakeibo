@@ -37,6 +37,7 @@ import { getCategoryEmoji } from "./gmail/types";
 import { parseTextExpense } from "./textParser";
 import { resolveAppUidForExpense } from "./linkUserResolver";
 import { getClassificationStats, classifyExpenseWithGemini, isGeminiAvailable, findCategoryWithGemini } from "./geminiCategoryClassifier";
+import { createIssueFromFeedback } from "./issueCreator";
 // Money Forward Me Import
 import { importMoneyForward } from "./importMoneyForward";
 import rateLimit from "express-rate-limit";
@@ -109,16 +110,10 @@ app.post("/webhook", async (req: Request, res: Response) => {
           }
         } else if (event.type === "message" && event.message.type === "text") {
           // テキストメッセージの処理
-          // 注: handleTextMessage内でreplyMessageを使用するため、ここでは送信しない
-
-          // バックグラウンドで処理実行
+          // 注: handleTextMessage内でreplyMessage（無料）を使用するため、ここでは送信しない
+          // エラー時のユーザー通知もhandleTextMessage内で行う（エラーpushの重複を防ぐ）
           handleTextMessage(event).catch(error => {
             console.error("Text processing error:", error);
-            const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
-            client.pushMessage(targetId, {
-              type: "text",
-              text: "❌ テキスト処理中にエラーが発生しました。もう一度お試しください。",
-            }).catch(console.error);
           });
         } else if (event.type === "postback") {
           // Postbackイベント処理
@@ -272,6 +267,47 @@ async function handleTextMessage(event: any) {
           });
         } catch (replyError) {
           console.error("Failed to send fallback reply:", replyError);
+        }
+      }
+      return;
+    }
+
+    // ②' フィードバック（要望・改善・不具合報告）からのIssue自動起票コマンド
+    const feedbackPrefixes = ["要望", "改善", "不具合", "フィードバック"];
+    let feedbackText: string | null = null;
+    for (const prefix of feedbackPrefixes) {
+      // 半角スペース・全角スペースの両方に対応
+      if (text.startsWith(`${prefix} `) || text.startsWith(`${prefix}　`)) {
+        feedbackText = text.slice(prefix.length + 1).trim();
+        break;
+      }
+    }
+    if (feedbackText !== null) {
+      console.log(
+        `=== FEEDBACK COMMAND MATCHED: Creating GitHub issue from feedback: "${feedbackText}" ===`
+      );
+      if (!feedbackText) {
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: "💡 フィードバック内容を入力してください。\n例: 「要望 月別のグラフが見たい」\n「不具合 レシートが読み取れない」",
+        });
+        return;
+      }
+      try {
+        const result = await createIssueFromFeedback(feedbackText);
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: result.message,
+        });
+      } catch (error) {
+        console.error("Error creating issue from feedback:", error);
+        try {
+          await client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "❌ Issueの作成に失敗しました。\n時間をおいてもう一度お試しください。",
+          });
+        } catch (replyError) {
+          console.error("Failed to send feedback error reply:", replyError);
         }
       }
       return;
@@ -684,23 +720,16 @@ async function handleTextMessage(event: any) {
 
     console.log(`=== TEXT PROCESSING: Successfully parsed expense:`, parsed);
 
-    // 即座に処理中のメッセージを返す
+    // 注: 中間メッセージ（「💬 登録中です...」）は送信しない。
+    // replyTokenを最終のFlex Message通知に温存し、replyMessage（無料）で
+    // 送信することでpushMessage（月200通制限）の消費を1通節約する
     const targetId = event.source.type === "group"
       ? event.source.groupId
       : event.source.userId;
 
-    try {
-      await client.replyMessage(event.replyToken, {
-        type: "text",
-        text: "💬 登録中です...",
-      });
-    } catch (replyError) {
-      console.warn("Failed to send processing confirmation:", replyError);
-    }
-
     // Process expense registration
     try {
-      await processExpenseInBackground(event, parsed);
+      await processExpenseInBackground(event, parsed, event.replyToken);
     } catch (error) {
       console.error("Background expense processing failed:", error);
       // Send error notification
@@ -732,7 +761,11 @@ async function handleTextMessage(event: any) {
 const userProfileCache = new Map<string, { profile: any; groups: any[]; timestamp: number }>();
 const CACHE_TTL = 15 * 60 * 1000; // 15分
 
-async function processExpenseInBackground(event: any, parsed: any) {
+async function processExpenseInBackground(
+  event: any,
+  parsed: any,
+  replyToken?: string
+) {
   try {
     console.log("Starting optimized background expense processing...");
 
@@ -948,10 +981,24 @@ async function processExpenseInBackground(event: any, parsed: any) {
       console.error(`PROFILE ERROR (${context}): Failed to get user profile for ${event.source.userId}`, profileFetchError);
 
       const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
-      await client.pushMessage(targetId, {
-        type: "text",
+      const profileErrorMessage = {
+        type: "text" as const,
         text: "⚠️ ユーザー情報の取得に失敗しました。\n\nしばらく待ってから再度お試しください。\n\n問題が継続する場合は、LINEアプリを再起動してください。"
-      });
+      };
+
+      // replyToken（無料）を優先使用し、失敗時のみpushMessageにフォールバック
+      let errorNotified = false;
+      if (replyToken) {
+        try {
+          await client.replyMessage(replyToken, profileErrorMessage);
+          errorNotified = true;
+        } catch (replyError) {
+          console.warn("replyMessage failed for profile error, falling back to pushMessage:", replyError);
+        }
+      }
+      if (!errorNotified) {
+        await client.pushMessage(targetId, profileErrorMessage);
+      }
       return; // 処理を中断（データは書き込まない）
     }
     
@@ -1056,7 +1103,9 @@ async function processExpenseInBackground(event: any, parsed: any) {
         payerName: userDisplayName,
       };
 
-      await sendTextExpenseNotification(targetId, textExpenseInfo);
+      // replyToken（無料・月200通制限の対象外）を優先使用し、
+      // 期限切れ等で失敗した場合のみpushMessageにフォールバック
+      await sendTextExpenseNotification(targetId, textExpenseInfo, replyToken);
     }
 
     console.log("Background expense processing completed successfully");
@@ -1237,7 +1286,7 @@ export const webhook = onRequest(
     memory: "512MiB", // Increased from 256MiB to handle image processing
     timeoutSeconds: 540, // Increased from 300s to 540s (9 minutes max)
     invoker: "public",
-    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY"],
+    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "GITHUB_TOKEN"],
   },
   app
 );

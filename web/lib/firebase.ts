@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getAuth, signInAnonymously, UserCredential } from 'firebase/auth';
+import { getStorage } from 'firebase/storage';
 
 // Firebase設定の型定義
 interface FirebaseConfig {
@@ -18,7 +19,7 @@ const config: FirebaseConfig = {
   apiKey: (process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "").trim(),
   authDomain: (process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "line-kakeibo-0410.firebaseapp.com").trim(),
   projectId: (process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "line-kakeibo-0410").trim(),
-  storageBucket: (process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "line-kakeibo-0410.appspot.com").trim(),
+  storageBucket: (process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "line-kakeibo-0410.firebasestorage.app").trim(),
   messagingSenderId: (process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "440748785600").trim(),
   appId: (process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "").trim(),
   measurementId: (process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || "G-PLNC7GY160").trim(),
@@ -58,6 +59,7 @@ const validateConfig = (): { isValid: boolean; errors: string[] } => {
 let app: ReturnType<typeof initializeApp> | undefined;
 let db: ReturnType<typeof getFirestore> | undefined;
 let auth: ReturnType<typeof getAuth> | undefined;
+let storage: ReturnType<typeof getStorage> | undefined;
 
 // 初期化処理
 const initializeFirebase = () => {
@@ -102,7 +104,21 @@ const initializeFirebase = () => {
     }
     
     // Firestore初期化
-    db = getFirestore(app);
+    // WebView/プロキシ/拡張機能などでWebChannelストリーミングがブロックされると
+    // "Failed to get document because the client is offline" になる。
+    // 自動でロングポーリングへフォールバックさせて接続性を確保する。
+    try {
+      db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+    } catch (error) {
+      // 通常ここに来るのは「Firestoreが既に初期化済み」(HMR等の二重初期化)のみで、
+      // その場合 getFirestore(app) は long-polling 付きで生成済みの既存インスタンスを返す。
+      // 観測性のため、フォールバックが発生した事実とエラー内容を必ずログに残す。
+      console.warn(
+        'initializeFirestore failed; falling back to getFirestore (long-polling preserved if already initialized):',
+        error
+      );
+      db = getFirestore(app);
+    }
     
     // Emulator接続（開発環境のみ）
     if (process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true') {
@@ -119,7 +135,10 @@ const initializeFirebase = () => {
     
     // Auth初期化
     auth = getAuth(app);
-    
+
+    // Storage初期化
+    storage = getStorage(app);
+
     isInitialized = true;
     
     // 接続テスト（開発環境のみ）
@@ -222,4 +241,4 @@ export const retryFirebaseInitialization = () => {
 };
 
 // エクスポート
-export { db, auth, app, testFirebaseConnection };
+export { db, auth, app, storage, testFirebaseConnection };

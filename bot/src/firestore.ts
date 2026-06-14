@@ -74,6 +74,7 @@ export interface Expense {
   advanceSettledAt?: Timestamp;   // 精算日時
   paymentMethod?: string;         // 支払い方法（cash, paypay, card）
   gmailMessageId?: string;        // Gmail自動取得時のメッセージID
+  receiptUrl?: string;            // レシート画像のURL（Firebase Storage）
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
