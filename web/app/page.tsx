@@ -50,7 +50,15 @@ const budgetToExpenseCategory: Record<string, string[]> = {
 };
 
 function getActualSpending(budgetCategory: string, categoryTotals: Record<string, number>): number {
-  const mapped = budgetToExpenseCategory[budgetCategory] || [budgetCategory];
+  let mapped = budgetToExpenseCategory[budgetCategory];
+  if (!mapped) {
+    // 旧予算キー（例: 娯楽費・医療費）を逆引きして正準キーに解決する。
+    // 正準キーへ統一する以前に保存された予算でも実支出と突き合うようにする。
+    const canonical = Object.keys(budgetToExpenseCategory).find((key) =>
+      budgetToExpenseCategory[key].includes(budgetCategory)
+    );
+    mapped = canonical ? budgetToExpenseCategory[canonical] : [budgetCategory];
+  }
   return mapped.reduce((sum, cat) => sum + (categoryTotals[cat] || 0), 0);
 }
 

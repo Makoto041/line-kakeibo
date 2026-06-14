@@ -480,25 +480,27 @@ function ExpensesPageContent() {
     return Array.from(set);
   })();
 
-  // Calculate individual person totals based on payer
-  const personTotals = filteredExpenses.reduce((acc, expense) => {
-    // 支払い者ベースで集計
+  // 支払い者名の解決ルール（金額/件数/チップ表示で共通利用）。
+  // - クレジットカード通知（Gmail自動取得）由来は「クレジットカード」にまとめる
+  // - payerDisplayName を最優先、不明系は支出履歴から表示名を補完
+  const resolvePayerName = (expense: Expense): string => {
+    if (expense.inputSource === 'gmail_auto') {
+      return 'クレジットカード';
+    }
     const payerId = expense.payerId || expense.lineId;
-    // payerDisplayNameを最優先で使用（userDisplayNameは使わない）
     let payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
-
-    // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
     if (payerName === 'メンバー' || payerName === '個人' || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
       const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
       if (historicalUser) {
         payerName = historicalUser.displayName;
       }
     }
+    return payerName;
+  };
 
-    // クレジットカード通知（Gmail自動取得）由来は「クレジットカード」としてまとめる
-    if (expense.inputSource === 'gmail_auto') {
-      payerName = 'クレジットカード';
-    }
+  // Calculate individual person totals based on payer
+  const personTotals = filteredExpenses.reduce((acc, expense) => {
+    const payerName = resolvePayerName(expense);
 
     // 承認済みの項目のみ合計に含める
     if (expense.includeInTotal) {
@@ -703,15 +705,9 @@ function ExpensesPageContent() {
                         <div className="text-lg font-bold tabular-nums text-accent">¥{total.toLocaleString()}</div>
                         <div className="text-xs text-muted">
                           {
-                            filteredExpenses.filter((e) => {
-                              const payerId = e.payerId || e.lineId;
-                              let expensePayerName = e.payerDisplayName || e.userDisplayName || "個人";
-                              if (expensePayerName === 'メンバー' || expensePayerName === '個人' || expensePayerName.startsWith('Unknown_') || expensePayerName.startsWith('User_')) {
-                                const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
-                                if (historicalUser) { expensePayerName = historicalUser.displayName; }
-                              }
-                              return expensePayerName === personName;
-                            }).length
+                            filteredExpenses.filter(
+                              (e) => resolvePayerName(e) === personName
+                            ).length
                           }
                           件
                         </div>
@@ -868,24 +864,10 @@ function ExpensesPageContent() {
                             </span>
                           )}
                         {(() => {
-                          // 支払い者の名前を取得（payerDisplayNameを最優先）
-                          const payerId = expense.payerId || expense.lineId;
-                          let payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
+                          // 支払い者の名前を共通ルールで解決（金額/件数集計と一致させる）
                           const isDefaultPayer = !expense.payerId || expense.payerId === expense.lineId;
-
-                          // payerDisplayNameが「メンバー」「Unknown_」「User_」「個人」の場合、支出履歴から正しい名前を取得
-                          if (payerName === 'メンバー' || payerName === '個人' || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
-                            const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
-                            if (historicalUser) {
-                              payerName = historicalUser.displayName;
-                            }
-                          }
-
-                          // クレジットカード通知（Gmail自動取得）由来は明示的に表示
                           const isCardSource = expense.inputSource === 'gmail_auto';
-                          if (isCardSource) {
-                            payerName = 'クレジットカード';
-                          }
+                          const payerName = resolvePayerName(expense);
 
                           return payerName !== "個人" && (
                             <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${
