@@ -588,7 +588,7 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
     categoryTotals,
   } = info;
 
-  const contextText = isGroupContext ? '' : '';
+  const contextText = isGroupContext ? 'グループ' : 'あなた';
   const pendingCount = monthlyCount - monthlyIncludedCount;
 
   // プログレスバーの計算（予算13.6万円に対する割合）
@@ -834,7 +834,7 @@ export function buildEmptyExpenseSummaryFlexMessage(
   isGroupContext: boolean,
   webAppUrl: string
 ): FlexMessage {
-  const contextText = isGroupContext ? '' : '';
+  const contextText = isGroupContext ? 'グループ' : 'あなた';
 
   const bubble: FlexBubble = {
     type: 'bubble',
