@@ -2,35 +2,136 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   Design tokens (RGB triplets so Tailwind <alpha-value> works)
+   ============================================================ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: 248 250 252;        /* slate-50  */
+  --fg: 15 23 42;           /* slate-900 */
+  --muted: 100 116 139;     /* slate-500 */
+  --card: 255 255 255;      /* white     */
+  --border: 226 232 240;    /* slate-200 */
+  --accent: 16 185 129;     /* emerald-500 */
+  --accent-fg: 255 255 255;
+  --ring: 16 185 129;
+
+  /* liquid-glass surface */
+  --glass-bg: 255 255 255;
+  --glass-alpha: 0.62;
+  --glass-border: 255 255 255;
+  --glass-border-alpha: 0.55;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+.dark {
+  --bg: 2 6 23;             /* slate-950 */
+  --fg: 226 232 240;        /* slate-200 */
+  --muted: 148 163 184;     /* slate-400 */
+  --card: 15 23 42;         /* slate-900 */
+  --border: 30 41 59;       /* slate-800 */
+  --accent: 16 185 129;
+  --accent-fg: 2 6 23;
+  --ring: 16 185 129;
+
+  --glass-bg: 15 23 42;
+  --glass-alpha: 0.55;
+  --glass-border: 148 163 184;
+  --glass-border-alpha: 0.16;
+}
+
+@layer base {
+  body {
+    background-color: rgb(var(--bg));
+    color: rgb(var(--fg));
+    font-family: var(--font-geist-sans), system-ui, -apple-system, "Hiragino Kaku Gothic ProN",
+      "Noto Sans JP", Meiryo, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  /* Consistent, accessible focus ring */
+  :focus-visible {
+    outline: 2px solid rgb(var(--ring));
+    outline-offset: 2px;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ============================================================
+   Liquid glass surfaces
+   ============================================================ */
+@layer components {
+  .glass {
+    background-color: rgb(var(--glass-bg) / var(--glass-alpha));
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid rgb(var(--glass-border) / var(--glass-border-alpha));
+  }
+  .glass-strong {
+    background-color: rgb(var(--glass-bg) / calc(var(--glass-alpha) + 0.22));
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid rgb(var(--glass-border) / var(--glass-border-alpha));
+  }
+  /* Nav / bars sit above content; slightly more opaque for legibility */
+  .glass-bar {
+    background-color: rgb(var(--glass-bg) / calc(var(--glass-alpha) + 0.18));
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+  }
 }
 
-/* シンプルなガラス効果のみ残す */
-.glass {
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+/* Safe-area helpers (mobile bottom tab / notches) */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.h-safe-bottom { height: env(safe-area-inset-bottom); }
+
+/* Soft background blobs */
+.app-bg-blob {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.app-bg-blob::before,
+.app-bg-blob::after {
+  content: "";
+  position: absolute;
+  width: 38rem;
+  height: 38rem;
+  border-radius: 9999px;
+  filter: blur(80px);
+  opacity: 0.35;
+}
+.app-bg-blob::before {
+  top: -10rem;
+  left: -8rem;
+  background: radial-gradient(circle at 30% 30%, rgb(var(--accent) / 0.45), transparent 70%);
+}
+.app-bg-blob::after {
+  bottom: -12rem;
+  right: -8rem;
+  background: radial-gradient(circle at 70% 70%, rgb(99 102 241 / 0.40), transparent 70%);
 }
 
-.glass-strong {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+/* ============================================================
+   Accessibility: reduced motion / reduced transparency
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-strong,
+  .glass-bar {
+    background-color: rgb(var(--card));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .app-bg-blob { display: none; }
 }

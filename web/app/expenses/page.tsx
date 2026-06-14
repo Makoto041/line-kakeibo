@@ -4,7 +4,6 @@ import React, { useState, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
-import Header from "../../components/Header";
 import PreviewModeBanner from "../../components/PreviewModeBanner";
 import GuestGuide from "../../components/GuestGuide";
 import dayjs from "dayjs";
@@ -39,7 +38,7 @@ function ExpensesPageLoading() {
 }
 
 function ExpensesPageContent() {
-  const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
+  const { user, loading: authLoading } = useLineAuth();
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
   const [currentMonth, setCurrentMonth] = useState(dayjs());
   // Initialize dateRange synchronously to avoid undefined→value transition causing double fetch
@@ -559,12 +558,6 @@ function ExpensesPageContent() {
         <div className="absolute top-40 right-10 w-72 h-72 bg-gradient-to-r from-purple-300/20 to-pink-300/20 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000 pointer-events-none"></div>
         <div className="absolute -bottom-8 left-20 w-72 h-72 bg-gradient-to-r from-pink-300/20 to-orange-300/20 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000 pointer-events-none"></div>
       </div>
-      <Header
-        title="支出一覧"
-        getUrlWithLineId={getUrlWithLineId}
-        currentPage="expenses"
-      />
-
       {isGuest && <PreviewModeBanner />}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
