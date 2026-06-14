@@ -192,7 +192,7 @@ async function handleTextExpensePostback(
       if (replyTarget) {
         await sendTextMessage(
           replyTarget,
-          `✅ 確認しました\n${expenseData.description} ¥${expenseData.amount?.toLocaleString()}`
+          `確認しました\n${expenseData.description} ¥${expenseData.amount?.toLocaleString()}`
         );
       }
       break;
@@ -207,7 +207,7 @@ async function handleTextExpensePostback(
         const editUrl = `https://line-kakeibo.vercel.app/expenses?edit=${expenseId}&lineId=${event.source.userId}`;
         await sendTextMessage(
           replyTarget,
-          `✏️ 以下のリンクから修正できます\n${editUrl}`
+          `以下のリンクから修正できます\n${editUrl}`
         );
       }
       break;
@@ -232,7 +232,7 @@ async function handleTextExpensePostback(
       if (replyTarget) {
         await sendTextMessage(
           replyTarget,
-          `↩️ 立替として記録しました\n${expenseData.description} ¥${expenseData.amount?.toLocaleString()}\n月末精算に含めます`
+          `立替として記録しました\n${expenseData.description} ¥${expenseData.amount?.toLocaleString()}\n月末精算に含めます`
         );
       }
       break;
@@ -390,7 +390,7 @@ async function handleSetCategory(
   if (replyTarget) {
     await sendTextMessage(
       replyTarget,
-      `🏷️ カテゴリを「${category}」に変更しました\n${expenseData.description} ¥${expenseData.amount?.toLocaleString()}`
+      `カテゴリを「${category}」に変更しました\n${expenseData.description} ¥${expenseData.amount?.toLocaleString()}`
     );
   }
 

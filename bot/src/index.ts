@@ -103,7 +103,7 @@ app.post("/webhook", async (req: Request, res: Response) => {
           try {
             await client.replyMessage(event.replyToken, {
               type: "text",
-              text: "📷 画像からの読み取り機能は終了しました。\nテキストで入力してください。\n例:「500 ランチ」「6/29 4800 家賃」",
+              text: "画像からの読み取り機能は終了しました。\nテキストで入力してください。\n例:「500 ランチ」「6/29 4800 家賃」",
             });
           } catch (replyError) {
             console.warn("Failed to send OCR discontinued notice:", replyError);
@@ -145,7 +145,7 @@ app.post("/webhook", async (req: Request, res: Response) => {
           try {
             await client.replyMessage(event.replyToken, {
               type: "text",
-              text: "申し訳ございませんが、一時的なエラーが発生しました。しばらく後でお試しください。🙏",
+              text: "申し訳ございませんが、一時的なエラーが発生しました。しばらく後でお試しください。",
             });
           } catch (replyError) {
             console.error("Failed to send error reply:", replyError);
@@ -169,7 +169,7 @@ async function handleTextMessage(event: any) {
       `=== TEXT MESSAGE DEBUG: Received text: "${text}" from user: ${event.source.userId} ===`
     );
 
-    // ① レシート一覧コマンド
+    // レシート一覧コマンド
     console.log(
       `=== COMMAND CHECK: Checking if text equals "家計簿": ${
         text === "家計簿"
@@ -259,9 +259,9 @@ async function handleTextMessage(event: any) {
           await client.replyMessage(event.replyToken, {
             type: "text",
             text:
-              `📊 家計簿\n\n現在データを読み込み中です...\n${
+              `家計簿\n\n現在データを読み込み中です...\n${
                 event.source.type === "group"
-                  ? "👥 グループ全体の支出が確認できます"
+                  ? "グループ全体の支出が確認できます"
                   : "個人の支出が確認できます"
               }\nWebアプリで詳細を確認してください：\nhttps://line-kakeibo.vercel.app?lineId=` +
               encodeURIComponent(event.source.userId) +
@@ -276,7 +276,7 @@ async function handleTextMessage(event: any) {
       return;
     }
 
-    // ②' フィードバック（要望・改善・不具合報告）からのIssue自動起票コマンド
+    // ' フィードバック（要望・改善・不具合報告）からのIssue自動起票コマンド
     const feedbackPrefixes = ["要望", "改善", "不具合", "フィードバック"];
     let feedbackText: string | null = null;
     for (const prefix of feedbackPrefixes) {
@@ -293,7 +293,7 @@ async function handleTextMessage(event: any) {
       if (!feedbackText) {
         await client.replyMessage(event.replyToken, {
           type: "text",
-          text: "💡 フィードバック内容を入力してください。\n例: 「要望 月別のグラフが見たい」\n「不具合 レシートが読み取れない」",
+          text: "フィードバック内容を入力してください。\n例: 「要望 月別のグラフが見たい」\n「不具合 レシートが読み取れない」",
         });
         return;
       }
@@ -308,7 +308,7 @@ async function handleTextMessage(event: any) {
         try {
           await client.replyMessage(event.replyToken, {
             type: "text",
-            text: "❌ Issueの作成に失敗しました。\n時間をおいてもう一度お試しください。",
+            text: "Issueの作成に失敗しました。\n時間をおいてもう一度お試しください。",
           });
         } catch (replyError) {
           console.error("Failed to send feedback error reply:", replyError);
@@ -317,7 +317,7 @@ async function handleTextMessage(event: any) {
       return;
     }
 
-    // ② カテゴリー設定・表示コマンド
+    // カテゴリー設定・表示コマンド
     const isCategoryCommand =
       text === "カテゴリー" ||
       text.startsWith("カテゴリー ") ||
@@ -364,11 +364,11 @@ async function handleTextMessage(event: any) {
 
         await client.replyMessage(event.replyToken, {
           type: "text",
-          text: `📋 利用可能なカテゴリー:\n\n${validCategories
+          text: `利用可能なカテゴリー:\n\n${validCategories
             .map((c) => "• " + c)
             .join(
               "\n"
-            )}\n\n🔧 現在のデフォルト: ${currentCategory}\n\n💡 設定方法:\n「カテゴリー 食費」のように送信してください`,
+            )}\n\n現在のデフォルト: ${currentCategory}\n\n設定方法:\n「カテゴリー 食費」のように送信してください`,
         });
         return;
       }
@@ -386,7 +386,7 @@ async function handleTextMessage(event: any) {
       if (!category) {
         await client.replyMessage(event.replyToken, {
           type: "text",
-          text: "💡 カテゴリー名を指定してください。\n例: 「カテゴリー 食費」\n\n利用可能なカテゴリー:\n• 食費\n• 日用品\n• 交通費\n• 医療費\n• 娯楽費\n• 衣服費\n• 教育費\n• 通信費\n• その他",
+          text: "カテゴリー名を指定してください。\n例: 「カテゴリー 食費」\n\n利用可能なカテゴリー:\n• 食費\n• 日用品\n• 交通費\n• 医療費\n• 娯楽費\n• 衣服費\n• 教育費\n• 通信費\n• その他",
         });
         return;
       }
@@ -406,7 +406,7 @@ async function handleTextMessage(event: any) {
       if (!validCategories.includes(category)) {
         await client.replyMessage(event.replyToken, {
           type: "text",
-          text: `❌ 「${category}」は有効なカテゴリーではありません。\n\n利用可能なカテゴリー:\n${validCategories
+          text: `「${category}」は有効なカテゴリーではありません。\n\n利用可能なカテゴリー:\n${validCategories
             .map((c) => "• " + c)
             .join("\n")}`,
         });
@@ -431,7 +431,7 @@ async function handleTextMessage(event: any) {
 
         await client.replyMessage(event.replyToken, {
           type: "text",
-          text: `✅ デフォルトカテゴリーを「${category}」に設定しました！\n\n今後の支出入力は自動的に「${category}」カテゴリーになります。\n\n変更するには「カテゴリー [新しいカテゴリー]」と送信してください。`,
+          text: `デフォルトカテゴリーを「${category}」に設定しました！\n\n今後の支出入力は自動的に「${category}」カテゴリーになります。\n\n変更するには「カテゴリー [新しいカテゴリー]」と送信してください。`,
         });
       } catch (error) {
         console.error("Error saving user settings:", error);
@@ -443,7 +443,7 @@ async function handleTextMessage(event: any) {
       return;
     }
 
-    // ③ グループ機能コマンド
+    // グループ機能コマンド
     console.log(
       `=== COMMAND CHECK: Checking if text starts with "グループ作成 ": ${text.startsWith(
         "グループ作成 "
@@ -455,7 +455,7 @@ async function handleTextMessage(event: any) {
       if (!groupName) {
         await client.replyMessage(event.replyToken, {
           type: "text",
-          text: "💡 グループ名を指定してください。\n例: 「グループ作成 田中夫婦の家計簿」",
+          text: "グループ名を指定してください。\n例: 「グループ作成 田中夫婦の家計簿」",
         });
         return;
       }
@@ -465,7 +465,7 @@ async function handleTextMessage(event: any) {
         const groups = await getUserGroups(event.source.userId);
         const group = groups.find((g) => g.id === groupId);
 
-        const replyText = `✅ グループ「${groupName}」を作成しました！\n\n📋 招待コード: ${group?.inviteCode}\n\n👫 このコードを共有して、パートナーを招待してください。\n\n使い方:\n「参加 ${group?.inviteCode} 表示名」で参加できます。`;
+        const replyText = `グループ「${groupName}」を作成しました！\n\n招待コード: ${group?.inviteCode}\n\nこのコードを共有して、パートナーを招待してください。\n\n使い方:\n「参加 ${group?.inviteCode} 表示名」で参加できます。`;
 
         await client.replyMessage(event.replyToken, {
           type: "text",
@@ -492,7 +492,7 @@ async function handleTextMessage(event: any) {
       if (parts.length < 2) {
         await client.replyMessage(event.replyToken, {
           type: "text",
-          text: "💡 招待コードと表示名を指定してください。\n例: 「参加 ABC123 太郎」",
+          text: "招待コードと表示名を指定してください。\n例: 「参加 ABC123 太郎」",
         });
         return;
       }
@@ -510,7 +510,7 @@ async function handleTextMessage(event: any) {
         if (!groupId) {
           await client.replyMessage(event.replyToken, {
             type: "text",
-            text: "❌ 無効な招待コードです。正しいコードを確認してください。",
+            text: "無効な招待コードです。正しいコードを確認してください。",
           });
           return;
         }
@@ -520,7 +520,7 @@ async function handleTextMessage(event: any) {
 
         await client.replyMessage(event.replyToken, {
           type: "text",
-          text: `✅ グループに参加しました！\n\n👥 メンバー: ${memberNames}\n\n💰 これからの支出は共有され、誰が何を支払ったかが記録されます。`,
+          text: `グループに参加しました！\n\nメンバー: ${memberNames}\n\nこれからの支出は共有され、誰が何を支払ったかが記録されます。`,
         });
       } catch (error) {
         console.error("Error joining group:", error);
@@ -545,18 +545,18 @@ async function handleTextMessage(event: any) {
         if (groups.length === 0) {
           await client.replyMessage(event.replyToken, {
             type: "text",
-            text: "📝 まだグループに参加していません。\n\n新しいグループを作成するか、招待コードで参加してください。\n\n• グループ作成 [名前]\n• 参加 [コード] [表示名]",
+            text: "まだグループに参加していません。\n\n新しいグループを作成するか、招待コードで参加してください。\n\n• グループ作成 [名前]\n• 参加 [コード] [表示名]",
           });
           return;
         }
 
-        let replyText = "👥 参加中のグループ:\n\n";
+        let replyText = "参加中のグループ:\n\n";
         for (const group of groups) {
           const members = await getGroupMembers(group.id!);
           const memberNames = members.map((m) => m.displayName).join("、");
-          replyText += `📋 ${group.name}\n`;
-          replyText += `👥 メンバー: ${memberNames}\n`;
-          replyText += `🔑 招待コード: ${group.inviteCode}\n\n`;
+          replyText += `${group.name}\n`;
+          replyText += `メンバー: ${memberNames}\n`;
+          replyText += `招待コード: ${group.inviteCode}\n\n`;
         }
 
         await client.replyMessage(event.replyToken, {
@@ -573,7 +573,7 @@ async function handleTextMessage(event: any) {
       return;
     }
 
-    // ④ 立替一覧コマンド
+    // 立替一覧コマンド
     if (text === "立替一覧" || text === "立替") {
       console.log(`=== COMMAND MATCHED: Processing 立替一覧 command ===`);
       try {
@@ -581,7 +581,7 @@ async function handleTextMessage(event: any) {
         if (event.source.type !== "group") {
           await client.replyMessage(event.replyToken, {
             type: "text",
-            text: "💡 立替一覧はグループ内でのみ利用できます。\n\nLINEグループで「立替一覧」と送信してください。",
+            text: "立替一覧はグループ内でのみ利用できます。\n\nLINEグループで「立替一覧」と送信してください。",
           });
           return;
         }
@@ -592,17 +592,17 @@ async function handleTextMessage(event: any) {
         if (summaries.length === 0) {
           await client.replyMessage(event.replyToken, {
             type: "text",
-            text: "📝 未精算の立替はありません。\n\n支出登録時に「↩️ 立替」ボタンを押すと、立替として記録できます。",
+            text: "未精算の立替はありません。\n\n支出登録時に「立替」ボタンを押すと、立替として記録できます。",
           });
           return;
         }
 
         // サマリーを表示
-        let replyText = "💰 未精算の立替一覧:\n\n";
+        let replyText = "未精算の立替一覧:\n\n";
 
         let totalAdvances = 0;
         for (const summary of summaries) {
-          replyText += `👤 ${summary.userDisplayName}\n`;
+          replyText += `${summary.userDisplayName}\n`;
           replyText += `   立替合計: ¥${summary.totalAdvanced.toLocaleString()}\n`;
           // 最近の3件のみ表示
           const recentExpenses = summary.expenses.slice(0, 3);
@@ -620,12 +620,12 @@ async function handleTextMessage(event: any) {
         if (summaries.length === 2) {
           const settlement = calculateSettlement(summaries);
           if (settlement) {
-            replyText += `\n💸 精算額:\n`;
-            replyText += `${settlement.fromUserName} → ${settlement.toUserName}\n`;
+            replyText += `\n精算額:\n`;
+            replyText += `${settlement.fromUserName} ${settlement.toUserName}\n`;
             replyText += `¥${settlement.amount.toLocaleString()}\n\n`;
             replyText += `「精算」と送信すると精算を完了できます。`;
           } else {
-            replyText += `\n✅ 精算不要（差額なし）`;
+            replyText += `\n精算不要（差額なし）`;
           }
         }
 
@@ -643,7 +643,7 @@ async function handleTextMessage(event: any) {
       return;
     }
 
-    // ⑤ 精算コマンド
+    // 精算コマンド
     if (text === "精算") {
       console.log(`=== COMMAND MATCHED: Processing 精算 command ===`);
       try {
@@ -651,7 +651,7 @@ async function handleTextMessage(event: any) {
         if (event.source.type !== "group") {
           await client.replyMessage(event.replyToken, {
             type: "text",
-            text: "💡 精算はグループ内でのみ利用できます。\n\nLINEグループで「精算」と送信してください。",
+            text: "精算はグループ内でのみ利用できます。\n\nLINEグループで「精算」と送信してください。",
           });
           return;
         }
@@ -662,7 +662,7 @@ async function handleTextMessage(event: any) {
         if (pendingAdvances.length === 0) {
           await client.replyMessage(event.replyToken, {
             type: "text",
-            text: "📝 精算する立替がありません。",
+            text: "精算する立替がありません。",
           });
           return;
         }
@@ -674,7 +674,7 @@ async function handleTextMessage(event: any) {
         if (summaries.length === 2) {
           const settlement = calculateSettlement(summaries);
           if (settlement) {
-            settlementText = `\n\n💸 精算内容:\n${settlement.fromUserName} → ${settlement.toUserName}\n¥${settlement.amount.toLocaleString()}`;
+            settlementText = `\n\n精算内容:\n${settlement.fromUserName} ${settlement.toUserName}\n¥${settlement.amount.toLocaleString()}`;
           }
         }
 
@@ -685,14 +685,14 @@ async function handleTextMessage(event: any) {
         if (settleResult.settled === 0) {
           await client.replyMessage(event.replyToken, {
             type: "text",
-            text: "⚠️ 精算処理でエラーが発生しました。対象の立替が見つかりませんでした。",
+            text: "精算処理でエラーが発生しました。対象の立替が見つかりませんでした。",
           });
           return;
         }
 
-        let resultText = `✅ 精算が完了しました！\n\n精算件数: ${settleResult.settled}件${settlementText}`;
+        let resultText = `精算が完了しました！\n\n精算件数: ${settleResult.settled}件${settlementText}`;
         if (settleResult.skipped > 0) {
-          resultText += `\n⚠️ ${settleResult.skipped}件はスキップされました`;
+          resultText += `\n${settleResult.skipped}件はスキップされました`;
         }
         resultText += "\n\n次の立替からまた集計を開始します。";
 
@@ -710,7 +710,7 @@ async function handleTextMessage(event: any) {
       return;
     }
 
-    // ⑥ テキスト登録
+    // テキスト登録
     console.log(`=== TEXT PROCESSING: Trying to parse as expense text ===`);
     const parsed = parseTextExpense(text);
     if (!parsed) {
@@ -724,7 +724,7 @@ async function handleTextMessage(event: any) {
 
     console.log(`=== TEXT PROCESSING: Successfully parsed expense:`, parsed);
 
-    // 注: 中間メッセージ（「💬 登録中です...」）は送信しない。
+    // 注: 中間メッセージ（「登録中です...」）は送信しない。
     // replyTokenを最終のFlex Message通知に温存し、replyMessage（無料）で
     // 送信することでpushMessage（月200通制限）の消費を1通節約する
     const targetId = event.source.type === "group"
@@ -739,7 +739,7 @@ async function handleTextMessage(event: any) {
       // Send error notification
       await client.pushMessage(targetId, {
         type: "text",
-        text: "⚠️ 支出の保存で問題が発生しました。データが正しく記録されていない可能性があります。",
+        text: "支出の保存で問題が発生しました。データが正しく記録されていない可能性があります。",
       }).catch((pushError) =>
         console.error("Failed to send error notification:", pushError)
       );
@@ -753,7 +753,7 @@ async function handleTextMessage(event: any) {
         : event.source.userId;
       await client.pushMessage(targetId, {
         type: "text",
-        text: "⚠️ メッセージの処理中にエラーが発生しました。もう一度お試しください。",
+        text: "メッセージの処理中にエラーが発生しました。もう一度お試しください。",
       });
     } catch (notifyError) {
       console.error("Failed to send error notification:", notifyError);
@@ -987,7 +987,7 @@ async function processExpenseInBackground(
       const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
       const profileErrorMessage = {
         type: "text" as const,
-        text: "⚠️ ユーザー情報の取得に失敗しました。\n\nしばらく待ってから再度お試しください。\n\n問題が継続する場合は、LINEアプリを再起動してください。"
+        text: "ユーザー情報の取得に失敗しました。\n\nしばらく待ってから再度お試しください。\n\n問題が継続する場合は、LINEアプリを再起動してください。"
       };
 
       // replyToken（無料）を優先使用し、失敗時のみpushMessageにフォールバック
@@ -1071,27 +1071,27 @@ async function processExpenseInBackground(
     if (targetId) {
       const getCategoryEmoji = (category: string): string => {
         const emojiMap: Record<string, string> = {
-          '食費': '🍽️',
-          '日用品': '🛒',
-          '交通費': '🚃',
-          '医療費': '🏥',
-          '娯楽費': '🎮',
-          '衣服費': '👕',
-          '教育費': '📚',
-          '通信費': '📱',
-          '光熱費': '💡',
-          '住居費': '🏠',
-          '保険': '🛡️',
-          '税金': '📋',
-          '貯蓄': '💰',
-          '投資': '📈',
-          '美容': '💅',
-          'ペット': '🐶',
-          '趣味': '🎨',
-          '交際費': '🎁',
-          'その他': '📦',
+          '食費': '',
+          '日用品': '',
+          '交通費': '',
+          '医療費': '',
+          '娯楽費': '',
+          '衣服費': '',
+          '教育費': '',
+          '通信費': '',
+          '光熱費': '',
+          '住居費': '',
+          '保険': '',
+          '税金': '',
+          '貯蓄': '',
+          '投資': '',
+          '美容': '',
+          'ペット': '',
+          '趣味': '',
+          '交際費': '',
+          'その他': '',
         };
-        return emojiMap[category] || '📦';
+        return emojiMap[category] || '';
       };
 
       const textExpenseInfo: TextExpenseInfo = {
@@ -1136,7 +1136,7 @@ async function handleJoin(event: any) {
     try {
       await client.pushMessage(lineGroupId, {
         type: "text",
-        text: "家計簿ボットがグループに参加しました！🎉\n\n📸 レシート画像を送信すると支出を自動記録\n💬 「500 ランチ」のようにテキストでも記録\n📊 「家計簿」で支出一覧を表示\n\nグループメンバーの支出が自動的に共有されます👥",
+        text: "家計簿ボットがグループに参加しました！\n\nレシート画像を送信すると支出を自動記録\n「500 ランチ」のようにテキストでも記録\n「家計簿」で支出一覧を表示\n\nグループメンバーの支出が自動的に共有されます",
       });
 
       console.log(
@@ -1171,7 +1171,7 @@ async function handleMemberJoined(event: any) {
         // Use pushMessage instead of replyMessage for better compatibility
         await client.pushMessage(lineGroupId, {
           type: "text",
-          text: "新しいメンバーがグループに参加しました！👋\n家計簿ボットで支出を記録・共有できます。\n\n「家計簿」と送信すると使い方を確認できます。",
+          text: "新しいメンバーがグループに参加しました！\n家計簿ボットで支出を記録・共有できます。\n\n「家計簿」と送信すると使い方を確認できます。",
         });
 
         console.log(
@@ -1290,7 +1290,7 @@ export const webhook = onRequest(
     memory: "512MiB", // Increased from 256MiB to handle image processing
     timeoutSeconds: 540, // Increased from 300s to 540s (9 minutes max)
     invoker: "public",
-    // GITHUB_TOKEN: LINEフィードバック→GitHub Issue自動作成に使用（issueCreator）。
+    // GITHUB_TOKEN: LINEフィードバックGitHub Issue自動作成に使用（issueCreator）。
     secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "GITHUB_TOKEN"],
   },
   app

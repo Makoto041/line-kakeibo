@@ -206,7 +206,7 @@ export async function createIssueFromFeedback(
       issueNumber,
       title: analysis.title,
       type: analysis.type,
-      message: `✅ Issueを作成しました！\n${analysis.title}\n${analysis.type}\n${issueUrl}`,
+      message: `Issueを作成しました。\n${analysis.title}\n${analysis.type}\n${issueUrl}`,
     };
   } catch (error) {
     console.error('GitHub Issue creation error:', error);
@@ -218,7 +218,7 @@ export async function createIssueFromFeedback(
       title: analysis.title,
       type: analysis.type,
       message:
-        '❌ Issueの作成に失敗しました。\n時間をおいてもう一度お試しください。',
+        'Issueの作成に失敗しました。\n時間をおいてもう一度お試しください。',
     };
   }
 }

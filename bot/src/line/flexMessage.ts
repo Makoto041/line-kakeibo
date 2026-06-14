@@ -64,7 +64,7 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
       contents: [
         {
           type: 'text',
-          text: '💳 カード利用を記録',
+          text: 'カード利用を記録',
           weight: 'bold',
           size: 'md',
           color: '#10B981',
@@ -101,7 +101,7 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
           contents: [
             {
               type: 'text',
-              text: `${categoryEmoji} ${category}`,
+              text: `${category}`,
               size: 'sm',
               color: '#64748B',
               flex: 1,
@@ -145,12 +145,12 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
               type: 'button',
               action: {
                 type: 'postback',
-                label: '✅ 共同費',
+                label: '共同費',
                 data: JSON.stringify({
                   action: 'shared',
                   expenseId,
                 }),
-                displayText: '✅ 共同費として記録',
+                displayText: '共同費として記録',
               },
               style: 'primary',
               color: '#10B981',
@@ -161,12 +161,12 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
               type: 'button',
               action: {
                 type: 'postback',
-                label: '👤 個人費',
+                label: '個人費',
                 data: JSON.stringify({
                   action: 'personal',
                   expenseId,
                 }),
-                displayText: '👤 個人費として除外',
+                displayText: '個人費として除外',
               },
               style: 'secondary',
               height: 'sm',
@@ -185,12 +185,12 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
               type: 'button',
               action: {
                 type: 'postback',
-                label: '↩️ 立替',
+                label: '立替',
                 data: JSON.stringify({
                   action: 'advance',
                   expenseId,
                 }),
-                displayText: '↩️ 立替として記録',
+                displayText: '立替として記録',
               },
               style: 'secondary',
               height: 'sm',
@@ -200,7 +200,7 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
               type: 'button',
               action: {
                 type: 'postback',
-                label: `🏷️ ${category}`,
+                label: `${category}`,
                 data: JSON.stringify({
                   action: 'show_category_select',
                   expenseId,
@@ -221,7 +221,7 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
           type: 'button',
           action: {
             type: 'uri',
-            label: '📎 レシート添付',
+            label: 'レシート添付',
             uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
           },
           style: 'secondary',
@@ -236,7 +236,7 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
 
   return {
     type: 'flex',
-    altText: `💳 ${merchant} ¥${amount.toLocaleString()}`,
+    altText: `${merchant} ¥${amount.toLocaleString()}`,
     contents: bubble,
   };
 }
@@ -280,9 +280,9 @@ export async function sendStatusUpdateConfirmation(
   amount: number
 ): Promise<void> {
   const messages: Record<string, string> = {
-    shared: `✅ 共同費として記録しました\n${merchant} ¥${amount.toLocaleString()}`,
-    personal: `👤 個人費として除外しました\n${merchant} ¥${amount.toLocaleString()}`,
-    advance: `↩️ 立替として記録しました\n${merchant} ¥${amount.toLocaleString()}\n月末精算に含めます`,
+    shared: `共同費として記録しました\n${merchant} ¥${amount.toLocaleString()}`,
+    personal: `個人費として除外しました\n${merchant} ¥${amount.toLocaleString()}`,
+    advance: `立替として記録しました\n${merchant} ¥${amount.toLocaleString()}\n月末精算に含めます`,
   };
 
   await sendTextMessage(targetId, messages[status]);
@@ -309,7 +309,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
   const { expenseId, description, amount, category, categoryEmoji, date, paymentMethod, payerName } = info;
 
   // 支払い方法の表示
-  const paymentMethodText = paymentMethod ? `💰 ${paymentMethod}` : '';
+  const paymentMethodText = paymentMethod ? `${paymentMethod}` : '';
 
   const bubble: FlexBubble = {
     type: 'bubble',
@@ -320,7 +320,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
       contents: [
         {
           type: 'text',
-          text: '✅ 支出を登録しました',
+          text: '支出を登録しました',
           weight: 'bold',
           size: 'md',
           color: '#10B981',
@@ -357,7 +357,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
           contents: [
             {
               type: 'text',
-              text: `${categoryEmoji} ${category}`,
+              text: `${category}`,
               size: 'sm',
               color: '#64748B',
               flex: 1,
@@ -389,7 +389,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
           ? [
               {
                 type: 'text' as const,
-                text: `👤 ${payerName}`,
+                text: `${payerName}`,
                 size: 'sm' as const,
                 color: '#475569',
                 margin: 'sm' as const,
@@ -412,13 +412,13 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
               type: 'button',
               action: {
                 type: 'postback',
-                label: '✅ OK',
+                label: 'OK',
                 data: JSON.stringify({
                   action: 'confirm',
                   expenseId,
                   source: 'text',
                 }),
-                displayText: '✅ 登録を確認しました',
+                displayText: '登録を確認しました',
               },
               style: 'primary',
               color: '#10B981',
@@ -429,13 +429,13 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
               type: 'button',
               action: {
                 type: 'postback',
-                label: '✏️ 修正',
+                label: '修正',
                 data: JSON.stringify({
                   action: 'edit',
                   expenseId,
                   source: 'text',
                 }),
-                displayText: '✏️ 修正が必要です',
+                displayText: '修正が必要です',
               },
               style: 'secondary',
               height: 'sm',
@@ -454,13 +454,13 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
               type: 'button',
               action: {
                 type: 'postback',
-                label: '↩️ 立替',
+                label: '立替',
                 data: JSON.stringify({
                   action: 'advance',
                   expenseId,
                   source: 'text',
                 }),
-                displayText: '↩️ 立替として記録',
+                displayText: '立替として記録',
               },
               style: 'secondary',
               height: 'sm',
@@ -470,7 +470,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
               type: 'button',
               action: {
                 type: 'postback',
-                label: `🏷️ ${category}`,
+                label: `${category}`,
                 data: JSON.stringify({
                   action: 'show_category_select',
                   expenseId,
@@ -491,7 +491,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
           type: 'button',
           action: {
             type: 'uri',
-            label: '📎 レシート添付',
+            label: 'レシート添付',
             uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
           },
           style: 'secondary',
@@ -506,7 +506,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
 
   return {
     type: 'flex',
-    altText: `✅ ${description} ¥${amount.toLocaleString()}`,
+    altText: `${description} ¥${amount.toLocaleString()}`,
     contents: bubble,
   };
 }
@@ -588,7 +588,7 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
     categoryTotals,
   } = info;
 
-  const contextText = isGroupContext ? '👥' : '📱';
+  const contextText = isGroupContext ? '' : '';
   const pendingCount = monthlyCount - monthlyIncludedCount;
 
   // プログレスバーの計算（予算13.6万円に対する割合）
@@ -644,7 +644,7 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
     contents: [
       {
         type: 'text' as const,
-        text: `${exp.categoryEmoji} ${exp.description}`,
+        text: `${exp.description}`,
         size: 'sm' as const,
         flex: 1,
         wrap: false,
@@ -675,7 +675,7 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
           contents: [
             {
               type: 'text',
-              text: `📊 ${contextText}の家計簿`,
+              text: `${contextText}の家計簿`,
               weight: 'bold',
               size: 'lg',
               color: '#10B981',
@@ -808,7 +808,7 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
           type: 'button',
           action: {
             type: 'uri',
-            label: '📱 詳細をWebで見る',
+            label: '詳細をWebで見る',
             uri: webAppUrl,
           },
           style: 'primary',
@@ -822,7 +822,7 @@ export function buildExpenseSummaryFlexMessage(info: ExpenseSummaryInfo): FlexMe
 
   return {
     type: 'flex',
-    altText: `📊 ${monthLabel}の支出: ¥${monthlyIncludedTotal.toLocaleString()}`,
+    altText: `${monthLabel}の支出: ¥${monthlyIncludedTotal.toLocaleString()}`,
     contents: bubble,
   };
 }
@@ -834,7 +834,7 @@ export function buildEmptyExpenseSummaryFlexMessage(
   isGroupContext: boolean,
   webAppUrl: string
 ): FlexMessage {
-  const contextText = isGroupContext ? '👥' : '📱';
+  const contextText = isGroupContext ? '' : '';
 
   const bubble: FlexBubble = {
     type: 'bubble',
@@ -845,7 +845,7 @@ export function buildEmptyExpenseSummaryFlexMessage(
       contents: [
         {
           type: 'text',
-          text: `📊 ${contextText}の家計簿`,
+          text: `${contextText}の家計簿`,
           weight: 'bold',
           size: 'md',
           color: '#10B981',
@@ -867,7 +867,7 @@ export function buildEmptyExpenseSummaryFlexMessage(
         },
         {
           type: 'text',
-          text: '💡 使い方',
+          text: '使い方',
           size: 'sm',
           color: '#0F172A',
           margin: 'xl',
@@ -891,7 +891,7 @@ export function buildEmptyExpenseSummaryFlexMessage(
           ? [
               {
                 type: 'text' as const,
-                text: '👥 グループメンバーの支出が自動で集計されます',
+                text: 'グループメンバーの支出が自動で集計されます',
                 size: 'xs' as const,
                 color: '#64748B',
                 margin: 'lg' as const,
@@ -910,7 +910,7 @@ export function buildEmptyExpenseSummaryFlexMessage(
           type: 'button',
           action: {
             type: 'uri',
-            label: '📱 Webアプリを開く',
+            label: 'Webアプリを開く',
             uri: webAppUrl,
           },
           style: 'primary',
@@ -924,7 +924,7 @@ export function buildEmptyExpenseSummaryFlexMessage(
 
   return {
     type: 'flex',
-    altText: `📊 ${contextText}の家計簿`,
+    altText: `${contextText}の家計簿`,
     contents: bubble,
   };
 }
@@ -942,16 +942,16 @@ export interface CategorySelectInfo {
 
 // カテゴリ絵文字マッピング
 const CATEGORY_EMOJI: Record<string, string> = {
-  '食費': '🍽️',
-  '日用品': '🛒',
-  '交通費': '🚃',
-  '医療費': '💊',
-  '娯楽費': '🎮',
-  '衣服費': '👗',
-  '教育費': '📚',
-  '通信費': '📱',
-  '光熱費': '💡',
-  'その他': '📦',
+  '食費': '',
+  '日用品': '',
+  '交通費': '',
+  '医療費': '',
+  '娯楽費': '',
+  '衣服費': '',
+  '教育費': '',
+  '通信費': '',
+  '光熱費': '',
+  'その他': '',
 };
 
 // カテゴリ一覧
@@ -969,7 +969,7 @@ export function buildCategorySelectCarousel(info: CategorySelectInfo): FlexMessa
   // 各カテゴリのbubbleを生成
   const bubbles: FlexBubble[] = CATEGORIES.map((categoryName) => {
     const isCurrentCategory = categoryName === currentCategory;
-    const emoji = CATEGORY_EMOJI[categoryName] || '📦';
+    const emoji = CATEGORY_EMOJI[categoryName] || '';
 
     return {
       type: 'bubble',
@@ -1013,7 +1013,7 @@ export function buildCategorySelectCarousel(info: CategorySelectInfo): FlexMessa
             type: 'button',
             action: {
               type: 'postback',
-              label: isCurrentCategory ? '✓ 選択中' : 'これにする',
+              label: isCurrentCategory ? '選択中' : 'これにする',
               data: JSON.stringify({
                 action: 'set_category',
                 expenseId,
@@ -1033,7 +1033,7 @@ export function buildCategorySelectCarousel(info: CategorySelectInfo): FlexMessa
 
   return {
     type: 'flex',
-    altText: `🏷️ カテゴリを選択: ${merchant}`,
+    altText: `カテゴリを選択: ${merchant}`,
     contents: {
       type: 'carousel',
       contents: bubbles,
