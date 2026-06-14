@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, Suspense } from "react";
+import React, { useState, useMemo, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   ChevronLeft,
@@ -145,6 +145,11 @@ function ExpensesPageContent() {
   const [filter, setFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"date" | "amount">("date");
   const [editingExpense, setEditingExpense] = useState<string | null>(null);
+  // Edit drawer accessibility: panel ref, latest-close ref, and the element to
+  // restore focus to when the drawer closes.
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const closeDrawerRef = useRef<() => void>(() => {});
+  const lastFocusedRef = useRef<HTMLElement | null>(null);
   const [editForm, setEditForm] = useState<{
     amount: number;
     description: string;
@@ -185,7 +190,60 @@ function ExpensesPageContent() {
       }
     }
   }, [editExpenseId, expenses, editingExpense, editConsumed]);
-  
+
+  // Accessibility for the edit drawer: when it opens, move focus into the
+  // panel, trap Tab within it, close on Escape, and restore focus on close.
+  // (Declared before any early return so hook order stays stable.)
+  useEffect(() => {
+    if (!editingExpense) return;
+    const panel = drawerRef.current;
+    if (!panel) return;
+
+    lastFocusedRef.current = (document.activeElement as HTMLElement) ?? null;
+
+    const SELECTOR =
+      'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+    const focusables = () => Array.from(panel.querySelectorAll<HTMLElement>(SELECTOR));
+
+    // Move focus into the drawer.
+    (focusables()[0] ?? panel).focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeDrawerRef.current();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const items = focusables();
+      if (items.length === 0) {
+        e.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || !panel.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      // Restore focus to the control that opened the drawer.
+      lastFocusedRef.current?.focus?.();
+    };
+  }, [editingExpense]);
+
   // Get group members for the expense being edited
   const editingExpenseData = editingExpense ? expenses.find(e => e.id === editingExpense) : null;
   const editingGroupId = editingExpenseData?.groupId || null;
@@ -491,6 +549,9 @@ function ExpensesPageContent() {
       payerDisplayName: "",
     });
   };
+
+  // Keep the latest cancel handler available to the keydown listener.
+  closeDrawerRef.current = handleEditCancel;
 
   const handleEditSave = async (id: string) => {
     try {
@@ -964,7 +1025,11 @@ function ExpensesPageContent() {
               onClick={handleEditCancel}
               className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             />
-            <div className="glass-strong relative z-10 ml-auto flex w-full animate-fade-up flex-col overflow-y-auto p-5 shadow-glass-lg max-sm:mt-auto max-sm:max-h-[88vh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl">
+            <div
+              ref={drawerRef}
+              tabIndex={-1}
+              className="glass-strong relative z-10 ml-auto flex w-full animate-fade-up flex-col overflow-y-auto p-5 shadow-glass-lg outline-none max-sm:mt-auto max-sm:max-h-[88vh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl"
+            >
               <div className="space-y-5">
                 <div className="flex items-center justify-between border-b border-line pb-3">
                   <h4 className="text-base font-semibold text-fg">支出の編集</h4>
