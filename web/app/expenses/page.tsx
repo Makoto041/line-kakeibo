@@ -2,10 +2,26 @@
 
 import React, { useState, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Pencil,
+  Trash2,
+  Save,
+  X,
+  Check,
+  Ban,
+  Paperclip,
+  CreditCard,
+  Smartphone,
+  Inbox,
+  Wallet,
+} from "lucide-react";
 import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
 import PreviewModeBanner from "../../components/PreviewModeBanner";
 import GuestGuide from "../../components/GuestGuide";
+import { getCategoryVisual } from "../../lib/categoryVisuals";
 import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
@@ -22,17 +38,8 @@ export default function ExpensesPage() {
 
 function ExpensesPageLoading() {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-white shadow-sm">
-        <div className="container mx-auto px-4 py-4">
-          <div className="h-8 bg-gray-200 rounded animate-pulse w-32"></div>
-        </div>
-      </div>
-      <main className="container mx-auto px-4 py-8">
-        <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
-        </div>
-      </main>
+    <div className="flex min-h-[60vh] items-center justify-center">
+      <div className="h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" />
     </div>
   );
 }
@@ -373,10 +380,10 @@ function ExpensesPageContent() {
 
   if (authLoading || (editExpenseId && !editMonthResolved)) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">読み込み中...</p>
+          <div className="mx-auto h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+          <p className="mt-3 text-sm text-muted">読み込み中...</p>
         </div>
       </div>
     );
@@ -551,28 +558,26 @@ function ExpensesPageContent() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 relative overflow-hidden">
-      {/* Glassmorphism background effects */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-20 left-10 w-72 h-72 bg-gradient-to-r from-blue-300/20 to-purple-300/20 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob pointer-events-none"></div>
-        <div className="absolute top-40 right-10 w-72 h-72 bg-gradient-to-r from-purple-300/20 to-pink-300/20 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000 pointer-events-none"></div>
-        <div className="absolute -bottom-8 left-20 w-72 h-72 bg-gradient-to-r from-pink-300/20 to-orange-300/20 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000 pointer-events-none"></div>
-      </div>
-      {isGuest && <PreviewModeBanner />}
+    <div className="mx-auto w-full max-w-3xl px-4 py-5 md:px-8 md:py-7">
+      {isGuest && (
+        <div className="mb-4">
+          <PreviewModeBanner />
+        </div>
+      )}
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Filters - Compact Style */}
-        <div className="bg-white/90 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-4 mb-6">
-          <div className="flex flex-wrap items-center gap-4 justify-between">
+      <main>
+        {/* Filters */}
+        <div className="glass mb-4 rounded-2xl p-4 shadow-glass">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap gap-4">
               <div className="min-w-0">
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  📂 フィルター
+                <label className="mb-1 block text-xs font-medium text-muted">
+                  フィルター
                 </label>
                 <select
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="all">すべて</option>
                   <option value="included">合計に含む</option>
@@ -586,15 +591,15 @@ function ExpensesPageContent() {
               </div>
 
               <div className="min-w-0">
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  🔄 並び順
+                <label className="mb-1 block text-xs font-medium text-muted">
+                  並び順
                 </label>
                 <select
                   value={sortBy}
                   onChange={(e) =>
                     setSortBy(e.target.value as "date" | "amount")
                   }
-                  className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="date">日付順</option>
                   <option value="amount">金額順</option>
@@ -602,26 +607,26 @@ function ExpensesPageContent() {
               </div>
 
               <div className="min-w-0">
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  📅 期間
+                <label className="mb-1 block text-xs font-medium text-muted">
+                  期間
                 </label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => setCurrentMonth(prev => prev.subtract(1, 'month'))}
-                    className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    title="前月"
+                    className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-card text-muted transition-colors hover:bg-fg/5 hover:text-fg"
+                    aria-label="前の期間"
                   >
-                    ◀
+                    <ChevronLeft className="h-4 w-4" />
                   </button>
-                  <div className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm whitespace-nowrap">
+                  <div className="whitespace-nowrap rounded-lg border border-line bg-card px-3 py-2 text-sm font-medium text-fg">
                     {getDisplayTitle(currentMonth, dateSettings)}
                   </div>
                   <button
                     onClick={() => setCurrentMonth(prev => prev.add(1, 'month'))}
-                    className="border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    title="次月"
+                    className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-card text-muted transition-colors hover:bg-fg/5 hover:text-fg"
+                    aria-label="次の期間"
                   >
-                    ▶
+                    <ChevronRight className="h-4 w-4" />
                   </button>
                 </div>
               </div>
@@ -631,16 +636,16 @@ function ExpensesPageContent() {
                   {sortedPersonTotals.map(([personName, total]) => (
                     <div
                       key={personName}
-                      className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-4 border border-green-200"
+                      className="rounded-xl border border-line bg-fg/[0.02] p-4"
                     >
                       <div className="text-center">
-                        <div className="text-sm font-medium text-gray-700 mb-1">
+                        <div className="mb-1 truncate text-sm font-medium text-fg">
                           {personName}
                         </div>
-                        <div className="text-xl font-bold text-green-600">
+                        <div className="text-xl font-bold tabular-nums text-accent">
                           ¥{total.toLocaleString()}
                         </div>
-                        <div className="text-xs text-gray-500">
+                        <div className="text-xs text-muted">
                           {
                             filteredExpenses.filter((e) => {
                               const payerId = e.payerId || e.lineId;
@@ -666,28 +671,28 @@ function ExpensesPageContent() {
                 </div>
             )}
 
-            <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-4 border border-blue-200">
+            <div className="rounded-xl border border-accent/20 bg-accent/[0.06] p-4">
               <div className="text-center">
-                <div className="text-xs font-medium text-gray-600 mb-1">
-                  💼 合計
+                <div className="mb-1 inline-flex items-center gap-1.5 text-xs font-medium text-muted">
+                  <Wallet className="h-3.5 w-3.5" />
+                  合計
                 </div>
-                <div className="text-lg font-bold text-blue-800">
+                <div className="text-sm font-semibold text-fg">
                   {filteredExpenses.length}件
                 </div>
-                <div className="text-2xl font-black text-red-600 my-1">
+                <div className="my-1 text-2xl font-black tabular-nums text-fg">
                   ¥
                   {filteredExpenses
                     .filter(e => e.includeInTotal) // 合計に含むもののみ
                     .reduce((sum, e) => sum + e.amount, 0)
                     .toLocaleString()}
                 </div>
-                <div className="text-xs text-gray-500">合計総支出額</div>
+                <div className="text-xs text-muted">合計総支出額</div>
                 {filteredExpenses.some(e => !e.includeInTotal) && (
-                  <div className="text-xs text-yellow-600 mt-1">
+                  <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
                     除外: {filteredExpenses.filter(e => !e.includeInTotal).length}件
                   </div>
                 )}
-                
               </div>
             </div>
           </div>
@@ -728,26 +733,26 @@ function ExpensesPageContent() {
         )} */}
 
         {loading ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">データを読み込み中...</p>
+          <div className="py-16 text-center">
+            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+            <p className="mt-3 text-sm text-muted">データを読み込み中...</p>
           </div>
         ) : error ? (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-red-800">{error}</p>
+          <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.06] p-4">
+            <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
           </div>
         ) : sortedExpenses.length === 0 ? (
           isGuest ? (
             // ゲスト（プレビュー）モード: 使い方ガイドを表示
-            <div className="max-w-2xl mx-auto space-y-6">
-              <div className="bg-white/90 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-6 sm:p-8 text-center">
-                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-green-100 to-emerald-100 flex items-center justify-center text-3xl">
-                  📒
-                </div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">
+            <div className="space-y-6">
+              <div className="glass rounded-2xl p-6 text-center shadow-glass sm:p-8">
+                <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-accent/12 text-accent">
+                  <Inbox className="h-7 w-7" strokeWidth={1.8} />
+                </span>
+                <h3 className="text-lg font-semibold text-fg">
                   ここにあなたの支出が一覧表示されます
                 </h3>
-                <p className="text-sm text-gray-600 leading-relaxed">
+                <p className="mt-1.5 text-sm leading-relaxed text-muted">
                   いまはプレビューモードのためデータがありません。
                   <br className="hidden sm:block" />
                   LINEボットから届くリンクで開くと、記録した支出の確認・編集ができます。
@@ -756,55 +761,41 @@ function ExpensesPageContent() {
               <GuestGuide />
             </div>
           ) : (
-            <div className="bg-white rounded-lg shadow-sm border p-12 text-center">
-              <div className="text-gray-400 mb-4">
-                <svg
-                  className="w-16 h-16 mx-auto"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                  />
-                </svg>
-              </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+            <div className="glass rounded-2xl p-10 text-center shadow-glass">
+              <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-fg/5 text-muted">
+                <Inbox className="h-7 w-7" strokeWidth={1.8} />
+              </span>
+              <h3 className="text-base font-semibold text-fg">
                 支出データがありません
               </h3>
-              <p className="text-gray-600">
+              <p className="mt-1.5 text-sm text-muted">
                 {filter === "all"
-                  ? "LINEでレシートを送信して始めましょう！"
+                  ? "LINEでレシートやメモを送ると、ここに記録されます。"
                   : "選択した条件に一致する支出がありません"}
               </p>
             </div>
           )
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {sortedExpenses.map((expense) => (
               <div
                 key={expense.id}
                 id={`expense-${expense.id}`}
-                className={`bg-white rounded-xl shadow-sm border hover:shadow-md transition-shadow duration-200 overflow-hidden ${
-                  !expense.includeInTotal
-                    ? "border-l-4 border-l-yellow-400 bg-gradient-to-r from-yellow-50 to-white"
-                    : "border-l-4 border-l-green-400 bg-gradient-to-r from-green-50 to-white"
-                } ${editingExpense === expense.id ? "ring-2 ring-blue-500" : ""}`}
+                className={`glass overflow-hidden rounded-2xl border-l-4 shadow-glass transition-shadow hover:shadow-glass-lg ${
+                  !expense.includeInTotal ? "border-l-amber-400" : "border-l-accent"
+                } ${editingExpense === expense.id ? "ring-2 ring-ring" : ""}`}
               >
-                <div className="p-4 sm:p-6">
+                <div className="p-4 sm:p-5">
                   {editingExpense === expense.id ? (
                     // Edit form
-                    <div className="space-y-6 bg-gray-50 rounded-lg p-4">
-                      <h4 className="text-lg font-semibold text-gray-900 border-b border-gray-200 pb-2">
+                    <div className="space-y-5 rounded-xl bg-fg/[0.03] p-4">
+                      <h4 className="border-b border-line pb-2 text-base font-semibold text-fg">
                         支出の編集
                       </h4>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="sm:col-span-2">
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                          <label className="mb-2 block text-sm font-medium text-fg">
                             説明
                           </label>
                           <input
@@ -812,13 +803,13 @@ function ExpensesPageContent() {
                             name="description"
                             value={editForm.description}
                             onChange={handleEditInputChange}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             placeholder="例: ランチ代"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                          <label className="mb-2 block text-sm font-medium text-fg">
                             金額 (円)
                           </label>
                           <input
@@ -826,13 +817,13 @@ function ExpensesPageContent() {
                             name="amount"
                             value={editForm.amount}
                             onChange={handleEditInputChange}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             placeholder="1000"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                          <label className="mb-2 block text-sm font-medium text-fg">
                             日付
                           </label>
                           <input
@@ -840,19 +831,19 @@ function ExpensesPageContent() {
                             name="date"
                             value={editForm.date}
                             onChange={handleEditInputChange}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                          <label className="mb-2 block text-sm font-medium text-fg">
                             カテゴリ
                           </label>
                           <select
                             name="category"
                             value={editForm.category}
                             onChange={handleEditInputChange}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             {allCategories.map((category) => (
                               <option key={category} value={category}>
@@ -863,14 +854,15 @@ function ExpensesPageContent() {
                         </div>
 
                         <div className="sm:col-span-2">
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            💳 支払い者
+                          <label className="mb-2 flex items-center gap-1.5 text-sm font-medium text-fg">
+                            <CreditCard className="h-4 w-4 text-muted" />
+                            支払い者
                           </label>
                           <select
                             name="payerId"
                             value={editForm.payerId}
                             onChange={handleEditInputChange}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-base text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             {/* availableMembersが空の場合、現在の支出リストから直接ユーザーを生成 */}
                             {availableMembers.length === 0 ? (
@@ -938,21 +930,21 @@ function ExpensesPageContent() {
                               </option>
                             )}
                           </select>
-                          <p className="text-xs text-gray-500 mt-1">
+                          <p className="mt-1 text-xs text-muted">
                             デフォルトは入力者と同じです
                           </p>
                         </div>
                       </div>
 
-                      <div className="flex items-center bg-white rounded-lg p-3 border border-gray-200">
+                      <div className="flex items-center rounded-lg border border-line bg-card p-3">
                         <input
                           type="checkbox"
                           name="includeInTotal"
                           checked={editForm.includeInTotal}
                           onChange={handleEditCheckboxChange}
-                          className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          className="h-4 w-4 rounded border-line text-accent focus:ring-ring"
                         />
-                        <label className="ml-3 text-sm font-medium text-gray-700">
+                        <label className="ml-3 text-sm font-medium text-fg">
                           合計に含める
                         </label>
                       </div>
@@ -969,10 +961,10 @@ function ExpensesPageContent() {
                             );
                             handleEditSave(expense.id);
                           }}
-                          className="bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1 cursor-pointer"
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg transition-colors hover:opacity-90"
                           style={{ pointerEvents: "auto" }}
                         >
-                          <span className="text-sm">💾</span>
+                          <Save className="h-4 w-4" />
                           保存
                         </button>
                         <button
@@ -983,10 +975,10 @@ function ExpensesPageContent() {
                             console.log("Cancel button clicked");
                             handleEditCancel();
                           }}
-                          className="bg-gray-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-600 transition-colors flex items-center gap-1 cursor-pointer"
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-card px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
                           style={{ pointerEvents: "auto" }}
                         >
-                          <span className="text-sm">❌</span>
+                          <X className="h-4 w-4" />
                           キャンセル
                         </button>
                       </div>
@@ -996,31 +988,38 @@ function ExpensesPageContent() {
                     <div className="space-y-4">
                       {/* Header with title and amount */}
                       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-lg font-semibold text-gray-900 mb-2 break-words">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="mb-1 break-words text-base font-semibold text-fg">
                             {expense.description}
                           </h3>
-                          <p className="text-sm text-gray-600">
+                          <p className="text-sm text-muted">
                             {dayjs(expense.date).format("YYYY年M月D日 (ddd)")}
                           </p>
                         </div>
 
                         <div className="flex-shrink-0">
-                          <p className="text-xl sm:text-2xl font-bold text-red-600 text-right">
+                          <p className="text-right text-xl font-bold tabular-nums text-fg sm:text-2xl">
                             ¥{expense.amount.toLocaleString()}
                           </p>
                         </div>
                       </div>
 
                       {/* Tags */}
-                      <div className="flex flex-wrap gap-2">
-                        <span className="bg-gray-100 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                          {expense.category}
-                        </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {(() => {
+                          const v = getCategoryVisual(expense.category);
+                          const Icon = v.icon;
+                          return (
+                            <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${v.bg} ${v.fg}`}>
+                              <Icon className="h-3 w-3" strokeWidth={2.2} />
+                              {expense.category}
+                            </span>
+                          );
+                        })()}
                         {expense.userDisplayName &&
                           expense.userDisplayName !== "個人" && (
-                            <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                              👤 入力者: {expense.userDisplayName}
+                            <span className="rounded-md bg-fg/5 px-2 py-0.5 text-xs font-medium text-muted">
+                              入力: {expense.userDisplayName}
                             </span>
                           )}
                         {(() => {
@@ -1038,22 +1037,24 @@ function ExpensesPageContent() {
                           }
 
                           return payerName !== "個人" && (
-                            <span className={`text-xs font-medium px-2.5 py-0.5 rounded ${
+                            <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${
                               isDefaultPayer
-                                ? "bg-green-100 text-green-800"
-                                : "bg-purple-100 text-purple-800"
+                                ? "bg-fg/5 text-muted"
+                                : "bg-violet-500/12 text-violet-600 dark:text-violet-400"
                             }`}>
-                              💳 支払い者: {payerName}
+                              <CreditCard className="h-3 w-3" />
+                              {payerName}
                             </span>
                           );
                         })()}
                         {expense.lineGroupId && (
-                          <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                            📱 LINEグループ
+                          <span className="inline-flex items-center gap-1 rounded-md bg-sky-500/12 px-2 py-0.5 text-xs font-medium text-sky-600 dark:text-sky-400">
+                            <Smartphone className="h-3 w-3" />
+                            グループ
                           </span>
                         )}
                         {!expense.includeInTotal && (
-                          <span className="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded">
+                          <span className="rounded-md bg-rose-500/12 px-2 py-0.5 text-xs font-medium text-rose-600 dark:text-rose-400">
                             合計から除外
                           </span>
                         )}
@@ -1062,18 +1063,20 @@ function ExpensesPageContent() {
                             href={expense.receiptUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="bg-amber-100 text-amber-800 text-xs font-medium px-2.5 py-0.5 rounded hover:bg-amber-200 transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1 rounded-md bg-amber-500/12 px-2 py-0.5 text-xs font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
                             title="レシート画像を開く"
                           >
-                            📎 レシート
+                            <Paperclip className="h-3 w-3" />
+                            レシート
                           </a>
                         ) : (
                           <a
                             href={`/attach?expenseId=${encodeURIComponent(expense.id)}`}
-                            className="bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-0.5 rounded hover:bg-gray-200 transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1 rounded-md bg-fg/5 px-2 py-0.5 text-xs font-medium text-muted transition-colors hover:bg-fg/10"
                             title="レシートを添付"
                           >
-                            📎 レシート添付
+                            <Paperclip className="h-3 w-3" />
+                            添付
                           </a>
                         )}
                       </div>
@@ -1081,25 +1084,21 @@ function ExpensesPageContent() {
                       {/* Items details */}
                       {expense.items && expense.items.length > 0 && (
                         <details className="group">
-                          <summary className="cursor-pointer text-blue-600 hover:text-blue-800 text-sm font-medium list-none">
-                            <div className="flex items-center gap-1">
-                              <span className="group-open:rotate-90 transform transition-transform duration-200">
-                                ▶
-                              </span>
-                              商品詳細 ({expense.items.length}点)
-                            </div>
+                          <summary className="flex cursor-pointer list-none items-center gap-1 text-sm font-medium text-accent">
+                            <ChevronRight className="h-4 w-4 transition-transform duration-200 group-open:rotate-90" />
+                            商品詳細 ({expense.items.length}点)
                           </summary>
-                          <div className="mt-3 bg-gray-50 rounded-lg p-3">
+                          <div className="mt-3 rounded-lg bg-fg/[0.03] p-3">
                             <ul className="space-y-2">
                               {expense.items.map((item, index) => (
                                 <li
                                   key={index}
-                                  className="flex justify-between items-center text-sm"
+                                  className="flex items-center justify-between text-sm"
                                 >
-                                  <span className="text-gray-700 flex-1 min-w-0 mr-2 break-words">
+                                  <span className="mr-2 min-w-0 flex-1 break-words text-muted">
                                     {item.name}
                                   </span>
-                                  <span className="text-gray-900 font-medium flex-shrink-0">
+                                  <span className="flex-shrink-0 font-medium tabular-nums text-fg">
                                     ¥{item.price.toLocaleString()}
                                   </span>
                                 </li>
@@ -1111,7 +1110,7 @@ function ExpensesPageContent() {
 
                       {/* Action buttons */}
                       <div
-                        className="flex flex-wrap gap-2 pt-3 border-t border-gray-100"
+                        className="flex flex-wrap gap-2 border-t border-line pt-3"
                         style={{ position: "relative", zIndex: 10 }}
                       >
                         {/* 合計に含める/除外する切り替えボタン */}
@@ -1123,16 +1122,14 @@ function ExpensesPageContent() {
                             console.log("Toggle include in total clicked");
                             updateExpense(expense.id, { includeInTotal: !expense.includeInTotal });
                           }}
-                          className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 cursor-pointer ${
-                            expense.includeInTotal 
-                              ? "bg-green-500 text-white hover:bg-green-600"
-                              : "bg-gray-500 text-white hover:bg-gray-600"
+                          className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                            expense.includeInTotal
+                              ? "bg-accent/12 text-accent hover:bg-accent/20"
+                              : "bg-fg/5 text-muted hover:bg-fg/10"
                           }`}
                           style={{ pointerEvents: "auto" }}
                         >
-                          <span className="text-sm">
-                            {expense.includeInTotal ? "✓" : "✗"}
-                          </span>
+                          {expense.includeInTotal ? <Check className="h-4 w-4" /> : <Ban className="h-4 w-4" />}
                           {expense.includeInTotal ? "合計に含む" : "合計から除外"}
                         </button>
 
@@ -1147,10 +1144,10 @@ function ExpensesPageContent() {
                             );
                             handleEditStart(expense);
                           }}
-                          className="bg-blue-500 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors flex items-center gap-1 cursor-pointer"
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-card px-3 py-2 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
                           style={{ pointerEvents: "auto" }}
                         >
-                          <span className="text-sm">✏️</span>
+                          <Pencil className="h-4 w-4" />
                           編集
                         </button>
 
@@ -1165,10 +1162,10 @@ function ExpensesPageContent() {
                             );
                             handleDeleteExpense(expense.id);
                           }}
-                          className="bg-red-500 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-red-600 transition-colors flex items-center gap-1 cursor-pointer"
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-rose-600 transition-colors hover:bg-rose-500/10 dark:text-rose-400"
                           style={{ pointerEvents: "auto" }}
                         >
-                          <span className="text-sm">🗑️</span>
+                          <Trash2 className="h-4 w-4" />
                           削除
                         </button>
                       </div>
