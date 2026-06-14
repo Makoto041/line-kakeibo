@@ -9,3 +9,18 @@ export function isSafeImageUrl(url: string | null | undefined): boolean {
     return false;
   }
 }
+
+// 安全な場合に URL を再シリアライズして返す（不正なら null）。
+// new URL().href を通すことで href/src へ渡す値をサニタイズする。
+export function toSafeImageUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'blob:') {
+      return parsed.href;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}

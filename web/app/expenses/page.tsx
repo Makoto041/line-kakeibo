@@ -29,7 +29,7 @@ import PreviewModeBanner from "../../components/PreviewModeBanner";
 import GuestGuide from "../../components/GuestGuide";
 import { getCategoryVisual } from "../../lib/categoryVisuals";
 import { CANONICAL_CATEGORIES } from "../../lib/categoryNormalization";
-import { isSafeImageUrl } from "../../lib/imageUrl";
+import { isSafeImageUrl, toSafeImageUrl } from "../../lib/imageUrl";
 import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
@@ -983,7 +983,9 @@ function ExpensesPageContent() {
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              setReceiptPreview({ url: expense.receiptUrl as string, expenseId: expense.id });
+                              // URLを正規化し https/blob のみ採用（XSS対策・CodeQLサニタイズ）
+                              const safe = toSafeImageUrl(expense.receiptUrl);
+                              if (safe) setReceiptPreview({ url: safe, expenseId: expense.id });
                             }}
                             className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-amber-500/12 px-3 py-2 text-sm font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
                             style={{ pointerEvents: "auto" }}
