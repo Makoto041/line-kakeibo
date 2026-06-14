@@ -1,262 +1,196 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect, useMemo } from 'react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Wallet,
+  Receipt,
+  TrendingUp,
+  PieChart as PieChartIcon,
+  LineChart as LineChartIcon,
+  Sparkles,
+  Inbox,
+  AlertTriangle,
+} from 'lucide-react';
 import { useLineAuth, useMonthlyStats, useBudgetConfig, ExpenseStats, BudgetConfig } from '../lib/hooks';
 import { CategoryPieChart, DailyLineChart } from '../components/Charts';
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
+import { getCategoryVisual } from '../lib/categoryVisuals';
 import PreviewModeBanner from '../components/PreviewModeBanner';
 import GuestGuide from '../components/GuestGuide';
 import { getSampleStats } from '../lib/sampleData';
 import dayjs from 'dayjs';
 import { db } from '../lib/firebase';
 
-// カテゴリ設定
-const categoryInfo: Record<string, { emoji: string; name: string }> = {
-  '食費': { emoji: '🍽️', name: '食費' },
-  '日用品': { emoji: '🛒', name: '日用品' },
-  '交通費': { emoji: '🚃', name: '交通費' },
-  '娯楽費': { emoji: '🎮', name: '娯楽費' },
-  '光熱費': { emoji: '💡', name: '光熱費' },
-  '通信費': { emoji: '📱', name: '通信費' },
-  '医療費': { emoji: '🏥', name: '医療費' },
-  '衣服費': { emoji: '👕', name: '衣服費' },
-  '教育費': { emoji: '📚', name: '教育費' },
-  'その他': { emoji: '📦', name: 'その他' },
-};
+const yen = (v: number) => `¥${Number(v).toLocaleString()}`;
 
-// 予算設定のカテゴリ名 → 支出データのカテゴリ名のマッピング
+// 予算カテゴリ名 → 支出データのカテゴリ名（表記ゆれ吸収）
 const budgetToExpenseCategory: Record<string, string[]> = {
-  '食費': ['食費'],
-  '日用品': ['日用品'],
-  '交通費': ['交通費'],
-  '娯楽費': ['娯楽費', '娯楽'],
-  '光熱費': ['光熱費'],
-  '通信費': ['通信費'],
-  '医療費': ['医療費', '医療・健康'],
-  '衣服費': ['衣服費', '衣服'],
-  '教育費': ['教育費', '教育'],
-  'その他': ['その他'],
+  食費: ['食費'],
+  日用品: ['日用品'],
+  交通費: ['交通費'],
+  娯楽費: ['娯楽費', '娯楽'],
+  光熱費: ['光熱費'],
+  通信費: ['通信費'],
+  医療費: ['医療費', '医療・健康'],
+  衣服費: ['衣服費', '衣服'],
+  教育費: ['教育費', '教育'],
+  その他: ['その他'],
 };
 
 function getActualSpending(budgetCategory: string, categoryTotals: Record<string, number>): number {
-  const mappedCategories = budgetToExpenseCategory[budgetCategory] || [budgetCategory];
-  return mappedCategories.reduce((sum, cat) => sum + (categoryTotals[cat] || 0), 0);
+  const mapped = budgetToExpenseCategory[budgetCategory] || [budgetCategory];
+  return mapped.reduce((sum, cat) => sum + (categoryTotals[cat] || 0), 0);
 }
 
-function calculatePace(actual: number, budget: number): { pace: 'good' | 'warning' | 'danger'; label: string } {
-  const today = dayjs();
-  const daysInMonth = today.daysInMonth();
-  const currentDay = today.date();
-  const proratedBudget = (budget / daysInMonth) * currentDay;
+type Pace = 'good' | 'warning' | 'danger';
 
+function calculatePace(actual: number, budget: number): { pace: Pace; label: string } {
+  const today = dayjs();
+  const prorated = (budget / today.daysInMonth()) * today.date();
   if (budget === 0) return { pace: 'good', label: '未設定' };
-  const ratio = actual / proratedBudget;
+  const ratio = actual / prorated;
   if (ratio <= 1) return { pace: 'good', label: '順調' };
   if (ratio <= 1.2) return { pace: 'warning', label: 'やや超過' };
   return { pace: 'danger', label: '超過' };
 }
 
-function getProgressColor(percentage: number): string {
-  if (percentage <= 80) return 'from-emerald-400 to-emerald-500';
-  if (percentage <= 100) return 'from-amber-400 to-amber-500';
-  return 'from-rose-400 to-rose-500';
+function progressColor(pct: number): string {
+  if (pct <= 80) return 'bg-emerald-500';
+  if (pct <= 100) return 'bg-amber-500';
+  return 'bg-rose-500';
 }
 
-function getPaceBadgeStyle(pace: 'good' | 'warning' | 'danger'): string {
-  if (pace === 'good') return 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200';
-  if (pace === 'warning') return 'bg-amber-100 text-amber-700 ring-1 ring-amber-200';
-  return 'bg-rose-100 text-rose-700 ring-1 ring-rose-200';
+function paceBadge(pace: Pace): string {
+  if (pace === 'good') return 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400';
+  if (pace === 'warning') return 'bg-amber-500/12 text-amber-600 dark:text-amber-400';
+  return 'bg-rose-500/12 text-rose-600 dark:text-rose-400';
 }
 
-// Budget Progress Component
+/* -------------------------------- Card ---------------------------------- */
+function GlassCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return <div className={`glass rounded-2xl shadow-glass ${className}`}>{children}</div>;
+}
+
+/* ---------------------------- Summary card ------------------------------ */
+function SummaryCard({
+  label,
+  value,
+  Icon,
+  tone,
+}: {
+  label: string;
+  value: string;
+  Icon: typeof Wallet;
+  tone: string;
+}) {
+  return (
+    <GlassCard className="p-4">
+      <span className={`inline-grid h-9 w-9 place-items-center rounded-xl ${tone}`}>
+        <Icon className="h-[18px] w-[18px]" strokeWidth={2.1} />
+      </span>
+      <p className="mt-3 text-[11px] font-medium text-muted">{label}</p>
+      <p className="mt-0.5 text-xl font-bold tracking-tight text-fg tabular-nums">{value}</p>
+    </GlassCard>
+  );
+}
+
+/* --------------------------- Budget progress ---------------------------- */
 function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; budgetConfig: BudgetConfig | null }) {
   if (!budgetConfig) return null;
-
   const categoryTotals = stats?.categoryTotals || {};
   const { categoryBudgets, monthlyBudget } = budgetConfig;
 
-  const categoriesWithBudget = Object.entries(categoryBudgets)
-    .filter(([, budget]) => budget > 0)
-    .map(([category, budget]) => ({
-      category,
-      budget,
-      actual: getActualSpending(category, categoryTotals),
-      info: categoryInfo[category] || { emoji: '📦', name: category },
-    }))
-    .sort((a, b) => {
-      const aOverBudget = a.actual > a.budget ? 1 : 0;
-      const bOverBudget = b.actual > b.budget ? 1 : 0;
-      if (aOverBudget !== bOverBudget) return bOverBudget - aOverBudget;
-      return (b.actual / b.budget) - (a.actual / a.budget);
-    });
+  const cats = Object.entries(categoryBudgets)
+    .filter(([, b]) => b > 0)
+    .map(([category, budget]) => ({ category, budget, actual: getActualSpending(category, categoryTotals) }))
+    .sort((a, b) => b.actual / b.budget - a.actual / a.budget);
 
   const totalActual = stats?.totalAmount || 0;
-  const totalPercentage = monthlyBudget > 0 ? (totalActual / monthlyBudget) * 100 : 0;
+  const totalPct = monthlyBudget > 0 ? (totalActual / monthlyBudget) * 100 : 0;
   const totalRemaining = monthlyBudget - totalActual;
   const totalPace = calculatePace(totalActual, monthlyBudget);
-
-  const today = dayjs();
-  const idealProgress = (today.date() / today.daysInMonth()) * 100;
+  const idealProgress = (dayjs().date() / dayjs().daysInMonth()) * 100;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.2 }}
-      className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-6"
-    >
-      <h2 className="text-lg font-semibold text-gray-900 mb-5 flex items-center gap-2">
-        <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white text-sm">📊</span>
+    <GlassCard className="p-5">
+      <h2 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-fg">
+        <Wallet className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
         予算管理
       </h2>
 
-      {/* Monthly Total */}
-      <div className="mb-6 p-4 rounded-xl bg-gradient-to-r from-gray-50 to-slate-50 border border-gray-100">
-        <div className="flex justify-between items-center mb-3">
-          <span className="font-medium text-gray-800">月間予算</span>
-          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${getPaceBadgeStyle(totalPace.pace)}`}>
+      {/* Monthly total */}
+      <div className="rounded-xl border border-line/70 bg-fg/[0.02] p-4">
+        <div className="mb-2.5 flex items-center justify-between">
+          <span className="text-sm font-medium text-fg">月間予算</span>
+          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${paceBadge(totalPace.pace)}`}>
             {totalPace.label}
           </span>
         </div>
-
-        <div className="relative h-3 bg-gray-200 rounded-full overflow-hidden">
+        <div className="relative h-2.5 overflow-hidden rounded-full bg-fg/10">
           <div
-            className="absolute top-0 bottom-0 w-0.5 bg-blue-500 z-10 opacity-60"
-            style={{ left: `${Math.min(idealProgress, 100)}%`, transform: 'translateX(-50%)' }}
+            className="absolute inset-y-0 z-10 w-px bg-accent/70"
+            style={{ left: `${Math.min(idealProgress, 100)}%` }}
+            aria-hidden
           />
-          <motion.div
-            initial={{ width: 0 }}
-            animate={{ width: `${Math.min(totalPercentage, 100)}%` }}
-            transition={{ duration: 0.6, ease: 'easeOut' }}
-            className={`h-full bg-gradient-to-r ${getProgressColor(totalPercentage)} rounded-full`}
+          <div
+            className={`h-full rounded-full ${progressColor(totalPct)} transition-[width] duration-500`}
+            style={{ width: `${Math.min(totalPct, 100)}%` }}
           />
         </div>
-
-        <div className="flex justify-between items-center mt-2 text-sm">
-          <span className="text-gray-500">
-            ¥{totalActual.toLocaleString()} / ¥{monthlyBudget.toLocaleString()}
+        <div className="mt-2 flex items-center justify-between text-sm">
+          <span className="tabular-nums text-muted">
+            {yen(totalActual)} / {yen(monthlyBudget)}
           </span>
-          <span className={`font-semibold ${totalRemaining >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-            {totalRemaining >= 0 ? `残り ¥${totalRemaining.toLocaleString()}` : `超過 ¥${Math.abs(totalRemaining).toLocaleString()}`}
+          <span className={`font-semibold tabular-nums ${totalRemaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+            {totalRemaining >= 0 ? `残り ${yen(totalRemaining)}` : `超過 ${yen(Math.abs(totalRemaining))}`}
           </span>
         </div>
       </div>
 
-      {/* Category Budgets */}
-      {categoriesWithBudget.length === 0 ? (
-        <div className="text-center py-6 text-gray-400">
-          <p className="text-sm">カテゴリ別予算が未設定です</p>
-        </div>
+      {/* Category budgets */}
+      {cats.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted">カテゴリ別予算が未設定です</p>
       ) : (
-        <div className="space-y-3">
-          {categoriesWithBudget.slice(0, 5).map(({ category, budget, actual, info }) => {
-            const percentage = budget > 0 ? (actual / budget) * 100 : 0;
+        <ul className="mt-4 space-y-3.5">
+          {cats.slice(0, 5).map(({ category, budget, actual }) => {
+            const pct = budget > 0 ? (actual / budget) * 100 : 0;
             const remaining = budget - actual;
-            const pace = calculatePace(actual, budget);
-
+            const v = getCategoryVisual(category);
+            const Icon = v.icon;
             return (
-              <motion.div
-                key={category}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="group"
-              >
-                <div className="flex justify-between items-center mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">{info.emoji}</span>
-                    <span className="text-sm font-medium text-gray-700">{info.name}</span>
-                  </div>
-                  <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${getPaceBadgeStyle(pace.pace)}`}>
-                    {pace.label}
+              <li key={category}>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className={`inline-grid h-6 w-6 place-items-center rounded-lg ${v.bg} ${v.fg}`}>
+                    <Icon className="h-3.5 w-3.5" strokeWidth={2.2} />
+                  </span>
+                  <span className="text-sm font-medium text-fg">{category}</span>
+                  <span className="ml-auto tabular-nums text-xs text-muted">
+                    {yen(actual)} / {yen(budget)}
                   </span>
                 </div>
-
-                <div className="relative h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div className="relative h-1.5 overflow-hidden rounded-full bg-fg/10">
                   <div
-                    className="absolute top-0 bottom-0 w-px bg-blue-400 z-10 opacity-50"
-                    style={{ left: `${Math.min(idealProgress, 100)}%` }}
-                  />
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${Math.min(percentage, 100)}%` }}
-                    transition={{ duration: 0.5, ease: 'easeOut' }}
-                    className={`h-full bg-gradient-to-r ${getProgressColor(percentage)} rounded-full`}
+                    className={`h-full rounded-full ${progressColor(pct)} transition-[width] duration-500`}
+                    style={{ width: `${Math.min(pct, 100)}%` }}
                   />
                 </div>
-
-                <div className="flex justify-between items-center mt-1 text-xs text-gray-500">
-                  <span>¥{actual.toLocaleString()} / ¥{budget.toLocaleString()}</span>
-                  <span className={remaining >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                    {remaining >= 0 ? `残 ¥${remaining.toLocaleString()}` : `超 ¥${Math.abs(remaining).toLocaleString()}`}
+                <div className="mt-1 text-right text-xs">
+                  <span className={remaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
+                    {remaining >= 0 ? `残 ${yen(remaining)}` : `超 ${yen(Math.abs(remaining))}`}
                   </span>
                 </div>
-              </motion.div>
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
-
-      {/* Legend */}
-      <div className="mt-5 pt-4 border-t border-gray-100">
-        <div className="flex flex-wrap gap-3 text-[10px] text-gray-400">
-          <div className="flex items-center gap-1">
-            <div className="w-2.5 h-2.5 rounded-sm bg-gradient-to-r from-emerald-400 to-emerald-500" />
-            <span>80%以下</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-2.5 h-2.5 rounded-sm bg-gradient-to-r from-amber-400 to-amber-500" />
-            <span>80-100%</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-2.5 h-2.5 rounded-sm bg-gradient-to-r from-rose-400 to-rose-500" />
-            <span>超過</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-px bg-blue-400" />
-            <span>今日</span>
-          </div>
-        </div>
-      </div>
-    </motion.div>
+    </GlassCard>
   );
 }
 
-// Summary Card Component
-function SummaryCard({
-  title,
-  value,
-  icon,
-  color,
-  subtext,
-  delay = 0
-}: {
-  title: string;
-  value: string;
-  icon: string;
-  color: string;
-  subtext?: string;
-  delay?: number;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay }}
-      className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
-    >
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs font-medium text-gray-500 mb-1">{title}</p>
-          <p className={`text-2xl font-bold ${color}`}>{value}</p>
-          {subtext && <p className="text-xs text-gray-400 mt-1">{subtext}</p>}
-        </div>
-        <span className="text-2xl">{icon}</span>
-      </div>
-    </motion.div>
-  );
-}
-
+/* ------------------------------- Page ----------------------------------- */
 export default function Dashboard() {
   const { user, loading: authLoading } = useLineAuth();
   const [currentDate, setCurrentDate] = useState(dayjs());
@@ -264,94 +198,75 @@ export default function Dashboard() {
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [firebaseError, setFirebaseError] = useState(false);
 
-  const { config: budgetConfig, loading: budgetLoading, error: budgetError, refetch: refetchBudget } = useBudgetConfig(user?.uid || null);
+  const { config: budgetConfig, loading: budgetLoading, error: budgetError, refetch: refetchBudget } =
+    useBudgetConfig(user?.uid || null);
 
-  // ゲスト（プレビュー）モード用のサンプル統計データ
   const sampleStats = useMemo(() => getSampleStats(), []);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && !db) {
-      setFirebaseError(true);
-    }
+    if (typeof window !== 'undefined' && !db) setFirebaseError(true);
   }, []);
 
   useEffect(() => {
-    const loadSettings = async () => {
+    const load = async () => {
       if (!user?.uid) {
         setSettingsLoading(false);
         return;
       }
-
       try {
         setSettingsLoading(true);
-        const settings = await getDateRangeSettings(user.uid);
-        setDateSettings(settings);
-      } catch (error) {
-        console.error('Failed to load date settings:', error);
+        setDateSettings(await getDateRangeSettings(user.uid));
+      } catch (e) {
+        console.error('Failed to load date settings:', e);
         setDateSettings({ mode: 'monthly' });
       } finally {
         setSettingsLoading(false);
       }
     };
-
-    loadSettings();
+    load();
   }, [user?.uid]);
 
   const effectiveRange = getEffectiveDateRange(currentDate, dateSettings);
-
   const { stats, loading: statsLoading } = useMonthlyStats(
     user?.uid || null,
     currentDate.year(),
     currentDate.month() + 1,
     dateSettings.customStartDay || 1,
     effectiveRange.startDate,
-    effectiveRange.endDate
+    effectiveRange.endDate,
   );
 
-  const navigateMonth = (direction: 'prev' | 'next') => {
+  const navigateMonth = (dir: 'prev' | 'next') => {
     if (dateSettings.mode === 'custom') return;
-
-    if (direction === 'prev') {
-      setCurrentDate(prev => prev.subtract(1, 'month'));
-    } else {
-      setCurrentDate(prev => prev.add(1, 'month'));
-    }
+    setCurrentDate((prev) => (dir === 'prev' ? prev.subtract(1, 'month') : prev.add(1, 'month')));
   };
 
   if (firebaseError) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-gray-100">
-        <div className="text-center max-w-md p-8 bg-white rounded-2xl shadow-lg">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-rose-100 flex items-center justify-center">
-            <svg className="w-8 h-8 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-2">接続エラー</h2>
-          <p className="text-gray-600 text-sm">
-            アプリケーションの初期化に失敗しました。<br />
-            しばらくしてから再度お試しください。
-          </p>
-        </div>
+      <div className="mx-auto flex min-h-[60vh] max-w-md items-center px-4">
+        <GlassCard className="w-full p-8 text-center">
+          <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-rose-500/12 text-rose-500">
+            <AlertTriangle className="h-7 w-7" />
+          </span>
+          <h2 className="text-lg font-semibold text-fg">接続エラー</h2>
+          <p className="mt-2 text-sm text-muted">アプリの初期化に失敗しました。時間をおいて再度お試しください。</p>
+        </GlassCard>
       </div>
     );
   }
 
   if (authLoading || settingsLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-gray-100">
+      <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
-          <div className="w-10 h-10 border-3 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p className="mt-4 text-sm text-gray-500">読み込み中...</p>
+          <div className="mx-auto h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+          <p className="mt-3 text-sm text-muted">読み込み中...</p>
         </div>
       </div>
     );
   }
 
-  // ゲスト（プレビュー）モード判定: lineIdなしで開かれた場合
   const isGuest = user?.uid === 'guest' || user?.isAnonymous === true;
-
-  // ゲストモード時はサンプルデータを表示してアプリの見た目を体験できるようにする
   const displayStats = isGuest ? sampleStats : stats;
 
   const totalExpense = displayStats?.totalAmount || 0;
@@ -360,197 +275,124 @@ export default function Dashboard() {
   const dailyAverage = totalExpense > 0 ? Math.round(totalExpense / days) : 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
-      {isGuest && <PreviewModeBanner />}
+    <div className="mx-auto w-full max-w-4xl px-4 py-5 md:px-8 md:py-7">
+      {isGuest && (
+        <div className="mb-4">
+          <PreviewModeBanner />
+        </div>
+      )}
 
-      <main className="max-w-4xl mx-auto px-4 py-6 pb-24">
-        {/* Date Navigation */}
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-4 mb-6"
-        >
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => navigateMonth('prev')}
-              disabled={dateSettings.mode === 'custom'}
-              className={`p-2.5 rounded-xl transition-all ${
-                dateSettings.mode === 'custom'
-                  ? 'text-gray-300 cursor-not-allowed'
-                  : 'text-gray-600 hover:bg-gray-100 active:scale-95'
-              }`}
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-
-            <div className="text-center">
-              <h2 className="text-lg font-bold text-gray-900">
-                {getDisplayTitle(currentDate, dateSettings)}
-              </h2>
-              {dateSettings.mode === 'monthly' && dateSettings.customStartDay && dateSettings.customStartDay !== 1 && (
-                <p className="text-xs text-gray-500 mt-0.5">{dateSettings.customStartDay}日起算</p>
-              )}
-            </div>
-
-            <button
-              onClick={() => navigateMonth('next')}
-              disabled={dateSettings.mode === 'custom'}
-              className={`p-2.5 rounded-xl transition-all ${
-                dateSettings.mode === 'custom'
-                  ? 'text-gray-300 cursor-not-allowed'
-                  : 'text-gray-600 hover:bg-gray-100 active:scale-95'
-              }`}
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
+      {/* Period navigation */}
+      <GlassCard className="animate-fade-up p-2.5">
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => navigateMonth('prev')}
+            disabled={dateSettings.mode === 'custom'}
+            aria-label="前の期間"
+            className="grid h-10 w-10 place-items-center rounded-xl text-muted transition-colors hover:bg-fg/5 hover:text-fg disabled:opacity-30"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          <div className="text-center">
+            <h1 className="text-base font-semibold tracking-tight text-fg">
+              {getDisplayTitle(currentDate, dateSettings)}
+            </h1>
+            {dateSettings.mode === 'monthly' && dateSettings.customStartDay && dateSettings.customStartDay !== 1 && (
+              <p className="text-[11px] text-muted">{dateSettings.customStartDay}日起算</p>
+            )}
           </div>
-        </motion.div>
+          <button
+            onClick={() => navigateMonth('next')}
+            disabled={dateSettings.mode === 'custom'}
+            aria-label="次の期間"
+            className="grid h-10 w-10 place-items-center rounded-xl text-muted transition-colors hover:bg-fg/5 hover:text-fg disabled:opacity-30"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </div>
+      </GlassCard>
 
-        {statsLoading ? (
-          <div className="text-center py-16">
-            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-            <p className="mt-3 text-sm text-gray-500">データを読み込み中...</p>
-          </div>
-        ) : (
-          <>
-            {/* Sample Data Notice (Guest Mode) */}
-            {isGuest && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mb-4 flex justify-center"
-              >
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-100 text-violet-700 ring-1 ring-violet-200 text-xs font-medium">
-                  ✨ 以下はサンプルデータです — 実際の画面イメージをお試しいただけます
-                </span>
-              </motion.div>
-            )}
-
-            {/* Summary Cards */}
-            <div className="grid grid-cols-3 gap-3 mb-6">
-              <SummaryCard
-                title="今月の支出"
-                value={`¥${totalExpense.toLocaleString()}`}
-                icon="💰"
-                color="text-gray-900"
-                delay={0.1}
-              />
-              <SummaryCard
-                title="支出回数"
-                value={`${expenseCount}`}
-                icon="📝"
-                color="text-blue-600"
-                subtext="回"
-                delay={0.15}
-              />
-              <SummaryCard
-                title="1日平均"
-                value={`¥${dailyAverage.toLocaleString()}`}
-                icon="📊"
-                color="text-emerald-600"
-                delay={0.2}
-              />
+      {statsLoading ? (
+        <div className="py-16 text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+          <p className="mt-3 text-sm text-muted">データを読み込み中...</p>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-4">
+          {isGuest && (
+            <div className="flex justify-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent">
+                <Sparkles className="h-3.5 w-3.5" />
+                サンプルデータを表示しています
+              </span>
             </div>
+          )}
 
-            {/* Budget Progress */}
-            {budgetLoading ? (
-              <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
-                <div className="animate-pulse">
-                  <div className="h-5 bg-gray-200 rounded w-1/4 mb-4"></div>
-                  <div className="h-3 bg-gray-200 rounded w-full mb-3"></div>
-                  <div className="h-3 bg-gray-200 rounded w-2/3"></div>
-                </div>
+          {/* Summary */}
+          <div className="grid grid-cols-3 gap-3">
+            <SummaryCard label="今月の支出" value={yen(totalExpense)} Icon={Wallet} tone="bg-accent/12 text-accent" />
+            <SummaryCard label="支出回数" value={`${expenseCount}回`} Icon={Receipt} tone="bg-sky-500/12 text-sky-600 dark:text-sky-400" />
+            <SummaryCard label="1日平均" value={yen(dailyAverage)} Icon={TrendingUp} tone="bg-violet-500/12 text-violet-600 dark:text-violet-400" />
+          </div>
+
+          {/* Budget */}
+          {budgetLoading ? (
+            <GlassCard className="p-5">
+              <div className="animate-pulse space-y-3">
+                <div className="h-4 w-1/4 rounded bg-fg/10" />
+                <div className="h-2.5 w-full rounded bg-fg/10" />
+                <div className="h-2.5 w-2/3 rounded bg-fg/10" />
               </div>
-            ) : budgetError ? (
-              <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
-                <div className="text-center text-rose-500">
-                  <p className="text-sm">予算設定の読み込みに失敗しました</p>
-                  <button
-                    onClick={refetchBudget}
-                    className="mt-2 text-xs text-blue-600 hover:underline"
-                  >
-                    再試行
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="mb-6">
-                <BudgetProgress stats={displayStats} budgetConfig={budgetConfig} />
-              </div>
-            )}
+            </GlassCard>
+          ) : budgetError ? (
+            <GlassCard className="p-5 text-center">
+              <p className="text-sm text-rose-500">予算設定の読み込みに失敗しました</p>
+              <button onClick={refetchBudget} className="mt-2 text-xs font-medium text-accent hover:underline">
+                再試行
+              </button>
+            </GlassCard>
+          ) : (
+            <BudgetProgress stats={displayStats} budgetConfig={budgetConfig} />
+          )}
 
-            {/* Charts */}
-            {displayStats && displayStats.totalAmount > 0 ? (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.3 }}
-                  className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-5"
-                >
-                  <CategoryPieChart data={displayStats.categoryTotals} />
-                </motion.div>
+          {/* Charts */}
+          {displayStats && displayStats.totalAmount > 0 ? (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <GlassCard className="p-5">
+                <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-fg">
+                  <PieChartIcon className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
+                  カテゴリ別支出
+                </h2>
+                <CategoryPieChart data={displayStats.categoryTotals} />
+              </GlassCard>
+              <GlassCard className="p-5">
+                <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-fg">
+                  <LineChartIcon className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
+                  日別の推移
+                </h2>
+                <DailyLineChart
+                  data={displayStats.dailyTotals}
+                  startDate={effectiveRange.startDate}
+                  endDate={effectiveRange.endDate}
+                  mode={dateSettings.mode}
+                />
+              </GlassCard>
+            </div>
+          ) : (
+            <GlassCard className="p-8 text-center">
+              <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-fg/5 text-muted">
+                <Inbox className="h-7 w-7" strokeWidth={1.8} />
+              </span>
+              <h3 className="text-base font-semibold text-fg">支出データがありません</h3>
+              <p className="mt-1.5 text-sm text-muted">
+                LINEでレシートやメモを送ると、ここに自動で記録されます。
+              </p>
+            </GlassCard>
+          )}
 
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.35 }}
-                  className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-5"
-                >
-                  <DailyLineChart
-                    data={displayStats.dailyTotals}
-                    startDate={effectiveRange.startDate}
-                    endDate={effectiveRange.endDate}
-                    mode={dateSettings.mode}
-                  />
-                </motion.div>
-              </div>
-            ) : (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.25 }}
-                className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 p-8 text-center"
-              >
-                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gray-100 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                  </svg>
-                </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">支出データがありません</h3>
-                <p className="text-sm text-gray-500 mb-5">
-                  LINEでレシート画像を送信して<br />家計簿を始めましょう
-                </p>
-                <div className="inline-flex flex-col items-start bg-blue-50 rounded-xl p-4 text-left">
-                  <p className="text-xs font-medium text-blue-800 mb-2">使い方</p>
-                  <ol className="text-xs text-blue-700 space-y-1">
-                    <li>1. LINEでBotを友達追加</li>
-                    <li>2. レシート画像を送信</li>
-                    <li>3. 自動で読み取り・保存</li>
-                  </ol>
-                </div>
-              </motion.div>
-            )}
-
-            {/* Guest Usage Guide */}
-            {isGuest && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.4 }}
-                className="mt-6"
-              >
-                <GuestGuide />
-              </motion.div>
-            )}
-
-          </>
-        )}
-      </main>
+          {isGuest && <GuestGuide />}
+        </div>
+      )}
     </div>
   );
 }

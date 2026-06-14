@@ -1,119 +1,96 @@
 'use client';
 
-import React from 'react';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-} from 'chart.js';
-import { Pie, Bar, Line } from 'react-chartjs-2';
+import * as Recharts from 'recharts';
 import dayjs from 'dayjs';
+import { getCategoryVisual } from '../lib/categoryVisuals';
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// recharts + React 19 の JSX 型不整合(TS2786)を回避するためのキャスト。
+const {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
   Tooltip,
-  Legend
-);
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+} = Recharts as unknown as Record<string, any>;
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
+const yen = (v: number) => `¥${Number(v).toLocaleString()}`;
+
+/* ----------------------------- Category donut ---------------------------- */
 interface CategoryPieChartProps {
   data: Record<string, number>;
 }
 
 export function CategoryPieChart({ data }: CategoryPieChartProps) {
-  const chartData = {
-    labels: Object.keys(data),
-    datasets: [
-      {
-        data: Object.values(data),
-        backgroundColor: [
-          '#FF6384',
-          '#36A2EB',
-          '#FFCE56',
-          '#4BC0C0',
-          '#9966FF',
-          '#FF9F40',
-          '#FF6384',
-          '#C9CBCF'
-        ],
-        borderWidth: 2
-      }
-    ]
-  };
+  const rows = Object.entries(data)
+    .filter(([, v]) => v > 0)
+    .map(([name, value]) => ({ name, value, color: getCategoryVisual(name).hex }))
+    .sort((a, b) => b.value - a.value);
 
-  const options = {
-    responsive: true,
-    plugins: {
-      legend: {
-        position: 'bottom' as const,
-      },
-      title: {
-        display: true,
-        text: 'カテゴリ別支出'
-      }
-    }
-  };
+  const total = rows.reduce((s, r) => s + r.value, 0);
 
-  return <Pie data={chartData} options={options} />;
+  if (rows.length === 0) {
+    return <p className="py-10 text-center text-sm text-muted">データがありません</p>;
+  }
+
+  return (
+    <div>
+      <div className="h-56">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={rows}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius={56}
+              outerRadius={84}
+              paddingAngle={2}
+              stroke="none"
+            >
+              {rows.map((r) => (
+                <Cell key={r.name} fill={r.color} />
+              ))}
+            </Pie>
+            <Tooltip
+              formatter={(value: number, name: string) => [yen(value), name]}
+              contentStyle={{
+                borderRadius: 12,
+                border: '1px solid rgb(var(--border))',
+                background: 'rgb(var(--card))',
+                color: 'rgb(var(--fg))',
+                fontSize: 12,
+              }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      <ul className="mt-3 space-y-1.5">
+        {rows.slice(0, 6).map((r) => {
+          const pct = total > 0 ? Math.round((r.value / total) * 100) : 0;
+          return (
+            <li key={r.name} className="flex items-center gap-2 text-sm">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.color }} />
+              <span className="truncate text-fg">{r.name}</span>
+              <span className="ml-auto tabular-nums text-muted">{yen(r.value)}</span>
+              <span className="w-9 text-right tabular-nums text-xs text-muted">{pct}%</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
-interface MonthlyBarChartProps {
-  data: Record<string, number>;
-  label?: string;
-}
-
-export function MonthlyBarChart({ data, label = '支出額' }: MonthlyBarChartProps) {
-  const chartData = {
-    labels: Object.keys(data),
-    datasets: [
-      {
-        label,
-        data: Object.values(data),
-        backgroundColor: 'rgba(54, 162, 235, 0.5)',
-        borderColor: 'rgba(54, 162, 235, 1)',
-        borderWidth: 2
-      }
-    ]
-  };
-
-  const options = {
-    responsive: true,
-    plugins: {
-      legend: {
-        position: 'top' as const,
-      },
-      title: {
-        display: true,
-        text: '月間支出推移'
-      }
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
-        ticks: {
-          callback: function(value: string | number) {
-            return '¥' + Number(value).toLocaleString();
-          }
-        }
-      }
-    }
-  };
-
-  return <Bar data={chartData} options={options} />;
-}
-
+/* ------------------------------ Daily trend ------------------------------ */
 interface DailyLineChartProps {
   data: Record<string, number>;
   startDate: string;
@@ -122,77 +99,68 @@ interface DailyLineChartProps {
 }
 
 export function DailyLineChart({ data, startDate, endDate, mode }: DailyLineChartProps) {
-  let chartData;
-  
-  // Generate all days in the range - using dayjs for better timezone handling
   const start = dayjs(startDate);
   const end = dayjs(endDate);
-  const allDays: string[] = [];
-  
-  let current = start;
-  while (current.isBefore(end) || current.isSame(end, 'day')) {
-    allDays.push(current.format('YYYY-MM-DD'));
-    current = current.add(1, 'day');
+
+  const series: { label: string; value: number }[] = [];
+  let cur = start;
+  while (cur.isBefore(end) || cur.isSame(end, 'day')) {
+    const key = cur.format('YYYY-MM-DD');
+    const label = mode === 'monthly' ? `${cur.date()}` : `${cur.month() + 1}/${cur.date()}`;
+    series.push({ label, value: data[key] || 0 });
+    cur = cur.add(1, 'day');
   }
 
-  if (mode === 'monthly') {
-    // For monthly mode, show day numbers (1, 2, 3...)
-    chartData = {
-      labels: allDays.map(date => {
-        const day = date.split('-')[2];
-        return day + '日';
-      }),
-      datasets: [
-        {
-          label: '日別支出',
-          data: allDays.map(date => data[date] || 0),
-          borderColor: 'rgb(75, 192, 192)',
-          backgroundColor: 'rgba(75, 192, 192, 0.2)',
-          tension: 0.1
-        }
-      ]
-    };
-  } else {
-    // For custom range, show month/day format
-    chartData = {
-      labels: allDays.map(date => {
-        const parts = date.split('-');
-        return `${parseInt(parts[1])}/${parseInt(parts[2])}`;
-      }),
-      datasets: [
-        {
-          label: '日別支出',
-          data: allDays.map(date => data[date] || 0),
-          borderColor: 'rgb(75, 192, 192)',
-          backgroundColor: 'rgba(75, 192, 192, 0.2)',
-          tension: 0.1
-        }
-      ]
-    };
+  const hasData = series.some((s) => s.value > 0);
+  if (!hasData) {
+    return <p className="py-10 text-center text-sm text-muted">この期間の支出はありません</p>;
   }
 
-  const options = {
-    responsive: true,
-    plugins: {
-      legend: {
-        position: 'top' as const,
-      },
-      title: {
-        display: true,
-        text: '日別支出推移'
-      }
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
-        ticks: {
-          callback: function(value: string | number) {
-            return '¥' + Number(value).toLocaleString();
-          }
-        }
-      }
-    }
-  };
-
-  return <Line data={chartData} options={options} />;
+  return (
+    <div className="h-56">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={series} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+          <defs>
+            <linearGradient id="dailyFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="rgb(var(--accent))" stopOpacity={0.35} />
+              <stop offset="100%" stopColor="rgb(var(--accent))" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--border))" vertical={false} />
+          <XAxis
+            dataKey="label"
+            tick={{ fontSize: 11, fill: 'rgb(var(--muted))' }}
+            tickLine={false}
+            axisLine={false}
+            interval="preserveStartEnd"
+            minTickGap={16}
+          />
+          <YAxis
+            tick={{ fontSize: 11, fill: 'rgb(var(--muted))' }}
+            tickLine={false}
+            axisLine={false}
+            width={48}
+            tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`)}
+          />
+          <Tooltip
+            formatter={(value: number) => [yen(value), '支出']}
+            contentStyle={{
+              borderRadius: 12,
+              border: '1px solid rgb(var(--border))',
+              background: 'rgb(var(--card))',
+              color: 'rgb(var(--fg))',
+              fontSize: 12,
+            }}
+          />
+          <Area
+            type="monotone"
+            dataKey="value"
+            stroke="rgb(var(--accent))"
+            strokeWidth={2}
+            fill="url(#dailyFill)"
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
 }
