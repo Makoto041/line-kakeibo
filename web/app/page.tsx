@@ -275,7 +275,7 @@ export default function Dashboard() {
   const dailyAverage = totalExpense > 0 ? Math.round(totalExpense / days) : 0;
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-5 md:px-8 md:py-7">
+    <div className="mx-auto w-full max-w-5xl px-4 py-5 md:px-8 md:py-7">
       {isGuest && (
         <div className="mb-4">
           <PreviewModeBanner />
@@ -335,60 +335,70 @@ export default function Dashboard() {
             <SummaryCard label="1日平均" value={yen(dailyAverage)} Icon={TrendingUp} tone="bg-violet-500/12 text-violet-600 dark:text-violet-400" />
           </div>
 
-          {/* Budget */}
-          {budgetLoading ? (
-            <GlassCard className="p-5">
-              <div className="animate-pulse space-y-3">
-                <div className="h-4 w-1/4 rounded bg-fg/10" />
-                <div className="h-2.5 w-full rounded bg-fg/10" />
-                <div className="h-2.5 w-2/3 rounded bg-fg/10" />
-              </div>
-            </GlassCard>
-          ) : budgetError ? (
-            <GlassCard className="p-5 text-center">
-              <p className="text-sm text-rose-500">予算設定の読み込みに失敗しました</p>
-              <button onClick={refetchBudget} className="mt-2 text-xs font-medium text-accent hover:underline">
-                再試行
-              </button>
-            </GlassCard>
-          ) : (
-            <BudgetProgress stats={displayStats} budgetConfig={budgetConfig} />
-          )}
-
-          {/* Charts */}
-          {displayStats && displayStats.totalAmount > 0 ? (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <GlassCard className="p-5">
-                <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-fg">
-                  <PieChartIcon className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
-                  カテゴリ別支出
-                </h2>
-                <CategoryPieChart data={displayStats.categoryTotals} />
-              </GlassCard>
-              <GlassCard className="p-5">
-                <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-fg">
-                  <LineChartIcon className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
-                  日別の推移
-                </h2>
-                <DailyLineChart
-                  data={displayStats.dailyTotals}
-                  startDate={effectiveRange.startDate}
-                  endDate={effectiveRange.endDate}
-                  mode={dateSettings.mode}
-                />
-              </GlassCard>
+          {/* Main (charts) + insight rail (budget). On desktop this becomes a
+              2/3 + 1/3 layout; on mobile budget stays above the charts.
+              DOM order is budget-first (mobile); explicit column placement
+              moves budget to the right rail on large screens. */}
+          <div className="grid gap-4 lg:grid-cols-3 lg:items-start">
+            {/* Insight rail: budget (sticky on desktop) */}
+            <div className="lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:sticky lg:top-20">
+              {budgetLoading ? (
+                <GlassCard className="p-5">
+                  <div className="animate-pulse space-y-3">
+                    <div className="h-4 w-1/4 rounded bg-fg/10" />
+                    <div className="h-2.5 w-full rounded bg-fg/10" />
+                    <div className="h-2.5 w-2/3 rounded bg-fg/10" />
+                  </div>
+                </GlassCard>
+              ) : budgetError ? (
+                <GlassCard className="p-5 text-center">
+                  <p className="text-sm text-rose-500">予算設定の読み込みに失敗しました</p>
+                  <button onClick={refetchBudget} className="mt-2 text-xs font-medium text-accent hover:underline">
+                    再試行
+                  </button>
+                </GlassCard>
+              ) : (
+                <BudgetProgress stats={displayStats} budgetConfig={budgetConfig} />
+              )}
             </div>
-          ) : (
-            <GlassCard className="p-8 text-center">
-              <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-fg/5 text-muted">
-                <Inbox className="h-7 w-7" strokeWidth={1.8} />
-              </span>
-              <h3 className="text-base font-semibold text-fg">支出データがありません</h3>
-              <p className="mt-1.5 text-sm text-muted">
-                LINEでレシートやメモを送ると、ここに自動で記録されます。
-              </p>
-            </GlassCard>
-          )}
+
+            {/* Main column: charts */}
+            <div className="space-y-4 lg:col-span-2 lg:col-start-1 lg:row-start-1">
+              {displayStats && displayStats.totalAmount > 0 ? (
+                <>
+                  <GlassCard className="p-5">
+                    <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-fg">
+                      <PieChartIcon className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
+                      カテゴリ別支出
+                    </h2>
+                    <CategoryPieChart data={displayStats.categoryTotals} />
+                  </GlassCard>
+                  <GlassCard className="p-5">
+                    <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-fg">
+                      <LineChartIcon className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
+                      日別の推移
+                    </h2>
+                    <DailyLineChart
+                      data={displayStats.dailyTotals}
+                      startDate={effectiveRange.startDate}
+                      endDate={effectiveRange.endDate}
+                      mode={dateSettings.mode}
+                    />
+                  </GlassCard>
+                </>
+              ) : (
+                <GlassCard className="p-8 text-center">
+                  <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-fg/5 text-muted">
+                    <Inbox className="h-7 w-7" strokeWidth={1.8} />
+                  </span>
+                  <h3 className="text-base font-semibold text-fg">支出データがありません</h3>
+                  <p className="mt-1.5 text-sm text-muted">
+                    LINEでレシートやメモを送ると、ここに自動で記録されます。
+                  </p>
+                </GlassCard>
+              )}
+            </div>
+          </div>
 
           {isGuest && <GuestGuide />}
         </div>
