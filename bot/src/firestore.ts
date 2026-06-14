@@ -403,6 +403,35 @@ export async function getMonthlyStats(lineId: string, year: number, month: numbe
 }
 
 /**
+ * 月次予算を取得する。
+ * Web設定（settings画面）は budgetSettings/{lineId} に monthlyBudget を保存する。
+ * グループ文脈ではグループID・操作ユーザーIDの順で探し、無ければ undefined を返す。
+ */
+export async function getMonthlyBudget(
+  lineId: string,
+  lineGroupId?: string
+): Promise<number | undefined> {
+  const candidateIds = [lineGroupId, lineId].filter(
+    (v): v is string => typeof v === 'string' && v.length > 0
+  );
+  for (const id of candidateIds) {
+    try {
+      const snap = await getDb().collection('budgetSettings').doc(id).get();
+      if (snap.exists) {
+        const monthly = snap.data()?.monthlyBudget;
+        if (typeof monthly === 'number' && Number.isFinite(monthly) && monthly > 0) {
+          return monthly;
+        }
+      }
+    } catch (error) {
+      // 注: ユーザー由来の id はフォーマット文字列に含めず引数で渡す（format string injection回避）
+      console.warn('Failed to read budgetSettings for id:', id, error);
+    }
+  }
+  return undefined;
+}
+
+/**
  * LINEグループまたはユーザーの月次集計を取得（家計簿コマンド用）
  * includeInTotalを考慮した集計を返す
  */

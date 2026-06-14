@@ -47,6 +47,10 @@ const ICONS = {
   'users': ['users', ACCENT],
   'external-link': ['external-link', ACCENT],
   'message': ['message-circle', ACCENT],
+  // ボタン用（アクション）
+  'check': ['check', ACCENT],
+  'pencil': ['pencil', ACCENT],
+  'user': ['user', ACCENT],
 };
 
 // lucide名の揺れに対するフォールバック

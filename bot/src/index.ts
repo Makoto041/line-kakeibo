@@ -27,6 +27,7 @@ import {
   AdvanceSummary,
   // 月次サマリー
   getMonthlyGroupSummary,
+  getMonthlyBudget,
 } from "./firestore";
 import {
   buildExpenseSummaryFlexMessage,
@@ -236,6 +237,12 @@ async function handleTextMessage(event: any) {
             includeInTotal: exp.includeInTotal !== false,
           }));
 
+          // 設定された月次予算を取得（Web設定: budgetSettings/{lineId|groupId}）
+          const monthlyBudget = await getMonthlyBudget(
+            event.source.userId,
+            lineGroupId
+          );
+
           const summaryInfo: ExpenseSummaryInfo = {
             isGroupContext,
             webAppUrl,
@@ -246,6 +253,7 @@ async function handleTextMessage(event: any) {
             monthLabel: `${now.month() + 1}月`,
             recentExpenses,
             categoryTotals,
+            monthlyBudget,
           };
 
           const flexMessage = buildExpenseSummaryFlexMessage(summaryInfo);
