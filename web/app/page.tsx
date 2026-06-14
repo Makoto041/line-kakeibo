@@ -7,6 +7,7 @@ import {
   Wallet,
   Receipt,
   TrendingUp,
+  TrendingDown,
   PieChart as PieChartIcon,
   LineChart as LineChartIcon,
   Sparkles,
@@ -236,6 +237,18 @@ export default function Dashboard() {
     effectiveRange.endDate,
   );
 
+  // Previous period — used for the month-over-month insight.
+  const prevDate = currentDate.subtract(1, 'month');
+  const prevRange = getEffectiveDateRange(prevDate, dateSettings);
+  const { stats: prevStats } = useMonthlyStats(
+    user?.uid || null,
+    prevDate.year(),
+    prevDate.month() + 1,
+    dateSettings.customStartDay || 1,
+    prevRange.startDate,
+    prevRange.endDate,
+  );
+
   const navigateMonth = (dir: 'prev' | 'next') => {
     if (dateSettings.mode === 'custom') return;
     setCurrentDate((prev) => (dir === 'prev' ? prev.subtract(1, 'month') : prev.add(1, 'month')));
@@ -273,6 +286,25 @@ export default function Dashboard() {
   const expenseCount = displayStats?.expenseCount || 0;
   const days = dayjs(effectiveRange.endDate).diff(dayjs(effectiveRange.startDate), 'day') + 1;
   const dailyAverage = totalExpense > 0 ? Math.round(totalExpense / days) : 0;
+
+  // --- 判断インサイト（予算・前月比・残ペース） ---
+  const monthlyBudget = budgetConfig?.monthlyBudget || 0;
+  const budgetPct = monthlyBudget > 0 ? Math.round((totalExpense / monthlyBudget) * 100) : null;
+  const budgetRemaining = monthlyBudget > 0 ? monthlyBudget - totalExpense : null;
+
+  // この期間の残り日数（今日が期間内なら今日〜終了日、過ぎていれば0扱い）
+  const today = dayjs();
+  const endD = dayjs(effectiveRange.endDate);
+  const daysLeft = endD.isBefore(today, 'day')
+    ? 0
+    : endD.diff(today.isBefore(dayjs(effectiveRange.startDate)) ? dayjs(effectiveRange.startDate) : today, 'day') + 1;
+  const perDayAvailable =
+    monthlyBudget > 0 && budgetRemaining !== null && budgetRemaining > 0 && daysLeft > 0
+      ? Math.floor(budgetRemaining / daysLeft)
+      : null;
+
+  const prevTotal = isGuest ? 0 : prevStats?.totalAmount || 0;
+  const momPct = prevTotal > 0 ? Math.round(((totalExpense - prevTotal) / prevTotal) * 100) : null;
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-5 md:px-8 md:py-7">
@@ -334,6 +366,40 @@ export default function Dashboard() {
             <SummaryCard label="支出回数" value={`${expenseCount}回`} Icon={Receipt} tone="bg-sky-500/12 text-sky-600 dark:text-sky-400" />
             <SummaryCard label="1日平均" value={yen(dailyAverage)} Icon={TrendingUp} tone="bg-violet-500/12 text-violet-600 dark:text-violet-400" />
           </div>
+
+          {/* 判断インサイト */}
+          {(budgetPct !== null || momPct !== null) && (
+            <GlassCard className="p-4">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+                {budgetPct !== null && (
+                  <div>
+                    <p className="text-[11px] font-medium text-muted">予算進捗</p>
+                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{budgetPct}%</p>
+                    <p className={`text-xs tabular-nums ${budgetRemaining! >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                      {budgetRemaining! >= 0 ? `残り ${yen(budgetRemaining!)}` : `超過 ${yen(-budgetRemaining!)}`}
+                    </p>
+                  </div>
+                )}
+                {perDayAvailable !== null && (
+                  <div>
+                    <p className="text-[11px] font-medium text-muted">あと使える / 日</p>
+                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{yen(perDayAvailable)}</p>
+                    <p className="text-xs text-muted">残り{daysLeft}日</p>
+                  </div>
+                )}
+                {momPct !== null && (
+                  <div>
+                    <p className="text-[11px] font-medium text-muted">前月比</p>
+                    <p className={`mt-0.5 inline-flex items-center gap-1 text-lg font-bold tabular-nums ${momPct > 0 ? 'text-rose-600 dark:text-rose-400' : momPct < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-fg'}`}>
+                      {momPct > 0 ? <TrendingUp className="h-4 w-4" /> : momPct < 0 ? <TrendingDown className="h-4 w-4" /> : null}
+                      {momPct > 0 ? '+' : ''}{momPct}%
+                    </p>
+                    <p className="text-xs tabular-nums text-muted">前月 {yen(prevTotal)}</p>
+                  </div>
+                )}
+              </div>
+            </GlassCard>
+          )}
 
           {/* Main (charts) + insight rail (budget). On desktop this becomes a
               2/3 + 1/3 layout; on mobile budget stays above the charts.
