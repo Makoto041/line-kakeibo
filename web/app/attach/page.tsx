@@ -7,6 +7,7 @@ import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
 import { isSafeImageUrl } from "../../lib/imageUrl";
+import { compressImage } from "../../lib/imageCompress";
 import dayjs from "dayjs";
 
 // Suspense boundary for useSearchParams（ビルドエラー防止）
@@ -127,13 +128,23 @@ function AttachPageContent() {
         throw new Error("Firebaseの初期化に失敗しました。");
       }
 
+      // アップロード前にリサイズ＋JPEG再エンコードで圧縮（容量・帯域の長期削減）
+      const { file: uploadFile, compressed, originalSize, outputSize } =
+        await compressImage(selectedFile);
+      if (compressed) {
+        console.log(
+          `レシート圧縮: ${(originalSize / 1024).toFixed(0)}KB → ${(outputSize / 1024).toFixed(0)}KB ` +
+            `(${Math.round((1 - outputSize / originalSize) * 100)}%削減)`
+        );
+      }
+
       // パス: receipts/{expenseId}/{timestamp}_{filename}
       const timestamp = Date.now();
-      const safeName = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const safeName = uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const storageRef = ref(storage, `receipts/${expenseId}/${timestamp}_${safeName}`);
 
-      await uploadBytes(storageRef, selectedFile, {
-        contentType: selectedFile.type,
+      await uploadBytes(storageRef, uploadFile, {
+        contentType: uploadFile.type,
       });
       const downloadUrl = await getDownloadURL(storageRef);
 
