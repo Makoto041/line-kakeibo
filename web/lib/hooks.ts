@@ -16,6 +16,7 @@ import {
 import { db, getFirebaseStatus, ensureFirebaseInitialized } from './firebase';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
+import { getCached, setCached, hasCached } from './swrCache';
 
 // Firestore document data shape for expenses (avoids explicit any)
 export type FirestoreExpenseData = Partial<Expense> & { category?: string };
@@ -193,54 +194,42 @@ const waitForFirebase = async (maxWaitMs: number = 5000, signal?: AbortSignal): 
   return checkFirebaseConnection();
 };
 
+// 認証はURL(lineId)から同期的に導出でき、アプリ内ナビでは値が変わらない。
+// 解決結果をモジュールに保持し、ページ再マウント時はそこから即時復元することで、
+// タブ切替のたびに全画面スピナーが1フレーム出る「リロード感」をなくす。
+// 初回ロードは null/loading=true で始まる（SSRと一致しハイドレーション不整合を避ける）。
+let cachedLineAuth: { uid: string; isAnonymous: boolean } | null = null;
+
+function getLineIdFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  const urlParams = new URLSearchParams(window.location.search);
+  let lineId = urlParams.get('lineId');
+  if (!lineId && window.location.hash) {
+    const hashParams = new URLSearchParams(window.location.hash.replace('#', ''));
+    lineId = hashParams.get('lineId');
+  }
+  if (!lineId) {
+    const match = window.location.href.match(/[?&]lineId=([^&]+)/);
+    if (match) {
+      lineId = decodeURIComponent(match[1]);
+    }
+  }
+  return lineId;
+}
+
 export function useLineAuth() {
-  const [user, setUser] = useState<{ uid: string; isAnonymous: boolean } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<{ uid: string; isAnonymous: boolean } | null>(() => cachedLineAuth);
+  const [loading, setLoading] = useState(() => cachedLineAuth === null);
 
   useEffect(() => {
-    // LINE IDベースの認証では、URLパラメータからLINE IDを取得
-    // 静的サイトでのクライアントサイドルーティング対応
-    const getLineIdFromUrl = () => {
-      if (typeof window === 'undefined') return null;
-      
-      // Try multiple ways to get the LINE ID
-      const urlParams = new URLSearchParams(window.location.search);
-      let lineId = urlParams.get('lineId');
-      
-      // If not found in search params, try hash
-      if (!lineId && window.location.hash) {
-        const hashParams = new URLSearchParams(window.location.hash.replace('#', ''));
-        lineId = hashParams.get('lineId');
-      }
-      
-      // If still not found, try parsing the full URL
-      if (!lineId) {
-        const match = window.location.href.match(/[?&]lineId=([^&]+)/);
-        if (match) {
-          lineId = decodeURIComponent(match[1]);
-        }
-      }
-      
-      return lineId;
-    };
-    
     const lineId = getLineIdFromUrl();
-    
-    console.log('LINE ID from URL:', lineId);
-    console.log('Current URL:', window.location.href);
-    console.log('Search params:', window.location.search);
-    console.log('Hash:', window.location.hash);
-    
-    if (lineId) {
-      // LINE IDが存在する場合は、それをユーザーIDとして使用
-      console.log('Setting user with LINE ID:', lineId);
-      setUser({ uid: lineId, isAnonymous: false });
-    } else {
-      // LINE IDが存在しない場合はゲストユーザーとして扱う
-      console.log('No LINE ID found, setting guest user');
-      setUser({ uid: 'guest', isAnonymous: true });
-    }
-    
+
+    const resolved = lineId
+      ? { uid: lineId, isAnonymous: false }
+      : { uid: 'guest', isAnonymous: true };
+
+    cachedLineAuth = resolved;
+    setUser(resolved);
     setLoading(false);
   }, []);
 
@@ -249,8 +238,9 @@ export function useLineAuth() {
     const url = new URL(window.location.href);
     url.searchParams.delete('lineId');
     window.history.replaceState({}, '', url.toString());
-    
-    // ゲストユーザーに戻す
+
+    // ゲストユーザーに戻す（モジュールキャッシュも同期）
+    cachedLineAuth = { uid: 'guest', isAnonymous: true };
     setUser({ uid: 'guest', isAnonymous: true });
   };
 
@@ -275,8 +265,9 @@ export function useLineAuth() {
 }
 
 export function useExpenses(userId: string | null, periodDays: number = 50, limitCount: number = 200, customStartDate?: string) {
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [loading, setLoading] = useState(true);
+  const expensesCacheKey = `expenses:${userId}:${periodDays}:${limitCount}:${customStartDate || ''}`;
+  const [expenses, setExpenses] = useState<Expense[]>(() => getCached<Expense[]>(expensesCacheKey) ?? []);
+  const [loading, setLoading] = useState(() => !hasCached(expensesCacheKey));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -284,6 +275,15 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
       setLoading(false);
       setExpenses([]);
       return;
+    }
+
+    // 再訪時はキャッシュを即表示し、裏で再取得（スピナーを出さない）。
+    const cached = getCached<Expense[]>(expensesCacheKey);
+    if (cached) {
+      setExpenses(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
     }
 
     const fetchExpenses = async () => {
@@ -297,9 +297,8 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
       }
 
       try {
-        setLoading(true);
         setError(null);
-        
+
         console.log("データ取得開始 - userId:", userId, "period:", periodDays);
         
         // Firebase接続の再確認
@@ -533,20 +532,24 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
           return bTime - aTime; // desc order
         });
         
+        setCached(expensesCacheKey, sortedExpenses);
         setExpenses(sortedExpenses);
         setError(null);
       } catch (err) {
         const errorMessage = handleFirestoreError(err);
         console.error('Error fetching expenses:', err);
         setError(errorMessage);
-        setExpenses([]);
+        // キャッシュがある場合は消さず、前回値を残す（取得失敗でも空にしない）
+        if (!hasCached(expensesCacheKey)) {
+          setExpenses([]);
+        }
       } finally {
         setLoading(false);
       }
     };
 
     fetchExpenses();
-  }, [userId, periodDays, limitCount, customStartDate]);
+  }, [userId, periodDays, limitCount, customStartDate, expensesCacheKey]);
 
   const updateExpense = async (id: string, updates: Partial<Expense>) => {
     if (!checkFirebaseConnection()) {
@@ -573,12 +576,14 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
         updatedAt: new Date()
       });
       
-      // Update local state
-      setExpenses(prev => 
-        prev.map(expense => 
+      // Update local state（キャッシュも同期して再訪時の巻き戻りを防ぐ）
+      setExpenses(prev => {
+        const next = prev.map(expense =>
           expense.id === id ? { ...expense, ...normalizedUpdates } : expense
-        )
-      );
+        );
+        setCached(expensesCacheKey, next);
+        return next;
+      });
     } catch (err) {
       const errorMessage = handleFirestoreError(err);
       console.error('Error updating expense:', err);
@@ -598,8 +603,12 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
     try {
       await deleteDoc(doc(db, 'expenses', id));
       
-      // Update local state
-      setExpenses(prev => prev.filter(expense => expense.id !== id));
+      // Update local state（キャッシュも同期）
+      setExpenses(prev => {
+        const next = prev.filter(expense => expense.id !== id);
+        setCached(expensesCacheKey, next);
+        return next;
+      });
     } catch (err) {
       const errorMessage = handleFirestoreError(err);
       console.error('Error deleting expense:', err);
@@ -624,14 +633,24 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
 }
 
 export function useMonthlyStats(userId: string | null, year: number, month: number, startDay: number = 1, customStartDate?: string, customEndDate?: string) {
-  const [stats, setStats] = useState<ExpenseStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const statsCacheKey = `stats:${userId}:${customStartDate || ''}:${customEndDate || ''}:${year}:${month}:${startDay}`;
+  const [stats, setStats] = useState<ExpenseStats | null>(() => getCached<ExpenseStats>(statsCacheKey) ?? null);
+  const [loading, setLoading] = useState(() => !hasCached(statsCacheKey));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!userId || userId === 'guest') {
       setLoading(false);
       return;
+    }
+
+    // 再訪時はキャッシュを即表示し、スピナーを出さずに裏で再取得する。
+    const cached = getCached<ExpenseStats>(statsCacheKey);
+    if (cached) {
+      setStats(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
     }
 
     const fetchStats = async () => {
@@ -644,9 +663,8 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
         return;
       }
       try {
-        setLoading(true);
         setError(null);
-        
+
         if (!db) {
           throw new Error('Firestoreデータベースが利用できません');
         }
@@ -757,12 +775,14 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
           return acc;
         }, {} as Record<string, number>);
         
-        setStats({
+        const nextStats: ExpenseStats = {
           totalAmount,
           expenseCount: includedExpenses.length,
           categoryTotals,
           dailyTotals
-        });
+        };
+        setCached(statsCacheKey, nextStats);
+        setStats(nextStats);
         setError(null);
       } catch (err) {
         const errorMessage = handleFirestoreError(err);
@@ -774,7 +794,7 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
     };
 
     fetchStats();
-  }, [userId, year, month, startDay, customStartDate, customEndDate]);
+  }, [userId, year, month, startDay, customStartDate, customEndDate, statsCacheKey]);
 
   return { stats, loading, error };
 }
@@ -1207,8 +1227,9 @@ const defaultBudgetConfig: BudgetConfig = {
 
 // Firestoreから予算設定を取得するフック
 export function useBudgetConfig(userId: string | null) {
-  const [config, setConfig] = useState<BudgetConfig | null>(null);
-  const [loading, setLoading] = useState(true);
+  const budgetCacheKey = `budget:${userId}`;
+  const [config, setConfig] = useState<BudgetConfig | null>(() => getCached<BudgetConfig>(budgetCacheKey) ?? null);
+  const [loading, setLoading] = useState(() => !hasCached(budgetCacheKey));
   const [error, setError] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
@@ -1217,6 +1238,15 @@ export function useBudgetConfig(userId: string | null) {
       setConfig(defaultBudgetConfig);
       setLoading(false);
       return;
+    }
+
+    // 再訪時はキャッシュを即表示し、裏で再取得する。
+    const cached = getCached<BudgetConfig>(budgetCacheKey);
+    if (cached) {
+      setConfig(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
     }
 
     const fetchBudgetConfig = async () => {
@@ -1229,7 +1259,6 @@ export function useBudgetConfig(userId: string | null) {
       }
 
       try {
-        setLoading(true);
         setError(null);
 
         if (!db) {
@@ -1239,35 +1268,37 @@ export function useBudgetConfig(userId: string | null) {
         const docRef = doc(db, 'budgetSettings', userId);
         const docSnap = await getDoc(docRef);
 
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setConfig({
-            monthlyBudget: typeof data.monthlyBudget === 'number' && data.monthlyBudget > 0
-              ? data.monthlyBudget
-              : defaultBudgetConfig.monthlyBudget,
-            categoryBudgets: data.categoryBudgets && typeof data.categoryBudgets === 'object'
-              ? data.categoryBudgets
-              : {},
-            alertThreshold: typeof data.alertThreshold === 'number'
-              ? data.alertThreshold
-              : defaultBudgetConfig.alertThreshold,
-          });
-        } else {
-          setConfig(defaultBudgetConfig);
-        }
+        const nextConfig: BudgetConfig = docSnap.exists()
+          ? {
+              monthlyBudget: typeof docSnap.data().monthlyBudget === 'number' && docSnap.data().monthlyBudget > 0
+                ? docSnap.data().monthlyBudget
+                : defaultBudgetConfig.monthlyBudget,
+              categoryBudgets: docSnap.data().categoryBudgets && typeof docSnap.data().categoryBudgets === 'object'
+                ? docSnap.data().categoryBudgets
+                : {},
+              alertThreshold: typeof docSnap.data().alertThreshold === 'number'
+                ? docSnap.data().alertThreshold
+                : defaultBudgetConfig.alertThreshold,
+            }
+          : defaultBudgetConfig;
+
+        setCached(budgetCacheKey, nextConfig);
+        setConfig(nextConfig);
         setError(null);
       } catch (err) {
         const errorMessage = handleFirestoreError(err);
         console.error('Error fetching budget config:', err);
         setError(errorMessage);
-        setConfig(defaultBudgetConfig);
+        if (!hasCached(budgetCacheKey)) {
+          setConfig(defaultBudgetConfig);
+        }
       } finally {
         setLoading(false);
       }
     };
 
     fetchBudgetConfig();
-  }, [userId, refreshTrigger]);
+  }, [userId, refreshTrigger, budgetCacheKey]);
 
   // 手動で再取得するための関数
   const refetch = () => {
