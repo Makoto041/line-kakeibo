@@ -109,8 +109,14 @@ const initializeFirebase = () => {
     // 自動でロングポーリングへフォールバックさせて接続性を確保する。
     try {
       db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
-    } catch {
-      // 既に初期化済み（HMR等での二重初期化）の場合は既存インスタンスを再利用
+    } catch (error) {
+      // 通常ここに来るのは「Firestoreが既に初期化済み」(HMR等の二重初期化)のみで、
+      // その場合 getFirestore(app) は long-polling 付きで生成済みの既存インスタンスを返す。
+      // 観測性のため、フォールバックが発生した事実とエラー内容を必ずログに残す。
+      console.warn(
+        'initializeFirestore failed; falling back to getFirestore (long-polling preserved if already initialized):',
+        error
+      );
       db = getFirestore(app);
     }
     
