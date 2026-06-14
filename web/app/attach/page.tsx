@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { Paperclip, Check, RefreshCw, Camera, Upload } from "lucide-react";
+import { Paperclip, Check, RefreshCw, Camera, Upload, Image as ImageIcon } from "lucide-react";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
@@ -55,6 +55,7 @@ function AttachPageContent() {
   const [uploadDone, setUploadDone] = useState(false);
   const [replacing, setReplacing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   // 支出データの取得
   useEffect(() => {
@@ -255,8 +256,17 @@ function AttachPageContent() {
                   {hasReceipt ? "新しいレシートを選択" : "レシート画像を選択"}
                 </h2>
 
+                {/* アルバム選択用（capture なし → 写真ライブラリ/ファイルから選べる） */}
                 <input
                   ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                {/* 撮影用（capture あり → カメラ起動） */}
+                <input
+                  ref={cameraInputRef}
                   type="file"
                   accept="image/*"
                   capture="environment"
@@ -264,18 +274,28 @@ function AttachPageContent() {
                   className="hidden"
                 />
 
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line p-6 text-center transition-colors hover:border-accent hover:bg-accent/[0.04]"
-                >
-                  <span className="grid h-12 w-12 place-items-center rounded-2xl bg-accent/12 text-accent">
-                    <Camera className="h-6 w-6" strokeWidth={1.9} />
-                  </span>
-                  <span className="text-sm text-muted">
-                    タップして撮影 / 画像を選択
-                  </span>
-                </button>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line p-5 text-center transition-colors hover:border-accent hover:bg-accent/[0.04]"
+                  >
+                    <span className="grid h-11 w-11 place-items-center rounded-2xl bg-accent/12 text-accent">
+                      <ImageIcon className="h-5 w-5" strokeWidth={1.9} />
+                    </span>
+                    <span className="text-sm font-medium text-fg">アルバムから選択</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line p-5 text-center transition-colors hover:border-accent hover:bg-accent/[0.04]"
+                  >
+                    <span className="grid h-11 w-11 place-items-center rounded-2xl bg-accent/12 text-accent">
+                      <Camera className="h-5 w-5" strokeWidth={1.9} />
+                    </span>
+                    <span className="text-sm font-medium text-fg">写真を撮る</span>
+                  </button>
+                </div>
 
                 {previewDataUrl && (
                   <div>
