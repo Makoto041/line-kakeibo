@@ -1286,7 +1286,10 @@ export const webhook = onRequest(
     memory: "512MiB", // Increased from 256MiB to handle image processing
     timeoutSeconds: 540, // Increased from 300s to 540s (9 minutes max)
     invoker: "public",
-    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "GITHUB_TOKEN"],
+    // GITHUB_TOKEN は未登録のためデプロイがブロックされていた。GitHub Issue自動作成は
+    // 未設定でも安全に「未設定」メッセージを返す実装のため、ここでは宣言しない。
+    // （Issue連携を使う場合は GITHUB_TOKEN シークレットを登録のうえ再追加する）
+    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY"],
   },
   app
 );
