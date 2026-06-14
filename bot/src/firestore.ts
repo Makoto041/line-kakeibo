@@ -424,7 +424,8 @@ export async function getMonthlyBudget(
         }
       }
     } catch (error) {
-      console.warn(`Failed to read budgetSettings/${id}:`, error);
+      // 注: ユーザー由来の id はフォーマット文字列に含めず引数で渡す（format string injection回避）
+      console.warn('Failed to read budgetSettings for id:', id, error);
     }
   }
   return undefined;
