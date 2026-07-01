@@ -52,10 +52,12 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | 金額 | `^\d+円?$`（カンマ許容） | ✅ | `500` `1,200円` |
 | 日付 | `YYYY-MM-DD` / `M/D` / `MM/DD` / `M月D日` | −（省略時は当日） | `6/29` `6月29日` |
 | 支払方法 | 現金/げんきん/キャッシュ→`cash`、paypay/ペイペイ→`paypay`、カード/クレカ/クレジット→`card` | −（省略時 `unknown`） | `現金` |
-| カテゴリ | 正準19カテゴリ名と完全一致 | − | `食費` |
+| カテゴリ | 正準19カテゴリ名と完全一致（※パーサは抽出するが**現行の登録処理では未使用** — §2.3参照） | − | `食費` |
 | 摘要 | 残りトークンを結合 | −（省略時 `支出`） | `ランチ` |
 
-入力例: `500 ランチ` / `6/29 4800 家賃` / `1500 現金 ドラッグストア` / `3000 スーパー 食費`
+入力例: `500 ランチ` / `6/29 4800 家賃` / `1500 現金 ドラッグストア`
+
+> ⚠️ **カテゴリトークンは現状指定しても反映されない**: `parseTextExpense()` はカテゴリを抽出するものの、登録処理（`processExpenseInBackground`）は `parsed.category` を参照せず、常に Gemini 分類／ユーザーデフォルトからカテゴリを決定します（`bot/src/index.ts:1025` 付近）。カテゴリの変更は登録後の「カテゴリ変更」ボタンで行います。
 
 ### 2.3 支出登録フロー（`processExpenseInBackground`, `bot/src/index.ts`)
 
@@ -78,7 +80,15 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 ### 2.5 メッセージ送信ポリシー
 
-LINE 無料枠（push 200通/月）節約のため、**replyMessage 優先・pushMessage フォールバック**を全経路で徹底（`index.ts:118`、`flexMessage.ts:627`）。Flex メッセージのアイコンは `line-kakeibo.vercel.app/icons` から PNG 配信（lucide 風）。
+LINE 無料枠（push 200通/月）節約のため、**テキスト支出の登録通知**は replyMessage 優先・pushMessage フォールバックで送信（`sendTextExpenseNotification`, `flexMessage.ts:627`。reply トークン失効時のみ push）。
+
+ただし **push 専用の経路も残っている**点に注意:
+
+- Gmail カード利用通知（`sendCardUsageNotification`, `flexMessage.ts:363`）
+- Postback 応答のテキスト送信（`sendTextMessage`, `flexMessage.ts:376`）
+- カテゴリ選択カルーセル（`postback.ts:347`）
+
+これらは push 枠を消費する。Flex メッセージのアイコンは `line-kakeibo.vercel.app/icons` から PNG 配信（lucide 風）。
 
 ---
 
@@ -90,12 +100,13 @@ LINE 無料枠（push 200通/月）節約のため、**replyMessage 優先・pus
 - フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → Gemini でカテゴリ分類 → **アトミック保存**（`gmailMessageId` および `date+amount+usedAt(±1分)` で重複排除、`firestore.ts:137`）→ LINE グループへ Flex 通知（shared/personal/立替ボタン付き）
 - 保存フィールド: `inputSource: 'gmail_auto'`, `usedAt`（カード利用日時）
 - watch は7日で失効するため、**6日ごとの cron**（`renewGmailWatch`）で更新
-- 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。`ADMIN_SECRET` Bearer 認証＋レートリミット（OAuth callback のみ CSRF state 検証）
+- 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。認証は `ADMIN_SECRET` を **`X-Admin-Secret` / `Authorization: Bearer` ヘッダーまたは `?adminSecret=` クエリパラメータ**で受け付け（`index.ts:1396` `requireAdminAuth`）＋レートリミット（OAuth callback のみ CSRF state 検証）。⚠️ クエリ渡しはアクセスログ等にシークレットが残るリスクあり
 
 ### 3.2 MoneyForward CSV インポート
 
 - `importMoneyForward`（cron: 毎日 5:00 JST）
-- Google Drive（ADC, `drive.readonly`）から最新の `MoneyForward*.csv` を取得 → 正規化 → Web API `${API_BASE_URL}/api/mf/import` へ POST（`MFKAKEIBO_TOKEN` 認証）
+- Google Drive（ADC, `drive.readonly`）から最新の `MoneyForward*.csv` を取得 → 正規化 → `${API_BASE_URL}/api/mf/import` へ POST（`MFKAKEIBO_TOKEN` 認証）
+- ⚠️ **送信先エンドポイントは本リポジトリの web に存在しない**: `web/app/api/` の Route は無効化済みで `/api/mf/import` の実装は見当たらない（§8 参照）。`API_BASE_URL` が別サービスを指していない限り、このバッチは現状機能しない可能性が高い
 
 ---
 
@@ -148,7 +159,7 @@ LINE 無料枠（push 200通/月）節約のため、**replyMessage 優先・pus
 
 | コレクション | 主なフィールド | 備考 |
 |---|---|---|
-| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`), `inputSource`(`line_text\|line_ocr\|gmail_auto`), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `receiptUrl?`, `needsEdit?`, `items?[]`, `ocrText?`, `createdAt`, `updatedAt` | 中核コレクション |
+| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`), `inputSource`(`line_text\|gmail_auto`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `receiptUrl?`, `needsEdit?`, `items?[]`, `ocrText?`, `createdAt`, `updatedAt` | 中核コレクション |
 | `groups` | `name`, `inviteCode`(6桁), `createdBy`, `lineGroupId?` | 汎用グループ機能はコード上「非推奨」— 実運用は LINE グループ共有 |
 | `groupMembers` | `groupId`, `lineId`, `displayName`, `isActive`, `joinedAt` | |
 | `userSettings/{lineId}` | `defaultCategory?`, `dateSettings` | 集計期間設定も格納 |

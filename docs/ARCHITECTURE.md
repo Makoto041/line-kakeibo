@@ -93,7 +93,7 @@ flowchart LR
 
 ### 4.1 テキスト支出登録
 
-```
+```text
 LINEテキスト → webhook(署名検証)
   → parseTextExpense()（金額必須・日付/支払方法/カテゴリ/摘要を抽出）
   → 並列: プロフィール取得(15分cache) / appUid解決(匿名Auth) / カテゴリ分類
@@ -105,7 +105,7 @@ LINEテキスト → webhook(署名検証)
 
 ### 4.2 Gmail カード利用自動取込
 
-```
+```text
 SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
   → history API差分取得 → SMBCフィルタ → 利用先/金額/利用日時パース
   → Gemini分類 → Firestoreトランザクションでアトミック保存
@@ -115,7 +115,7 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
 
 ### 4.3 Web 閲覧・編集
 
-```
+```text
 LINEのリンク(?lineId=xxx) → Next.js（クライアント）
   → useLineAuth: URLパラメータで識別（ログインなし）
   → useExpenses: 個人分(where lineId==) ＋ 関与した全lineGroupIdのグループ分をマージ
@@ -131,7 +131,7 @@ LINEのリンク(?lineId=xxx) → Next.js（クライアント）
 
 ## 5. カテゴリ分類パイプライン（コスト最適化）
 
-```
+```text
 入力テキスト
   ├─ 1. FAST_KEYWORD_MAP（メモリ内・即時・conf 0.8）── ヒット→終了
   ├─ 2. 結果キャッシュ（15分TTL）／ユーザー別キャッシュ（30分TTL）── ヒット→終了
@@ -141,7 +141,7 @@ LINEのリンク(?lineId=xxx) → Next.js（クライアント）
 
 その他のコスト施策:
 
-- **replyMessage 優先・push フォールバック**（LINE 無料枠 200 push/月の節約）
+- **replyMessage 優先・push フォールバック**（LINE 無料枠 200 push/月の節約。※対象はテキスト支出の登録通知経路。Gmail カード通知・postback 応答・カテゴリカルーセルは push 専用）
 - LINE プロフィール 15 分メモリキャッシュ、`Promise.allSettled` による並列化
 - レシート画像はアップロード前にクライアントで圧縮（Vision API 依存は撤廃済み＝OCR 廃止）
 - Function ごとのメモリチューニング（webhook 512MiB / Gmail 系 256MiB）
@@ -156,7 +156,7 @@ LINEのリンク(?lineId=xxx) → Next.js（クライアント）
 | Web ユーザー識別 | `?lineId=` クエリのみ。LIFF / Firebase Auth ログイン未使用 ⚠️ |
 | Firestore ルール | `userLinks` のみ `request.auth.uid == uid`。**他コレクションは `if true`** ⚠️ |
 | Storage ルール | 読取は公開、書込は `image/*` かつ 10MB 未満 ⚠️ |
-| Gmail 管理 API | `ADMIN_SECRET` Bearer ＋ レートリミット、OAuth callback は CSRF state ✅ |
+| Gmail 管理 API | `ADMIN_SECRET`（`X-Admin-Secret` / `Authorization: Bearer` ヘッダーに加え **`?adminSecret=` クエリでも受理** — ログ等への露出リスクあり）＋ レートリミット、OAuth callback は CSRF state ⚠️ |
 | Gmail スコープ | `gmail.readonly` に最小化 ✅ |
 
 ### 改善ロードマップ（推奨）
@@ -175,7 +175,7 @@ LINEのリンク(?lineId=xxx) → Next.js（クライアント）
 
 ## 8. ディレクトリ構成（現行）
 
-```
+```text
 line-kakeibo/
 ├─ bot/                      # Firebase Functions v2 (Node 20)
 │  └─ src/
