@@ -1,225 +1,159 @@
-# 📱 LINE家計簿 - レシート自動読み取りアプリ
+# 📱 LINE家計簿（ぶちこむ家計簿）
 
-LINEでレシート画像を送信するだけで自動的にOCR処理・家計簿管理できるWebアプリケーションです。
+[![CI/CD](https://github.com/Makoto041/line-kakeibo/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Makoto041/line-kakeibo/actions/workflows/ci-cd.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[![CI/CD](https://github.com/makoto041s/line-kakeibo/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/makoto041s/line-kakeibo/actions)
+LINE にメッセージを送るだけで支出を記録できる家計簿アプリケーションです。
+`500 ランチ` のようなテキストを送信すると、Gemini AI がカテゴリを自動分類して登録。クレジットカードの利用通知メールや MoneyForward の CSV も自動で取り込み、Web ダッシュボードで予算管理・分析ができます。
 
-## ✨ 特徴
+> 📖 詳細な機能仕様は [docs/SPECIFICATION.md](docs/SPECIFICATION.md)、システム構成は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照してください（いずれも現行実装準拠）。
 
-- 📸 **レシート画像自動読み取り**: Google Cloud Vision APIでOCR処理
-- 💬 **LINE Bot統合**: 日常のLINE使用で自然に家計簿記録
-- 📊 **リアルタイム分析**: 月次統計・カテゴリ別グラフ・日別推移
-- 🔐 **セキュア**: Firebase認証・Firestoreルールで個人データ保護
-- 📱 **レスポンシブ**: モバイルファーストなUI/UX
-- ⚡ **高速**: Next.js 15 + App Router でサーバーサイドレンダリング
+## ✨ 主な機能
 
-## 🏗️ 技術スタック（理想設計準拠）
+### 支出の入力チャネル
 
-### アーキテクチャ
+| チャネル | 内容 |
+|---|---|
+| 💬 **LINE テキスト入力** | `500 ランチ` のように送るだけで登録。確認用 Flex メッセージから OK / 修正 / 立替 / カテゴリ変更が可能 |
+| 📧 **Gmail 自動取込** | クレジットカード利用通知メール（三井住友カード）を Gmail API + Pub/Sub でリアルタイム取込 |
+| 📊 **MoneyForward CSV** | Google Drive 上の CSV を日次バッチでインポート |
+| ✏️ **Web アプリ** | 支出の手動編集・レシート画像の添付 |
+
+### その他の機能
+
+- 🤖 **AI カテゴリ自動分類**: キーワードマップ → キャッシュ → Gemini 2.5 Flash の3段パイプラインでコストを抑えつつ 19 カテゴリに自動分類
+- 👨‍👩‍👧 **グループ共有**: LINE グループ単位での支出共有・立替（advance）管理・精算
+- 📈 **Web ダッシュボード**: 月次統計・予算プログレス・カテゴリ別円グラフ・日別推移・前月比インサイト（ライト/ダークモード対応）
+- 🧾 **レシート画像添付**: 登録済み支出に Web からレシート画像を添付（クライアント側圧縮 + Firebase Storage）
+- 🛠️ **フィードバック自動起票**: LINE で「要望 / 不具合 〜」と送ると Gemini が内容を解析して GitHub Issue を自動作成
+
+> ⚠️ レシート画像の OCR 読み取り機能は**廃止済み**です。画像を送るとテキスト入力を案内します。
+
+## 💬 LINE Bot の使い方
+
+### 支出の登録
+
+空白区切りで金額（必須）・日付・支払方法・摘要を順不同に送信します。
+
 ```
-┌───────────────┐   HTTPS/WebSocket   ┌───────────────┐
-│ Next.js Web   │  ── Firestore SDK ─▶│   Firestore   │
-│ (Vercel)      │ ◀─ Cloud Functions ──│   (GCP)       │
-└───────────────┘                     └───────────────┘
-        ▲│                                       ▲
-        ││ REST API                   Pub/Sub    │
-        │▼                                       │
-┌───────────────┐  webhook  ┌───────────────┐    │
-│  LINE Bot     │──────────▶│ Cloud Func.   │────┘
-│ (Functions)   │           └───────────────┘
-└───────────────┘
-```
-
-### Tech Stack
-- **Frontend**: Next.js 15 + React 19 + TypeScript + Tailwind CSS
-- **Backend**: Node.js 20 + Express + Firebase Functions 2nd Gen
-- **Database**: Firestore (NoSQL) + セキュリティルール
-- **Authentication**: Firebase Auth (匿名 → Google連携)
-- **OCR**: Google Cloud Vision API
-- **Hosting**: Vercel (Web) + Firebase Functions (API)
-- **CI/CD**: GitHub Actions
-
-### データモデル（1:1マッピング設計）
-```typescript
-// 理想設計: シンプルな2コレクション構成
-interface Expense {
-  appUid: string;      // Firebase Auth UID (主キー)
-  lineId: string;      // LINE User ID  
-  amount: number;
-  category: string;
-  date: string;        // YYYY-MM-DD
-  // ...
-}
-
-interface UserLink {
-  lineId: string;      // 1:1マッピング
-}
+500 ランチ
+6/29 4800 家賃
+1500 現金 ドラッグストア
 ```
 
-## 🚀 クイックスタート
+### コマンド一覧
 
-### 1. リポジトリクローン
-```bash
-git clone https://github.com/makoto041s/line-kakeibo.git
-cd line-kakeibo
+| 入力 | 動作 |
+|---|---|
+| `家計簿` | 当月サマリーの Flex メッセージ（予算・カテゴリ別・直近支出） |
+| `カテゴリー` / `カテゴリー <名前>` | カテゴリ一覧の表示 / デフォルトカテゴリの設定 |
+| `グループ作成 <名前>` / `参加 <コード> <表示名>` / `グループ一覧` | グループ共有の管理 |
+| `立替一覧` / `精算` | （グループ）未精算の立替の確認・精算 |
+| `要望 <本文>` `不具合 <本文>` など | GitHub Issue を自動起票 |
+
+## 🏗️ アーキテクチャ
+
+```mermaid
+flowchart LR
+    LINE["LINE アプリ"] -->|webhook| Bot["Firebase Functions v2<br/>(bot/ Node.js 20 + Express)"]
+    Gmail["Gmail API"] -->|Pub/Sub push| Bot
+    Drive["Google Drive<br/>(MoneyForward CSV)"] -->|日次 cron| Bot
+    Bot --> Gemini["Gemini 2.5 Flash<br/>(カテゴリ分類)"]
+    Bot --> FS[("Firestore")]
+    Browser["ブラウザ /<br/>LINE内WebView"] --> Web["Next.js 15 Web<br/>(Vercel)"]
+    Web -->|クライアントSDK直| FS
+    Web -->|画像アップロード| ST[("Cloud Storage")]
 ```
 
-### 2. 依存関係インストール
-```bash
-# Bot
-cd bot && npm install
+- **Bot（`bot/`）**: LINE webhook・Gmail 取込・cron バッチを Firebase Functions v2（asia-northeast1）でホスト
+- **Web（`web/`）**: Vercel でホスト。サーバー API はほぼ持たず、クライアントから Firestore/Storage に直接アクセス
+- デプロイ単位が **Vercel（Web）と Firebase（Bot・ルール）に分かれている**点に注意
 
-# Web  
-cd ../web && npm install
-```
+## 🧰 技術スタック
 
-### 3. 環境設定
-```bash
-# Firebase プロジェクト作成
-firebase login
-firebase init
+| レイヤー | 技術 |
+|---|---|
+| Frontend | Next.js 15（App Router）+ React 19 + TypeScript + Tailwind CSS + Recharts + framer-motion |
+| Backend | Node.js 20 + TypeScript + Express 5 + `@line/bot-sdk` v10（Firebase Functions v2） |
+| Database / Storage | Firestore + Cloud Storage |
+| AI | Gemini 2.5 Flash（カテゴリ分類・フィードバック解析） |
+| 外部連携 | LINE Messaging API / Gmail API + Pub/Sub / Google Drive API / GitHub API |
+| Hosting / CI | Vercel（Web）+ Firebase（Bot）/ GitHub Actions |
 
-# 環境変数設定（重要）
-cp web/.env.example web/.env.local
-# .env.local を編集して Firebase の認証情報を設定
+## 📁 プロジェクト構成
 
-# Vercel デプロイ時は以下の環境変数を設定:
-# - NEXT_PUBLIC_FIREBASE_API_KEY
-# - NEXT_PUBLIC_FIREBASE_APP_ID
-# その他の値は .env.example を参照
-```
-
-### 4. ローカル開発
-```bash
-# Web (http://localhost:3000)
-cd web && npm run dev
-
-# Bot (http://localhost:8080) 
-cd bot && npm run dev
-```
-
-### 5. デプロイ
-```bash
-# ワンコマンドデプロイ
-cd web && npm run deploy:all
-
-# 個別デプロイ
-npm run deploy        # Web only
-npm run deploy:bot    # Bot only
-```
-
-## 📱 使用方法
-
-### LINE Bot
-1. QRコードでBotを友達追加
-2. 📸 レシート画像送信 → 自動OCR・登録
-3. 💬 「家計簿」送信 → 最近の支出表示
-4. 💬 「500 ランチ」→ テキスト直接登録
-
-### Web アプリ
-- 📊 **ダッシュボード**: 月次統計・グラフ表示
-- 📋 **支出一覧**: フィルタ・ソート・編集
-- ✏️ **編集機能**: 金額・カテゴリ・日付修正
-- 🔗 **アカウント連携**: Google認証でデータ同期
-
-## 🔧 開発ガイド
-
-### プロジェクト構成（理想設計）
 ```
 line-kakeibo/
-├─ bot/              # Cloud Functions (Node 20)
-│  ├─ src/
-│  │  ├─ index.ts    # LINE webhook
-│  │  ├─ parser.ts   # Vision OCR
-│  │  └─ firestore.ts # DB操作
-│  └─ package.json
-├─ web/              # Next.js (App Router)
-│  ├─ app/
-│  │  ├─ page.tsx    # Dashboard  
-│  │  ├─ expenses/   # 支出管理
-│  │  └─ api/        # API Routes
-│  ├─ lib/
-│  │  ├─ firebase.ts # Client SDK
-│  │  └─ hooks.ts    # React Hooks
-│  └─ package.json
-├─ types/            # 共通型定義
-├─ firestore.rules   # セキュリティルール
-└─ .github/workflows/ # CI/CD
+├─ bot/                  # Firebase Functions (LINE webhook / Gmail 取込 / cron)
+│  └─ src/
+│     ├─ index.ts        # webhook 本体・支出登録フロー
+│     ├─ textParser.ts   # 支出テキストのパース
+│     ├─ geminiCategoryClassifier.ts  # AI カテゴリ分類
+│     ├─ line/           # Flex メッセージ・postback 処理
+│     └─ gmail/          # Gmail 連携（認証・パース・watch 更新）
+├─ web/                  # Next.js アプリ (Vercel)
+│  ├─ app/               # ダッシュボード / expenses / settings / attach など
+│  └─ lib/               # Firebase クライアント・hooks
+├─ types/                # 共通型定義
+├─ docs/                 # ARCHITECTURE.md / SPECIFICATION.md（実装準拠ドキュメント）
+├─ firestore.rules       # Firestore セキュリティルール
+├─ firestore.indexes.json
+├─ storage.rules
+└─ .github/workflows/    # CI/CD
 ```
 
-### データフロー
-1. **LINE → OCR**: レシート画像 → Vision API
-2. **Parser**: OCR結果 → 構造化データ
-3. **Firestore**: appUid で 1:1 保存
-4. **Web**: リアルタイム表示・編集
+## 🚀 セットアップ
 
-### セキュリティ（appUidベース）
-```javascript
-// firestore.rules
-match /expenses/{id} {
-  allow read, write: if request.auth.uid == resource.data.appUid;
-}
-```
+詳細な手順は [SETUP.md](SETUP.md) を参照してください。関連ドキュメント: [GEMINI_SETUP.md](GEMINI_SETUP.md) / [DEPLOYMENT_SETUP.md](DEPLOYMENT_SETUP.md) / [VERCEL_SETUP.md](VERCEL_SETUP.md)
 
-## 📊 運用・監視
+### 前提条件
 
-### ログ確認
+- Node.js 20+ / Firebase CLI
+- Firebase プロジェクト（Firestore / Authentication / Functions）
+- LINE Developers チャネル（Messaging API）
+- Gemini API キー（[Google AI Studio](https://aistudio.google.com/app/apikey)）
+
+### インストールと起動
+
 ```bash
-# Cloud Functions
-firebase functions:log
+git clone https://github.com/Makoto041/line-kakeibo.git
+cd line-kakeibo
 
-# Vercel
-vercel logs
+# 依存関係のインストール（npm workspaces）
+npm install
+
+# 環境変数の設定
+cp web/.env.example web/.env.local
+# .env.local に Firebase の認証情報を設定
+# bot 側は LINE_CHANNEL_SECRET / LINE_CHANNEL_ACCESS_TOKEN / GEMINI_API_KEY などを設定
+
+# ローカル開発
+cd web && npm run dev    # Web: http://localhost:3000
+cd bot && npm run dev    # Bot webhook
 ```
 
-### パフォーマンス
-- 📈 **Vercel Analytics**: Web パフォーマンス
-- 📊 **Firebase Console**: Firestore使用量
-- 🔍 **Cloud Logging**: エラー監視
+### デプロイ
 
-### スケーリング
-- ⚡ **Functions**: 自動スケール（256MB〜）
-- 🌐 **Vercel**: Edge Network + CDN
-- 💾 **Firestore**: 読み取り最適化済み
+```bash
+cd web
+npm run deploy        # Web のみ (Vercel)
+npm run deploy:bot    # Bot のみ (Firebase Functions)
+npm run deploy:all    # 両方
+```
 
-## 🎯 ロードマップ
+## ⚠️ 既知の課題
 
-### v1.0 (完了)
-- ✅ LINE Bot基本機能
-- ✅ OCR処理・データ抽出  
-- ✅ Web ダッシュボード
-- ✅ 理想設計準拠アーキテクチャ
-
-### v1.1 (開発中)
-- [ ] PWA対応
-- [ ] ダークモード
-- [ ] 通知機能
-
-### v2.0 (計画中)  
-- [ ] 多通貨対応
-- [ ] AI カテゴリ自動分類
-- [ ] 家族共有機能
+現状の認証・認可モデルには制約があります（Web は `?lineId=` クエリによる識別で、Firestore ルールによる DB 層のアクセス制御は未実装）。既知の不整合・技術的負債の一覧は [docs/SPECIFICATION.md §8](docs/SPECIFICATION.md) を参照してください。
 
 ## 🤝 コントリビュート
 
-1. Fork this repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
+1. このリポジトリを Fork
+2. Feature ブランチを作成（`git checkout -b feature/amazing-feature`）
+3. 変更をコミット（`git commit -m 'Add amazing feature'`）
+4. Push して Pull Request を作成
+
+バグ報告・要望は [Issues](https://github.com/Makoto041/line-kakeibo/issues) へ。LINE Bot から「要望 〜」「不具合 〜」と送信して起票することもできます。
 
 ## 📄 ライセンス
 
-MIT License - 詳細は [LICENSE](LICENSE) ファイルを参照
-
-## 🙏 謝辞
-
-- [Firebase](https://firebase.google.com/) - バックエンドインフラ
-- [Google Cloud Vision](https://cloud.google.com/vision/) - OCR API
-- [LINE Messaging API](https://developers.line.biz/) - Bot プラットフォーム
-- [Next.js](https://nextjs.org/) - Webフレームワーク
-- [Vercel](https://vercel.com/) - ホスティング
-
----
-
-⭐ **気に入ったらStarをお願いします！** ⭐
+MIT License — 詳細は [LICENSE](LICENSE) を参照
