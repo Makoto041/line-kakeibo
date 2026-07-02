@@ -1,14 +1,15 @@
 // web/lib/firebaseAdmin.ts
-import * as admin from 'firebase-admin';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 
-if (!admin.apps.length) {
+if (!getApps().length) {
   const json = Buffer
     .from(process.env.FIREBASE_SA_BASE64!, 'base64')
     .toString('utf8');
 
-  admin.initializeApp({
-    credential: admin.credential.cert(JSON.parse(json)),
+  initializeApp({
+    credential: cert(JSON.parse(json)),
   });
 }
 
-export { admin };
+export const db = getFirestore();

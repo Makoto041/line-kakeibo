@@ -8,7 +8,7 @@ on:
   workflow_dispatch: # 手動実行を可能に
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '22'
 
 # 同時実行の制御
 concurrency:

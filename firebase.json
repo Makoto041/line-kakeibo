@@ -3,7 +3,7 @@
     {
       "source": "bot",
       "codebase": "default",
-      "runtime": "nodejs20",
+      "runtime": "nodejs22",
       "region": "asia-northeast1",
       "ignore": [
         "node_modules",
