@@ -28,6 +28,10 @@ module.exports = {
         '3xl': '1.5rem',
       },
       boxShadow: {
+        // v4 renamed the default scale (v3 `shadow-sm` -> v4 `shadow-xs`), which would
+        // silently enlarge every existing `shadow-sm`. Pin it to the v3 value so the
+        // rendered result stays identical.
+        sm: '0 1px 2px 0 rgb(0 0 0 / 0.05)',
         glass: '0 1px 1px rgb(0 0 0 / 0.04), 0 8px 24px -12px rgb(15 23 42 / 0.18)',
         'glass-lg': '0 1px 1px rgb(0 0 0 / 0.05), 0 18px 48px -20px rgb(15 23 42 / 0.30)',
       },

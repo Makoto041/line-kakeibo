@@ -676,7 +676,7 @@ function ExpensesPageContent() {
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                   aria-label="フィルター"
-                  className="rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="all">すべて</option>
                   <option value="included">合計に含む</option>
@@ -689,7 +689,7 @@ function ExpensesPageContent() {
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as "date" | "amount")}
                   aria-label="並び順"
-                  className="rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="date">日付順</option>
                   <option value="amount">金額順</option>
@@ -1042,7 +1042,7 @@ function ExpensesPageContent() {
             <div
               ref={drawerRef}
               tabIndex={-1}
-              className="glass-strong relative z-10 ml-auto flex w-full animate-fade-up flex-col overflow-y-auto p-5 shadow-glass-lg outline-none max-sm:mt-auto max-sm:max-h-[88vh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl"
+              className="glass-strong relative z-10 ml-auto flex w-full animate-fade-up flex-col overflow-y-auto p-5 shadow-glass-lg outline-hidden max-sm:mt-auto max-sm:max-h-[88vh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl"
             >
               <div className="space-y-5">
                 <div className="flex items-center justify-between border-b border-line pb-3">
@@ -1065,7 +1065,7 @@ function ExpensesPageContent() {
                       name="description"
                       value={editForm.description}
                       onChange={handleEditInputChange}
-                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                       placeholder="例: ランチ代"
                     />
                   </div>
@@ -1077,7 +1077,7 @@ function ExpensesPageContent() {
                       name="amount"
                       value={editForm.amount}
                       onChange={handleEditInputChange}
-                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                       placeholder="1000"
                     />
                   </div>
@@ -1089,7 +1089,7 @@ function ExpensesPageContent() {
                       name="date"
                       value={editForm.date}
                       onChange={handleEditInputChange}
-                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </div>
 
@@ -1099,7 +1099,7 @@ function ExpensesPageContent() {
                       name="category"
                       value={editForm.category}
                       onChange={handleEditInputChange}
-                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       {allCategories.map((category) => (
                         <option key={category} value={category}>{category}</option>
@@ -1116,7 +1116,7 @@ function ExpensesPageContent() {
                       name="payerId"
                       value={editForm.payerId}
                       onChange={handleEditInputChange}
-                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       {(() => {
                         // 候補を重複排除で構築し、現在の支払い者と入力者を必ず含める

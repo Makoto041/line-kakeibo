@@ -288,7 +288,7 @@ export default function Settings() {
                     const value = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
                     setBudgetConfig(prev => ({ ...prev, monthlyBudget: value }));
                   }}
-                  className="w-full rounded-xl border border-line bg-card py-3 pl-8 pr-4 text-lg font-bold text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="w-full rounded-xl border border-line bg-card py-3 pl-8 pr-4 text-lg font-bold text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
             </div>
@@ -350,7 +350,7 @@ export default function Settings() {
                             },
                           }));
                         }}
-                        className="w-full rounded-lg border border-line bg-card py-2 pl-7 pr-3 text-sm text-fg focus:border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="w-full rounded-lg border border-line bg-card py-2 pl-7 pr-3 text-sm text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                       />
                     </div>
                   </div>
@@ -416,7 +416,7 @@ export default function Settings() {
                 <select
                   value={tempStartDay}
                   onChange={(e) => setTempStartDay(parseInt(e.target.value))}
-                  className="w-full rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="w-full rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {Array.from({ length: 28 }, (_, i) => i + 1).map(day => (
                     <option key={day} value={day}>{day}日</option>
@@ -437,7 +437,7 @@ export default function Settings() {
                     value={tempStartDate}
                     onChange={(e) => setTempStartDate(e.target.value)}
                     max={tempEndDate || dayjs().format('YYYY-MM-DD')}
-                    className="w-full rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="w-full rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 </div>
                 <div>
@@ -448,7 +448,7 @@ export default function Settings() {
                     onChange={(e) => setTempEndDate(e.target.value)}
                     min={tempStartDate}
                     max={dayjs().format('YYYY-MM-DD')}
-                    className="w-full rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="w-full rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 </div>
               </div>

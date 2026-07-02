@@ -1,6 +1,13 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* source(none) disables v4 の自動ソース検出。有効にすると content グロブ外の
+   web/test.html・web/public/index.html まで走査され CSS が肥大化するため、
+   tailwind.config.js の content と同じ範囲だけを @source で明示する。 */
+@import "tailwindcss" source(none);
+@config "../tailwind.config.js";
+
+@source "../app/**/*.{js,ts,jsx,tsx,mdx}";
+@source "../components/**/*.{js,ts,jsx,tsx,mdx}";
+@source "../lib/**/*.{js,ts,jsx,tsx,mdx}";
+@source "../pages/**/*.{js,ts,jsx,tsx,mdx}";
 
 /* ============================================================
    Design tokens (RGB triplets so Tailwind <alpha-value> works)
