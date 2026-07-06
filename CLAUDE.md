@@ -23,6 +23,16 @@ npm -w bot run build    # tsc
 2. **自走 PR → マージ**: **master への直コミット禁止**。ブランチを切って PR を作成し、既存の CI / AIレビュー群（`.github/workflows/` の `pr-checks` / 各 review / `vercel-deploy` など）の完了を待ち、指摘があれば修正・無ければ squash マージまで自走する。
 3. **検証**: build / type-check / lint をローカルで通してから PR にする。
 4. レビュー方針・ロードマップの詳細は `.github/docs/`（`AI_REVIEW_GUIDE` 等）を参照。
+5. **設計/UX を変える変更はまずモック**: 方向性の合意を得てから実装に入る。サーバー環境で作業していて実機で見せたい場合は、下記「サーバー環境でのプレビュー」で URL を渡し、実機（iPhone / Mac など SP・PC 両方）で確認してもらう。
+
+## サーバー環境でのプレビュー（tailnet 経由で実機確認）
+
+サーバー（`debian-ai`）で作業中に、モックや変更を **iPhone / Mac の実機ブラウザ（SP・PC 両方）**で見せたいときの手順。共通の前提: tailnet IP のみにバインドして tailnet 内限定で配信（`0.0.0.0` は不可）。URL は `http://<tailscale-ip>:PORT/` か `http://debian-ai.<tailnet>.ts.net:PORT/`（MagicDNS 名）を渡す。停止は `fuser -k <port>/tcp`（`pkill -f http.server` は自分自身のコマンド文字列にマッチして落ちるため使わない）。
+
+- **A. 静的モック（HTML 単体）**: リポジトリ直下は `.env` 等の secret を含むため配信禁止。secret を含まない専用ディレクトリへ HTML を `index.html` としてコピーし、`python3 -m http.server 8000 --bind "$(tailscale ip -4)"` で配信。
+- **B. 実アプリ / レスポンシブ確認（web）**: Next dev を tailscale IP にバインド。`npm -w web run dev -- -H "$(tailscale ip -4)"`（既定 3000）。Next は任意ファイルを列挙配信しない（`.env` 非露出）ため実アプリ直出しでよい。PC ブラウザで幅を変えればレスポンシブ切替を実データで確認できる。
+
+補足: `tailscale serve`（HTTPS）は tailnet 側で要有効化（管理コンソール）。未有効なら上記の tailnet IP 直アクセス方式を使う。
 
 ## 全環境共通の規約
 
