@@ -141,7 +141,7 @@ LINEのリンク(?lineId=xxx) → Next.js（クライアント）
 
 その他のコスト施策:
 
-- **replyMessage 優先・push フォールバック**（LINE 無料枠 200 push/月の節約。※対象はテキスト支出の登録通知経路。Gmail カード通知・postback 応答・カテゴリカルーセルは push 専用）
+- **replyMessage 優先・push フォールバック**（LINE 無料枠 200 push/月の節約。※テキスト支出の登録通知と postback 応答（設定変更後のカード再送・カテゴリ選択カルーセル・各種案内）が対象。Gmail カード通知のみグループ宛の非同期プッシュで reply トークンが無く push 専用）
 - LINE プロフィール 15 分メモリキャッシュ、`Promise.allSettled` による並列化
 - レシート画像はアップロード前にクライアントで圧縮（Vision API 依存は撤廃済み＝OCR 廃止）
 - Function ごとのメモリチューニング（webhook 512MiB / Gmail 系 256MiB）

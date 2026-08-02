@@ -103,8 +103,8 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 | アクション | 効果 |
 |---|---|
-| `set_split`（`to: shared \| personal`） | `status` を設定し `includeInTotal` を連動（`shared`=true / `personal`=false）。立替は解除（`advanceBy` を削除） |
-| `set_advance`（`to: on \| off`） | on=`status: 'advance_pending'`・`advanceBy` に押下者・`includeInTotal: true` / off=`status: 'shared'`・`advanceBy` 削除 |
+| `set_split`（`to: shared \| personal`） | `status` を設定し `includeInTotal` を連動（`shared`=true / `personal`=false）。立替は解除（`advanceBy` を削除）。あわせて `confirmed: true` |
+| `set_advance`（`to: on \| off`） | on=`status: 'advance_pending'`・`advanceBy` に押下者 / off=`status: 'shared'`・`advanceBy` 削除。いずれも `includeInTotal: true`・`confirmed: true` |
 | `confirm`（OK） | `confirmed: true`。**`pending` のときだけ** `status: 'shared'`・`includeInTotal: true` へ昇格（設定済みの支出を共同費へ巻き戻さない） |
 | `edit`（修正） | `needsEdit: true` を設定し、Web 編集 URL（`/expenses?edit=<id>&lineId=...`）を案内 |
 | `show_category_select` / `set_category` | カテゴリ選択カルーセルを表示 / カテゴリを更新 |
@@ -114,6 +114,8 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 **矛盾の解消**: 個人費にすると立替は解除され、立替ありにすると支出区分は共同費相当に揃う（個人費かつ立替ありは成立しない）。`advance_settled` の支出に対する**支出区分・立替の変更**はサーバー側で拒否する（古いカードにボタンが残っているため、表示を消すだけでは足りない）。カテゴリ変更は精算後も可能（精算額に影響しないため）。
 
 **変更後の再表示**: LINE は送信済みメッセージを編集できないため、状態を変えたら最新値のカードを `replyToken` で返信する（`buildExpenseCardFromRecord()`）。登録直後のカードと同じビルダーを通すので表現がぶれない。
+
+**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
 
 ### 2.6 メッセージ送信ポリシー
 
