@@ -4,12 +4,16 @@
  * カード利用通知用のリッチなメッセージを生成
  */
 
-import { Client, FlexMessage, FlexBubble, FlexComponent } from '@line/bot-sdk';
+import { messagingApi } from '@line/bot-sdk';
+
+type FlexMessage = messagingApi.FlexMessage;
+type FlexBubble = messagingApi.FlexBubble;
+type FlexComponent = messagingApi.FlexComponent;
 
 // LINEクライアントの初期化
-let lineClient: Client | null = null;
+let lineClient: messagingApi.MessagingApiClient | null = null;
 
-function getLineClient(): Client {
+function getLineClient(): messagingApi.MessagingApiClient {
   if (!lineClient) {
     const channelAccessToken = process.env.LINE_CHANNEL_TOKEN;
     const channelSecret = process.env.LINE_CHANNEL_SECRET;
@@ -18,9 +22,8 @@ function getLineClient(): Client {
       throw new Error('LINE credentials not configured');
     }
 
-    lineClient = new Client({
+    lineClient = new messagingApi.MessagingApiClient({
       channelAccessToken,
-      channelSecret,
     });
   }
   return lineClient;
@@ -360,7 +363,7 @@ export async function sendCardUsageNotification(
   const client = getLineClient();
   const message = buildCardUsageFlexMessage(info);
 
-  await client.pushMessage(lineGroupId, message);
+  await client.pushMessage({ to: lineGroupId, messages: [message] });
   console.log(`Card usage notification sent to ${lineGroupId}`);
 }
 
@@ -373,10 +376,10 @@ export async function sendTextMessage(
 ): Promise<void> {
   const client = getLineClient();
 
-  await client.pushMessage(targetId, {
+  await client.pushMessage({ to: targetId, messages: [{
     type: 'text',
     text,
-  });
+  }] });
 }
 
 /**
@@ -634,7 +637,7 @@ export async function sendTextExpenseNotification(
 
   if (replyToken) {
     try {
-      await client.replyMessage(replyToken, message);
+      await client.replyMessage({ replyToken: replyToken, messages: [message] });
       console.log(`Text expense notification sent via replyMessage (free) to ${targetId}`);
       return;
     } catch (replyError) {
@@ -645,7 +648,7 @@ export async function sendTextExpenseNotification(
     }
   }
 
-  await client.pushMessage(targetId, message);
+  await client.pushMessage({ to: targetId, messages: [message] });
   console.log(`Text expense notification sent via pushMessage to ${targetId}`);
 }
 

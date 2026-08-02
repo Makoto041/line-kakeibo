@@ -4,7 +4,10 @@
  * カード利用通知・テキスト入力のボタン押下を処理
  */
 
-import { WebhookEvent, PostbackEvent, Client } from '@line/bot-sdk';
+import { webhook, messagingApi } from '@line/bot-sdk';
+
+type WebhookEvent = webhook.Event;
+type PostbackEvent = webhook.PostbackEvent;
 import { getFirestore } from 'firebase-admin/firestore';
 import { PostbackActionData, ExpenseStatus } from '../gmail/types';
 import { sendStatusUpdateConfirmation, sendTextMessage, buildCategorySelectCarousel, CategorySelectInfo } from './flexMessage';
@@ -21,9 +24,9 @@ interface ExtendedPostbackActionData extends PostbackActionData {
 }
 
 // LINEクライアントの初期化
-let lineClient: Client | null = null;
+let lineClient: messagingApi.MessagingApiClient | null = null;
 
-function getLineClient(): Client {
+function getLineClient(): messagingApi.MessagingApiClient {
   if (!lineClient) {
     const channelAccessToken = process.env.LINE_CHANNEL_TOKEN;
     const channelSecret = process.env.LINE_CHANNEL_SECRET;
@@ -32,9 +35,8 @@ function getLineClient(): Client {
       throw new Error('LINE credentials not configured');
     }
 
-    lineClient = new Client({
+    lineClient = new messagingApi.MessagingApiClient({
       channelAccessToken,
-      channelSecret,
     });
   }
   return lineClient;
@@ -118,11 +120,11 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
 
     // 立替の場合は立替者を記録
     if (action === 'advance') {
-      const userId = event.source.userId;
+      const userId = event.source!.userId;
       if (!userId) {
         console.error('Cannot process advance: userId is missing', {
           expenseId,
-          sourceType: event.source.type,
+          sourceType: event.source!.type,
         });
         return; // 立替者不明では処理できない
       }
@@ -135,9 +137,9 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
     console.log(`Expense ${expenseId} status updated to ${newStatus}`);
 
     // 確認メッセージを送信
-    const replyTarget = event.source.type === 'group'
+    const replyTarget = event.source!.type === 'group'
       ? (event.source as any).groupId
-      : event.source.userId;
+      : event.source!.userId;
 
     if (replyTarget && (action === 'shared' || action === 'personal' || action === 'advance')) {
       await sendStatusUpdateConfirmation(
@@ -176,9 +178,9 @@ async function handleTextExpensePostback(
     return;
   }
 
-  const replyTarget = event.source.type === 'group'
+  const replyTarget = event.source!.type === 'group'
     ? (event.source as any).groupId
-    : event.source.userId;
+    : event.source!.userId;
 
   switch (action) {
     case 'confirm':
@@ -204,7 +206,7 @@ async function handleTextExpensePostback(
         updatedAt: new Date(),
       });
       if (replyTarget) {
-        const editUrl = `https://line-kakeibo.vercel.app/expenses?edit=${expenseId}&lineId=${event.source.userId}`;
+        const editUrl = `https://line-kakeibo.vercel.app/expenses?edit=${expenseId}&lineId=${event.source!.userId}`;
         await sendTextMessage(
           replyTarget,
           `以下のリンクから修正できます\n${editUrl}`
@@ -214,11 +216,11 @@ async function handleTextExpensePostback(
 
     case 'advance': {
       // 立替として記録（合計に含める）
-      const userId = event.source.userId;
+      const userId = event.source!.userId;
       if (!userId) {
         console.error('Cannot process text expense advance: userId is missing', {
           expenseId,
-          sourceType: event.source.type,
+          sourceType: event.source!.type,
         });
         return; // 立替者不明では処理できない
       }
@@ -308,9 +310,9 @@ async function handleShowCategorySelect(
 ): Promise<void> {
   const { expenseId, source } = actionData;
 
-  const replyTarget = event.source.type === 'group'
+  const replyTarget = event.source!.type === 'group'
     ? (event.source as any).groupId
-    : event.source.userId;
+    : event.source!.userId;
 
   if (!replyTarget) {
     console.warn('Cannot determine reply target for category select');
@@ -344,7 +346,7 @@ async function handleShowCategorySelect(
   const carousel = buildCategorySelectCarousel(carouselInfo);
   const client = getLineClient();
 
-  await client.pushMessage(replyTarget, carousel);
+  await client.pushMessage({ to: replyTarget, messages: [carousel] });
   console.log(`Category select carousel sent for expense ${expenseId}`);
 }
 
@@ -383,9 +385,9 @@ async function handleSetCategory(
     updatedAt: new Date(),
   });
 
-  const replyTarget = event.source.type === 'group'
+  const replyTarget = event.source!.type === 'group'
     ? (event.source as any).groupId
-    : event.source.userId;
+    : event.source!.userId;
 
   if (replyTarget) {
     await sendTextMessage(

@@ -1,6 +1,6 @@
 // Version: 2026-03-28-2200 - Force redeploy
 import express, { Express, Request, Response } from "express";
-import { Client, middleware } from "@line/bot-sdk";
+import { messagingApi, middleware } from "@line/bot-sdk";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import dayjs from "dayjs";
@@ -57,15 +57,17 @@ const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET || "dummy-secret-for-build",
 };
 
-let client: Client;
+let client: messagingApi.MessagingApiClient;
 try {
-  client = new Client(config);
+  client = new messagingApi.MessagingApiClient({
+    channelAccessToken: config.channelAccessToken,
+  });
 } catch (error) {
   console.warn(
     "LINE Client initialization failed during build, using dummy client"
   );
   // Create a dummy client for build analysis
-  client = {} as Client;
+  client = {} as messagingApi.MessagingApiClient;
 }
 
 // Firebase Admin setup
@@ -102,10 +104,10 @@ app.post("/webhook", async (req: Request, res: Response) => {
         if (event.type === "message" && event.message.type === "image") {
           // レシートOCR機能は廃止済み（replyMessageは無料）
           try {
-            await client.replyMessage(event.replyToken, {
+            await client.replyMessage({ replyToken: event.replyToken, messages: [{
               type: "text",
               text: "画像からの読み取り機能は終了しました。\nテキストで入力してください。\n例:「500 ランチ」「6/29 4800 家賃」",
-            });
+            }] });
           } catch (replyError) {
             console.warn("Failed to send OCR discontinued notice:", replyError);
           }
@@ -144,10 +146,10 @@ app.post("/webhook", async (req: Request, res: Response) => {
           (error as Error).message !== "Invalid reply token"
         ) {
           try {
-            await client.replyMessage(event.replyToken, {
+            await client.replyMessage({ replyToken: event.replyToken, messages: [{
               type: "text",
               text: "申し訳ございませんが、一時的なエラーが発生しました。しばらく後でお試しください。",
-            });
+            }] });
           } catch (replyError) {
             console.error("Failed to send error reply:", replyError);
           }
@@ -216,7 +218,7 @@ async function handleTextMessage(event: any) {
         if (summary.expenseCount === 0) {
           // データなしの場合
           const emptyMessage = buildEmptyExpenseSummaryFlexMessage(isGroupContext, webAppUrl);
-          await client.replyMessage(event.replyToken, emptyMessage);
+          await client.replyMessage({ replyToken: event.replyToken, messages: [emptyMessage] });
         } else {
           // カテゴリ別データの整形
           const totalIncluded = summary.includedTotalAmount || 1; // ゼロ除算防止
@@ -257,14 +259,14 @@ async function handleTextMessage(event: any) {
           };
 
           const flexMessage = buildExpenseSummaryFlexMessage(summaryInfo);
-          await client.replyMessage(event.replyToken, flexMessage);
+          await client.replyMessage({ replyToken: event.replyToken, messages: [flexMessage] });
         }
       } catch (error) {
         console.error("Error fetching expenses:", error);
 
         // Fallback response (テキストメッセージ)
         try {
-          await client.replyMessage(event.replyToken, {
+          await client.replyMessage({ replyToken: event.replyToken, messages: [{
             type: "text",
             text:
               `家計簿\n\n現在データを読み込み中です...\n${
@@ -276,7 +278,7 @@ async function handleTextMessage(event: any) {
               (event.source.type === "group" && event.source.groupId
                 ? `&lineGroupId=${encodeURIComponent(event.source.groupId)}`
                 : ""),
-          });
+          }] });
         } catch (replyError) {
           console.error("Failed to send fallback reply:", replyError);
         }
@@ -299,25 +301,25 @@ async function handleTextMessage(event: any) {
         `=== FEEDBACK COMMAND MATCHED: Creating GitHub issue from feedback: "${feedbackText}" ===`
       );
       if (!feedbackText) {
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: "フィードバック内容を入力してください。\n例: 「要望 月別のグラフが見たい」\n「不具合 レシートが読み取れない」",
-        });
+        }] });
         return;
       }
       try {
         const result = await createIssueFromFeedback(feedbackText);
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: result.message,
-        });
+        }] });
       } catch (error) {
         console.error("Error creating issue from feedback:", error);
         try {
-          await client.replyMessage(event.replyToken, {
+          await client.replyMessage({ replyToken: event.replyToken, messages: [{
             type: "text",
             text: "Issueの作成に失敗しました。\n時間をおいてもう一度お試しください。",
-          });
+          }] });
         } catch (replyError) {
           console.error("Failed to send feedback error reply:", replyError);
         }
@@ -370,14 +372,14 @@ async function handleTextMessage(event: any) {
           console.log("Failed to get current category setting:", error);
         }
 
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: `利用可能なカテゴリー:\n\n${validCategories
             .map((c) => "• " + c)
             .join(
               "\n"
             )}\n\n現在のデフォルト: ${currentCategory}\n\n設定方法:\n「カテゴリー 食費」のように送信してください`,
-        });
+        }] });
         return;
       }
 
@@ -392,10 +394,10 @@ async function handleTextMessage(event: any) {
         `=== CATEGORY COMMAND: Extracted category: "${category}" ===`
       );
       if (!category) {
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: "カテゴリー名を指定してください。\n例: 「カテゴリー 食費」\n\n利用可能なカテゴリー:\n• 食費\n• 日用品\n• 交通費\n• 医療費\n• 娯楽費\n• 衣服費\n• 教育費\n• 通信費\n• その他",
-        });
+        }] });
         return;
       }
 
@@ -412,12 +414,12 @@ async function handleTextMessage(event: any) {
       ];
 
       if (!validCategories.includes(category)) {
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: `「${category}」は有効なカテゴリーではありません。\n\n利用可能なカテゴリー:\n${validCategories
             .map((c) => "• " + c)
             .join("\n")}`,
-        });
+        }] });
         return;
       }
 
@@ -437,16 +439,16 @@ async function handleTextMessage(event: any) {
           verifySettings
         );
 
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: `デフォルトカテゴリーを「${category}」に設定しました！\n\n今後の支出入力は自動的に「${category}」カテゴリーになります。\n\n変更するには「カテゴリー [新しいカテゴリー]」と送信してください。`,
-        });
+        }] });
       } catch (error) {
         console.error("Error saving user settings:", error);
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: "カテゴリーの設定に失敗しました。もう一度お試しください。",
-        });
+        }] });
       }
       return;
     }
@@ -461,10 +463,10 @@ async function handleTextMessage(event: any) {
       console.log(`=== COMMAND MATCHED: Processing グループ作成 command ===`);
       const groupName = text.replace("グループ作成 ", "").trim();
       if (!groupName) {
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: "グループ名を指定してください。\n例: 「グループ作成 田中夫婦の家計簿」",
-        });
+        }] });
         return;
       }
 
@@ -475,16 +477,16 @@ async function handleTextMessage(event: any) {
 
         const replyText = `グループ「${groupName}」を作成しました！\n\n招待コード: ${group?.inviteCode}\n\nこのコードを共有して、パートナーを招待してください。\n\n使い方:\n「参加 ${group?.inviteCode} 表示名」で参加できます。`;
 
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: replyText,
-        });
+        }] });
       } catch (error) {
         console.error("Error creating group:", error);
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: "グループの作成に失敗しました。もう一度お試しください。",
-        });
+        }] });
       }
       return;
     }
@@ -498,10 +500,10 @@ async function handleTextMessage(event: any) {
       console.log(`=== COMMAND MATCHED: Processing 参加 command ===`);
       const parts = text.replace("参加 ", "").trim().split(" ");
       if (parts.length < 2) {
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: "招待コードと表示名を指定してください。\n例: 「参加 ABC123 太郎」",
-        });
+        }] });
         return;
       }
 
@@ -516,26 +518,26 @@ async function handleTextMessage(event: any) {
         );
 
         if (!groupId) {
-          await client.replyMessage(event.replyToken, {
+          await client.replyMessage({ replyToken: event.replyToken, messages: [{
             type: "text",
             text: "無効な招待コードです。正しいコードを確認してください。",
-          });
+          }] });
           return;
         }
 
         const members = await getGroupMembers(groupId);
         const memberNames = members.map((m) => m.displayName).join("、");
 
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: `グループに参加しました！\n\nメンバー: ${memberNames}\n\nこれからの支出は共有され、誰が何を支払ったかが記録されます。`,
-        });
+        }] });
       } catch (error) {
         console.error("Error joining group:", error);
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: "グループへの参加に失敗しました。もう一度お試しください。",
-        });
+        }] });
       }
       return;
     }
@@ -551,10 +553,10 @@ async function handleTextMessage(event: any) {
         const groups = await getUserGroups(event.source.userId);
 
         if (groups.length === 0) {
-          await client.replyMessage(event.replyToken, {
+          await client.replyMessage({ replyToken: event.replyToken, messages: [{
             type: "text",
             text: "まだグループに参加していません。\n\n新しいグループを作成するか、招待コードで参加してください。\n\n• グループ作成 [名前]\n• 参加 [コード] [表示名]",
-          });
+          }] });
           return;
         }
 
@@ -567,16 +569,16 @@ async function handleTextMessage(event: any) {
           replyText += `招待コード: ${group.inviteCode}\n\n`;
         }
 
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: replyText,
-        });
+        }] });
       } catch (error) {
         console.error("Error getting groups:", error);
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: "グループ情報の取得に失敗しました。",
-        });
+        }] });
       }
       return;
     }
@@ -587,10 +589,10 @@ async function handleTextMessage(event: any) {
       try {
         // グループコンテキストが必要
         if (event.source.type !== "group") {
-          await client.replyMessage(event.replyToken, {
+          await client.replyMessage({ replyToken: event.replyToken, messages: [{
             type: "text",
             text: "立替一覧はグループ内でのみ利用できます。\n\nLINEグループで「立替一覧」と送信してください。",
-          });
+          }] });
           return;
         }
 
@@ -598,10 +600,10 @@ async function handleTextMessage(event: any) {
         const summaries = await getAdvanceSummaryByUser(lineGroupId, true);
 
         if (summaries.length === 0) {
-          await client.replyMessage(event.replyToken, {
+          await client.replyMessage({ replyToken: event.replyToken, messages: [{
             type: "text",
             text: "未精算の立替はありません。\n\n支出登録時に「立替」ボタンを押すと、立替として記録できます。",
-          });
+          }] });
           return;
         }
 
@@ -637,16 +639,16 @@ async function handleTextMessage(event: any) {
           }
         }
 
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: replyText,
-        });
+        }] });
       } catch (error) {
         console.error("Error getting advance list:", error);
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: "立替一覧の取得に失敗しました。",
-        });
+        }] });
       }
       return;
     }
@@ -657,10 +659,10 @@ async function handleTextMessage(event: any) {
       try {
         // グループコンテキストが必要
         if (event.source.type !== "group") {
-          await client.replyMessage(event.replyToken, {
+          await client.replyMessage({ replyToken: event.replyToken, messages: [{
             type: "text",
             text: "精算はグループ内でのみ利用できます。\n\nLINEグループで「精算」と送信してください。",
-          });
+          }] });
           return;
         }
 
@@ -668,10 +670,10 @@ async function handleTextMessage(event: any) {
         const pendingAdvances = await getPendingAdvances(lineGroupId, true);
 
         if (pendingAdvances.length === 0) {
-          await client.replyMessage(event.replyToken, {
+          await client.replyMessage({ replyToken: event.replyToken, messages: [{
             type: "text",
             text: "精算する立替がありません。",
-          });
+          }] });
           return;
         }
 
@@ -691,10 +693,10 @@ async function handleTextMessage(event: any) {
         const settleResult = await settleAdvances(expenseIds, lineGroupId, true);
 
         if (settleResult.settled === 0) {
-          await client.replyMessage(event.replyToken, {
+          await client.replyMessage({ replyToken: event.replyToken, messages: [{
             type: "text",
             text: "精算処理でエラーが発生しました。対象の立替が見つかりませんでした。",
-          });
+          }] });
           return;
         }
 
@@ -704,16 +706,16 @@ async function handleTextMessage(event: any) {
         }
         resultText += "\n\n次の立替からまた集計を開始します。";
 
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: resultText,
-        });
+        }] });
       } catch (error) {
         console.error("Error settling advances:", error);
-        await client.replyMessage(event.replyToken, {
+        await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
           text: "精算処理に失敗しました。",
-        });
+        }] });
       }
       return;
     }
@@ -745,10 +747,10 @@ async function handleTextMessage(event: any) {
     } catch (error) {
       console.error("Background expense processing failed:", error);
       // Send error notification
-      await client.pushMessage(targetId, {
+      await client.pushMessage({ to: targetId, messages: [{
         type: "text",
         text: "支出の保存で問題が発生しました。データが正しく記録されていない可能性があります。",
-      }).catch((pushError) =>
+      }] }).catch((pushError) =>
         console.error("Failed to send error notification:", pushError)
       );
     }
@@ -759,10 +761,10 @@ async function handleTextMessage(event: any) {
       const targetId = event.source.type === "group"
         ? event.source.groupId
         : event.source.userId;
-      await client.pushMessage(targetId, {
+      await client.pushMessage({ to: targetId, messages: [{
         type: "text",
         text: "メッセージの処理中にエラーが発生しました。もう一度お試しください。",
-      });
+      }] });
     } catch (notifyError) {
       console.error("Failed to send error notification:", notifyError);
     }
@@ -1002,14 +1004,14 @@ async function processExpenseInBackground(
       let errorNotified = false;
       if (replyToken) {
         try {
-          await client.replyMessage(replyToken, profileErrorMessage);
+          await client.replyMessage({ replyToken: replyToken, messages: [profileErrorMessage] });
           errorNotified = true;
         } catch (replyError) {
           console.warn("replyMessage failed for profile error, falling back to pushMessage:", replyError);
         }
       }
       if (!errorNotified) {
-        await client.pushMessage(targetId, profileErrorMessage);
+        await client.pushMessage({ to: targetId, messages: [profileErrorMessage] });
       }
       return; // 処理を中断（データは書き込まない）
     }
@@ -1142,10 +1144,10 @@ async function handleJoin(event: any) {
 
     // Send welcome message with error handling
     try {
-      await client.pushMessage(lineGroupId, {
+      await client.pushMessage({ to: lineGroupId, messages: [{
         type: "text",
         text: "家計簿ボットがグループに参加しました！\n\nレシート画像を送信すると支出を自動記録\n「500 ランチ」のようにテキストでも記録\n「家計簿」で支出一覧を表示\n\nグループメンバーの支出が自動的に共有されます",
-      });
+      }] });
 
       console.log(
         `Bot successfully joined and sent welcome to LINE group: ${lineGroupId}`
@@ -1177,10 +1179,10 @@ async function handleMemberJoined(event: any) {
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         // Use pushMessage instead of replyMessage for better compatibility
-        await client.pushMessage(lineGroupId, {
+        await client.pushMessage({ to: lineGroupId, messages: [{
           type: "text",
           text: "新しいメンバーがグループに参加しました！\n家計簿ボットで支出を記録・共有できます。\n\n「家計簿」と送信すると使い方を確認できます。",
-        });
+        }] });
 
         console.log(
           `Successfully sent welcome message for new member in group: ${lineGroupId}`
