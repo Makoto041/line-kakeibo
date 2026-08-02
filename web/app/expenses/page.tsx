@@ -794,7 +794,7 @@ function ExpensesPageContent() {
                   { Icon: LinkIcon, title: "リンクから確認・編集", desc: "届いたリンクを開くと、ここに支出が表示されます。" },
                 ].map(({ Icon, title, desc }, i) => (
                   <li key={i} className="flex items-start gap-3 rounded-xl border border-line bg-fg/[0.02] p-3">
-                    <span className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg bg-accent/12 text-accent">
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent/12 text-accent">
                       <Icon className="h-4 w-4" strokeWidth={2.1} />
                     </span>
                     <div className="min-w-0">
@@ -843,7 +843,7 @@ function ExpensesPageContent() {
                           </p>
                         </div>
 
-                        <div className="flex-shrink-0">
+                        <div className="shrink-0">
                           <p className="text-right text-xl font-bold tabular-nums text-fg sm:text-2xl">
                             ¥{expense.amount.toLocaleString()}
                           </p>
@@ -923,7 +923,7 @@ function ExpensesPageContent() {
                                   <span className="mr-2 min-w-0 flex-1 break-words text-muted">
                                     {item.name}
                                   </span>
-                                  <span className="flex-shrink-0 font-medium tabular-nums text-fg">
+                                  <span className="shrink-0 font-medium tabular-nums text-fg">
                                     ¥{item.price.toLocaleString()}
                                   </span>
                                 </li>

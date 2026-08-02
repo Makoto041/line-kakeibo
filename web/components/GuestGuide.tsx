@@ -55,7 +55,7 @@ export default function GuestGuide({ className = '' }: { className?: string }) {
       <ol className="mb-6 space-y-4">
         {STEPS.map((step, index) => (
           <li key={step.title} className="flex gap-3">
-            <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-accent/12 text-sm font-bold text-accent">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent/12 text-sm font-bold text-accent">
               {index + 1}
             </span>
             <div className="min-w-0">
@@ -103,7 +103,7 @@ export default function GuestGuide({ className = '' }: { className?: string }) {
               key={item.command}
               className="flex items-center gap-2 rounded-lg border border-line bg-fg/[0.02] px-3 py-2"
             >
-              <code className="flex-shrink-0 rounded border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-xs font-semibold text-accent">
+              <code className="shrink-0 rounded border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-xs font-semibold text-accent">
                 {item.command}
               </code>
               <span className="text-xs leading-tight text-muted">{item.description}</span>
