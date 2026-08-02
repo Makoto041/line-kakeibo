@@ -8,7 +8,7 @@
     "web"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "recharts": "^3.9.1"
