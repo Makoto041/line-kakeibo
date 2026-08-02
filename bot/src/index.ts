@@ -32,6 +32,7 @@ import {
 import {
   buildExpenseSummaryFlexMessage,
   buildEmptyExpenseSummaryFlexMessage,
+  buildExpenseListUrl,
   ExpenseSummaryInfo,
 } from "./line/flexMessage";
 import { getCategoryEmoji } from "./gmail/types";
@@ -185,16 +186,7 @@ async function handleTextMessage(event: any) {
         const lineGroupId = isGroupContext ? event.source.groupId : undefined;
 
         // Generate appropriate URL based on context
-        let webAppUrl;
-        if (isGroupContext && event.source.groupId) {
-          webAppUrl = `https://line-kakeibo.vercel.app?lineId=${encodeURIComponent(
-            event.source.userId
-          )}&lineGroupId=${encodeURIComponent(event.source.groupId)}`;
-        } else {
-          webAppUrl = `https://line-kakeibo.vercel.app?lineId=${encodeURIComponent(
-            event.source.userId
-          )}`;
-        }
+        const webAppUrl = buildExpenseListUrl(event.source.userId, lineGroupId);
 
         // 当月の集計データを取得
         const now = dayjs();
@@ -1115,6 +1107,11 @@ async function processExpenseInBackground(
           ? getPaymentMethodLabel(parsed.paymentMethod as PaymentMethod)
           : undefined,
         payerName: userDisplayName,
+        // 保存時の値と揃える（LINE手入力は OK を押すまで集計に入らない）
+        includeInTotal: expense.includeInTotal,
+        webAppUrl: event.source.userId
+          ? buildExpenseListUrl(event.source.userId, lineGroupId)
+          : undefined,
       };
 
       // replyToken（無料・月200通制限の対象外）を優先使用し、
@@ -1340,8 +1337,6 @@ import {
 import {
   handlePostback,
   isPostbackEvent,
-  isGmailPostback,
-  isTextExpensePostback,
   sendTextExpenseNotification,
   TextExpenseInfo,
 } from "./line";
