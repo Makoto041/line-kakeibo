@@ -35,6 +35,12 @@ module.exports = {
         glass: '0 1px 1px rgb(0 0 0 / 0.04), 0 8px 24px -12px rgb(15 23 42 / 0.18)',
         'glass-lg': '0 1px 1px rgb(0 0 0 / 0.05), 0 18px 48px -20px rgb(15 23 42 / 0.30)',
       },
+      blur: {
+        // 同じく v4 で blur スケールが 1 段ずれた（v3 `sm`=4px -> v4 `sm`=8px）。
+        // v4 は blur と backdrop-blur で `--blur-*` を共有するため、ここを固定すると
+        // `backdrop-blur-sm`（モーダル背景 2 箇所）が v3 と同じ 4px に戻る。
+        sm: '4px',
+      },
       keyframes: {
         blob: {
           '0%,100%': { transform: 'translate(0,0) scale(1)' },
