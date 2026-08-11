@@ -11,9 +11,12 @@ env:
   NODE_VERSION: '22'
 
 # 同時実行の制御
+# PR は新しい push で古い run を打ち切ってよいが、master push は deploy を含む。
+# 連続 push で firebase deploy の途中がキャンセルされると部分デプロイになるため、
+# キャンセルは PR のときだけ有効にする。
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # 変更検知ジョブ
