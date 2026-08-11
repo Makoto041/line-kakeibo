@@ -69,14 +69,24 @@ jobs:
         cd web
         npm run build
         
-    - name: Deploy Firebase Functions (Production)
-      uses: w9jds/firebase-action@master
+    # 認証は ci-cd.yml と同じサービスアカウント方式に揃える。
+    # 旧構成の FIREBASE_TOKEN（firebase login:ci）は非推奨で、
+    # 手動フォールバックとして使えない状態だった。
+    - name: Authenticate to Google Cloud
+      id: auth
+      uses: google-github-actions/auth@v3
       with:
-        args: deploy --only functions
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Deploy Firebase Functions (Production)
+      run: |
+        npm install -g firebase-tools@15
+        firebase deploy --only functions --project "$FIREBASE_PROJECT_ID"
       env:
-        FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
-        PROJECT_ID: line-kakeibo-0410
-        
+        GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+        FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID || 'line-kakeibo-0410' }}
+
+
     - name: Deploy to Vercel (Production)
       uses: amondnet/vercel-action@v25
       id: vercel-deploy

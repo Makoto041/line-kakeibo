@@ -32,9 +32,15 @@ jobs:
             web:
               - 'web/**'
               - '.github/workflows/**'
+            # deploy-bot は functions に加えて firestore の rules / indexes も
+            # デプロイするため、それらの定義ファイルも検知対象に含める。
             bot:
               - 'bot/**'
               - '.github/workflows/**'
+              - 'firebase.json'
+              - '.firebaserc'
+              - 'firestore.rules'
+              - 'firestore.indexes.json'
             deps:
               - 'package*.json'
               - 'package-lock.json'
@@ -295,12 +301,12 @@ jobs:
 
       - name: Deploy to Firebase
         run: |
-          npm install -g firebase-tools@latest
+          npm install -g firebase-tools@15
           firebase deploy --only functions,firestore:rules,firestore:indexes --project "$FIREBASE_PROJECT_ID"
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
-          # 未設定なら .firebaserc の default を使う（空文字を渡すと deploy が落ちるため）
-          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID || 'default' }}
+          # 未設定時のフォールバック（空文字を渡すと deploy が落ちるため）
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID || 'line-kakeibo-0410' }}
 
   # デプロイ後の健全性チェック
   post-deploy-check:
@@ -313,7 +319,10 @@ jobs:
       - name: Health check - Web
         if: needs.deploy-web.result == 'success'
         run: |
-          response=$(curl -s -L -o /dev/null -w "%{http_code}" --max-time 30 https://line-kakeibo.vercel.app/)
+          # curl 自体が失敗すると set -e でここで止まりメッセージが出ないため 000 を割り当てる
+          response=$(curl -s -L -o /dev/null -w "%{http_code}" \
+            --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
+            https://line-kakeibo.vercel.app/) || response=000
           if [ "$response" -eq 200 ]; then
             echo "✅ Web app is healthy"
           else
@@ -328,8 +337,10 @@ jobs:
         env:
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID || 'line-kakeibo-0410' }}
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \
-            "https://asia-northeast1-${FIREBASE_PROJECT_ID}.cloudfunctions.net/webhook/health")
+          # デプロイ直後はトラフィック切替中で一時的に落ちうるためリトライする
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
+            "https://asia-northeast1-${FIREBASE_PROJECT_ID}.cloudfunctions.net/webhook/health") || response=000
           if [ "$response" -eq 200 ]; then
             echo "✅ Bot functions are healthy"
           else
