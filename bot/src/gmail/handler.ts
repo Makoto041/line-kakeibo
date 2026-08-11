@@ -207,6 +207,9 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
         category,
         categoryEmoji: getCategoryEmoji(category),
         date: dayjs(parsed.usedAt).format('M/D'),
+        // 保存時の値と揃える（Gmail自動取得は未確認でも集計に入る）
+        status: 'pending',
+        includeInTotal: true,
       });
       console.log(`LINE notification sent for expense: ${expenseId}`);
     } else {
@@ -426,6 +429,9 @@ export async function forceProcessMessage(messageId: string): Promise<{
         category,
         categoryEmoji: getCategoryEmoji(category),
         date: dayjs(parsed.usedAt).format('M/D'),
+        // 保存時の値と揃える（Gmail自動取得は未確認でも集計に入る）
+        status: 'pending',
+        includeInTotal: true,
       });
       console.log(`LINE notification sent for expense: ${expenseId}`);
     }

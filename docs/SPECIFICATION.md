@@ -65,30 +65,69 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 2. `appUid` 解決（LINE userId → Firebase Auth 匿名ユーザーを作成/取得。`linkUserResolver.ts`）
 3. カテゴリ分類（§4）とユーザーデフォルトカテゴリを並列取得。Gemini の確信度 ≥ 0.4 なら採用、なければデフォルト、それも無ければ `その他`
 4. `expenses` に保存（`confirmed: false`, `includeInTotal: false`, `inputSource: 'line_text'`）
-5. 確認用 Flex メッセージを送信 — ボタン: **OK / 修正 / 立替 / カテゴリ変更 / レシート添付**
+5. 確認用 Flex メッセージを送信（§2.4 の登録・編集カード）
 
-### 2.4 Postback アクション（`bot/src/line/postback.ts`）
+### 2.4 登録・編集カードの構成（`bot/src/line/flexMessage.ts`）
+
+テキスト入力・Gmail カード利用の両方で同じビルダー（`buildExpenseCard`）を使い、ヘッダー文言と金額下の補足行だけを差し替える。**現在の設定値はリッチテキストで表示し、ボタンは変更操作だけを担う**。
+
+```text
+現在の設定
+支出区分：共同費　　[変更]
+立替：なし　　　　　[変更]
+カテゴリ：食費　　　[変更]
+```
+
+| 領域 | 内容 |
+|---|---|
+| ヘッダー | テキスト入力=「支出を登録しました」/ カード利用=「カード利用を記録」 |
+| 本文 | 店舗名・説明 → 金額と日付 → （残り予算 / 支払い方法・支払い者）→ 「現在の設定」3行 |
+| フッター | `OK` `修正` / `レシート添付` / `家計簿一覧を見る` |
+
+支出区分と立替は単一の `status` フィールドに排他的に入るため、表示上の 2 行は `status` から導出する（`deriveExpenseSettings()`）。`pending` のときだけ、実際の集計挙動（`includeInTotal`）に合わせて表示を変える。
+
+| `status` | `includeInTotal` | 支出区分 | 立替 |
+|---|---|---|---|
+| `pending` | `true`（Gmail 自動取得） | 共同費（未確認） | なし |
+| `pending` | `false`（LINE 手入力） | 未設定 | なし |
+| `shared` | — | 共同費 | なし |
+| `personal` | — | 個人費 | なし |
+| `advance_pending` | — | 共同費 | あり（精算待ち） |
+| `advance_settled` | — | 共同費 | 精算済み |
+
+`advance_settled` の行には支出区分・立替の [変更] を出さない（カテゴリのみ変更可）。
+
+### 2.5 Postback アクション（`bot/src/line/postback.ts`）
+
+[変更] ボタンにはトグル（反転）ではなく**設定する値そのもの**を埋め込む（`to`）。カード描画時点の現在値の反対が入っているため、古いカードから押しても表示どおりの結果になる。
 
 | アクション | 効果 |
 |---|---|
-| confirm（OK） | `status: 'shared'`, `includeInTotal: true` |
-| 修正 | `needsEdit: true` を設定し、Web 編集 URL（`/expenses?edit=<id>&lineId=...`）を案内 |
-| 立替 | `status: 'advance_pending'`, `advanceBy` 設定 |
-| shared / personal（Gmail 由来） | `includeInTotal` の切替、`status` 更新 |
-| show_category_select | カテゴリ選択カルーセルを表示 |
-| set_category | カテゴリを更新 |
+| `set_split`（`to: shared \| personal`） | `status` を設定し `includeInTotal` を連動（`shared`=true / `personal`=false）。立替は解除（`advanceBy` を削除）。あわせて `confirmed: true` |
+| `set_advance`（`to: on \| off`） | on=`status: 'advance_pending'`・`advanceBy` に押下者 / off=`status: 'shared'`・`advanceBy` 削除。いずれも `includeInTotal: true`・`confirmed: true` |
+| `confirm`（OK） | `confirmed: true`。**`pending` のときだけ** `status: 'shared'`・`includeInTotal: true` へ昇格（設定済みの支出を共同費へ巻き戻さない） |
+| `edit`（修正） | `needsEdit: true` を設定し、Web 編集 URL（`/expenses?edit=<id>&lineId=...`）を案内 |
+| `show_category_select` / `set_category` | カテゴリ選択カルーセルを表示 / カテゴリを更新 |
+| `show_list` | 押下者の `lineId` を含む家計簿一覧 URL を返す |
+| `shared` / `personal` / `advance`（旧 UI） | 配信済みカードからの押下に備えて `set_split` / `set_advance` へ読み替える |
 
-### 2.5 メッセージ送信ポリシー
+**矛盾の解消**: 個人費にすると立替は解除され、立替ありにすると支出区分は共同費相当に揃う（個人費かつ立替ありは成立しない）。`advance_settled` の支出に対する**支出区分・立替の変更**はサーバー側で拒否する（古いカードにボタンが残っているため、表示を消すだけでは足りない）。カテゴリ変更は精算後も可能（精算額に影響しないため）。
 
-LINE 無料枠（push 200通/月）節約のため、**テキスト支出の登録通知**は replyMessage 優先・pushMessage フォールバックで送信（`sendTextExpenseNotification`, `flexMessage.ts:627`。reply トークン失効時のみ push）。
+**変更後の再表示**: LINE は送信済みメッセージを編集できないため、状態を変えたら最新値のカードを `replyToken` で返信する（`buildExpenseCardFromRecord()`）。登録直後のカードと同じビルダーを通すので表現がぶれない。
+
+**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
+
+### 2.6 メッセージ送信ポリシー
+
+LINE 無料枠（push 200通/月）節約のため、**テキスト支出の登録通知**は replyMessage 優先・pushMessage フォールバックで送信（`sendTextExpenseNotification`, `flexMessage.ts`。reply トークン失効時のみ push）。
+
+Postback への応答（設定変更後のカード再送・カテゴリ選択カルーセル・各種案内テキスト）も `replyToken` を使い、失効時のみ push にフォールバックする（`replyToPostback`, `postback.ts`）。
 
 ただし **push 専用の経路も残っている**点に注意:
 
-- Gmail カード利用通知（`sendCardUsageNotification`, `flexMessage.ts:363`）
-- Postback 応答のテキスト送信（`sendTextMessage`, `flexMessage.ts:376`）
-- カテゴリ選択カルーセル（`postback.ts:347`）
+- Gmail カード利用通知（`sendCardUsageNotification`, `flexMessage.ts`）… グループ宛の非同期プッシュのため reply トークンが無い
 
-これらは push 枠を消費する。Flex メッセージのアイコンは `line-kakeibo.vercel.app/icons` から PNG 配信（lucide 風）。
+これは push 枠を消費する。Flex メッセージのアイコンは `line-kakeibo.vercel.app/icons` から PNG 配信（lucide 風）。
 
 ---
 
@@ -97,7 +136,7 @@ LINE 無料枠（push 200通/月）節約のため、**テキスト支出の登�
 ### 3.1 Gmail 連携（三井住友カード利用通知）
 
 - Gmail API（`gmail.readonly` スコープのみ）＋ **Pub/Sub push 通知**（topic: `gmail-notifications`）
-- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → Gemini でカテゴリ分類 → **アトミック保存**（`gmailMessageId` および `date+amount+usedAt(±1分)` で重複排除、`firestore.ts:137`）→ LINE グループへ Flex 通知（shared/personal/立替ボタン付き）
+- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → Gemini でカテゴリ分類 → **アトミック保存**（`gmailMessageId` および `date+amount+usedAt(±1分)` で重複排除、`firestore.ts:137`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 3 行＋[変更] ボタン）
 - 保存フィールド: `inputSource: 'gmail_auto'`, `usedAt`（カード利用日時）
 - watch は7日で失効するため、**6日ごとの cron**（`renewGmailWatch`）で更新
 - 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。認証は `ADMIN_SECRET` を **`X-Admin-Secret` / `Authorization: Bearer` ヘッダーまたは `?adminSecret=` クエリパラメータ**で受け付け（`index.ts:1396` `requireAdminAuth`）＋レートリミット（OAuth callback のみ CSRF state 検証）。⚠️ クエリ渡しはアクセスログ等にシークレットが残るリスクあり

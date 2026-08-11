@@ -5,7 +5,7 @@
  * @see /.github/docs/GMAIL_AUTO_SPEC_V2.md
  */
 
-import { Expense } from '../firestore';
+import { Expense, ExpenseStatusType } from '../firestore';
 
 // ============================================
 // Gmail OAuth2 関連
@@ -72,9 +72,12 @@ export interface GmailPubSubPayload {
 export type InputSource = 'line_text' | 'line_ocr' | 'gmail_auto';
 
 /**
- * 支出ステータス（Gmail自動取得用）
+ * 支出ステータス
+ *
+ * 精算済み（advance_settled）を含めて firestore.ts の定義と一本化する。
+ * 以前はここだけ advance_settled が欠けており、精算済み支出を扱うコードで型が合わなかった。
  */
-export type ExpenseStatus = 'pending' | 'shared' | 'personal' | 'advance_pending';
+export type ExpenseStatus = ExpenseStatusType;
 
 /**
  * Gmail自動取得で追加するフィールド
@@ -109,8 +112,24 @@ export type GmailExpense = Expense & GmailExpenseExtension;
  * LINE Postbackアクションデータ
  */
 export interface PostbackActionData {
-  /** アクション種別 */
-  action: 'shared' | 'personal' | 'advance' | 'confirm' | 'edit' | 'show_category_select' | 'set_category';
+  /**
+   * アクション種別
+   *
+   * - set_split / set_advance / show_list … 現行UI（現在値表示＋[変更]ボタン）が送る操作
+   * - shared / personal / advance … 旧UIのボタン。配信済みメッセージは編集できないため、
+   *   過去に送ったカードから押される可能性がある。互換のため残す。
+   */
+  action:
+    | 'set_split'
+    | 'set_advance'
+    | 'show_list'
+    | 'confirm'
+    | 'edit'
+    | 'show_category_select'
+    | 'set_category'
+    | 'shared'
+    | 'personal'
+    | 'advance';
   /** 対象の支出ID */
   expenseId: string;
 }

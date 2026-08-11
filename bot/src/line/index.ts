@@ -8,8 +8,8 @@
 export {
   buildCardUsageFlexMessage,
   sendCardUsageNotification,
-  sendTextMessage,
-  sendStatusUpdateConfirmation,
+  buildExpenseCardFromRecord,
+  buildExpenseListUrl,
   CardUsageInfo,
   // テキスト入力用
   buildTextExpenseFlexMessage,
@@ -21,6 +21,4 @@ export {
 export {
   handlePostback,
   isPostbackEvent,
-  isGmailPostback,
-  isTextExpensePostback,
 } from './postback';

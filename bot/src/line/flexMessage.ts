@@ -5,6 +5,8 @@
  */
 
 import { messagingApi } from '@line/bot-sdk';
+import { ExpenseStatusType } from '../firestore';
+import { getPaymentMethodLabel, PaymentMethod } from '../textParser';
 
 type FlexMessage = messagingApi.FlexMessage;
 type FlexBubble = messagingApi.FlexBubble;
@@ -137,34 +139,236 @@ function iconActionButton(opts: {
   return button as unknown as FlexComponent;
 }
 
-/**
- * カード利用通知の情報
- */
-export interface CardUsageInfo {
-  expenseId: string;
-  merchant: string;
-  amount: number;
-  category: string;
-  categoryEmoji: string;
-  date: string;
-  remainingBudget?: number;
+// ============================================
+// 現在の設定（リッチテキスト表示）と [変更] ボタン
+// ============================================
+
+/** Webアプリのベースドメイン */
+export const WEB_APP_BASE = 'https://line-kakeibo.vercel.app';
+
+/** 登録・編集カードの入力元 */
+export type ExpenseCardSource = 'gmail' | 'text';
+
+/** 「現在の設定」に出す表示値と、[変更] で設定する値 */
+export interface DerivedExpenseSettings {
+  /** 支出区分の現在値 */
+  splitLabel: string;
+  /** 支出区分の [変更] で設定する値 */
+  nextSplit: 'shared' | 'personal';
+  /** 立替の現在値 */
+  advanceLabel: string;
+  /** 立替の [変更] で設定する値 */
+  nextAdvance: 'on' | 'off';
+  /** 精算済みで変更を受け付けない状態か */
+  settled: boolean;
 }
 
 /**
- * カード利用通知のFlex Messageを生成
+ * status から「支出区分」と「立替」の現在値を導出する
+ *
+ * 支出区分と立替は単一の status フィールドに排他的に格納されているため、
+ * 表示上の2行はここで導出する。status が pending のときだけ、実際の集計挙動
+ * （includeInTotal）に合わせて表示を分ける。Gmail自動取得は includeInTotal: true
+ * （集計に入る）、LINE手入力は false（入らない）で作られ、意味が異なるため。
  */
-export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
-  const { expenseId, merchant, amount, category, categoryEmoji, date, remainingBudget } = info;
-
-  // 残り予算の表示
-  let budgetText = '';
-  let budgetColor = '#10B981'; // 緑（余裕あり）
-  if (remainingBudget !== undefined) {
-    budgetText = `残り予算: ¥${remainingBudget.toLocaleString()}`;
-    if (remainingBudget < 20000) {
-      budgetColor = '#F43F5E'; // 赤（残り少ない）
-    }
+export function deriveExpenseSettings(
+  status?: ExpenseStatusType,
+  includeInTotal?: boolean
+): DerivedExpenseSettings {
+  switch (status) {
+    case 'shared':
+      return { splitLabel: '共同費', nextSplit: 'personal', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
+    case 'personal':
+      return { splitLabel: '個人費', nextSplit: 'shared', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
+    case 'advance_pending':
+      return { splitLabel: '共同費', nextSplit: 'personal', advanceLabel: 'あり（精算待ち）', nextAdvance: 'off', settled: false };
+    case 'advance_settled':
+      return { splitLabel: '共同費', nextSplit: 'personal', advanceLabel: '精算済み', nextAdvance: 'off', settled: true };
+    default:
+      // pending / 未設定
+      return includeInTotal === false
+        ? { splitLabel: '未設定', nextSplit: 'shared', advanceLabel: 'なし', nextAdvance: 'on', settled: false }
+        : { splitLabel: '共同費（未確認）', nextSplit: 'personal', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
   }
+}
+
+/** 日付を M/D 表記に揃える（Firestore は YYYY-MM-DD 保存） */
+export function formatCardDate(date?: string): string {
+  if (!date) return '';
+  const matched = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(date);
+  return matched ? `${Number(matched[2])}/${Number(matched[3])}` : date;
+}
+
+/** 現在値の行末に置く、変更操作だと分かる小さなボタン */
+function changeButton(action: Record<string, unknown>): FlexComponent {
+  return {
+    type: 'box',
+    layout: 'vertical',
+    flex: 0,
+    action,
+    backgroundColor: '#EFF6FF',
+    cornerRadius: '6px',
+    paddingAll: 'xs',
+    paddingStart: 'md',
+    paddingEnd: 'md',
+    contents: [
+      {
+        type: 'text',
+        text: '変更',
+        size: 'xs',
+        weight: 'bold',
+        color: '#2563EB',
+        align: 'center',
+      },
+    ],
+  } as unknown as FlexComponent;
+}
+
+/**
+ * 「ラベル：値」の現在値と、右端の [変更] ボタンを1行に並べる
+ * action を渡さない場合は現在値だけを表示する（変更できない状態）
+ */
+function settingRow(opts: {
+  label: string;
+  value: string;
+  action?: Record<string, unknown>;
+}): FlexComponent {
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    alignItems: 'center',
+    margin: 'md',
+    contents: [
+      {
+        type: 'text',
+        flex: 1,
+        size: 'sm',
+        wrap: true,
+        gravity: 'center',
+        contents: [
+          { type: 'span', text: `${opts.label}：`, color: '#64748B' },
+          { type: 'span', text: opts.value, color: '#0F172A', weight: 'bold' },
+        ],
+      },
+      ...(opts.action ? [changeButton(opts.action)] : []),
+    ],
+  } as unknown as FlexComponent;
+}
+
+/**
+ * 「現在の設定」セクション（支出区分・立替・カテゴリ）
+ *
+ * 現在値はリッチテキストで示し、ボタンは変更操作だけを担う。登録・編集カードで
+ * 共通に使うことで、同じUIを使う画面全体で表現を揃える。
+ */
+function buildCurrentSettingsSection(opts: {
+  expenseId: string;
+  source: ExpenseCardSource;
+  category: string;
+  status?: ExpenseStatusType;
+  includeInTotal?: boolean;
+}): FlexComponent {
+  const { expenseId, source, category, status, includeInTotal } = opts;
+  const derived = deriveExpenseSettings(status, includeInTotal);
+
+  return {
+    type: 'box',
+    layout: 'vertical',
+    margin: 'lg',
+    contents: [
+      { type: 'separator' },
+      {
+        type: 'text',
+        text: '現在の設定',
+        size: 'xs',
+        color: '#64748B',
+        margin: 'lg',
+      },
+      settingRow({
+        label: '支出区分',
+        value: derived.splitLabel,
+        action: derived.settled
+          ? undefined
+          : {
+              type: 'postback',
+              label: '支出区分を変更',
+              data: JSON.stringify({
+                action: 'set_split',
+                expenseId,
+                to: derived.nextSplit,
+                source,
+              }),
+            },
+      }),
+      settingRow({
+        label: '立替',
+        value: derived.advanceLabel,
+        action: derived.settled
+          ? undefined
+          : {
+              type: 'postback',
+              label: '立替を変更',
+              data: JSON.stringify({
+                action: 'set_advance',
+                expenseId,
+                to: derived.nextAdvance,
+                source,
+              }),
+            },
+      }),
+      settingRow({
+        label: 'カテゴリ',
+        value: category,
+        action: {
+          type: 'postback',
+          label: 'カテゴリを変更',
+          data: JSON.stringify({
+            action: 'show_category_select',
+            expenseId,
+            source,
+          }),
+        },
+      }),
+    ],
+  } as unknown as FlexComponent;
+}
+
+/**
+ * 登録・編集カードの共通ビルダー
+ *
+ * カード利用通知（Gmail）とテキスト入力登録で共通の骨格を使い、
+ * ヘッダー文言と金額下の補足行だけをフローごとに差し替える。
+ */
+function buildExpenseCard(opts: {
+  expenseId: string;
+  headerIconKey: string;
+  headerText: string;
+  title: string;
+  amount: number;
+  date: string;
+  category: string;
+  source: ExpenseCardSource;
+  status?: ExpenseStatusType;
+  includeInTotal?: boolean;
+  /** 金額行の下に差し込むフロー固有の行（残り予算・支払い方法など） */
+  detailRows?: FlexComponent[];
+  /** 「家計簿一覧を見る」の遷移先。未指定なら押下者のIDで解決する postback にする。 */
+  listUrl?: string;
+}): FlexMessage {
+  const {
+    expenseId,
+    headerIconKey,
+    headerText,
+    title,
+    amount,
+    date,
+    category,
+    source,
+    status,
+    includeInTotal,
+    detailRows = [],
+    listUrl,
+  } = opts;
 
   const bubble: FlexBubble = {
     type: 'bubble',
@@ -175,12 +379,12 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
       contents: [
         {
           type: 'icon',
-          url: iconUrl('credit-card'),
+          url: iconUrl(headerIconKey),
           size: 'md',
         },
         {
           type: 'text',
-          text: 'カード利用を記録',
+          text: headerText,
           weight: 'bold',
           size: 'md',
           color: '#10B981',
@@ -194,70 +398,41 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
       type: 'box',
       layout: 'vertical',
       contents: [
-        // 店舗名（テキスト入力版の支出カードと表記・サイズを統一）
+        // 店舗名・説明
         {
           type: 'text',
-          text: merchant,
+          text: title,
           weight: 'bold',
           size: 'lg',
           wrap: true,
         },
-        // 金額
-        {
-          type: 'text',
-          text: `¥${amount.toLocaleString()}`,
-          weight: 'bold',
-          size: 'xl',
-          color: '#0F172A',
-          margin: 'sm',
-        },
-        // カテゴリと日付
+        // 金額と日付
         {
           type: 'box',
-          layout: 'horizontal',
+          layout: 'baseline',
+          margin: 'sm',
           contents: [
             {
-              type: 'box',
-              layout: 'baseline',
+              type: 'text',
+              text: `¥${amount.toLocaleString()}`,
+              weight: 'bold',
+              size: 'xl',
+              color: '#0F172A',
               flex: 1,
-              contents: [
-                {
-                  type: 'icon',
-                  url: categoryIconUrl(category),
-                  size: 'sm',
-                },
-                {
-                  type: 'text',
-                  text: `${category}`,
-                  size: 'sm',
-                  color: '#64748B',
-                  margin: 'sm',
-                },
-              ],
             },
             {
               type: 'text',
-              text: date,
+              text: formatCardDate(date),
               size: 'sm',
               color: '#64748B',
               align: 'end',
+              flex: 0,
             },
           ],
-          margin: 'md',
         },
-        // 残り予算（設定されている場合）
-        ...(budgetText
-          ? [
-              {
-                type: 'text' as const,
-                text: budgetText,
-                size: 'sm' as const,
-                color: budgetColor,
-                margin: 'lg' as const,
-                align: 'center' as const,
-              },
-            ]
-          : []),
+        ...detailRows,
+        // 現在の設定（値の表示と [変更] 操作を分離）
+        buildCurrentSettingsSection({ expenseId, source, category, status, includeInTotal }),
       ],
       paddingAll: 'lg',
     },
@@ -265,80 +440,64 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
       type: 'box',
       layout: 'vertical',
       contents: [
-        // 1段目: 共同費・個人費
+        // 1段目: この内容で確定 / 修正
         {
           type: 'box',
           layout: 'horizontal',
           contents: [
             iconActionButton({
-              iconKey: 'users',
-              label: '共同費',
+              iconKey: 'check',
+              label: 'OK',
               variant: 'primary',
               flex: 1,
               action: {
                 type: 'postback',
-                label: '共同費',
-                data: JSON.stringify({ action: 'shared', expenseId }),
-                displayText: '共同費として記録',
+                label: 'OK',
+                data: JSON.stringify({ action: 'confirm', expenseId, source }),
+                displayText: 'この内容で確定',
               },
             }),
             iconActionButton({
-              iconKey: 'user',
-              label: '個人費',
+              iconKey: 'pencil',
+              label: '修正',
               flex: 1,
               action: {
                 type: 'postback',
-                label: '個人費',
-                data: JSON.stringify({ action: 'personal', expenseId }),
-                displayText: '個人費として除外',
+                label: '修正',
+                data: JSON.stringify({ action: 'edit', expenseId, source }),
+                displayText: '修正が必要です',
               },
             }),
           ],
           spacing: 'sm',
         },
-        // 2段目: 立替・カテゴリ変更
-        {
-          type: 'box',
-          layout: 'horizontal',
-          contents: [
-            iconActionButton({
-              iconKey: 'credit-card',
-              label: '立替',
-              flex: 1,
-              action: {
-                type: 'postback',
-                label: '立替',
-                data: JSON.stringify({ action: 'advance', expenseId }),
-                displayText: '立替として記録',
-              },
-            }),
-            iconActionButton({
-              iconImageUrl: categoryIconUrl(category),
-              label: `${category}`,
-              flex: 1,
-              action: {
-                type: 'postback',
-                label: `${category}`,
-                data: JSON.stringify({
-                  action: 'show_category_select',
-                  expenseId,
-                  source: 'gmail',
-                }),
-              },
-            }),
-          ],
-          spacing: 'sm',
-          margin: 'sm',
-        },
-        // 3段目: レシート添付
+        // 2段目: レシート添付
         iconActionButton({
           iconKey: 'paperclip',
           label: 'レシート添付',
           action: {
             type: 'uri',
             label: 'レシート添付',
-            uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
+            uri: `${WEB_APP_BASE}/attach?expenseId=${expenseId}`,
           },
+        }),
+        // 3段目: 家計簿一覧への導線
+        iconActionButton({
+          iconKey: 'external-link',
+          label: '家計簿一覧を見る',
+          action: listUrl
+            ? {
+                type: 'uri',
+                label: '家計簿一覧を見る',
+                uri: listUrl,
+              }
+            : {
+                // Gmail 通知はグループ宛の push で、押す人が誰か分からない。
+                // 押下時の userId で個人化したURLを返すため postback にする。
+                type: 'postback',
+                label: '家計簿一覧を見る',
+                data: JSON.stringify({ action: 'show_list', expenseId, source }),
+              },
         }),
       ],
       paddingAll: 'md',
@@ -348,9 +507,61 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
 
   return {
     type: 'flex',
-    altText: `${merchant} ¥${amount.toLocaleString()}`,
+    altText: `${title} ¥${amount.toLocaleString()}`,
     contents: bubble,
   };
+}
+
+/**
+ * カード利用通知の情報
+ */
+export interface CardUsageInfo {
+  expenseId: string;
+  merchant: string;
+  amount: number;
+  category: string;
+  categoryEmoji: string;
+  date: string;
+  remainingBudget?: number;
+  /** 現在の支出ステータス（未指定は pending 相当） */
+  status?: ExpenseStatusType;
+  /** 集計に含めるか。pending のときの現在値表示に使う */
+  includeInTotal?: boolean;
+}
+
+/**
+ * カード利用通知のFlex Messageを生成
+ */
+export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
+  const { expenseId, merchant, amount, category, date, remainingBudget, status, includeInTotal } = info;
+
+  // 残り予算の表示
+  const detailRows = [];
+  if (remainingBudget !== undefined) {
+    detailRows.push({
+      type: 'text' as const,
+      text: `残り予算: \u00a5${remainingBudget.toLocaleString()}`,
+      size: 'sm' as const,
+      // 残り2万円を切ったら赤で警告
+      color: remainingBudget < 20000 ? '#F43F5E' : '#10B981',
+      margin: 'md' as const,
+    });
+  }
+
+  return buildExpenseCard({
+    expenseId,
+    headerIconKey: 'credit-card',
+    headerText: 'カード利用を記録',
+    title: merchant,
+    amount,
+    date,
+    category,
+    source: 'gmail',
+    // Gmail自動取得は includeInTotal: true で作られる（未指定でも集計に入る扱い）
+    status,
+    includeInTotal: includeInTotal ?? true,
+    detailRows: detailRows as unknown as FlexComponent[],
+  });
 }
 
 /**
@@ -368,39 +579,6 @@ export async function sendCardUsageNotification(
 }
 
 /**
- * シンプルなテキストメッセージを送信
- */
-export async function sendTextMessage(
-  targetId: string,
-  text: string
-): Promise<void> {
-  const client = getLineClient();
-
-  await client.pushMessage({ to: targetId, messages: [{
-    type: 'text',
-    text,
-  }] });
-}
-
-/**
- * ステータス更新の確認メッセージを送信
- */
-export async function sendStatusUpdateConfirmation(
-  targetId: string,
-  status: 'shared' | 'personal' | 'advance',
-  merchant: string,
-  amount: number
-): Promise<void> {
-  const messages: Record<string, string> = {
-    shared: `共同費として記録しました\n${merchant} ¥${amount.toLocaleString()}`,
-    personal: `個人費として除外しました\n${merchant} ¥${amount.toLocaleString()}`,
-    advance: `立替として記録しました\n${merchant} ¥${amount.toLocaleString()}\n月末精算に含めます`,
-  };
-
-  await sendTextMessage(targetId, messages[status]);
-}
-
-/**
  * テキスト入力用の情報
  */
 export interface TextExpenseInfo {
@@ -412,213 +590,132 @@ export interface TextExpenseInfo {
   date: string;
   paymentMethod?: string;
   payerName?: string;
+  /** 現在の支出ステータス（未指定は pending 相当） */
+  status?: ExpenseStatusType;
+  /** 集計に含めるか。pending のときの現在値表示に使う */
+  includeInTotal?: boolean;
+  /** 「家計簿一覧を見る」の遷移先（送信相手の lineId を含むURL） */
+  webAppUrl?: string;
 }
 
 /**
  * テキスト入力登録完了のFlex Messageを生成
  */
 export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage {
-  const { expenseId, description, amount, category, categoryEmoji, date, paymentMethod, payerName } = info;
+  const {
+    expenseId,
+    description,
+    amount,
+    category,
+    date,
+    paymentMethod,
+    payerName,
+    status,
+    includeInTotal,
+    webAppUrl,
+  } = info;
 
-  // 支払い方法の表示
-  const paymentMethodText = paymentMethod ? `${paymentMethod}` : '';
+  // 支払い方法・支払い者（設定されている場合のみ）
+  const detailRows = [paymentMethod, payerName]
+    .filter((text): text is string => Boolean(text))
+    .map((text) => ({
+      type: 'text' as const,
+      text,
+      size: 'sm' as const,
+      color: '#475569',
+      margin: 'sm' as const,
+    }));
 
-  const bubble: FlexBubble = {
-    type: 'bubble',
-    size: 'kilo',
-    header: {
-      type: 'box',
-      layout: 'baseline',
-      contents: [
-        {
-          type: 'icon',
-          url: iconUrl('receipt'),
-          size: 'md',
-        },
-        {
-          type: 'text',
-          text: '支出を登録しました',
-          weight: 'bold',
-          size: 'md',
-          color: '#10B981',
-          margin: 'sm',
-        },
-      ],
-      paddingAll: 'lg',
-      backgroundColor: '#ECFDF5',
-    },
-    body: {
-      type: 'box',
-      layout: 'vertical',
-      contents: [
-        // 説明
-        {
-          type: 'text',
-          text: description,
-          weight: 'bold',
-          size: 'lg',
-          wrap: true,
-        },
-        // 金額
-        {
-          type: 'text',
-          text: `¥${amount.toLocaleString()}`,
-          weight: 'bold',
-          size: 'xl',
-          color: '#0F172A',
-          margin: 'sm',
-        },
-        // カテゴリと日付
-        {
-          type: 'box',
-          layout: 'horizontal',
-          contents: [
-            {
-              type: 'box',
-              layout: 'baseline',
-              flex: 1,
-              contents: [
-                {
-                  type: 'icon',
-                  url: categoryIconUrl(category),
-                  size: 'sm',
-                },
-                {
-                  type: 'text',
-                  text: `${category}`,
-                  size: 'sm',
-                  color: '#64748B',
-                  margin: 'sm',
-                },
-              ],
-            },
-            {
-              type: 'text',
-              text: date,
-              size: 'sm',
-              color: '#64748B',
-              align: 'end',
-            },
-          ],
-          margin: 'md',
-        },
-        // 支払い方法（設定されている場合）
-        ...(paymentMethodText
-          ? [
-              {
-                type: 'text' as const,
-                text: paymentMethodText,
-                size: 'sm' as const,
-                color: '#475569',
-                margin: 'sm' as const,
-              },
-            ]
-          : []),
-        // 支払い者（設定されている場合）
-        ...(payerName
-          ? [
-              {
-                type: 'text' as const,
-                text: `${payerName}`,
-                size: 'sm' as const,
-                color: '#475569',
-                margin: 'sm' as const,
-              },
-            ]
-          : []),
-      ],
-      paddingAll: 'lg',
-    },
-    footer: {
-      type: 'box',
-      layout: 'vertical',
-      contents: [
-        // 1段目: OK・修正
-        {
-          type: 'box',
-          layout: 'horizontal',
-          contents: [
-            iconActionButton({
-              iconKey: 'check',
-              label: 'OK',
-              variant: 'primary',
-              flex: 1,
-              action: {
-                type: 'postback',
-                label: 'OK',
-                data: JSON.stringify({ action: 'confirm', expenseId, source: 'text' }),
-                displayText: '登録を確認しました',
-              },
-            }),
-            iconActionButton({
-              iconKey: 'pencil',
-              label: '修正',
-              flex: 1,
-              action: {
-                type: 'postback',
-                label: '修正',
-                data: JSON.stringify({ action: 'edit', expenseId, source: 'text' }),
-                displayText: '修正が必要です',
-              },
-            }),
-          ],
-          spacing: 'sm',
-        },
-        // 2段目: 立替・カテゴリ変更
-        {
-          type: 'box',
-          layout: 'horizontal',
-          contents: [
-            iconActionButton({
-              iconKey: 'credit-card',
-              label: '立替',
-              flex: 1,
-              action: {
-                type: 'postback',
-                label: '立替',
-                data: JSON.stringify({ action: 'advance', expenseId, source: 'text' }),
-                displayText: '立替として記録',
-              },
-            }),
-            iconActionButton({
-              iconImageUrl: categoryIconUrl(category),
-              label: `${category}`,
-              flex: 1,
-              action: {
-                type: 'postback',
-                label: `${category}`,
-                data: JSON.stringify({
-                  action: 'show_category_select',
-                  expenseId,
-                  source: 'text',
-                }),
-              },
-            }),
-          ],
-          spacing: 'sm',
-          margin: 'sm',
-        },
-        // 3段目: レシート添付
-        iconActionButton({
-          iconKey: 'paperclip',
-          label: 'レシート添付',
-          action: {
-            type: 'uri',
-            label: 'レシート添付',
-            uri: `https://line-kakeibo.vercel.app/attach?expenseId=${expenseId}`,
-          },
-        }),
-      ],
-      paddingAll: 'md',
-      spacing: 'sm',
-    },
-  };
+  return buildExpenseCard({
+    expenseId,
+    headerIconKey: 'receipt',
+    headerText: '支出を登録しました',
+    title: description,
+    amount,
+    date,
+    category,
+    source: 'text',
+    status,
+    // LINE手入力は includeInTotal: false で作られる（OK を押すまで集計に入らない）
+    includeInTotal: includeInTotal ?? false,
+    detailRows: detailRows as unknown as FlexComponent[],
+    listUrl: webAppUrl,
+  });
+}
 
-  return {
-    type: 'flex',
-    altText: `${description} ¥${amount.toLocaleString()}`,
-    contents: bubble,
-  };
+/**
+ * 家計簿一覧（Webアプリ）のURLを組み立てる
+ *
+ * Web側の認証は lineId クエリだけを見る（無い場合はゲスト扱いでサンプル表示になる）ため、
+ * 押した本人の lineId を必ず含める。
+ */
+export function buildExpenseListUrl(lineId: string, lineGroupId?: string): string {
+  const base = `${WEB_APP_BASE}?lineId=${encodeURIComponent(lineId)}`;
+  return lineGroupId ? `${base}&lineGroupId=${encodeURIComponent(lineGroupId)}` : base;
+}
+
+/** カードの組み立て直しに使う、Firestoreの支出ドキュメントの部分形 */
+export interface ExpenseRecordLike {
+  description?: string;
+  amount?: number;
+  category?: string;
+  date?: string;
+  status?: ExpenseStatusType;
+  includeInTotal?: boolean;
+  inputSource?: string;
+  paymentMethod?: string;
+  payerDisplayName?: string;
+  userDisplayName?: string;
+}
+
+/**
+ * Firestoreの支出ドキュメントから登録・編集カードを組み立て直す
+ *
+ * LINEは送信済みメッセージを編集できないため、設定を変更したら最新値のカードを返信して
+ * 「現在の設定」が実際の値とずれないようにする。元の通知と同じビルダーを通すので、
+ * 登録直後のカードと変更後のカードで表現が食い違わない。
+ */
+export function buildExpenseCardFromRecord(
+  expenseId: string,
+  record: ExpenseRecordLike,
+  opts: { listUrl?: string; headerText?: string; headerIconKey?: string } = {}
+): FlexMessage {
+  const source: ExpenseCardSource = record.inputSource === 'gmail_auto' ? 'gmail' : 'text';
+
+  // 支払い方法・支払い者はテキスト入力フローのカードだけが持つ情報。
+  // Firestoreには 'cash' | 'paypay' | 'card' | 'unknown' の生値が入っているため、
+  // 登録直後のカードと同じく表示名へ変換する（'unknown' は空文字になり行ごと消える）。
+  const paymentLabel = record.paymentMethod
+    ? getPaymentMethodLabel(record.paymentMethod as PaymentMethod)
+    : '';
+
+  const detailRows =
+    source === 'text'
+      ? [paymentLabel, record.payerDisplayName ?? record.userDisplayName]
+          .filter((text): text is string => Boolean(text))
+          .map((text) => ({
+            type: 'text' as const,
+            text,
+            size: 'sm' as const,
+            color: '#475569',
+            margin: 'sm' as const,
+          }))
+      : [];
+
+  return buildExpenseCard({
+    expenseId,
+    headerIconKey: opts.headerIconKey ?? (source === 'gmail' ? 'credit-card' : 'receipt'),
+    headerText: opts.headerText ?? (source === 'gmail' ? 'カード利用を記録' : '支出を登録しました'),
+    title: record.description || '不明',
+    amount: record.amount ?? 0,
+    date: record.date ?? '',
+    category: record.category || 'その他',
+    source,
+    status: record.status,
+    includeInTotal: record.includeInTotal,
+    detailRows: detailRows as unknown as FlexComponent[],
+    listUrl: opts.listUrl,
+  });
 }
 
 /**

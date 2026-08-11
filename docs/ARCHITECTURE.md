@@ -99,8 +99,8 @@ LINEテキスト → webhook(署名検証)
   → 並列: プロフィール取得(15分cache) / appUid解決(匿名Auth) / カテゴリ分類
   → カテゴリ分類: キーワードマップ → キャッシュ → Gemini 2.5 Flash（確信度≥0.4で採用）
   → expenses 保存 (confirmed:false, includeInTotal:false, inputSource:'line_text')
-  → 確認Flex返信（OK/修正/立替/カテゴリ変更/レシート添付）
-  → postbackで status / includeInTotal / category を確定
+  → 確認Flex返信（現在の設定3行＋[変更] / OK / 修正 / レシート添付 / 家計簿一覧を見る）
+  → postbackで status / includeInTotal / category を確定 → 最新値のカードを返信
 ```
 
 ### 4.2 Gmail カード利用自動取込
@@ -110,7 +110,7 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
   → history API差分取得 → SMBCフィルタ → 利用先/金額/利用日時パース
   → Gemini分類 → Firestoreトランザクションでアトミック保存
      （gmailMessageId ＋ date+amount+usedAt±1分 の二重チェックで重複排除）
-  → LINEグループへFlex通知（shared/personal/立替 ボタン）
+  → LINEグループへFlex通知（テキスト入力と同じ登録・編集カード）
 ```
 
 ### 4.3 Web 閲覧・編集
@@ -141,7 +141,7 @@ LINEのリンク(?lineId=xxx) → Next.js（クライアント）
 
 その他のコスト施策:
 
-- **replyMessage 優先・push フォールバック**（LINE 無料枠 200 push/月の節約。※対象はテキスト支出の登録通知経路。Gmail カード通知・postback 応答・カテゴリカルーセルは push 専用）
+- **replyMessage 優先・push フォールバック**（LINE 無料枠 200 push/月の節約。※テキスト支出の登録通知と postback 応答（設定変更後のカード再送・カテゴリ選択カルーセル・各種案内）が対象。Gmail カード通知のみグループ宛の非同期プッシュで reply トークンが無く push 専用）
 - LINE プロフィール 15 分メモリキャッシュ、`Promise.allSettled` による並列化
 - レシート画像はアップロード前にクライアントで圧縮（Vision API 依存は撤廃済み＝OCR 廃止）
 - Function ごとのメモリチューニング（webhook 512MiB / Gmail 系 256MiB）
