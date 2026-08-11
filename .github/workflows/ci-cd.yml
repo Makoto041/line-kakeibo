@@ -159,13 +159,16 @@ jobs:
         run: |
           npm test --if-present || echo "::notice::No tests configured for ${{ matrix.app }}"
           
+      # 成果物を使うのは deploy-bot だけ（firebase deploy が bot/dist を同梱する）。
+      # web は Vercel の Git 連携がソースからビルドするため成果物を必要としない。
+      # なお .next は隠しディレクトリで upload-artifact v4 の既定では除外されるため、
+      # 以前の web-build は中身が空になり deploy-web のダウンロードが失敗していた。
       - name: Upload build artifacts
+        if: matrix.app == 'bot'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.app }}-build
-          path: |
-            ${{ matrix.app }}/dist
-            ${{ matrix.app }}/.next
+          name: bot-build
+          path: bot/dist
           retention-days: 1
 
   # セキュリティチェック（並列実行）
@@ -213,57 +216,12 @@ jobs:
         if: steps.init-codeql.outcome == 'success'
         uses: github/codeql-action/analyze@v3
 
-  # Webアプリデプロイ（Vercel）
-  deploy-web:
-    runs-on: ubuntu-latest
-    needs: [build-and-test, lint, changes]
-    if: |
-      github.ref == 'refs/heads/master' && 
-      github.event_name == 'push' &&
-      needs.changes.outputs.web == 'true'
-    environment:
-      name: production-web
-      url: ${{ steps.deploy.outputs.url }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          
-      - name: Download build artifacts
-        uses: actions/download-artifact@v5
-        with:
-          name: web-build
-          path: web/
-          
-      - name: Deploy to Vercel
-        id: deploy
-        run: |
-          npm install -g vercel@latest
-          cd web
-          vercel pull --environment=production --token="${{ secrets.VERCEL_TOKEN }}" --yes --project line-kakeibo
-          DEPLOYMENT_URL=$(vercel --prod --token="${{ secrets.VERCEL_TOKEN }}" --yes --project line-kakeibo)
-          echo "url=${DEPLOYMENT_URL}" >> $GITHUB_OUTPUT
-          echo "Deployed to: ${DEPLOYMENT_URL}"
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-          
-      - name: Comment deployment URL
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v8
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '🚀 Web app deployed to: ${{ steps.deploy.outputs.url }}'
-            })
+  # Web（Vercel）のデプロイジョブはここには無い。
+  # Vercel へのデプロイは Vercel の Git 連携（GitHub App）がネイティブに実行する。
+  # 以前ここにあった deploy-web は vercel CLI で二重にデプロイしようとするもので、
+  # vercel-deploy.yml が同じ理由で no-op 化されたのと同じ構成だった。加えて
+  # web-build 成果物が常に空（.next は隠しディレクトリで除外される）だったため、
+  # ダウンロード段階で必ず失敗していた。詳細は .github/workflows/vercel-deploy.yml 参照。
 
   # Bot/Functions デプロイ（Firebase）
   deploy-bot:
@@ -314,25 +272,9 @@ jobs:
   # デプロイ後の健全性チェック
   post-deploy-check:
     runs-on: ubuntu-latest
-    needs: [deploy-web, deploy-bot]
-    if: always() && (needs.deploy-web.result == 'success' || needs.deploy-bot.result == 'success')
+    needs: [deploy-bot]
+    if: always() && needs.deploy-bot.result == 'success'
     steps:
-      # web の /api/health は静的エクスポートのため無効化されている（GETは405）。
-      # 代わりにトップページの応答でデプロイの生存を確認する。
-      - name: Health check - Web
-        if: needs.deploy-web.result == 'success'
-        run: |
-          # curl 自体が失敗すると set -e でここで止まりメッセージが出ないため 000 を割り当てる
-          response=$(curl -s -L -o /dev/null -w "%{http_code}" \
-            --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
-            https://line-kakeibo.vercel.app/) || response=000
-          if [ "$response" -eq 200 ]; then
-            echo "✅ Web app is healthy"
-          else
-            echo "❌ Web app health check failed (HTTP $response)"
-            exit 1
-          fi
-
       # /health は webhook 関数（asia-northeast1）が持つ express ルート。
       # 旧URL（us-central1 直下の /health）は存在せず 404 になる。
       - name: Health check - Bot
@@ -358,7 +300,6 @@ jobs:
           status: ${{ job.status }}
           text: |
             Deployment Status:
-            - Web: ${{ needs.deploy-web.result }}
             - Bot: ${{ needs.deploy-bot.result }}
           webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
         continue-on-error: true
@@ -366,11 +307,11 @@ jobs:
   # リリースノート生成（オプション）
   release-notes:
     runs-on: ubuntu-latest
-    needs: [deploy-web, deploy-bot]
+    needs: [deploy-bot]
     if: |
-      github.ref == 'refs/heads/master' && 
+      github.ref == 'refs/heads/master' &&
       github.event_name == 'push' &&
-      (needs.deploy-web.result == 'success' || needs.deploy-bot.result == 'success')
+      needs.deploy-bot.result == 'success'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
