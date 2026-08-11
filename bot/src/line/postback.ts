@@ -18,9 +18,9 @@ import { ExpenseStatusType } from '../firestore';
 import {
   buildCategorySelectCarousel,
   buildExpenseCardFromRecord,
+  buildExpenseEditUrl,
   buildExpenseListUrl,
   CategorySelectInfo,
-  WEB_APP_BASE,
 } from './flexMessage';
 
 /**
@@ -178,8 +178,12 @@ async function applyExpenseChange(
 /**
  * 更新後の値でカードを組み立て直して返信する
  *
- * 押した本人のIDで一覧リンクを作る。Gmail通知はグループ宛のpushで送信時点では
- * 押す人が分からないため、ここで初めて個人化できる。
+ * 押した本人のIDで一覧・修正リンクを作る。Gmail通知はグループ宛のpushで送信時点では
+ * 押す人が分からないため、ここで初めて個人化できる。IDが分かったので「修正」も
+ * postback を介さずWeb編集画面へ直接飛ばせる。
+ *
+ * なおグループでは返信もグループ全員に届くため、リンクは押した本人のIDで固定される
+ * （別のメンバーが押すと、その人ではなく押した本人のIDでWebが開く）。
  */
 async function replyUpdatedCard(
   event: PostbackEvent,
@@ -189,9 +193,11 @@ async function replyUpdatedCard(
 ): Promise<void> {
   const userId = event.source!.userId;
   const listUrl = userId ? buildExpenseListUrl(userId, getGroupId(event)) : undefined;
+  const editUrl = userId ? buildExpenseEditUrl(expenseId, userId) : undefined;
 
   const card = buildExpenseCardFromRecord(expenseId, record, {
     listUrl,
+    editUrl,
     headerText,
     headerIconKey: 'check',
   });
@@ -413,6 +419,10 @@ async function handleConfirm(
 
 /**
  * 修正用のリンクを返す
+ *
+ * 押した本人のIDが分かっているカードでは「修正」は URI ボタンで直接Web編集画面へ飛ぶ。
+ * ここへ来るのはGmail通知のように送信時点で押す人が決まっていない場合と、
+ * 配信済みの古いカードから押された場合だけ。
  */
 async function handleEdit(
   event: PostbackEvent,
@@ -428,16 +438,10 @@ async function handleEdit(
     return;
   }
 
-  await loaded.ref.update({
-    needsEdit: true,
-    updatedAt: new Date(),
-  });
-
-  const editUrl = `${WEB_APP_BASE}/expenses?edit=${encodeURIComponent(
-    expenseId
-  )}&lineId=${encodeURIComponent(userId)}`;
-
-  await replyText(event, `以下のリンクから修正できます\n${editUrl}`);
+  await replyText(
+    event,
+    `以下のリンクから修正できます\n${buildExpenseEditUrl(expenseId, userId)}`
+  );
 }
 
 /**

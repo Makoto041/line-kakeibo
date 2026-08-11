@@ -73,9 +73,9 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 ```text
 現在の設定
-支出区分：共同費　　[変更]
-立替：なし　　　　　[変更]
-カテゴリ：食費　　　[変更]
+[users]  支出区分：共同費　　[変更]
+[wallet] 立替：なし　　　　　[変更]
+[食費]   カテゴリ：食費　　　[変更]
 ```
 
 | 領域 | 内容 |
@@ -83,6 +83,10 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | ヘッダー | テキスト入力=「支出を登録しました」/ カード利用=「カード利用を記録」 |
 | 本文 | 店舗名・説明 → 金額と日付 → （残り予算 / 支払い方法・支払い者）→ 「現在の設定」3行 |
 | フッター | `OK` `修正` / `レシート添付` / `家計簿一覧を見る` |
+
+各行の先頭にはアイコンを置く。支出区分は共同費系が `users`・個人費/未設定が `user`、立替は `wallet`、カテゴリは `categoryIconUrl()` が返すカテゴリ別アイコン（未知のカテゴリは `cat-other`）。値をボタンで並べていた頃と同じ絵柄を使い、表示だけになっても見た目の手がかりが減らないようにする。
+
+**「修正」は押す人が分かっていれば URI ボタンで Web 編集画面へ直接飛ぶ**（テキスト入力の登録カード、および postback 応答で返す再構築カード）。Gmail のカード利用通知はグループ宛の push で送信時点では押下者が不明なため、`edit` postback で押した人の `lineId` を含む URL を返す方式を残す。なおグループではカードが全員に届くため、URI ボタンのリンクは組み立てた時点の本人の `lineId` で固定される（`家計簿一覧を見る` の直リンクと同じ性質）。
 
 支出区分と立替は単一の `status` フィールドに排他的に入るため、表示上の 2 行は `status` から導出する（`deriveExpenseSettings()`）。`pending` のときだけ、実際の集計挙動（`includeInTotal`）に合わせて表示を変える。
 
@@ -106,7 +110,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | `set_split`（`to: shared \| personal`） | `status` を設定し `includeInTotal` を連動（`shared`=true / `personal`=false）。立替は解除（`advanceBy` を削除）。あわせて `confirmed: true` |
 | `set_advance`（`to: on \| off`） | on=`status: 'advance_pending'`・`advanceBy` に押下者 / off=`status: 'shared'`・`advanceBy` 削除。いずれも `includeInTotal: true`・`confirmed: true` |
 | `confirm`（OK） | `confirmed: true`。**`pending` のときだけ** `status: 'shared'`・`includeInTotal: true` へ昇格（設定済みの支出を共同費へ巻き戻さない） |
-| `edit`（修正） | `needsEdit: true` を設定し、Web 編集 URL（`/expenses?edit=<id>&lineId=...`）を案内 |
+| `edit`（修正） | 押下者の `lineId` を含む Web 編集 URL（`/expenses?edit=<id>&lineId=...`）を返信。**押す人が分かっているカードでは「修正」は URI ボタンで直接 Web を開く**ため、この postback へ来るのは Gmail 通知と配信済みの古いカードだけ |
 | `show_category_select` / `set_category` | カテゴリ選択カルーセルを表示 / カテゴリを更新 |
 | `show_list` | 押下者の `lineId` を含む家計簿一覧 URL を返す |
 | `shared` / `personal` / `advance`（旧 UI） | 配信済みカードからの押下に備えて `set_split` / `set_advance` へ読み替える |
@@ -198,7 +202,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 | コレクション | 主なフィールド | 備考 |
 |---|---|---|
-| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`), `inputSource`(`line_text\|gmail_auto`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `receiptUrl?`, `needsEdit?`, `items?[]`, `ocrText?`, `createdAt`, `updatedAt` | 中核コレクション |
+| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`), `inputSource`(`line_text\|gmail_auto`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `receiptUrl?`, `needsEdit?`（**レガシー**。書き込み・読み出しとも廃止済みで既存データにのみ存在）, `items?[]`, `ocrText?`, `createdAt`, `updatedAt` | 中核コレクション |
 | `groups` | `name`, `inviteCode`(6桁), `createdBy`, `lineGroupId?` | 汎用グループ機能はコード上「非推奨」— 実運用は LINE グループ共有 |
 | `groupMembers` | `groupId`, `lineId`, `displayName`, `isActive`, `joinedAt` | |
 | `userSettings/{lineId}` | `defaultCategory?`, `dateSettings` | 集計期間設定も格納 |

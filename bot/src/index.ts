@@ -32,6 +32,7 @@ import {
 import {
   buildExpenseSummaryFlexMessage,
   buildEmptyExpenseSummaryFlexMessage,
+  buildExpenseEditUrl,
   buildExpenseListUrl,
   ExpenseSummaryInfo,
 } from "./line/flexMessage";
@@ -1111,6 +1112,11 @@ async function processExpenseInBackground(
         includeInTotal: expense.includeInTotal,
         webAppUrl: event.source.userId
           ? buildExpenseListUrl(event.source.userId, lineGroupId)
+          : undefined,
+        // 「修正」はWeb編集画面への直リンク。グループの場合カードはグループ全員に
+        // 届くため、リンクは入力した本人のIDで固定される（上の webAppUrl と同じ性質）。
+        editUrl: event.source.userId
+          ? buildExpenseEditUrl(expenseId, event.source.userId)
           : undefined,
       };
 
