@@ -154,11 +154,14 @@ jobs:
         working-directory: ./${{ matrix.app }}
         run: npm run build
         
+      # --if-present は test スクリプトが無ければ 0 で終わるので、スクリプト未定義の
+      # ワークスペースでも失敗しない。`|| echo` を付けるとテストが落ちても緑になり、
+      # テストを追加しても意味がなくなるため付けない。
       - name: Run tests
         working-directory: ./${{ matrix.app }}
-        run: |
-          npm test --if-present || echo "::notice::No tests configured for ${{ matrix.app }}"
-          
+        run: npm test --if-present
+
+
       # 成果物を使うのは deploy-bot だけ（firebase deploy が bot/dist を同梱する）。
       # web は Vercel の Git 連携がソースからビルドするため成果物を必要としない。
       # なお .next は隠しディレクトリで upload-artifact v4 の既定では除外されるため、
