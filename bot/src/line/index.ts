@@ -9,6 +9,7 @@ export {
   buildCardUsageFlexMessage,
   sendCardUsageNotification,
   buildExpenseCardFromRecord,
+  buildExpenseEditUrl,
   buildExpenseListUrl,
   CardUsageInfo,
   // テキスト入力用

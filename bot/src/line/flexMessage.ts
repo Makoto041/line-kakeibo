@@ -81,6 +81,9 @@ const CATEGORY_ICON_KEY: Record<string, string> = {
   旅行: 'cat-travel',
   ペット: 'cat-pet',
   貯金: 'cat-savings',
+  貯蓄: 'cat-savings',
+  投資: 'cat-savings',
+  交際費: 'cat-fun',
   その他: 'cat-other',
 };
 
@@ -153,6 +156,8 @@ export type ExpenseCardSource = 'gmail' | 'text';
 export interface DerivedExpenseSettings {
   /** 支出区分の現在値 */
   splitLabel: string;
+  /** 支出区分の行頭に置くアイコン（共同費は複数人、個人費・未設定は単体） */
+  splitIconKey: 'users' | 'user';
   /** 支出区分の [変更] で設定する値 */
   nextSplit: 'shared' | 'personal';
   /** 立替の現在値 */
@@ -177,18 +182,18 @@ export function deriveExpenseSettings(
 ): DerivedExpenseSettings {
   switch (status) {
     case 'shared':
-      return { splitLabel: '共同費', nextSplit: 'personal', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
+      return { splitLabel: '共同費', splitIconKey: 'users', nextSplit: 'personal', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
     case 'personal':
-      return { splitLabel: '個人費', nextSplit: 'shared', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
+      return { splitLabel: '個人費', splitIconKey: 'user', nextSplit: 'shared', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
     case 'advance_pending':
-      return { splitLabel: '共同費', nextSplit: 'personal', advanceLabel: 'あり（精算待ち）', nextAdvance: 'off', settled: false };
+      return { splitLabel: '共同費', splitIconKey: 'users', nextSplit: 'personal', advanceLabel: 'あり（精算待ち）', nextAdvance: 'off', settled: false };
     case 'advance_settled':
-      return { splitLabel: '共同費', nextSplit: 'personal', advanceLabel: '精算済み', nextAdvance: 'off', settled: true };
+      return { splitLabel: '共同費', splitIconKey: 'users', nextSplit: 'personal', advanceLabel: '精算済み', nextAdvance: 'off', settled: true };
     default:
       // pending / 未設定
       return includeInTotal === false
-        ? { splitLabel: '未設定', nextSplit: 'shared', advanceLabel: 'なし', nextAdvance: 'on', settled: false }
-        : { splitLabel: '共同費（未確認）', nextSplit: 'personal', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
+        ? { splitLabel: '未設定', splitIconKey: 'user', nextSplit: 'shared', advanceLabel: 'なし', nextAdvance: 'on', settled: false }
+        : { splitLabel: '共同費（未確認）', splitIconKey: 'users', nextSplit: 'personal', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
   }
 }
 
@@ -199,7 +204,12 @@ export function formatCardDate(date?: string): string {
   return matched ? `${Number(matched[2])}/${Number(matched[3])}` : date;
 }
 
-/** 現在値の行末に置く、変更操作だと分かる小さなボタン */
+/**
+ * 現在値の行末に置く、変更操作だと分かるボタン
+ *
+ * 余白と文字を最小指定にすると高さが文字とほぼ同じになり、指で狙いにくい。
+ * 隣の行を誤って触らない程度の押し代を持たせる。
+ */
 function changeButton(action: Record<string, unknown>): FlexComponent {
   return {
     type: 'box',
@@ -207,15 +217,15 @@ function changeButton(action: Record<string, unknown>): FlexComponent {
     flex: 0,
     action,
     backgroundColor: '#EFF6FF',
-    cornerRadius: '6px',
-    paddingAll: 'xs',
-    paddingStart: 'md',
-    paddingEnd: 'md',
+    cornerRadius: '8px',
+    paddingAll: 'lg',
+    paddingStart: 'xl',
+    paddingEnd: 'xl',
     contents: [
       {
         type: 'text',
         text: '変更',
-        size: 'xs',
+        size: 'sm',
         weight: 'bold',
         color: '#2563EB',
         align: 'center',
@@ -225,10 +235,14 @@ function changeButton(action: Record<string, unknown>): FlexComponent {
 }
 
 /**
- * 「ラベル：値」の現在値と、右端の [変更] ボタンを1行に並べる
+ * 行頭のアイコン、「ラベル：値」の現在値、右端の [変更] ボタンを1行に並べる
+ *
+ * アイコンは値を一目で判別するための手がかり。ボタン化されていた頃と同じ絵柄を使い、
+ * 表示だけになっても見た目の手がかりが減らないようにする。
  * action を渡さない場合は現在値だけを表示する（変更できない状態）
  */
 function settingRow(opts: {
+  iconUrl: string;
   label: string;
   value: string;
   action?: Record<string, unknown>;
@@ -239,12 +253,14 @@ function settingRow(opts: {
     alignItems: 'center',
     margin: 'md',
     contents: [
+      { type: 'image', url: opts.iconUrl, size: '20px', flex: 0 },
       {
         type: 'text',
         flex: 1,
         size: 'sm',
         wrap: true,
         gravity: 'center',
+        margin: 'md',
         contents: [
           { type: 'span', text: `${opts.label}：`, color: '#64748B' },
           { type: 'span', text: opts.value, color: '#0F172A', weight: 'bold' },
@@ -285,6 +301,7 @@ function buildCurrentSettingsSection(opts: {
         margin: 'lg',
       },
       settingRow({
+        iconUrl: iconUrl(derived.splitIconKey),
         label: '支出区分',
         value: derived.splitLabel,
         action: derived.settled
@@ -301,6 +318,7 @@ function buildCurrentSettingsSection(opts: {
             },
       }),
       settingRow({
+        iconUrl: iconUrl('wallet'),
         label: '立替',
         value: derived.advanceLabel,
         action: derived.settled
@@ -317,6 +335,7 @@ function buildCurrentSettingsSection(opts: {
             },
       }),
       settingRow({
+        iconUrl: categoryIconUrl(category),
         label: 'カテゴリ',
         value: category,
         action: {
@@ -354,6 +373,8 @@ function buildExpenseCard(opts: {
   detailRows?: FlexComponent[];
   /** 「家計簿一覧を見る」の遷移先。未指定なら押下者のIDで解決する postback にする。 */
   listUrl?: string;
+  /** 「修正」の遷移先。未指定なら押下者のIDで解決する postback にする。 */
+  editUrl?: string;
 }): FlexMessage {
   const {
     expenseId,
@@ -368,6 +389,7 @@ function buildExpenseCard(opts: {
     includeInTotal,
     detailRows = [],
     listUrl,
+    editUrl,
   } = opts;
 
   const bubble: FlexBubble = {
@@ -461,12 +483,20 @@ function buildExpenseCard(opts: {
               iconKey: 'pencil',
               label: '修正',
               flex: 1,
-              action: {
-                type: 'postback',
-                label: '修正',
-                data: JSON.stringify({ action: 'edit', expenseId, source }),
-                displayText: '修正が必要です',
-              },
+              action: editUrl
+                ? {
+                    type: 'uri',
+                    label: '修正',
+                    uri: editUrl,
+                  }
+                : {
+                    // Gmail通知はグループ宛のpushで押す人が分からない。編集URLは
+                    // lineId で本人を判定するため、押下時のIDで組み立てて返す。
+                    type: 'postback',
+                    label: '修正',
+                    data: JSON.stringify({ action: 'edit', expenseId, source }),
+                    displayText: '修正が必要です',
+                  },
             }),
           ],
           spacing: 'sm',
@@ -596,6 +626,8 @@ export interface TextExpenseInfo {
   includeInTotal?: boolean;
   /** 「家計簿一覧を見る」の遷移先（送信相手の lineId を含むURL） */
   webAppUrl?: string;
+  /** 「修正」の遷移先（送信相手の lineId を含むWeb編集URL） */
+  editUrl?: string;
 }
 
 /**
@@ -613,6 +645,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     status,
     includeInTotal,
     webAppUrl,
+    editUrl,
   } = info;
 
   // 支払い方法・支払い者（設定されている場合のみ）
@@ -640,6 +673,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     includeInTotal: includeInTotal ?? false,
     detailRows: detailRows as unknown as FlexComponent[],
     listUrl: webAppUrl,
+    editUrl,
   });
 }
 
@@ -652,6 +686,17 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
 export function buildExpenseListUrl(lineId: string, lineGroupId?: string): string {
   const base = `${WEB_APP_BASE}?lineId=${encodeURIComponent(lineId)}`;
   return lineGroupId ? `${base}&lineGroupId=${encodeURIComponent(lineGroupId)}` : base;
+}
+
+/**
+ * Web編集画面のURLを組み立てる
+ *
+ * 一覧と同じく lineId で本人を判定するため、開く本人のIDを必ず含める。
+ */
+export function buildExpenseEditUrl(expenseId: string, lineId: string): string {
+  return `${WEB_APP_BASE}/expenses?edit=${encodeURIComponent(
+    expenseId
+  )}&lineId=${encodeURIComponent(lineId)}`;
 }
 
 /** カードの組み立て直しに使う、Firestoreの支出ドキュメントの部分形 */
@@ -678,7 +723,12 @@ export interface ExpenseRecordLike {
 export function buildExpenseCardFromRecord(
   expenseId: string,
   record: ExpenseRecordLike,
-  opts: { listUrl?: string; headerText?: string; headerIconKey?: string } = {}
+  opts: {
+    listUrl?: string;
+    editUrl?: string;
+    headerText?: string;
+    headerIconKey?: string;
+  } = {}
 ): FlexMessage {
   const source: ExpenseCardSource = record.inputSource === 'gmail_auto' ? 'gmail' : 'text';
 
@@ -715,6 +765,7 @@ export function buildExpenseCardFromRecord(
     includeInTotal: record.includeInTotal,
     detailRows: detailRows as unknown as FlexComponent[],
     listUrl: opts.listUrl,
+    editUrl: opts.editUrl,
   });
 }
 
