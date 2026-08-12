@@ -169,7 +169,11 @@ LINEのリンク(?lineId=xxx) → Next.js（クライアント）
 ## 7. デプロイ・CI/CD
 
 - **ブランチ運用**: `feature/* → develop → master`（`DEPLOYMENT_SETUP.md`）。develop = Vercel プレビュー、master = 本番
-- **GitHub Actions**: `deploy-develop.yml` / `deploy-production.yml` / `pr-checks.yml`。Secrets: `FIREBASE_SERVICE_ACCOUNT_*`, `FIREBASE_TOKEN`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`
+- **デプロイの担当**:
+  - Web（Vercel）→ **Vercel の Git 連携が実行**する。GitHub Actions 側にデプロイジョブは持たない（`vercel-deploy.yml` は意図的に no-op）
+  - Bot / Firestore ルール・インデックス → `ci-cd.yml` の `deploy-bot`（master への push のみ）
+- **`deploy-bot` の前提**: リポジトリ（または `production-bot` Environment）に **`GCP_SA_KEY`** が必要。値は Firebase プロジェクトのサービスアカウント JSON。`onRequest({ secrets: [...] })` を使う関数をデプロイするため、Cloud Functions / Cloud Run のデプロイ権限に加えて **Secret Manager の参照権限**も要る。未設定だと `google-github-actions/auth` が `must specify exactly one of "workload_identity_provider" or "credentials_json"` で失敗する
+- **GitHub Actions**: `ci-cd.yml`（本線）/ `pr-checks.yml` / `deploy-develop.yml`。`deploy-production.yml` は `ci-cd.yml` と重複するため手動実行（`workflow_dispatch`）専用。Secrets: `GCP_SA_KEY`, `FIREBASE_PROJECT_ID`（未設定時は `.firebaserc` の値にフォールバック）
 - **手動スクリプト**: `web/deploy-vercel.sh`（lint→build→vercel --prod）、`deploy-bot.sh`（firebase deploy --only functions）、`deploy-all.sh`
 - ローカル開発: `web` は `npm run dev`（:3000）、`bot` は `ts-node-dev`（:8080）＋ Firebase Emulator（`NEXT_PUBLIC_USE_FIREBASE_EMULATOR`）
 
