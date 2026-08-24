@@ -5,7 +5,8 @@
  * 三井住友カードの利用通知を処理して支出を自動登録
  */
 
-import dayjs from 'dayjs';
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { formatJST, toJSTDateString } from '../time';
 import { getGmailClient } from './auth';
 import { getWatchState, updateHistoryId } from './watch';
 import {
@@ -58,8 +59,59 @@ export async function handleGmailPubSub(data: string): Promise<void> {
 }
 
 /**
+ * 同じメッセージで諦めるまでの試行回数
+ *
+ * 恒久的に処理できないメール（パースできない等）で historyId が永久に止まるのを防ぐ。
+ */
+const MAX_MESSAGE_ATTEMPTS = 3;
+
+/** 失敗したメッセージの記録。`system/gmailFailures` に messageId ごとの試行回数を持つ */
+async function recordMessageFailure(messageId: string, error: unknown): Promise<number> {
+  const db = getFirestore();
+  const ref = db.collection('system').doc('gmailFailures');
+
+  return db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    const failures = (snapshot.exists ? snapshot.data() : {}) || {};
+    const previous = (failures[messageId]?.attempts as number | undefined) ?? 0;
+    const attempts = previous + 1;
+
+    transaction.set(
+      ref,
+      {
+        [messageId]: {
+          attempts,
+          lastError: String((error as Error)?.message ?? error).slice(0, 500),
+          lastFailedAt: Timestamp.now(),
+        },
+      },
+      { merge: true }
+    );
+
+    return attempts;
+  });
+}
+
+/** 処理できたメッセージを失敗記録から外す */
+async function clearMessageFailure(messageId: string): Promise<void> {
+  const db = getFirestore();
+  await db
+    .collection('system')
+    .doc('gmailFailures')
+    .set({ [messageId]: FieldValue.delete() }, { merge: true })
+    .catch((error) => console.warn(`Failed to clear failure record for ${messageId}:`, error));
+}
+
+/**
  * 新着メールを取得して処理
  * ページネーション対応：全ページを処理してからhistoryIdを更新
+ *
+ * 1通でも処理に失敗したら historyId を進めない。以前は個別の失敗を握り潰したまま
+ * historyId を進めていたため、一過性のエラー（Gemini/LINE/Firestore の失敗や
+ * トランザクション競合）で落ちたカード利用が**二度と再処理されず消えていた**。
+ * Pub/Sub の再送に委ねる（重複は gmailMessageId で弾かれる）。
+ * ただし同じメッセージが MAX_MESSAGE_ATTEMPTS 回失敗したら、その1通は諦めて先へ進む
+ * （恒久的に処理できない1通で以降の取り込みが止まらないようにする）。
  */
 async function processNewEmails(newHistoryId: string): Promise<void> {
   const gmail = await getGmailClient();
@@ -72,6 +124,8 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
 
   const startHistoryId = watchState.historyId;
   const processedMessageIds: string[] = [];
+  const retryableFailures: string[] = [];
+  const abandonedFailures: string[] = [];
 
   try {
     let pageToken: string | undefined;
@@ -98,12 +152,42 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
           if (processedMessageIds.includes(messageId)) continue;
           processedMessageIds.push(messageId);
 
-          await processMessage(gmail, messageId);
+          try {
+            await processMessage(gmail, messageId);
+            await clearMessageFailure(messageId);
+          } catch (messageError) {
+            const attempts = await recordMessageFailure(messageId, messageError);
+            console.error(
+              `Failed to process message ${messageId} (attempt ${attempts}/${MAX_MESSAGE_ATTEMPTS}):`,
+              messageError
+            );
+            if (attempts >= MAX_MESSAGE_ATTEMPTS) {
+              abandonedFailures.push(messageId);
+            } else {
+              retryableFailures.push(messageId);
+            }
+          }
         }
       }
 
       pageToken = historyResponse.data.nextPageToken || undefined;
     } while (pageToken);
+
+    if (abandonedFailures.length > 0) {
+      console.error(
+        `Giving up on ${abandonedFailures.length} message(s) after ${MAX_MESSAGE_ATTEMPTS} attempts: ` +
+          `${abandonedFailures.join(', ')}. ` +
+          'Re-run manually with POST /gmail/force-process/:messageId after fixing the cause.'
+      );
+    }
+
+    if (retryableFailures.length > 0) {
+      // historyId を進めずに投げ直す。Pub/Sub が再送し、次回この範囲をやり直す。
+      throw new Error(
+        `${retryableFailures.length} message(s) failed, keeping historyId at ${startHistoryId} for retry: ` +
+          retryableFailures.join(', ')
+      );
+    }
 
     // 全ページ処理完了後にhistoryIdを更新
     await updateHistoryId(newHistoryId);
@@ -111,7 +195,10 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
   } catch (error: any) {
     // historyIdが古すぎる場合は最新に更新
     if (error.code === 404) {
-      console.warn('History ID too old, updating to latest');
+      console.error(
+        `History ID ${startHistoryId} is too old (Gmail keeps ~1 week). ` +
+          `Skipping to ${newHistoryId}; mail in between is NOT imported.`
+      );
       await updateHistoryId(newHistoryId);
     } else {
       throw error;
@@ -175,7 +262,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       lineId: GMAIL_SYSTEM_LINE_ID, // システムユーザーとして登録
       amount: parsed.amount,
       description: parsed.merchant,
-      date: dayjs(parsed.usedAt).format('YYYY-MM-DD'),
+      date: toJSTDateString(parsed.usedAt),
       category,
       confirmed: false, // 未確認状態
       includeInTotal: true, // Gmail自動取得は基本的に会計に含める
@@ -206,7 +293,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
         amount: parsed.amount,
         category,
         categoryEmoji: getCategoryEmoji(category),
-        date: dayjs(parsed.usedAt).format('M/D'),
+        date: formatJST(parsed.usedAt, 'M/D'),
         // 保存時の値と揃える（Gmail自動取得は未確認でも集計に入る）
         status: 'pending',
         includeInTotal: true,
@@ -216,8 +303,10 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       console.warn('LINE_GROUP_ID not configured, skipping notification');
     }
   } catch (error) {
+    // 呼び出し元（processNewEmails）が試行回数を記録し、historyId を進めるかを決める。
+    // ここで握り潰すと、失敗したメールが再処理されないまま historyId だけ進んでしまう。
     console.error(`Failed to process message ${messageId}:`, error);
-    // 個別のメッセージ処理エラーは全体を止めない
+    throw error;
   }
 }
 
@@ -281,7 +370,7 @@ export async function processLatestEmail(): Promise<{
         lineId: GMAIL_SYSTEM_LINE_ID,
         amount: parsed.amount,
         description: parsed.merchant,
-        date: dayjs(parsed.usedAt).format('YYYY-MM-DD'),
+        date: toJSTDateString(parsed.usedAt),
         category: categoryResult.category || 'その他',
         confirmed: false,
         includeInTotal: true, // Gmail自動取得は基本的に会計に含める
@@ -394,7 +483,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
       lineId: GMAIL_SYSTEM_LINE_ID,
       amount: parsed.amount,
       description: parsed.merchant,
-      date: dayjs(parsed.usedAt).format('YYYY-MM-DD'),
+      date: toJSTDateString(parsed.usedAt),
       category,
       confirmed: false,
       includeInTotal: true, // Gmail自動取得は基本的に会計に含める
@@ -428,7 +517,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
         amount: parsed.amount,
         category,
         categoryEmoji: getCategoryEmoji(category),
-        date: dayjs(parsed.usedAt).format('M/D'),
+        date: formatJST(parsed.usedAt, 'M/D'),
         // 保存時の値と揃える（Gmail自動取得は未確認でも集計に入る）
         status: 'pending',
         includeInTotal: true,

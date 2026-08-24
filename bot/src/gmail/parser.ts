@@ -7,7 +7,7 @@
 
 import { ParsedCardNotification, SMBC_CARD_FILTER } from './types';
 import { getFirestore } from 'firebase-admin/firestore';
-import dayjs from 'dayjs';
+import { parseJSTWallClock, toJSTDateString } from '../time';
 
 /**
  * メールが三井住友ゴールドVISA（NL）の利用通知かどうか判定
@@ -84,7 +84,9 @@ export function parseSMBCCardEmail(
     if (dateMatch) {
       const dateStr = dateMatch[1];
       const timeStr = dateMatch[2] || '00:00';
-      usedAt = new Date(`${dateStr.replace(/\//g, '-')} ${timeStr}`);
+      // メール本文の日時は JST の壁時計表記。コンテナのTZ（本番は UTC）で
+      // 解釈すると9時間ずれた瞬間になるため、JST として読む。
+      usedAt = parseJSTWallClock(dateStr.replace(/\//g, '-'), timeStr);
     } else {
       // 日時が見つからない場合は現在時刻を使用
       usedAt = new Date();
@@ -235,8 +237,8 @@ export async function isDuplicateByTimestamp(
   amount: number
 ): Promise<boolean> {
   const db = getFirestore();
-  // 保存時と同じくdayjsを使用してローカルタイムゾーンで日付を正規化
-  const date = dayjs(usedAt).format('YYYY-MM-DD');
+  // 保存時（handler.ts）と同じ整形にそろえる。片方だけ変えると重複判定が壊れる
+  const date = toJSTDateString(usedAt);
 
   // 同じ日付で同じ金額のGmail自動取得の支出のみを検索
   const snapshot = await db
