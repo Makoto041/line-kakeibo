@@ -10,8 +10,8 @@ import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
 
-// dayjs のプラグインはプロセスで一度拡張すれば全体に効く。
-// 日付を扱うモジュールはこのファイル経由で dayjs を使う。
+// dayjs のプラグインはプロセスで一度拡張すれば全体に効く（既存の単一引数パースの挙動は変わらない）。
+// タイムゾーンや書式指定パースが要るモジュールは、このファイル経由で dayjs を使う。
 dayjs.extend(utc);
 dayjs.extend(timezone);
 dayjs.extend(customParseFormat);
