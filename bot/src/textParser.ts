@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import { dayjs, nowJST, todayJST } from './time';
 
 // 支払い方法
 export type PaymentMethod = 'cash' | 'paypay' | 'card' | 'unknown';
@@ -32,6 +32,46 @@ const PAYMENT_KEYWORDS: { [key: string]: PaymentMethod } = {
   'クレジット': 'card',
 };
 
+/** 日付トークンとして認識する形（YYYY-MM-DD / M/D / M月D日） */
+const DATE_TOKEN = /^(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}|\d{1,2}月\d{1,2}日?)$/;
+
+function pad(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+/**
+ * 年月日から YYYY-MM-DD を作る（実在しない日は今日に倒す）
+ *
+ * 厳密パースにするのは 2/31 のような入力を silently ずらさないため。
+ */
+function formatYMD(year: number, month: number, day: number): string {
+  const parsed = dayjs(`${year}-${pad(month)}-${pad(day)}`, 'YYYY-MM-DD', true);
+  return parsed.isValid() ? parsed.format('YYYY-MM-DD') : todayJST();
+}
+
+/**
+ * 日付トークンを YYYY-MM-DD へ解決する
+ *
+ * 年の無い「6/29」「6月29日」は JST の今年として扱う。
+ * 以前は `dayjs('6/29', ['M/D'])` としていたが、customParseFormat プラグインを
+ * 読み込んでいないため書式指定が無視され、`new Date('6/29')` 相当の解釈で
+ * **2001年** になっていた（保存はされるがアプリのどの月にも出てこない）。
+ */
+function resolveDate(dateStr?: string): string {
+  if (!dateStr) return todayJST();
+
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(dateStr);
+  if (iso) return formatYMD(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+
+  const monthDay =
+    /^(\d{1,2})\/(\d{1,2})$/.exec(dateStr) || /^(\d{1,2})月(\d{1,2})日?$/.exec(dateStr);
+  if (monthDay) {
+    return formatYMD(nowJST().year(), Number(monthDay[1]), Number(monthDay[2]));
+  }
+
+  return todayJST();
+}
+
 /**
  * 「500 ランチ」「6/29 4800 家賃」「1500 現金 ドラッグストア」などを解析
  *
@@ -39,7 +79,7 @@ const PAYMENT_KEYWORDS: { [key: string]: PaymentMethod } = {
  * - 基本: "500 ランチ"
  * - 日付付き: "6/29 4800 家賃"
  * - 支払い方法指定: "1500 現金 ドラッグストア"
- * - カテゴリ指定: "3000 スーパー 食費"
+ * - カテゴリ指定: "3000 スーパー 食費" / "光熱費 28727"
  */
 export function parseTextExpense(input: string): ParsedTextExpense | null {
   const tokens = input.trim().split(/\s+/);
@@ -50,28 +90,8 @@ export function parseTextExpense(input: string): ParsedTextExpense | null {
   const amount = Number(tokens[amountIdx].replace(/[,円]/g, ''));
 
   // 日付っぽいトークンを探す
-  const dateIdx = tokens.findIndex(t => /^(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}|\d{1,2}月\d{1,2}日?)$/.test(t));
-  const dateStr = dateIdx !== -1 ? tokens[dateIdx] : undefined;
-
-  let date: string;
-  if (dateStr) {
-    if (dateStr.includes('月')) {
-      // MM月DD日 形式
-      const match = dateStr.match(/(\d{1,2})月(\d{1,2})日?/);
-      if (match) {
-        const month = match[1].padStart(2, '0');
-        const day = match[2].padStart(2, '0');
-        date = dayjs(`${dayjs().year()}-${month}-${day}`).format('YYYY-MM-DD');
-      } else {
-        date = dayjs().format('YYYY-MM-DD');
-      }
-    } else {
-      // YYYY-MM-DD や M/D 形式
-      date = dayjs(dateStr, ['YYYY-MM-DD', 'M/D', 'MM/DD']).format('YYYY-MM-DD');
-    }
-  } else {
-    date = dayjs().format('YYYY-MM-DD');
-  }
+  const dateIdx = tokens.findIndex(t => DATE_TOKEN.test(t));
+  const date = resolveDate(dateIdx !== -1 ? tokens[dateIdx] : undefined);
 
   // 支払い方法を検出
   let paymentMethod: PaymentMethod = 'unknown';
@@ -100,10 +120,13 @@ export function parseTextExpense(input: string): ParsedTextExpense | null {
   }
 
   // 残りは説明（金額、日付、支払い方法、カテゴリを除く）
+  // 「光熱費 28727」のようにカテゴリと金額だけの入力では残りが空になる。
+  // 一覧に「支出」が並ぶと見分けが付かないため、その場合はカテゴリ名を説明にする。
   const excludeIndices = new Set([amountIdx, dateIdx, paymentIdx, categoryIdx].filter(i => i !== -1));
   const description = tokens
     .filter((_, i) => !excludeIndices.has(i))
     .join(' ')
+    || category
     || '支出';
 
   return { amount, date, description, paymentMethod, category };
