@@ -108,14 +108,37 @@ export async function getWatchState(): Promise<GmailWatchState | null> {
   };
 }
 
+/** historyId は uint64 の文字列。桁があふれるので BigInt で比較する */
+function isNewerHistoryId(candidate: string, current: string): boolean {
+  try {
+    return BigInt(candidate) > BigInt(current);
+  } catch {
+    // 数値として読めない値が入っていたら、比較を諦めて更新を許す
+    return true;
+  }
+}
+
 /**
- * historyIdを更新
+ * historyIdを更新（前進のみ）
+ *
+ * Pub/Sub は at-least-once で順序保証が無いため、古い通知が後着すると historyId が
+ * 巻き戻る。巻き戻ると次回の `history.list` が既知の範囲を取り直すことになり、
+ * 404（履歴が古すぎる）と重なったときに取りこぼす。必ず新しい方を残す。
  */
 export async function updateHistoryId(historyId: string): Promise<void> {
   const db = getFirestore();
-  await db.collection('system').doc('gmailState').update({
-    historyId,
-    updatedAt: Timestamp.now(),
+  const ref = db.collection('system').doc('gmailState');
+
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    const current = snapshot.exists ? (snapshot.data()?.historyId as string | undefined) : undefined;
+
+    if (current && !isNewerHistoryId(historyId, current)) {
+      console.log(`Skipping historyId rollback: current=${current}, incoming=${historyId}`);
+      return;
+    }
+
+    transaction.set(ref, { historyId, updatedAt: Timestamp.now() }, { merge: true });
   });
 }
 

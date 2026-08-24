@@ -29,3 +29,24 @@ export function todayJST(): string {
 }
 
 export { dayjs };
+
+/** 任意の日時を JST の YYYY-MM-DD にする */
+export function toJSTDateString(value: Date | string): string {
+  return dayjs(value).tz(JST).format('YYYY-MM-DD');
+}
+
+/** 任意の日時を JST で書式化する */
+export function formatJST(value: Date | string, template: string): string {
+  return dayjs(value).tz(JST).format(template);
+}
+
+/**
+ * 「2026/3/14 19:20」のような JST の壁時計表記を Date にする
+ *
+ * `new Date('2026-03-14 19:20')` はコンテナのTZ（本番は UTC）で解釈されるため、
+ * JST の表記をそのまま渡すと実時刻より9時間ずれた瞬間になる。
+ */
+export function parseJSTWallClock(dateStr: string, timeStr: string): Date {
+  const parsed = dayjs.tz(`${dateStr} ${timeStr}`, 'YYYY-M-D H:mm', JST);
+  return parsed.isValid() ? parsed.toDate() : new Date();
+}
