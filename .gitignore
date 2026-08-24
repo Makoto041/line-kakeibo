@@ -6,6 +6,11 @@ yarn.lock
 .env
 .env.local
 .env.production
+# 環境変数の受け渡し用に手で置いたコピー（*.incoming）も追跡しない。
+# gitignore から漏れていたため `git add -A` で秘密値ごとコミットされた実績がある。
+*.incoming
+# .env を書き換える際のバックアップも同様に追跡しない
+*.bak
 
 # OS
 .DS_Store

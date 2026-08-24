@@ -38,6 +38,7 @@ import {
 } from "./line/flexMessage";
 import { getCategoryEmoji } from "./gmail/types";
 import { parseTextExpense } from "./textParser";
+import { nowJST } from "./time";
 import { resolveAppUidForExpense } from "./linkUserResolver";
 import { getClassificationStats, classifyExpenseWithGemini, isGeminiAvailable, findCategoryWithGemini } from "./geminiCategoryClassifier";
 import { createIssueFromFeedback } from "./issueCreator";
@@ -189,8 +190,8 @@ async function handleTextMessage(event: any) {
         // Generate appropriate URL based on context
         const webAppUrl = buildExpenseListUrl(event.source.userId, lineGroupId);
 
-        // 当月の集計データを取得
-        const now = dayjs();
+        // 当月の集計データを取得（コンテナは UTC 動作のため JST で当月を決める）
+        const now = nowJST();
         const summaryPromise = getMonthlyGroupSummary(
           lineGroupId,
           event.source.userId,
@@ -1011,29 +1012,40 @@ async function processExpenseInBackground(
     
     console.log(`=== FINAL USER DEBUG: Final userDisplayName: ${userDisplayName} ===`);
 
-    // カテゴリ分類を並列実行（Gemini + ユーザーデフォルト）
-    const [geminiResult, userSettingsResult] = await Promise.allSettled([
-      classifyExpenseWithGemini(event.source.userId, parsed.description),
-      getUserSettings(event.source.userId)
-    ]);
-
+    // カテゴリの決定
+    //
+    // 本人が「光熱費 28727」のようにカテゴリ名を書いていれば、それが最も確かな指定なので
+    // 推定を挟まずそのまま使う。以前は parseTextExpense が返す category を捨てて
+    // 説明文（この場合は残りが無いためフォールバックの「支出」）を Gemini に投げており、
+    // 低信頼→デフォルトカテゴリへ倒れて毎回カード上で付け直す必要があった。
     let finalCategory = "その他";
-    
-    // Gemini結果を優先使用（閾値0.4で精度向上）
-    if (geminiResult.status === 'fulfilled') {
-      const result = geminiResult.value;
-      if (result && result.category && result.confidence >= 0.4) {
-        finalCategory = result.category;
-        console.log(`Fast Gemini classification: ${finalCategory} (confidence: ${result.confidence})`);
+
+    if (parsed.category) {
+      finalCategory = parsed.category;
+      console.log(`Using user-specified category from text: ${finalCategory}`);
+    } else {
+      // カテゴリ分類を並列実行（Gemini + ユーザーデフォルト）
+      const [geminiResult, userSettingsResult] = await Promise.allSettled([
+        classifyExpenseWithGemini(event.source.userId, parsed.description),
+        getUserSettings(event.source.userId)
+      ]);
+
+      // Gemini結果を優先使用（閾値0.4で精度向上）
+      if (geminiResult.status === 'fulfilled') {
+        const result = geminiResult.value;
+        if (result && result.category && result.confidence >= 0.4) {
+          finalCategory = result.category;
+          console.log(`Fast Gemini classification: ${finalCategory} (confidence: ${result.confidence})`);
+        }
       }
-    }
-    
-    // Geminiが失敗またはlow confidenceの場合、ユーザーデフォルトを使用
-    if (finalCategory === "その他" && userSettingsResult.status === 'fulfilled') {
-      const userSettings = userSettingsResult.value;
-      if (userSettings?.defaultCategory) {
-        finalCategory = userSettings.defaultCategory;
-        console.log(`Using user default category: ${finalCategory}`);
+
+      // Geminiが失敗またはlow confidenceの場合、ユーザーデフォルトを使用
+      if (finalCategory === "その他" && userSettingsResult.status === 'fulfilled') {
+        const userSettings = userSettingsResult.value;
+        if (userSettings?.defaultCategory) {
+          finalCategory = userSettings.defaultCategory;
+          console.log(`Using user default category: ${finalCategory}`);
+        }
       }
     }
 

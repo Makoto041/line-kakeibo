@@ -509,10 +509,32 @@ async function handleSetCategory(
   }
 
   // 同時に支出区分などが変更されていても、返信カードが最新の状態を映すようにする
-  const result = await applyExpenseChange(expenseId, () => ({
-    update: { category, updatedAt: new Date() },
-    cardPatch: { category },
-  }));
+  //
+  // カテゴリを選び直す操作は「この支出でよい」という確認でもあるため、set_split /
+  // set_advance と同じく確認済みにする。カテゴリだけ更新して未確認のままにすると、
+  // LINE手入力（includeInTotal: false で保存される）はカード上でカテゴリが直った
+  // ように見えるのに合計にはずっと入らない。
+  const result = await applyExpenseChange(expenseId, (data) => {
+    const status = data.status as ExpenseStatusType | undefined;
+    const isPending = !status || status === 'pending';
+
+    // 未確認のときだけ共同費へ昇格させる。個人費や立替を設定済みの支出は触らない。
+    return isPending
+      ? {
+          update: {
+            category,
+            confirmed: true,
+            status: 'shared',
+            includeInTotal: true,
+            updatedAt: new Date(),
+          },
+          cardPatch: { category, status: 'shared', includeInTotal: true },
+        }
+      : {
+          update: { category, confirmed: true, updatedAt: new Date() },
+          cardPatch: { category },
+        };
+  });
 
   if (!result) return;
   if ('reject' in result) {
