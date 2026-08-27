@@ -1,9 +1,29 @@
 rules_version = '2';
+
+// ============================================================================
+// Cloud Storage セキュリティルール — 認証必須
+// ----------------------------------------------------------------------------
+// レシート画像は receipts/{expenseId}/{fileName} に保存される。
+// read/write ともにサインイン（Firebase Auth）を必須とする。
+//
+// 【限界】expense 単位の所有者検証（当該レシートが呼び出し元の支出のものか）は、
+//   Firestore の expenses ドキュメントを参照しないと判定できないが、Storage ルール
+//   から Firestore への安価なルックアップ手段はない。したがって
+//   「サインイン済み」を現実的なゲートとする。
+// ============================================================================
+
 service firebase.storage {
   match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
     match /receipts/{expenseId}/{fileName} {
-      allow read: if true;
-      allow write: if request.resource.size < 10 * 1024 * 1024
+      // read: サインイン済みのみ（従来の `if true` を廃止）。
+      allow read: if isSignedIn();
+      // write: サインイン済み、かつ従来のサイズ/コンテンツタイプ制約を維持。
+      allow write: if isSignedIn()
+                   && request.resource.size < 10 * 1024 * 1024
                    && request.resource.contentType.matches('image/.*');
     }
   }
