@@ -12,6 +12,7 @@
     "deploy:all": "./deploy-all.sh"
   },
   "dependencies": {
+    "@line/liff": "^2.30.0",
     "dayjs": "^1.11.21",
     "firebase": "^12.15.0",
     "firebase-admin": "^14.1.0",
@@ -24,10 +25,10 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
+    "@tailwindcss/postcss": "^4.3.2",
     "@types/node": "^26.1.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@tailwindcss/postcss": "^4.3.2",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.10",
     "postcss": "^8.5.16",

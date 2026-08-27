@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Sidebar } from './Sidebar';
 import { BottomTabBar } from './BottomTabBar';
 import { TopBar } from './TopBar';
+import { initLineAuth } from '@/lib/lineAuth';
 
 // Routes that should render without the app navigation chrome
 // (single-purpose / standalone screens opened from outside the app).
@@ -14,16 +15,14 @@ const BARE_ROUTES = ['/attach', '/link', '/debug'];
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
   const reduceMotion = useReducedMotion();
-  const [lineId, setLineId] = useState<string | null>(null);
 
-  // Read lineId after mount to keep SSR/first-render markup stable (no hydration mismatch).
+  // アプリ起動時に1度だけサインイン（LIFF または匿名フォールバック）を開始する。
+  // 認証は Firebase に永続化されるため、遷移ごとに URL へ lineId を引き回す必要はない。
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setLineId(params.get('lineId'));
-  }, [pathname]);
+    initLineAuth();
+  }, []);
 
-  const hrefFor = (path: string) =>
-    lineId ? `${path}?lineId=${encodeURIComponent(lineId)}` : path;
+  const hrefFor = (path: string) => path;
 
   const bare = BARE_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
 
