@@ -31,17 +31,26 @@ export function initLineAuth(): Promise<void> {
       return;
     }
 
-    // すでにサインイン済みなら何もしない（Firebase がセッションを永続化している）
-    if (auth.currentUser) return;
+    // 永続化されたセッションの復元完了を待ってから判定する
+    // （復元前は currentUser が null のため、待たないと二重サインインし得る）
+    await auth.authStateReady();
+
+    // LINE 認証済み（非匿名）セッションが復元されたなら何もしない。
+    // 匿名セッションは一時フォールバックの名残なのでスキップ対象にしない。
+    // （匿名で早期 return すると、一度の失敗で以後 LIFF を再試行できず
+    //   永久にゲスト化してしまう）
+    if (auth.currentUser && !auth.currentUser.isAnonymous) return;
 
     const liffId = process.env.NEXT_PUBLIC_LIFF_ID;
 
     // LIFF 未設定: 匿名フォールバック（lineId クレームなし＝データは見えない）
     if (!liffId) {
-      try {
-        await signInAnonymously(auth);
-      } catch (e) {
-        console.error('Anonymous sign-in failed:', e);
+      if (!auth.currentUser) {
+        try {
+          await signInAnonymously(auth);
+        } catch (e) {
+          console.error('Anonymous sign-in failed:', e);
+        }
       }
       return;
     }
