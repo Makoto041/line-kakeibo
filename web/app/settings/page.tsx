@@ -330,7 +330,7 @@ export default function Settings() {
                   const Icon = v.icon;
                   return (
                   <div key={category.id} className="flex items-center gap-3">
-                    <span className={`grid h-7 w-7 flex-shrink-0 place-items-center rounded-lg ${v.bg} ${v.fg}`}>
+                    <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg ${v.bg} ${v.fg}`}>
                       <Icon className="h-4 w-4" strokeWidth={2.1} />
                     </span>
                     <span className="w-24 truncate text-sm text-fg">{category.name}</span>

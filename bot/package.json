@@ -25,10 +25,10 @@
     "dayjs": "^1.11.21",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
     "firebase-admin": "^14.1.0",
     "firebase-functions": "^7.3.2",
-    "googleapis": "^173.0.0",
-    "express-rate-limit": "^8.5.2"
+    "googleapis": "^173.0.0"
   },
   "engines": {
     "node": ">=22"
@@ -38,6 +38,6 @@
     "@types/node": "^26.1.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   }
 }
