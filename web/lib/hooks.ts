@@ -273,6 +273,36 @@ export function useLineAuth() {
   };
 }
 
+/**
+ * 自分が所属する（有効な）グループの groupId 一覧を取得する。
+ *
+ * 以前はユーザー自身の支出を最大200件走査して lineGroupId を集めていたが、
+ * (1) 支出を一度も登録していないメンバーはグループを検出できない
+ * (2) 200件を超えると取りこぼしうる
+ * (3) セキュリティルールがメンバーシップで判定するようになったため、
+ *     グループの所在は groupMembers を正とすべき
+ * という理由から、groupMembers から引く方式に変更した。
+ *
+ * このクエリ形（where lineId == 自分）はルールの「自分のメンバーシップは読める」
+ * 条項で許可される。
+ */
+async function fetchMyActiveGroupIds(lineId: string): Promise<string[]> {
+  if (!db) return [];
+  const snapshot = await getDocs(
+    query(
+      collection(db, 'groupMembers'),
+      where('lineId', '==', lineId),
+      where('isActive', '==', true)
+    )
+  );
+  const groupIds = new Set<string>();
+  snapshot.docs.forEach((d) => {
+    const groupId = (d.data() as { groupId?: string }).groupId;
+    if (groupId) groupIds.add(groupId);
+  });
+  return Array.from(groupIds);
+}
+
 export function useExpenses(userId: string | null, periodDays: number = 50, limitCount: number = 200, customStartDate?: string) {
   const expensesCacheKey = `expenses:${userId}:${periodDays}:${limitCount}:${customStartDate || ''}`;
   const [expenses, setExpenses] = useState<Expense[]>(() => getCached<Expense[]>(expensesCacheKey) ?? []);
@@ -397,41 +427,13 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
         let lineGroupExpenses: Expense[] = [];
         
         try {
-          // First, get all user's expenses to find LINE group IDs they've participated in
-          console.log("=== ユーザーの全支出からLINEグループIDを検索 ===");
-          const allUserExpensesQuery = query(
-            collection(db, 'expenses'),
-            where('lineId', '==', userId),
-            limit(200) // Increase limit to get more data
-          );
+          // 所属グループは groupMembers を正として引く（支出の走査はしない）
+          const userGroupIds = await fetchMyActiveGroupIds(userId);
+          console.log("ユーザーが参加するグループID:", userGroupIds);
           
-          const allUserExpensesSnapshot = await getDocs(allUserExpensesQuery);
-          const userLineGroupIds = new Set<string>();
-          
-          console.log("ユーザーの全支出件数:", allUserExpensesSnapshot.docs.length);
-          
-          allUserExpensesSnapshot.docs.forEach(doc => {
-            const data = doc.data();
-            console.log("支出データ:", {
-              id: doc.id,
-              amount: data.amount,
-              description: data.description,
-              lineGroupId: data.lineGroupId,
-              date: data.date
-            });
-            
-            if (data.lineGroupId) {
-              userLineGroupIds.add(data.lineGroupId);
-              console.log("LINEグループID発見:", data.lineGroupId);
-            }
-          });
-          
-          console.log("ユーザーが参加するLINEグループID:", Array.from(userLineGroupIds));
-          console.log("検出されたLINEグループ数:", userLineGroupIds.size);
-          
-          // Get expenses from each LINE group
-          for (const lineGroupId of userLineGroupIds) {
-            console.log("=== LINEグループ", lineGroupId, "の支出を取得中... ===");
+          // Get expenses from each group
+          for (const groupId of userGroupIds) {
+            console.log("=== グループ", groupId, "の支出を取得中... ===");
             
             let lineGroupQuery;
             let startDate, endDate;
@@ -442,7 +444,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
               console.log("カスタム期間:", startDate, "〜", endDate);
               lineGroupQuery = query(
                 collection(db, 'expenses'),
-                where('lineGroupId', '==', lineGroupId),
+                where('groupId', '==', groupId),
                 where('date', '>=', startDate),
                 where('date', '<=', endDate),
                 limit(Math.max(limitCount, 500)) // Ensure we get enough data
@@ -453,7 +455,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
               console.log("期間指定:", periodDays, "日間 (", startDate, "〜", endDate, ")");
               lineGroupQuery = query(
                 collection(db, 'expenses'),
-                where('lineGroupId', '==', lineGroupId),
+                where('groupId', '==', groupId),
                 where('date', '>=', startDate),
                 where('date', '<=', endDate),
                 limit(Math.max(limitCount, 500)) // Ensure we get enough data
@@ -462,7 +464,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
               console.log("全期間での取得");
               lineGroupQuery = query(
                 collection(db, 'expenses'),
-                where('lineGroupId', '==', lineGroupId),
+                where('groupId', '==', groupId),
                 limit(Math.max(limitCount, 500)) // Ensure we get enough data
               );
             }
@@ -492,7 +494,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
               });
             });
             
-            console.log("LINEグループ", lineGroupId, "の支出:", lineGroupExpenseList.length, "件");
+            console.log("グループ", groupId, "の支出:", lineGroupExpenseList.length, "件");
             lineGroupExpenses = [...lineGroupExpenses, ...lineGroupExpenseList];
           }
           
@@ -715,28 +717,14 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
         let lineGroupExpenses: Expense[] = [];
         
         try {
-          // Get all user's expenses to find LINE group IDs they've participated in
-          const allUserExpensesQuery = query(
-            collection(db, 'expenses'),
-            where('lineId', '==', userId),
-            limit(100)
-          );
-          
-          const allUserExpensesSnapshot = await getDocs(allUserExpensesQuery);
-          const userLineGroupIds = new Set<string>();
-          
-          allUserExpensesSnapshot.docs.forEach(doc => {
-            const data = doc.data();
-            if (data.lineGroupId) {
-              userLineGroupIds.add(data.lineGroupId);
-            }
-          });
-          
-          // Get expenses from LINE groups for the specified period
-          for (const lineGroupId of userLineGroupIds) {
+          // 所属グループは groupMembers を正として引く（支出の走査はしない）
+          const userGroupIds = await fetchMyActiveGroupIds(userId);
+
+          // Get expenses from groups for the specified period
+          for (const groupId of userGroupIds) {
             const lineGroupQuery = query(
               collection(db, 'expenses'),
-              where('lineGroupId', '==', lineGroupId),
+              where('groupId', '==', groupId),
               where('date', '>=', startDate),
               where('date', '<=', endDate)
             );
@@ -750,7 +738,7 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
             lineGroupExpenses = [...lineGroupExpenses, ...lineGroupExpenseList];
           }
           
-          console.log("月次統計 - LINEグループの支出:", lineGroupExpenses.length, "件");
+          console.log("月次統計 - グループの支出:", lineGroupExpenses.length, "件");
         } catch (groupError) {
           console.error("月次統計 - LINEグループ支出取得エラー:", groupError);
         }
@@ -965,81 +953,6 @@ export function useGroupExpenses(groupId: string | null, limitCount: number = 50
   return { expenses, loading, error };
 }
 
-export function useLineGroupExpenses(lineGroupId: string | null, limitCount: number = 50) {
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!lineGroupId) {
-      setLoading(false);
-      return;
-    }
-
-    const fetchLineGroupExpenses = async () => {
-      // Firebase初期化を待機
-      const isConnected = await waitForFirebase();
-      if (!isConnected) {
-        const status = getFirebaseStatus();
-        setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
-        setLoading(false);
-        return;
-      }
-      try {
-        setLoading(true);
-        setError(null);
-        
-        if (!db) {
-          throw new Error('Firestoreデータベースが利用できません');
-        }
-        
-        console.log("LINEグループ支出取得開始 - lineGroupId:", lineGroupId);
-        
-        const q = query(
-          collection(db, 'expenses'),
-          where('lineGroupId', '==', lineGroupId),
-          limit(limitCount)
-        );
-        
-        const querySnapshot = await getDocs(q);
-        console.log("LINEグループ支出クエリ結果:", querySnapshot.docs.length, "件");
-        
-        const expenseList = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as Expense));
-        
-        console.log("取得したLINEグループ支出:", expenseList);
-        
-        // Sort in memory by creation time desc
-        const sortedExpenses = expenseList.sort((a, b) => {
-          const aTime = a.createdAt ? 
-            (typeof a.createdAt === 'object' && 'seconds' in a.createdAt ? 
-              a.createdAt.seconds * 1000 : 
-              (a.createdAt as Date).getTime()) : 0;
-          const bTime = b.createdAt ? 
-            (typeof b.createdAt === 'object' && 'seconds' in b.createdAt ? 
-              b.createdAt.seconds * 1000 : 
-              (b.createdAt as Date).getTime()) : 0;
-          return bTime - aTime; // desc order
-        });
-        
-        setExpenses(sortedExpenses);
-        setError(null);
-      } catch (err) {
-        const errorMessage = handleFirestoreError(err);
-        console.error('Error fetching LINE group expenses:', err);
-        setError(errorMessage);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchLineGroupExpenses();
-  }, [lineGroupId, limitCount]);
-
-  return { expenses, loading, error };
-}
 
 // グループメンバーを取得するフック
 export function useGroupMembers(groupId: string | null) {
@@ -1120,105 +1033,6 @@ export function useGroupMembers(groupId: string | null) {
   return { members, loading, error };
 }
 
-// LINE Group IDベースでメンバーを取得するフック（フォールバック用）
-export function useLineGroupMembers(lineGroupId: string | null) {
-  const [members, setMembers] = useState<GroupMember[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!lineGroupId) {
-      setLoading(false);
-      setMembers([]);
-      return;
-    }
-
-    const fetchLineGroupMembers = async () => {
-      // Firebase初期化を待機
-      const isConnected = await waitForFirebase();
-      if (!isConnected) {
-        const status = getFirebaseStatus();
-        setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
-        setLoading(false);
-        return;
-      }
-      try {
-        setLoading(true);
-        console.log("LINE グループメンバー取得開始 - lineGroupId:", lineGroupId);
-
-        // まずlineGroupIdに対応するグループを探す
-        const groupQuery = query(
-          collection(db!, 'groups'),
-          where('lineGroupId', '==', lineGroupId)
-        );
-
-        const groupSnapshot = await getDocs(groupQuery);
-        
-        if (groupSnapshot.empty) {
-          console.log("LINE Group IDに対応するグループが見つかりません");
-          setMembers([]);
-          setError(null);
-          return;
-        }
-
-        const group = groupSnapshot.docs[0];
-        const groupId = group.id;
-        
-        console.log("対応するgroupId:", groupId);
-
-        // そのグループのメンバーを取得
-        const membersQuery = query(
-          collection(db!, 'groupMembers'),
-          where('groupId', '==', groupId),
-          where('isActive', '==', true)
-        );
-
-        const membersSnapshot = await getDocs(membersQuery);
-        
-        if (membersSnapshot.empty) {
-          console.log("グループメンバーが見つかりません");
-          setMembers([]);
-          setError(null);
-          return;
-        }
-
-        const memberList: GroupMember[] = membersSnapshot.docs.map(doc => {
-          const data = doc.data();
-          console.log("--- LINE GroupMember生データ ---");
-          console.log("Document ID:", doc.id);
-          console.log("Raw data:", data);
-          console.log("displayName:", data.displayName, typeof data.displayName);
-          console.log("lineId:", data.lineId);
-          console.log("groupId:", data.groupId);
-          console.log("isActive:", data.isActive);
-          
-          return {
-            id: doc.id,
-            groupId: data.groupId,
-            lineId: data.lineId,
-            displayName: data.displayName || `LineUnknown_${data.lineId?.slice(-6) || 'NoID'}`,
-            joinedAt: data.joinedAt,
-            isActive: data.isActive
-          } as GroupMember;
-        });
-
-        console.log("処理後のLINE グループメンバー:", memberList);
-        setMembers(memberList);
-        setError(null);
-      } catch (err) {
-        const errorMessage = handleFirestoreError(err);
-        console.error('Error fetching LINE group members:', err);
-        setError(errorMessage);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchLineGroupMembers();
-  }, [lineGroupId]);
-
-  return { members, loading, error };
-}
 
 // 予算設定インターフェース
 export interface BudgetConfig {

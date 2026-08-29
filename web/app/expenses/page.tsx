@@ -23,7 +23,7 @@ import {
   RefreshCw,
   ExternalLink,
 } from "lucide-react";
-import { useLineAuth, useExpenses, useGroupMembers, useLineGroupMembers } from "../../lib/hooks";
+import { useLineAuth, useExpenses, useGroupMembers } from "../../lib/hooks";
 import type { Expense } from "../../lib/hooks";
 import PreviewModeBanner from "../../components/PreviewModeBanner";
 import GuestGuide from "../../components/GuestGuide";
@@ -254,11 +254,10 @@ function ExpensesPageContent() {
   // Get group members for the expense being edited
   const editingExpenseData = editingExpense ? expenses.find(e => e.id === editingExpense) : null;
   const editingGroupId = editingExpenseData?.groupId || null;
-  const editingLineGroupId = editingExpenseData?.lineGroupId || null;
-  
-  // Try both group ID and LINE group ID based member fetching
+
+  // グループ支出には必ず groupId が付くため、lineGroupId 由来のフォールバックは廃止した。
+  // セキュリティルールがメンバーシップを groupId で判定するようになったこととも整合する。
   const { members: groupMembers, loading: membersLoading, error: membersError } = useGroupMembers(editingGroupId);
-  const { members: lineGroupMembers, loading: lineGroupMembersLoading } = useLineGroupMembers(editingLineGroupId);
   
   // Get all users who have ever created expenses (across all groups)
   // 入力者と支払い者の両方を含める
@@ -344,7 +343,7 @@ function ExpensesPageContent() {
   // Combine all available users: formal group members, group history users, and all historical users
   // 支出履歴のdisplayNameを優先（より正確な名前が入っている）
   const availableMembers = useMemo(() => {
-    const formalMembers = groupMembers.length > 0 ? groupMembers : lineGroupMembers;
+    const formalMembers = groupMembers;
     const combinedMap = new Map();
 
     // Priority 1: Add formal group members (メンバーシップ情報として追加)
@@ -399,7 +398,7 @@ function ExpensesPageContent() {
     });
 
     return Array.from(combinedMap.values());
-  }, [groupMembers, lineGroupMembers, groupExpenseUsers, allHistoricalUsers]);
+  }, [groupMembers, groupExpenseUsers, allHistoricalUsers]);
   
   // Debug logging - より詳細な情報を追加
   if (editingExpense) {
@@ -419,18 +418,15 @@ function ExpensesPageContent() {
     console.log("--- 編集中の支出データ ---");
     console.log("EditingExpenseData:", editingExpenseData);
     console.log("EditingGroupId:", editingGroupId);
-    console.log("EditingLineGroupId:", editingLineGroupId);
     
     console.log("--- ユーザー取得結果 ---");
     console.log("GroupMembers (正式メンバー):", groupMembers);
-    console.log("LineGroupMembers (LINEグループメンバー):", lineGroupMembers);
     console.log("GroupExpenseUsers (このグループの履歴):", groupExpenseUsers);
     console.log("AllHistoricalUsers (全履歴ユーザー):", allHistoricalUsers);
     console.log("AvailableMembers (最終的な選択肢):", availableMembers);
     
     console.log("--- ローディング状態 ---");
     console.log("MembersLoading:", membersLoading);
-    console.log("LineGroupMembersLoading:", lineGroupMembersLoading);
     console.log("MembersError:", membersError);
     
     // 選択肢の詳細を表示
