@@ -14,15 +14,18 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    function isSignedIn() {
-      return request.auth != null;
+    // 匿名サインインは公開 API キーだけで誰でも作れるため、request.auth != null は
+    // 実質「誰でも」と同義。LINE 本人確認を経たセッションだけが lineId クレームを
+    // 持つので、そちらを条件にする。
+    function isLineUser() {
+      return request.auth != null && request.auth.token.lineId != null;
     }
 
     match /receipts/{expenseId}/{fileName} {
       // read: サインイン済みのみ（従来の `if true` を廃止）。
-      allow read: if isSignedIn();
+      allow read: if isLineUser();
       // write: サインイン済み、かつ従来のサイズ/コンテンツタイプ制約を維持。
-      allow write: if isSignedIn()
+      allow write: if isLineUser()
                    && request.resource.size < 10 * 1024 * 1024
                    && request.resource.contentType.matches('image/.*');
     }

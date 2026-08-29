@@ -37,6 +37,12 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'expenses/expA'), { lineId: 'A', amount: 100, date: '2026-08-01' });
   await setDoc(doc(db, 'expenses/expB'), { lineId: 'B', amount: 200, date: '2026-08-01' });
   await setDoc(doc(db, 'expenses/expG'), { lineId: 'B', lineGroupId: 'G1', amount: 300, date: '2026-08-01' });
+  // Gmail 自動取込はシステムユーザー名義で登録される（bot の GMAIL_SYSTEM_LINE_ID）
+  await setDoc(doc(db, 'expenses/expGmail'), { lineId: 'gmail-auto-system', lineGroupId: 'G1', amount: 400, date: '2026-08-01' });
+  // グループに属さない Gmail 支出（実データには無いが、緩和がグループ限定であることの確認用）
+  await setDoc(doc(db, 'expenses/expGmailSolo'), { lineId: 'gmail-auto-system', amount: 500, date: '2026-08-01' });
+  await setDoc(doc(db, 'groups/G1'), { createdBy: 'B', inviteCode: 'INV123' });
+  await setDoc(doc(db, 'groupMembers/m1'), { groupId: 'G1', lineId: 'B' });
   await setDoc(doc(db, 'budgetSettings/A'), { monthlyBudget: 1000 });
   await setDoc(doc(db, 'budgetSettings/B'), { monthlyBudget: 2000 });
   await setDoc(doc(db, 'linkTokens/t1'), { lineId: 'A' });
@@ -121,6 +127,45 @@ await test('userLinks: user can read own (uid match)', async () => {
 await test('userLinks: user canNOT read other uid', async () => {
   await assertFails(getDoc(doc(userB, 'userLinks/appuid-A')));
 });
+// ---- グループ支出の書き込み緩和（Gmail 自動取込を web から扱えるようにする） ----
+await test('group expense: signed-in user can UPDATE (not owner)', async () => {
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expG'), { amount: 301 }));
+});
+await test('group expense: gmail-owned can be UPDATED by signed-in user', async () => {
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expGmail'), { amount: 401 }));
+});
+await test('group expense: UPDATE canNOT reassign owner', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expGmail'), { lineId: 'A' }));
+});
+await test('non-group expense of others still DENIED for update', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expB'), { amount: 999 }));
+});
+await test('group expense: gmail-owned can be DELETED by signed-in user', async () => {
+  await assertSucceeds(deleteDoc(doc(userA, 'expenses/expGmail')));
+});
+await test('group expense authored by a person canNOT be deleted by others', async () => {
+  await assertFails(deleteDoc(doc(userA, 'expenses/expG')));
+});
+await test('gmail expense OUTSIDE a group canNOT be deleted', async () => {
+  await assertFails(deleteDoc(doc(userA, 'expenses/expGmailSolo')));
+});
+await test('LINE user can read groups / groupMembers', async () => {
+  await assertSucceeds(getDoc(doc(userA, 'groups/G1')));
+  await assertSucceeds(getDoc(doc(userA, 'groupMembers/m1')));
+});
+await test('anonymous user canNOT READ group expense', async () => {
+  await assertFails(getDoc(doc(anon, 'expenses/expG')));
+});
+await test('anonymous user canNOT read groups', async () => {
+  await assertFails(getDoc(doc(anon, 'groups/G1')));
+});
+await test('anonymous user canNOT read groupMembers', async () => {
+  await assertFails(getDoc(doc(anon, 'groupMembers/m1')));
+});
+await test('anonymous user canNOT update group expense', async () => {
+  await assertFails(updateDoc(doc(anon, 'expenses/expG'), { amount: 777 }));
+});
+
 await test('default-deny: unknown collection read DENIED', async () => {
   await assertFails(getDoc(doc(userA, 'userCustomCategories/x')));
 });
