@@ -23,6 +23,13 @@ service cloud.firestore {
     function isSignedIn() {
       return request.auth != null;
     }
+    // 検証済みの LINE ユーザーとしてサインインしているか。
+    // 匿名サインインは公開 API キーだけで誰でも作れるため、isSignedIn() は実質
+    // 「誰でも」と同義になる。LINE 本人確認を経たセッションだけが lineId クレームを
+    // 持つので、他人のデータに触れうる条件では必ずこちらを使うこと。
+    function isLineUser() {
+      return isSignedIn() && request.auth.token.lineId != null;
+    }
     // 検証済み LINE userId（カスタムクレーム）。未サインイン/匿名では null 相当。
     function myLineId() {
       return request.auth.token.lineId;
@@ -34,6 +41,19 @@ service cloud.firestore {
     // これから書き込むドキュメントの lineId が自分のものか。
     function writingAsSelf() {
       return isSignedIn() && request.resource.data.lineId == myLineId();
+    }
+    // グループ（LINEグループ／アプリ内グループ）に属するドキュメントか。
+    function isGroupDoc() {
+      return resource.data.lineGroupId != null || resource.data.groupId != null;
+    }
+    // Gmail 自動取込がシステムユーザーとして登録した支出か。
+    // bot/src/gmail/handler.ts の GMAIL_SYSTEM_LINE_ID と一致させること。
+    function isGmailSystemDoc() {
+      return resource.data.lineId == 'gmail-auto-system';
+    }
+    // 所有者の付け替えを伴わない更新か（lineId を書き換えさせない）。
+    function keepsOwner() {
+      return request.resource.data.lineId == resource.data.lineId;
     }
 
     // ---- expenses -----------------------------------------------------------
@@ -48,32 +68,43 @@ service cloud.firestore {
       //   決定的なドキュメントパスが存在しない。Firestore ルールは他コレクションへの
       //   「クエリ」ができず exists()/get() は決定的パスしか辿れないため、
       //   「呼び出し元が当該グループのメンバーか」をルール内で厳密に検証できない。
-      //   よって現状はグループ支出の read を isSignedIn() まで緩めている
-      //   （＝サインイン済みの任意ユーザーが任意のグループ支出を読める余地が残る）。
+      //   よって現状はグループ支出の read を isLineUser() まで緩めている
+      //   （＝LINE 本人確認済みの任意ユーザーが任意のグループ支出を読める余地が残る）。
       //   将来 groupMembers を決定的 ID（例: `${groupId}_${lineId}`）へ移行すれば、
       //   exists(/databases/$(database)/documents/groupMembers/$(...)) で厳密化できる。
-      allow read: if ownsDoc()
-                  || (isSignedIn()
-                      && (resource.data.lineGroupId != null || resource.data.groupId != null));
+      allow read: if ownsDoc() || (isLineUser() && isGroupDoc());
 
       // create: サインイン済みで、自分の lineId を持つドキュメントのみ作成可。
       allow create: if writingAsSelf();
 
-      // update: 既存ドキュメントの所有者のみ。所有権の付け替え（lineId 変更）は禁止。
-      allow update: if ownsDoc() && writingAsSelf();
+      // update:
+      //   - 所有者は従来どおり更新可（所有権の付け替えは禁止）。
+      //   - 加えて、グループ支出はサインイン済みなら更新可とする（所有権の付け替えは禁止）。
+      //     Gmail 自動取込の支出は lineId が固定のシステムユーザー
+      //     ('gmail-auto-system') であり、どの実ユーザーの lineId とも一致しない。
+      //     所有者限定のままだと、世帯の支出の大半（取込分）を web から修正できず、
+      //     LINE カードの「修正」導線が機能しない。read が既に isLineUser() まで
+      //     緩んでいるため、update をそれに揃えても新たな露出の種類は増えない。
+      allow update: if (ownsDoc() && writingAsSelf())
+                    || (isLineUser() && isGroupDoc() && keepsOwner());
 
-      // delete: 既存ドキュメントの所有者のみ。
-      allow delete: if ownsDoc();
+      // delete:
+      //   - 所有者は従来どおり削除可。
+      //   - 加えて、グループ支出のうち Gmail 自動取込分のみサインイン済みで削除可。
+      //     誤取込メールを消せるようにするための最小限の緩和で、人が手入力した
+      //     支出は引き続き本人しか削除できない（不可逆な操作の露出を最小化する）。
+      allow delete: if ownsDoc()
+                    || (isLineUser() && isGroupDoc() && isGmailSystemDoc());
     }
 
     // ---- groups -------------------------------------------------------------
     // 共有家計グループ。createdBy に作成者の LINE userId を持つ。
     // 作成・参加・メンバー追加は Bot（Admin SDK）が行い、ルールをバイパスする。
     match /groups/{groupId} {
-      // read: サインイン済み。
+      // read: 検証済み LINE ユーザー。
       // 【限界】メンバーシップを決定的に検証できない（groupMembers が自動生成 ID）ため、
-      //   read はサインイン済みまで緩める（inviteCode 等も読める余地が残る）。
-      allow read: if isSignedIn();
+      //   read は LINE ユーザーであることまでしか絞れない（inviteCode 等も読める余地が残る）。
+      allow read: if isLineUser();
       // create: 作成者を自分に設定する場合のみ。
       allow create: if isSignedIn() && request.resource.data.createdBy == myLineId();
       // update, delete: 作成者本人のみ。
@@ -84,12 +115,12 @@ service cloud.firestore {
     // グループメンバーシップ。lineId フィールドでメンバー本人を表す。
     // メンバー追加・更新は Bot（Admin SDK）が行い、ルールをバイパスする。
     match /groupMembers/{memberId} {
-      // read: サインイン済み。
+      // read: 検証済み LINE ユーザー。
       // 【限界】useGroupMembers は groupId でグループ全員分を読むため、
       //   他メンバー（別 lineId）のドキュメントも返る。よって read を
       //   resource.data.lineId == myLineId() に絞るとクエリ全体が拒否される。
-      //   決定的なメンバーシップ検証ができないため isSignedIn() まで緩める。
-      allow read: if isSignedIn();
+      //   決定的なメンバーシップ検証ができないため LINE ユーザーまでで留める。
+      allow read: if isLineUser();
       // create: 自分の lineId のメンバーシップのみ作成可。
       allow create: if writingAsSelf();
       // update, delete: 自分のメンバーシップのみ。

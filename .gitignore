@@ -26,6 +26,9 @@ build/
 # Firebase
 .firebase/
 firebase-debug.log
+# エミュレータ実行時に生成される（test/firestore.rules.test.mjs の手順）
+firestore-debug.log
+ui-debug.log
 
 # Vercel
 .vercel/
