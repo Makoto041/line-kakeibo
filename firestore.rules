@@ -1,49 +1,132 @@
 rules_version = '2';
+
+// ============================================================================
+// Firestore セキュリティルール — 認証・所有者ベース
+// ----------------------------------------------------------------------------
+// 認証モデル（LIFF→Firebase カスタムトークン認証 PR と対応。契約を変更しない）:
+//   - request.auth.uid            = 安定した Firebase アプリ UID（appUid）
+//   - request.auth.token.lineId   = 検証済みの LINE userId（カスタムクレーム）
+// 既存ドキュメントは各ドキュメントの `lineId` フィールドで所有者を表す。
+// したがって所有者判定 = 「サインイン済み かつ resource.data.lineId == token.lineId」。
+// 匿名フォールバックのユーザーは request.auth != null だが lineId クレームを持たない
+// ため、所有者判定・doc-id 判定の双方に一致せず、フェイルセーフに拒否される。
+//
+// 重要: サーバー側の Bot は Firebase Admin SDK を使用しており、Admin SDK は
+// これらのルールを完全にバイパスする。したがって Bot 経由の書き込み
+// （グループ作成・メンバー管理・立替精算・カテゴリ等）はここで拒否しても影響しない。
+// ============================================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Expenses collection - LINE ID based access control
+
+    // ---- ヘルパー -----------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    // 検証済み LINE userId（カスタムクレーム）。未サインイン/匿名では null 相当。
+    function myLineId() {
+      return request.auth.token.lineId;
+    }
+    // 既存ドキュメントの所有者か（lineId フィールド一致）。
+    function ownsDoc() {
+      return isSignedIn() && resource.data.lineId == myLineId();
+    }
+    // これから書き込むドキュメントの lineId が自分のものか。
+    function writingAsSelf() {
+      return isSignedIn() && request.resource.data.lineId == myLineId();
+    }
+
+    // ---- expenses -----------------------------------------------------------
+    // 支出。個人支出は lineId フィールドで所有者を持つ。グループ支出は
+    // lineGroupId / groupId フィールドを併せ持つ。
     match /expenses/{expenseId} {
-      // Allow read/write access to documents
-      // Since we're using LINE ID only authentication, we allow access
-      // Security is handled by the web app URL parameter validation
-      allow read, write: if true;
-      allow create: if true;
+      // read:
+      //   - 所有者（resource.data.lineId == myLineId()）は常に読める。
+      //   - グループ支出（lineGroupId もしくは groupId を持つ）はサインイン済みなら読める。
+      // 【限界】グループのメンバーシップは groupMembers コレクションで表現されるが、
+      //   groupMembers ドキュメントは .add() による自動生成 ID で作られており、
+      //   決定的なドキュメントパスが存在しない。Firestore ルールは他コレクションへの
+      //   「クエリ」ができず exists()/get() は決定的パスしか辿れないため、
+      //   「呼び出し元が当該グループのメンバーか」をルール内で厳密に検証できない。
+      //   よって現状はグループ支出の read を isSignedIn() まで緩めている
+      //   （＝サインイン済みの任意ユーザーが任意のグループ支出を読める余地が残る）。
+      //   将来 groupMembers を決定的 ID（例: `${groupId}_${lineId}`）へ移行すれば、
+      //   exists(/databases/$(database)/documents/groupMembers/$(...)) で厳密化できる。
+      allow read: if ownsDoc()
+                  || (isSignedIn()
+                      && (resource.data.lineGroupId != null || resource.data.groupId != null));
+
+      // create: サインイン済みで、自分の lineId を持つドキュメントのみ作成可。
+      allow create: if writingAsSelf();
+
+      // update: 既存ドキュメントの所有者のみ。所有権の付け替え（lineId 変更）は禁止。
+      allow update: if ownsDoc() && writingAsSelf();
+
+      // delete: 既存ドキュメントの所有者のみ。
+      allow delete: if ownsDoc();
     }
-    
-    // UserLinks collection - users can only access their own linking data
-    match /userLinks/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-    }
-    
-    // LinkTokens collection - for account linking process only
-    match /linkTokens/{tokenId} {
-      allow read, write: if true;
-      // Write operations handled by Cloud Functions only
-    }
-    
-    // Groups collection - shared household budget groups
+
+    // ---- groups -------------------------------------------------------------
+    // 共有家計グループ。createdBy に作成者の LINE userId を持つ。
+    // 作成・参加・メンバー追加は Bot（Admin SDK）が行い、ルールをバイパスする。
     match /groups/{groupId} {
-      allow read, write: if true;
+      // read: サインイン済み。
+      // 【限界】メンバーシップを決定的に検証できない（groupMembers が自動生成 ID）ため、
+      //   read はサインイン済みまで緩める（inviteCode 等も読める余地が残る）。
+      allow read: if isSignedIn();
+      // create: 作成者を自分に設定する場合のみ。
+      allow create: if isSignedIn() && request.resource.data.createdBy == myLineId();
+      // update, delete: 作成者本人のみ。
+      allow update, delete: if isSignedIn() && resource.data.createdBy == myLineId();
     }
-    
-    // Group members collection - group membership management
+
+    // ---- groupMembers -------------------------------------------------------
+    // グループメンバーシップ。lineId フィールドでメンバー本人を表す。
+    // メンバー追加・更新は Bot（Admin SDK）が行い、ルールをバイパスする。
     match /groupMembers/{memberId} {
-      allow read, write: if true;
-    }
-    
-    // User settings collection
-    match /userSettings/{userId} {
-      allow read, write: if true;
+      // read: サインイン済み。
+      // 【限界】useGroupMembers は groupId でグループ全員分を読むため、
+      //   他メンバー（別 lineId）のドキュメントも返る。よって read を
+      //   resource.data.lineId == myLineId() に絞るとクエリ全体が拒否される。
+      //   決定的なメンバーシップ検証ができないため isSignedIn() まで緩める。
+      allow read: if isSignedIn();
+      // create: 自分の lineId のメンバーシップのみ作成可。
+      allow create: if writingAsSelf();
+      // update, delete: 自分のメンバーシップのみ。
+      allow update, delete: if ownsDoc();
     }
 
-    // Budget settings collection
-    match /budgetSettings/{userId} {
-      allow read, write: if true;
+    // ---- userSettings / budgetSettings / dateRangeSettings ------------------
+    // いずれもドキュメント ID = 利用者の LINE userId（web は user.uid=lineId を doc-id に使う）。
+    // 自分の設定ドキュメントのみ read/write 可。
+    match /userSettings/{lineId} {
+      allow read, write: if isSignedIn() && lineId == myLineId();
+    }
+    match /budgetSettings/{lineId} {
+      allow read, write: if isSignedIn() && lineId == myLineId();
+    }
+    match /dateRangeSettings/{lineId} {
+      allow read, write: if isSignedIn() && lineId == myLineId();
     }
 
-    // Date range settings collection
-    match /dateRangeSettings/{userId} {
-      allow read, write: if true;
+    // ---- userLinks ----------------------------------------------------------
+    // appUid → lineId のリンク。ドキュメント ID = appUid。本人のみ。
+    match /userLinks/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ---- linkTokens ---------------------------------------------------------
+    // アカウント連携トークン。Bot（Admin SDK）のみが読み書きし、Admin SDK は
+    // ルールをバイパスする。クライアントからのアクセスは全面禁止。
+    match /linkTokens/{tokenId} {
+      allow read, write: if false;
+    }
+
+    // ---- デフォルト拒否 ------------------------------------------------------
+    // 明示的に許可されていないすべてのパス（userCustomCategories / categoryFeedback
+    // など Bot/Admin SDK 専用コレクションを含む）はクライアントから拒否する。
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
