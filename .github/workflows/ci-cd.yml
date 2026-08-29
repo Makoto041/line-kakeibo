@@ -35,7 +35,7 @@ jobs:
             web:
               - 'web/**'
               - '.github/workflows/**'
-            # deploy-bot は functions に加えて firestore の rules / indexes も
+            # deploy-bot は functions に加えて firestore / storage の rules も
             # デプロイするため、それらの定義ファイルも検知対象に含める。
             bot:
               - 'bot/**'
@@ -44,6 +44,7 @@ jobs:
               - '.firebaserc'
               - 'firestore.rules'
               - 'firestore.indexes.json'
+              - 'storage.rules'
             deps:
               - 'package*.json'
               - 'package-lock.json'
@@ -266,7 +267,7 @@ jobs:
       - name: Deploy to Firebase
         run: |
           npm install -g firebase-tools@15
-          firebase deploy --only functions,firestore:rules,firestore:indexes --project "$FIREBASE_PROJECT_ID"
+          firebase deploy --only functions,firestore:rules,firestore:indexes,storage --project "$FIREBASE_PROJECT_ID"
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
           # 未設定時のフォールバック（空文字を渡すと deploy が落ちるため）
