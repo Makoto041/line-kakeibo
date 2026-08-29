@@ -19,7 +19,7 @@ import {
   buildCategorySelectCarousel,
   buildExpenseCardFromRecord,
   buildExpenseEditUrl,
-  buildExpenseListUrl,
+  EXPENSE_LIST_URL,
   CategorySelectInfo,
 } from './flexMessage';
 
@@ -62,11 +62,6 @@ function getReplyTarget(event: PostbackEvent): string | undefined {
   return event.source!.type === 'group'
     ? (event.source as any).groupId
     : event.source!.userId;
-}
-
-/** グループから押された場合のグループID */
-function getGroupId(event: PostbackEvent): string | undefined {
-  return event.source!.type === 'group' ? (event.source as any).groupId : undefined;
 }
 
 /**
@@ -192,11 +187,9 @@ async function replyUpdatedCard(
   headerText: string
 ): Promise<void> {
   const userId = event.source!.userId;
-  const listUrl = userId ? buildExpenseListUrl(userId, getGroupId(event)) : undefined;
   const editUrl = userId ? buildExpenseEditUrl(expenseId, userId) : undefined;
 
   const card = buildExpenseCardFromRecord(expenseId, record, {
-    listUrl,
     editUrl,
     headerText,
     headerIconKey: 'check',
@@ -447,17 +440,12 @@ async function handleEdit(
 /**
  * 家計簿一覧のリンクを返す
  *
- * Web側は lineId クエリで対象ユーザーを判定するため、押した本人のIDで組み立てる。
+ * 新しいカードの「家計簿一覧を見る」は uri アクションで直接遷移するため、この
+ * postback は届かない。トーク履歴に残る過去のカードから押された場合にのみ来る
+ * ので、後方互換のために残している。
  */
 async function handleShowList(event: PostbackEvent): Promise<void> {
-  const userId = event.source!.userId;
-  if (!userId) {
-    await replyText(event, 'ユーザーを特定できなかったため、家計簿一覧を開けませんでした');
-    return;
-  }
-
-  const url = buildExpenseListUrl(userId, getGroupId(event));
-  await replyText(event, `家計簿一覧はこちら\n${url}`);
+  await replyText(event, `家計簿一覧はこちら\n${EXPENSE_LIST_URL}`);
 }
 
 /**

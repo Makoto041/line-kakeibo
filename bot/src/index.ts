@@ -189,7 +189,7 @@ async function handleTextMessage(event: any) {
         const lineGroupId = isGroupContext ? event.source.groupId : undefined;
 
         // Generate appropriate URL based on context
-        const webAppUrl = buildExpenseListUrl(event.source.userId, lineGroupId);
+        const webAppUrl = buildExpenseListUrl();
 
         // 当月の集計データを取得（コンテナは UTC 動作のため JST で当月を決める）
         const now = nowJST();
@@ -1123,11 +1123,8 @@ async function processExpenseInBackground(
         payerName: userDisplayName,
         // 保存時の値と揃える（LINE手入力は OK を押すまで集計に入らない）
         includeInTotal: expense.includeInTotal,
-        webAppUrl: event.source.userId
-          ? buildExpenseListUrl(event.source.userId, lineGroupId)
-          : undefined,
         // 「修正」はWeb編集画面への直リンク。グループの場合カードはグループ全員に
-        // 届くため、リンクは入力した本人のIDで固定される（上の webAppUrl と同じ性質）。
+        // 届くため、リンクは入力した本人のIDで固定される。
         editUrl: event.source.userId
           ? buildExpenseEditUrl(expenseId, event.source.userId)
           : undefined,
