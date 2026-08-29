@@ -149,6 +149,16 @@ function iconActionButton(opts: {
 /** Webアプリのベースドメイン */
 export const WEB_APP_BASE = 'https://line-kakeibo.vercel.app';
 
+/**
+ * 「家計簿一覧を見る」の遷移先（支出一覧ページ）。
+ *
+ * LIFF ログイン導入前は、web が URL の lineId クエリで本人を判定していたため
+ * 「押した人ごとに異なるURL」を組み立てる必要があり、押下者が不明な push では
+ * postback で往復してURLを返していた。現在は web が検証済みの Firebase
+ * カスタムクレームで本人を判定するため、一覧の入口は全員共通の固定URLでよい。
+ */
+export const EXPENSE_LIST_URL = `${WEB_APP_BASE}/expenses`;
+
 /** 登録・編集カードの入力元 */
 export type ExpenseCardSource = 'gmail' | 'text';
 
@@ -371,8 +381,6 @@ function buildExpenseCard(opts: {
   includeInTotal?: boolean;
   /** 金額行の下に差し込むフロー固有の行（残り予算・支払い方法など） */
   detailRows?: FlexComponent[];
-  /** 「家計簿一覧を見る」の遷移先。未指定なら押下者のIDで解決する postback にする。 */
-  listUrl?: string;
   /** 「修正」の遷移先。未指定なら押下者のIDで解決する postback にする。 */
   editUrl?: string;
 }): FlexMessage {
@@ -388,7 +396,6 @@ function buildExpenseCard(opts: {
     status,
     includeInTotal,
     detailRows = [],
-    listUrl,
     editUrl,
   } = opts;
 
@@ -512,22 +519,16 @@ function buildExpenseCard(opts: {
           },
         }),
         // 3段目: 家計簿一覧への導線
+        // 本人判定が URL から Firebase の検証済みクレームへ移ったため、押下者が
+        // 誰であっても同じURLでよい。postback で往復せず1タップで直接開く。
         iconActionButton({
           iconKey: 'external-link',
           label: '家計簿一覧を見る',
-          action: listUrl
-            ? {
-                type: 'uri',
-                label: '家計簿一覧を見る',
-                uri: listUrl,
-              }
-            : {
-                // Gmail 通知はグループ宛の push で、押す人が誰か分からない。
-                // 押下時の userId で個人化したURLを返すため postback にする。
-                type: 'postback',
-                label: '家計簿一覧を見る',
-                data: JSON.stringify({ action: 'show_list', expenseId, source }),
-              },
+          action: {
+            type: 'uri',
+            label: '家計簿一覧を見る',
+            uri: EXPENSE_LIST_URL,
+          },
         }),
       ],
       paddingAll: 'md',
@@ -624,8 +625,6 @@ export interface TextExpenseInfo {
   status?: ExpenseStatusType;
   /** 集計に含めるか。pending のときの現在値表示に使う */
   includeInTotal?: boolean;
-  /** 「家計簿一覧を見る」の遷移先（送信相手の lineId を含むURL） */
-  webAppUrl?: string;
   /** 「修正」の遷移先（送信相手の lineId を含むWeb編集URL） */
   editUrl?: string;
 }
@@ -644,7 +643,6 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     payerName,
     status,
     includeInTotal,
-    webAppUrl,
     editUrl,
   } = info;
 
@@ -672,20 +670,21 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     // LINE手入力は includeInTotal: false で作られる（OK を押すまで集計に入らない）
     includeInTotal: includeInTotal ?? false,
     detailRows: detailRows as unknown as FlexComponent[],
-    listUrl: webAppUrl,
     editUrl,
   });
 }
 
 /**
- * 家計簿一覧（Webアプリ）のURLを組み立てる
+ * Webアプリ（ダッシュボード）のURLを組み立てる
  *
- * Web側の認証は lineId クエリだけを見る（無い場合はゲスト扱いでサンプル表示になる）ため、
- * 押した本人の lineId を必ず含める。
+ * かつては web が URL の lineId クエリで本人を判定していたため lineId / lineGroupId を
+ * 付与していたが、LIFF ログイン導入後の web はダッシュボード・一覧のどちらでも
+ * これらのクエリを読まない（lineGroupId は利用者自身のグループ所属から解決し、
+ * lineId を読むのは /link のアカウント連携フローのみ）。グループトークに流れる
+ * リンクに LINE userId を載せ続ける理由も無いため、クエリなしの固定URLにする。
  */
-export function buildExpenseListUrl(lineId: string, lineGroupId?: string): string {
-  const base = `${WEB_APP_BASE}?lineId=${encodeURIComponent(lineId)}`;
-  return lineGroupId ? `${base}&lineGroupId=${encodeURIComponent(lineGroupId)}` : base;
+export function buildExpenseListUrl(): string {
+  return WEB_APP_BASE;
 }
 
 /**
@@ -724,7 +723,6 @@ export function buildExpenseCardFromRecord(
   expenseId: string,
   record: ExpenseRecordLike,
   opts: {
-    listUrl?: string;
     editUrl?: string;
     headerText?: string;
     headerIconKey?: string;
@@ -764,7 +762,6 @@ export function buildExpenseCardFromRecord(
     status: record.status,
     includeInTotal: record.includeInTotal,
     detailRows: detailRows as unknown as FlexComponent[],
-    listUrl: opts.listUrl,
     editUrl: opts.editUrl,
   });
 }

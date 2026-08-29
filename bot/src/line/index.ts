@@ -11,6 +11,7 @@ export {
   buildExpenseCardFromRecord,
   buildExpenseEditUrl,
   buildExpenseListUrl,
+  EXPENSE_LIST_URL,
   CardUsageInfo,
   // テキスト入力用
   buildTextExpenseFlexMessage,

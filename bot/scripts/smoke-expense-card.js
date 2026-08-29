@@ -103,7 +103,6 @@ function common(name, msg) {
     paymentMethod: '現金',
     payerName: 'まこと',
     includeInTotal: false,
-    webAppUrl: 'https://line-kakeibo.vercel.app?lineId=U1',
     editUrl: buildExpenseEditUrl('exp_text_1', 'U1'),
   });
   common('手入力の登録カード', msg);
@@ -137,7 +136,9 @@ function common(name, msg) {
     edit.uri
   );
   const list = actions.find((a) => a.label === '家計簿一覧を見る');
-  check('家計簿一覧は直リンク(uri)', list && list.type === 'uri');
+  check('家計簿一覧は直リンク(uri)', list && list.type === 'uri', list && list.type);
+  check('家計簿一覧の遷移先は支出一覧ページ', list && list.uri.endsWith('/expenses'), list && list.uri);
+  check('家計簿一覧URLに lineId を含まない', list && !list.uri.includes('lineId'), list && list.uri);
   check('OK は postback', actions.find((a) => a.label === 'OK').type === 'postback');
   check('日付は M/D 表記', JSON.stringify(msg).includes('"8/11"'));
 }
@@ -170,7 +171,10 @@ function common(name, msg) {
   const edit = actions.find((a) => a.label === '修正');
   check('修正は postback（押下者が未定のため）', edit && edit.type === 'postback', edit && edit.type);
   const list = actions.find((a) => a.label === '家計簿一覧を見る');
-  check('家計簿一覧も postback', list && list.type === 'postback');
+  // 本人判定が URL から Firebase の検証済みクレームへ移ったため、押下者が未定の
+  // Gmail 通知でも個人化不要の固定URLへ直接遷移できる。
+  check('家計簿一覧は直リンク(uri)', list && list.type === 'uri', list && list.type);
+  check('家計簿一覧の遷移先は支出一覧ページ', list && list.uri.endsWith('/expenses'), list && list.uri);
 }
 
 // ------------------------------------------------- 精算済み（変更不可の状態）
@@ -187,7 +191,7 @@ function common(name, msg) {
       inputSource: 'line_text',
       paymentMethod: 'unknown',
     },
-    { listUrl: 'https://line-kakeibo.vercel.app?lineId=U1', editUrl: buildExpenseEditUrl('exp_settled', 'U1') }
+    { editUrl: buildExpenseEditUrl('exp_settled', 'U1') }
   );
   common('精算済みの再構築カード', msg);
 
