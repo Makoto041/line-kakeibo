@@ -647,16 +647,36 @@ export async function joinGroup(inviteCode: string, lineId: string, displayName:
   }
 }
 
+/**
+ * groupMembers のドキュメントID。
+ *
+ * セキュリティルールから `exists()` でメンバーシップを検証できるよう、
+ * 自動生成IDではなく (groupId, lineId) から決定的に導出する。
+ * ルール側もこの組み立て方に依存するため、変更する場合は firestore.rules と
+ * scripts/migrate-group-members.mjs も併せて更新すること。
+ */
+export function groupMemberDocId(groupId: string, lineId: string): string {
+  return `${groupId}_${lineId}`;
+}
+
 export async function addGroupMember(groupId: string, lineId: string, displayName: string): Promise<void> {
   try {
     const now = Timestamp.now();
-    await getDb().collection('groupMembers').add({
-      groupId,
-      lineId,
-      displayName,
-      joinedAt: now,
-      isActive: true
-    });
+    // 決定的IDなので、同じメンバーの再参加は上書きになり重複ドキュメントが増えない。
+    // merge:true により、既存の joinedAt など保持したいフィールドを壊さない。
+    await getDb()
+      .collection('groupMembers')
+      .doc(groupMemberDocId(groupId, lineId))
+      .set(
+        {
+          groupId,
+          lineId,
+          displayName,
+          joinedAt: now,
+          isActive: true,
+        },
+        { merge: true }
+      );
   } catch (error) {
     console.error('Error adding group member:', error);
     throw error;
