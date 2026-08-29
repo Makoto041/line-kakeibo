@@ -41,12 +41,18 @@ async function api(path, init = {}) {
   return res.status === 204 ? null : res.json();
 }
 
-/** ページングしてコレクション全件を取得する */
-async function listAll(collection) {
+/**
+ * ページングしてコレクション全件を取得する。
+ * selectFields を渡すと、そのフィールドだけを取得する（不要な個人データを読まない）。
+ */
+async function listAll(collection, selectFields) {
   const out = [];
   let pageToken = '';
+  const mask = (selectFields || [])
+    .map((f) => `&mask.fieldPaths=${encodeURIComponent(f.fieldPath)}`)
+    .join('');
   do {
-    const q = `?pageSize=300${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+    const q = `?pageSize=300${mask}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
     const page = await api(`/${collection}${q}`);
     out.push(...(page.documents || []));
     pageToken = page.nextPageToken || '';
@@ -86,14 +92,22 @@ if (planned.length === 0) {
 } else if (!APPLY) {
   console.log(`\n[dry-run] ${planned.length} 件が移行対象です。--apply を付けると実行します。`);
 } else {
+  const existingIds = new Set(members.map(docId));
   for (const { oldId, targetId, fields } of planned) {
-    // 新IDで作成（フィールドはそのままコピー。joinedAt 等のタイムスタンプを作り直さない）
-    await api(`/groupMembers/${encodeURIComponent(targetId)}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ fields }),
-    });
-    // 新ドキュメントの生成を確認してから旧ドキュメントを消す
-    await api(`/groupMembers/${encodeURIComponent(targetId)}`);
+    if (existingIds.has(targetId)) {
+      // 前回の実行が「新ID作成後・旧ID削除前」で中断した場合、移行先には既に
+      // 正しい（場合によっては更新済みの）状態がある。ここで旧IDの内容を書き戻すと
+      // displayName / isActive などを巻き戻してしまうため、上書きせず旧IDだけ消す。
+      console.log(`  KEEP  ${mask(targetId)} は既に存在するため上書きしない`);
+    } else {
+      // 新IDで作成（フィールドはそのままコピー。joinedAt 等のタイムスタンプを作り直さない）
+      await api(`/groupMembers/${encodeURIComponent(targetId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ fields }),
+      });
+      // 新ドキュメントの生成を確認してから旧ドキュメントを消す
+      await api(`/groupMembers/${encodeURIComponent(targetId)}`);
+    }
     await api(`/groupMembers/${encodeURIComponent(oldId)}`, { method: 'DELETE' });
     console.log(`  DONE  ${mask(oldId)} -> ${mask(targetId)}`);
   }
@@ -116,26 +130,21 @@ for (const d of after) {
 const dupes = [...seen.entries()].filter(([, n]) => n > 1);
 console.log(`[2] 重複メンバー: ${dupes.length} 件` + (dupes.length ? ' ← 要対応' : ' ✓'));
 
-// 3) グループ支出を持つ全 LINE ユーザーがメンバードキュメントを持つか
+// 3) グループ支出を持つ全 LINE ユーザーが「有効な」メンバードキュメントを持つか
 //    これが満たされないまま Phase 2（ルール厳格化）を出すと、その利用者は
 //    グループ家計簿が見えなくなる。Phase 2 の前提条件。
-const expenses = await (async () => {
-  const res = await fetch(`${BASE}:runQuery`, {
-    method: 'POST',
-    headers: authHeaders,
-    body: JSON.stringify({
-      structuredQuery: {
-        from: [{ collectionId: 'expenses' }],
-        select: { fields: [{ fieldPath: 'lineId' }, { fieldPath: 'groupId' }] },
-        limit: 5000,
-      },
-    }),
-  });
-  if (!res.ok) throw new Error(`runQuery -> HTTP ${res.status}`);
-  return (await res.json()).filter((r) => r.document).map((r) => r.document);
-})();
+// 件数上限を切ると、上限を超えた分に未登録メンバーが紛れていても
+// 「安全」と報告してしまう。ページングして全件を見る。
+const expenses = await listAll('expenses', [
+  { fieldPath: 'lineId' },
+  { fieldPath: 'groupId' },
+]);
 
-const memberIds = new Set(after.map(docId));
+// Phase 2 のルールは isActive == true のメンバーシップだけを有効とみなす。
+// ここで無効なものまで「登録済み」と数えると、脱退扱いの利用者がゲートを
+// 通過したのちルール側で拒否され、グループ家計簿が見えなくなる。
+const bool = (doc, field) => doc.fields?.[field]?.booleanValue === true;
+const memberIds = new Set(after.filter((d) => bool(d, 'isActive')).map(docId));
 const needed = new Map(); // `${groupId}_${lineId}` -> 件数
 for (const e of expenses) {
   const groupId = str(e, 'groupId');
@@ -147,7 +156,7 @@ for (const e of expenses) {
 }
 const missing = [...needed.keys()].filter((k) => !memberIds.has(k));
 console.log(
-  `[3] グループ支出を持つ LINE ユーザー: ${needed.size} 名 / メンバー未登録: ${missing.length} 名` +
+  `[3] グループ支出を持つ LINE ユーザー: ${needed.size} 名 / 有効なメンバー登録なし: ${missing.length} 名` +
     (missing.length ? ' ← Phase 2 を出す前に要対応' : ' ✓')
 );
 for (const k of missing) console.log(`      未登録: ${mask(k)}`);
