@@ -264,7 +264,12 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: bot-build
-          path: bot/
+          # upload 側は `path: bot/dist` なので、アーティファクトのルートには
+          # dist の「中身」が入る（共通パスが剥がされる仕様）。ここで `bot/` に
+          # 展開すると bot/index.js になり、bot/package.json の
+          # main=dist/index.js と食い違って
+          # 「bot/dist/index.js does not exist」でデプロイが落ちる。
+          path: bot/dist
 
       # firebase deploy は関数の一覧を取得するために bot/ のコードを実際に読み込む。
       # 成果物（dist）だけでは依存が解決できないため、ワークスペース全体を入れる。
