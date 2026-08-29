@@ -1,0 +1,32 @@
+# 秘密値（.gitignore は Vercel のアップロードに効かないため明示的に除外する）
+# .gitignore が「秘密値を含みうる」として扱っているパターンをすべてミラーする。
+# ルートからデプロイするため、ここに漏れがあるとそのまま流出経路になる。
+.env
+.env.*
+*.b64
+*.incoming
+*.bak
+*.secret.json
+*.local.json
+credentials.json
+**/credentials.json
+service-account*.json
+kakeibo_service.json
+vision-key.json
+
+# 巨大なローカル資材（デプロイに不要）
+google-cloud-sdk
+google-cloud-*.tar.gz
+
+# 依存とビルド成果物（Vercel 側でインストール／ビルドする）
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+
+# その他
+.git
+.firebase
+*.log

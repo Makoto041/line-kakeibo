@@ -238,6 +238,19 @@ jobs:
     environment:
       name: production-bot
     steps:
+      # secrets コンテキストは job-level の `if:` から参照できない（常に空扱いに
+      # なる）ため、ジョブ内の最初のステップで明示的に検証する。未設定のまま
+      # 進むと google-github-actions/auth が分かりにくいエラーで落ちる。
+      - name: Verify Google Cloud credentials are configured
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          if [ -z "$GCP_SA_KEY" ]; then
+            echo "::error::GCP_SA_KEY が production-bot environment に設定されていません。Firebase への自動デプロイは実行できません。"
+            exit 1
+          fi
+          echo "✅ GCP_SA_KEY is configured"
+
       - name: Checkout code
         uses: actions/checkout@v4
         

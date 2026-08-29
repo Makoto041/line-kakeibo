@@ -14,13 +14,17 @@ if ! command -v vercel >/dev/null 2>&1; then
   exit 1
 fi
 
-# .vercelディレクトリの存在確認（web 配下で実施）
-if [ ! -d web/.vercel ] || [ ! -s web/.vercel/project.json ]; then
-  echo "⚠️ Vercel プロジェクトにリンクされていません（web）。リンクを作成します..."
-  vercel link --yes --cwd web
+# Vercel プロジェクトリンクの確認（リポジトリルートで実施）
+# 本番 https://line-kakeibo.vercel.app を配信しているのはルートにリンクした
+# `line-kakeibo` プロジェクト。ルートの vercel.json が
+# buildCommand='cd web && npm run build' / outputDirectory='web/.next' を
+# 定義しているため、デプロイもルートから実行する必要がある。
+if [ ! -d .vercel ] || [ ! -s .vercel/project.json ]; then
+  echo "⚠️ Vercel プロジェクトにリンクされていません。リンクを作成します..."
+  vercel link --yes --project line-kakeibo --scope makoto041s-projects
 fi
 
-echo "✅ Vercel CLI および（web ディレクトリの）プロジェクトリンクの確認が完了しました。"
+echo "✅ Vercel CLI およびプロジェクトリンクの確認が完了しました。"
 
 # 環境変数ファイルの確認
 if [ ! -f web/.env.local ]; then
@@ -51,24 +55,14 @@ npm run build
 # プロジェクトルートに戻る
 cd ..
 
-# Vercel に環境変数を設定（必要に応じて）
-echo "🔐 Vercel環境変数を設定中..."
+# 環境変数は Vercel ダッシュボード（Project Settings > Environment Variables）で
+# 管理する。以前はここで web/.env.local の全キーを `vercel env add` に流していたが、
+# ローカルの秘密値を機械的に本番へ push してしまううえ、リンク先プロジェクトが
+# ずれていると誤ったプロジェクトへ書き込む事故になるため廃止した。
 
-# web/.env.localから環境変数を読み込んで設定
-while IFS='=' read -r key value; do
-  # 空行やコメント行はスキップ
-  if [[ -z "$key" || "$key" == \#* ]]; then
-    continue
-  fi
-
-  # Vercelに環境変数を追加（エラーを無視）
-  echo "Setting $key..."
-  echo "$value" | vercel env add "$key" production --cwd web 2>/dev/null || true
-done <web/.env.local
-
-# Vercel production デプロイ
-echo "🚀 Vercel に production モードでデプロイを実行中... (tgz アーカイブ + web ディレクトリ)"
-vercel --prod --archive=tgz --cwd web --yes
+# Vercel production デプロイ（リポジトリルートから実行）
+echo "🚀 Vercel に production モードでデプロイを実行中... (tgz アーカイブ)"
+vercel --prod --archive=tgz --yes
 
 echo "✅ デプロイが完了しました！"
 echo "📖 デプロイされたURLを確認してください。"

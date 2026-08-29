@@ -174,22 +174,29 @@ const testFirebaseConnection = async () => {
     console.log('✅ Firebase connection test successful');
     return true;
   } catch (error) {
-    console.error('❌ Firebase connection test failed:', error);
-    
-    // エラーの種類に応じた対処法を提示
     const firestoreError = error as { code?: string };
+
+    // permission-denied はリクエストがバックエンドに到達し、ルールに評価された
+    // 証拠なので、接続テストとしては成功扱いにする。
+    // このプローブは無フィルタの `expenses` クエリであり、所有者ベースのルール
+    // （resource.data.lineId == token.lineId）を構造的に満たせないため、
+    // ルールが正しく機能している限り必ずここに来る。
     if (firestoreError?.code === 'permission-denied') {
-      console.info(
-        '📝 Firestore Security Rules may be blocking access.\n' +
-        'Please check your Firestore rules in Firebase Console.'
+      console.log(
+        '✅ Firebase connection test successful (probe query rejected by Security Rules, which confirms reachability)'
       );
-    } else if (firestoreError?.code === 'unavailable') {
+      return true;
+    }
+
+    console.error('❌ Firebase connection test failed:', error);
+
+    if (firestoreError?.code === 'unavailable') {
       console.info(
         '📝 Firestore service is unavailable.\n' +
         'Please check your internet connection and Firebase project status.'
       );
     }
-    
+
     return false;
   }
 };
