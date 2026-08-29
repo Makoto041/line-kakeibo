@@ -13,7 +13,9 @@ import {
   deleteDoc,
   FirestoreError
 } from 'firebase/firestore';
-import { db, getFirebaseStatus, ensureFirebaseInitialized } from './firebase';
+import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
+import { db, auth, getFirebaseStatus, ensureFirebaseInitialized } from './firebase';
+import { initLineAuth, getLineIdClaim } from './lineAuth';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
 import { getCached, setCached, hasCached } from './swrCache';
@@ -194,73 +196,80 @@ const waitForFirebase = async (maxWaitMs: number = 5000, signal?: AbortSignal): 
   return checkFirebaseConnection();
 };
 
-// 認証はURL(lineId)から同期的に導出でき、アプリ内ナビでは値が変わらない。
-// 解決結果をモジュールに保持し、ページ再マウント時はそこから即時復元することで、
-// タブ切替のたびに全画面スピナーが1フレーム出る「リロード感」をなくす。
-// 初回ロードは null/loading=true で始まる（SSRと一致しハイドレーション不整合を避ける）。
-let cachedLineAuth: { uid: string; isAnonymous: boolean } | null = null;
-
-function getLineIdFromUrl(): string | null {
-  if (typeof window === 'undefined') return null;
-  const urlParams = new URLSearchParams(window.location.search);
-  let lineId = urlParams.get('lineId');
-  if (!lineId && window.location.hash) {
-    const hashParams = new URLSearchParams(window.location.hash.replace('#', ''));
-    lineId = hashParams.get('lineId');
-  }
-  if (!lineId) {
-    const match = window.location.href.match(/[?&]lineId=([^&]+)/);
-    if (match) {
-      lineId = decodeURIComponent(match[1]);
-    }
-  }
-  return lineId;
+// 認証は Firebase の onAuthStateChanged + カスタムクレームで駆動する。
+// URL の lineId は一切信用しない（旧方式の脆弱性の除去）。
+// - uid      … appUid（auth.currentUser.uid）
+// - lineId   … 検証済み LINE userId（ID トークンの custom claim。匿名時は null）
+// - isAnonymous … 匿名フォールバック（＝lineId なし。データにアクセスできない）
+// 解決結果はモジュールに保持し、ページ再マウント時に即時復元してスピナーの点滅を防ぐ。
+interface LineAuthState {
+  uid: string;
+  lineId: string | null;
+  isAnonymous: boolean;
 }
 
+let cachedLineAuth: LineAuthState | null = null;
+
 export function useLineAuth() {
-  const [user, setUser] = useState<{ uid: string; isAnonymous: boolean } | null>(() => cachedLineAuth);
+  const [state, setState] = useState<LineAuthState | null>(() => cachedLineAuth);
   const [loading, setLoading] = useState(() => cachedLineAuth === null);
 
   useEffect(() => {
-    const lineId = getLineIdFromUrl();
+    ensureFirebaseInitialized();
+    // 起動時サインイン（LIFF もしくは匿名フォールバック）を確実に開始する
+    initLineAuth();
 
-    const resolved = lineId
-      ? { uid: lineId, isAnonymous: false }
-      : { uid: 'guest', isAnonymous: true };
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
 
-    cachedLineAuth = resolved;
-    setUser(resolved);
-    setLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser) {
+        cachedLineAuth = null;
+        setState(null);
+        setLoading(false);
+        return;
+      }
+
+      // lineId は検証済みクレームからのみ取得（匿名ユーザーは null）
+      const lineId = await getLineIdClaim(fbUser);
+      const resolved: LineAuthState = {
+        uid: fbUser.uid,
+        lineId,
+        isAnonymous: fbUser.isAnonymous || !lineId,
+      };
+
+      cachedLineAuth = resolved;
+      setState(resolved);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const signOutUser = async () => {
-    // LINE IDベースの認証では、URLを変更してLINE IDを削除
-    const url = new URL(window.location.href);
-    url.searchParams.delete('lineId');
-    window.history.replaceState({}, '', url.toString());
-
-    // ゲストユーザーに戻す（モジュールキャッシュも同期）
-    cachedLineAuth = { uid: 'guest', isAnonymous: true };
-    setUser({ uid: 'guest', isAnonymous: true });
-  };
-
-  // URLパラメータを保持してページ遷移するためのヘルパー関数
-  const getUrlWithLineId = (path: string) => {
-    if (typeof window === 'undefined') return path;
-    const urlParams = new URLSearchParams(window.location.search);
-    const lineId = urlParams.get('lineId');
-    if (lineId) {
-      return `${path}?lineId=${encodeURIComponent(lineId)}`;
+    try {
+      if (auth) await firebaseSignOut(auth);
+    } catch (e) {
+      console.error('Sign out failed:', e);
     }
-    return path;
+    cachedLineAuth = null;
+    setState(null);
   };
 
-  return { 
-    user, 
-    loading, 
+  // 旧: URL に lineId を引き回すヘルパー。現在は認証が Firebase に永続化されるため
+  // URL への付与は不要。互換のため関数は残し、パスをそのまま返す。
+  const getUrlWithLineId = (path: string) => path;
+
+  return {
+    user: state ? { uid: state.uid, isAnonymous: state.isAnonymous } : null,
+    uid: state?.uid ?? null,
+    lineId: state?.lineId ?? null,
+    loading,
     signOut: signOutUser,
-    isAnonymous: user?.isAnonymous || true,
-    getUrlWithLineId
+    isAnonymous: state?.isAnonymous ?? true,
+    getUrlWithLineId,
   };
 }
 

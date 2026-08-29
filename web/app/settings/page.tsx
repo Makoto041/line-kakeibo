@@ -7,7 +7,6 @@ import { useLineAuth } from '../../lib/hooks';
 import { getDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, DEFAULT_SETTINGS, type DateRangeSettings } from '../../lib/dateSettings';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import PreviewModeBanner from '../../components/PreviewModeBanner';
 import { getCategoryVisual } from '../../lib/categoryVisuals';
 import { CANONICAL_CATEGORIES } from '../../lib/categoryNormalization';
 import { getCached, setCached } from '../../lib/swrCache';
@@ -55,11 +54,11 @@ function normalizeBudgetConfig(data: unknown): BudgetConfig {
 }
 
 export default function Settings() {
-  const { user, loading: authLoading, getUrlWithLineId } = useLineAuth();
+  const { lineId, loading: authLoading, getUrlWithLineId } = useLineAuth();
 
   // 再訪時の全画面スピナーを避けるためのキャッシュキー
-  const dsCacheKey = user?.uid ? `dateSettings:${user.uid}` : '';
-  const sbCacheKey = user?.uid ? `settingsBudget:${user.uid}` : '';
+  const dsCacheKey = lineId ? `dateSettings:${lineId}` : '';
+  const sbCacheKey = lineId ? `settingsBudget:${lineId}` : '';
   const cachedDate = dsCacheKey ? getCached<DateRangeSettings>(dsCacheKey) : undefined;
   const cachedBudget = sbCacheKey ? getCached<BudgetConfig>(sbCacheKey) : undefined;
 
@@ -82,20 +81,20 @@ export default function Settings() {
 
   useEffect(() => {
     const loadAllSettings = async () => {
-      if (!user?.uid) {
+      if (!lineId) {
         setLoading(false);
         return;
       }
 
       // キャッシュがあれば即表示し、裏で再取得（スピナーを出さない）
-      const hadCache = !!(getCached(`dateSettings:${user.uid}`) && getCached(`settingsBudget:${user.uid}`));
+      const hadCache = !!(getCached(`dateSettings:${lineId}`) && getCached(`settingsBudget:${lineId}`));
       try {
         if (!hadCache) setLoading(true);
 
         // 期間設定の読み込み
-        await migrateLocalToFirestore(user.uid);
-        const loadedDateSettings = await getDateRangeSettings(user.uid);
-        setCached(`dateSettings:${user.uid}`, loadedDateSettings);
+        await migrateLocalToFirestore(lineId);
+        const loadedDateSettings = await getDateRangeSettings(lineId);
+        setCached(`dateSettings:${lineId}`, loadedDateSettings);
         setDateSettings(loadedDateSettings);
         setTempStartDate(loadedDateSettings.startDate || '');
         setTempEndDate(loadedDateSettings.endDate || '');
@@ -103,11 +102,11 @@ export default function Settings() {
 
         // 予算設定の読み込み
         if (db) {
-          const docRef = doc(db, 'budgetSettings', user.uid);
+          const docRef = doc(db, 'budgetSettings', lineId);
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
             const normalizedConfig = normalizeBudgetConfig(docSnap.data());
-            setCached(`settingsBudget:${user.uid}`, normalizedConfig);
+            setCached(`settingsBudget:${lineId}`, normalizedConfig);
             setBudgetConfig(normalizedConfig);
           }
           setBudgetHasLoaded(true);
@@ -122,10 +121,10 @@ export default function Settings() {
     };
 
     loadAllSettings();
-  }, [user?.uid]);
+  }, [lineId]);
 
   const saveDateSettingsHandler = async () => {
-    if (!user?.uid) return;
+    if (!lineId) return;
 
     const newSettings: DateRangeSettings = {
       mode: dateSettings.mode,
@@ -138,14 +137,14 @@ export default function Settings() {
       }),
     };
 
-    await saveDateRangeSettings(user.uid, newSettings);
+    await saveDateRangeSettings(lineId, newSettings);
     setDateSettings(newSettings);
     // 保存後はキャッシュも更新（ホーム/再訪時に最新を即表示）
-    setCached(`dateSettings:${user.uid}`, newSettings);
+    setCached(`dateSettings:${lineId}`, newSettings);
   };
 
   const saveBudgetSettingsHandler = async () => {
-    if (!user?.uid || !db) return;
+    if (!lineId || !db) return;
 
     if (budgetLoadError || !budgetHasLoaded) {
       setMessage({ type: 'error', text: '設定を正常に読み込めていないため、保存できません' });
@@ -157,18 +156,18 @@ export default function Settings() {
       return;
     }
 
-    const docRef = doc(db, 'budgetSettings', user.uid);
+    const docRef = doc(db, 'budgetSettings', lineId);
     await setDoc(docRef, {
       ...budgetConfig,
       updatedAt: new Date(),
     });
     // 保存後はキャッシュも更新（settings再訪・ホームの予算表示に即反映）
-    setCached(`settingsBudget:${user.uid}`, budgetConfig);
-    setCached(`budget:${user.uid}`, budgetConfig);
+    setCached(`settingsBudget:${lineId}`, budgetConfig);
+    setCached(`budget:${lineId}`, budgetConfig);
   };
 
   const handleSaveAll = async () => {
-    if (!user?.uid) {
+    if (!lineId) {
       setMessage({ type: 'error', text: 'ユーザー情報が取得できません' });
       return;
     }
@@ -201,12 +200,12 @@ export default function Settings() {
     );
   }
 
-  if (!user) {
+  if (!lineId) {
     return (
       <div className="mx-auto flex min-h-[60vh] max-w-md items-center px-4">
         <div className="glass w-full rounded-2xl p-8 text-center shadow-glass">
           <h1 className="text-lg font-semibold text-fg">ログインが必要です</h1>
-          <p className="mt-1.5 text-sm text-muted">設定を変更するにはログインしてください</p>
+          <p className="mt-1.5 text-sm text-muted">設定を変更するにはLINEログインが必要です</p>
           <a
             href={getUrlWithLineId('/')}
             className="mt-4 inline-flex items-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg transition-colors hover:opacity-90"
@@ -220,12 +219,6 @@ export default function Settings() {
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-5 md:px-8 md:py-7">
-      {(user.uid === 'guest' || user.isAnonymous) && (
-        <div className="mb-4">
-          <PreviewModeBanner />
-        </div>
-      )}
-
       <main>
         {/* Message */}
         {message && (

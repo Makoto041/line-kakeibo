@@ -252,8 +252,8 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
 
 /* ------------------------------- Page ----------------------------------- */
 export default function Dashboard() {
-  const { user, loading: authLoading } = useLineAuth();
-  const dsCacheKey = user?.uid ? `dateSettings:${user.uid}` : '';
+  const { lineId, loading: authLoading } = useLineAuth();
+  const dsCacheKey = lineId ? `dateSettings:${lineId}` : '';
   const [currentDate, setCurrentDate] = useState(dayjs());
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>(
     () => (dsCacheKey && getCached<DateRangeSettings>(dsCacheKey)) || { mode: 'monthly' }
@@ -263,7 +263,7 @@ export default function Dashboard() {
   const [firebaseError, setFirebaseError] = useState(false);
 
   const { config: budgetConfig, loading: budgetLoading, error: budgetError, refetch: refetchBudget } =
-    useBudgetConfig(user?.uid || null);
+    useBudgetConfig(lineId);
 
   const sampleStats = useMemo(() => getSampleStats(), []);
 
@@ -273,11 +273,11 @@ export default function Dashboard() {
 
   useEffect(() => {
     const load = async () => {
-      if (!user?.uid) {
+      if (!lineId) {
         setSettingsLoading(false);
         return;
       }
-      const key = `dateSettings:${user.uid}`;
+      const key = `dateSettings:${lineId}`;
       const cached = getCached<DateRangeSettings>(key);
       // キャッシュがあれば即表示して裏で再取得（スピナーを出さない）
       if (cached) {
@@ -287,7 +287,7 @@ export default function Dashboard() {
         setSettingsLoading(true);
       }
       try {
-        const fresh = await getDateRangeSettings(user.uid);
+        const fresh = await getDateRangeSettings(lineId);
         setCached(key, fresh);
         setDateSettings(fresh);
       } catch (e) {
@@ -298,11 +298,11 @@ export default function Dashboard() {
       }
     };
     load();
-  }, [user?.uid]);
+  }, [lineId]);
 
   const effectiveRange = getEffectiveDateRange(currentDate, dateSettings);
   const { stats, loading: statsLoading } = useMonthlyStats(
-    user?.uid || null,
+    lineId,
     currentDate.year(),
     currentDate.month() + 1,
     dateSettings.customStartDay || 1,
@@ -314,7 +314,7 @@ export default function Dashboard() {
   const prevDate = currentDate.subtract(1, 'month');
   const prevRange = getEffectiveDateRange(prevDate, dateSettings);
   const { stats: prevStats } = useMonthlyStats(
-    user?.uid || null,
+    lineId,
     prevDate.year(),
     prevDate.month() + 1,
     dateSettings.customStartDay || 1,
@@ -352,7 +352,7 @@ export default function Dashboard() {
     );
   }
 
-  const isGuest = user?.uid === 'guest' || user?.isAnonymous === true;
+  const isGuest = !lineId;
   const displayStats = isGuest ? sampleStats : stats;
 
   const totalExpense = displayStats?.totalAmount || 0;

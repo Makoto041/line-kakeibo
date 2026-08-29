@@ -53,7 +53,7 @@ function ExpensesPageLoading() {
 }
 
 function ExpensesPageContent() {
-  const { user, loading: authLoading } = useLineAuth();
+  const { lineId, loading: authLoading } = useLineAuth();
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
   const [currentMonth, setCurrentMonth] = useState(dayjs());
   // Initialize dateRange synchronously to avoid undefined→value transition causing double fetch
@@ -69,15 +69,16 @@ function ExpensesPageContent() {
   const [editMonthSet, setEditMonthSet] = useState(false);
 
   // URLからパラメータを取得（useSearchParamsでハイドレーション安全に取得）
+  // edit / expenseId はドキュメントIDであり、認証（本人特定）には使わない。
+  // 本人特定は検証済みクレームの lineId のみで行う（URL の lineId は信用しない）。
   const searchParams = useSearchParams();
-  const lineIdFromUrl = searchParams.get('lineId');
   const editExpenseId = searchParams.get('edit');
 
-  // LINE IDがある場合は直接それを使用、なければuser.uidを使用
-  const effectiveUserId = lineIdFromUrl || user?.uid || null;
+  // データ取得は検証済み lineId クレームでのみ行う
+  const effectiveUserId = lineId;
 
-  // ゲスト（プレビュー）モード判定: lineIdなしで開かれた場合
-  const isGuest = !lineIdFromUrl && (user?.uid === 'guest' || user?.isAnonymous === true);
+  // ゲスト（プレビュー）モード判定: 検証済み lineId がない場合
+  const isGuest = !lineId;
 
   // Load date settings from Firestore on mount
   useEffect(() => {
@@ -1235,7 +1236,7 @@ function ExpensesPageContent() {
               </div>
               <div className="flex gap-2 border-t border-line/60 p-3">
                 <a
-                  href={`/attach?expenseId=${encodeURIComponent(receiptPreview.expenseId)}${lineIdFromUrl ? `&lineId=${encodeURIComponent(lineIdFromUrl)}` : ""}`}
+                  href={`/attach?expenseId=${encodeURIComponent(receiptPreview.expenseId)}`}
                   className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent/12 px-4 py-2.5 text-sm font-medium text-accent transition-colors hover:bg-accent/20"
                 >
                   <RefreshCw className="h-4 w-4" />
