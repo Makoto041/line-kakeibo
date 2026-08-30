@@ -1,6 +1,6 @@
 # CLAUDE.md — line-kakeibo（Claude Code 向け）
 
-LINE 連携の家計簿アプリ。既存の CI / AIレビュー群を尊重しつつ、環境（Mac/サーバ）を問わず同じ「しきたり」で作業するための共通ルールを定義する。
+LINE 連携の家計簿アプリ。既存の CI を尊重しつつ、環境（Mac/サーバ）を問わず同じ「しきたり」で作業するための共通ルールを定義する。
 
 ## 構成（npm workspace）
 
@@ -20,9 +20,9 @@ npm -w bot run build    # tsc
 ## 開発フロー（毎回この手順で進める。ユーザーの再指示は不要）
 
 1. **Fable 5 レビュー**: 非自明な実装は Agent ツール（`model: fable`）でサブエージェント指名し設計/コードレビュー → Blocking/Should-fix を修正・再確認してから PR。
-2. **自走 PR → マージ**: **master への直コミット禁止**。ブランチを切って PR を作成し、既存の CI / AIレビュー群（`.github/workflows/` の `pr-checks` / 各 review / `vercel-deploy` など）の完了を待ち、指摘があれば修正・無ければ squash マージまで自走する。
+2. **自走 PR → マージ**: **master への直コミット禁止**。ブランチを切って PR を作成し、既存の CI（`.github/workflows/` の `ci-cd` / `pr-checks` / `code-review` / `vercel-deploy` など）の完了を待ち、指摘があれば修正・無ければ squash マージまで自走する。
 3. **検証**: build / type-check / lint をローカルで通してから PR にする。
-4. レビュー方針・ロードマップの詳細は `.github/docs/`（`AI_REVIEW_GUIDE` 等）を参照。
+4. ロードマップ・実装方針の詳細は `.github/docs/`（`IMPLEMENTATION_ROADMAP` / `IMPLEMENTATION_DECISION` 等）を参照。
 5. **設計/UX を変える変更はまずモック**: 方向性の合意を得てから実装に入る。サーバー環境で作業していて実機で見せたい場合は、下記「サーバー環境でのプレビュー」で URL を渡し、実機（iPhone / Mac など SP・PC 両方）で確認してもらう。
 
 ## サーバー環境でのプレビュー（tailnet 経由で実機確認）
