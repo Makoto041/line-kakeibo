@@ -111,8 +111,8 @@ function common(name, msg) {
   check('現在の設定は3行', rows.length === 3, `got ${rows.length}`);
   check('各行にアイコンがある', rows.every((r) => r.contents[0].type === 'image'));
   check(
-    '支出区分は未設定＋userアイコン',
-    rowText(rows[0]) === '支出区分：未設定' && rows[0].contents[0].url.endsWith('/user.png'),
+    '支出区分は共同費（未確認）＋usersアイコン',
+    rowText(rows[0]) === '支出区分：共同費（未確認）' && rows[0].contents[0].url.endsWith('/users.png'),
     rows[0].contents[0].url
   );
   check(
@@ -197,8 +197,8 @@ function common(name, msg) {
 
   const rows = settingsRows(msg);
   check('現在の設定は3行', rows.length === 3, `got ${rows.length}`);
-  check('支出区分に[変更]が出ない', !rows[0].contents.some((c) => c.action));
-  check('立替に[変更]が出ない', !rows[1].contents.some((c) => c.action));
+  check('支出区分にボタンが出ない', !rows[0].contents.some((c) => c.action));
+  check('立替にボタンが出ない', !rows[1].contents.some((c) => c.action));
   check('カテゴリは変更できる', rows[2].contents.some((c) => c.action));
   check(
     'paymentMethod の生値が漏れない',
@@ -210,7 +210,7 @@ function common(name, msg) {
 {
   console.log('\n[status ごとの支出区分アイコン]');
   const cases = [
-    ['personal', '支出区分：個人費', '/user.png'],
+    ['personal', '支出区分：除外', '/user.png'],
     ['shared', '支出区分：共同費', '/users.png'],
     ['advance_pending', '支出区分：共同費', '/users.png'],
     ['advance_settled', '支出区分：共同費', '/users.png'],
@@ -245,6 +245,49 @@ function common(name, msg) {
     'advance_pending の立替はあり（精算待ち）',
     rowText(settingsRows(pendingAdv)[1]) === '立替：あり（精算待ち）'
   );
+}
+
+// ------------------------------------------- 操作ボタンの表記・色・postback
+{
+  console.log('\n[操作ボタンの表記・色]');
+  const RED = '#DC2626';
+  const BLUE = '#2563EB';
+  /** 行末ボタンの表記・文字色・postback data を取り出す */
+  function button(row) {
+    const b = row.contents.find((c) => c.action);
+    if (!b) return null;
+    return { label: b.contents[0].text, color: b.contents[0].color, data: JSON.parse(b.action.data) };
+  }
+  // [status, 支出区分ボタン, 色, to, 立替ボタン, 色, to]
+  const cases = [
+    [undefined, '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
+    ['pending', '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
+    ['shared', '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
+    ['personal', '戻す', RED, 'shared', '自分が立替', BLUE, 'on'],
+    ['advance_pending', '除外', RED, 'personal', '取り消す', RED, 'off'],
+  ];
+  for (const [status, splitLabel, splitColor, splitTo, advLabel, advColor, advTo] of cases) {
+    const rows = settingsRows(
+      buildExpenseCardFromRecord('exp_b', { category: '食費', status, inputSource: 'gmail_auto' })
+    );
+    const split = button(rows[0]);
+    const adv = button(rows[1]);
+    const cat = button(rows[2]);
+    check(
+      `${status ?? '未指定'} → 支出区分[${splitLabel}]`,
+      split && split.label === splitLabel && split.color === splitColor &&
+        split.data.action === 'set_split' && split.data.to === splitTo &&
+        split.data.expenseId === 'exp_b' && split.data.source === 'gmail',
+      JSON.stringify(split)
+    );
+    check(
+      `${status ?? '未指定'} → 立替[${advLabel}]`,
+      adv && adv.label === advLabel && adv.color === advColor &&
+        adv.data.action === 'set_advance' && adv.data.to === advTo,
+      JSON.stringify(adv)
+    );
+    check(`${status ?? '未指定'} → カテゴリ[変更]は青`, cat && cat.label === '変更' && cat.color === BLUE);
+  }
 }
 
 // ------------------------------------------------------ カテゴリアイコン解決

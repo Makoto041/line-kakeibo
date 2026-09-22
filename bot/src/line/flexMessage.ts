@@ -143,7 +143,7 @@ function iconActionButton(opts: {
 }
 
 // ============================================
-// 現在の設定（リッチテキスト表示）と [変更] ボタン
+// 現在の設定（リッチテキスト表示）と操作ボタン
 // ============================================
 
 /** Webアプリのベースドメイン */
@@ -212,14 +212,17 @@ export interface DerivedExpenseSettings {
  * （includeInTotal: false）で集計状態が異なるが、どちらも OK やカテゴリ選択で
  * 共同費として確定する流れのため、表示は「共同費（未確認）」に揃える。
  */
-export function deriveExpenseSettings(
-  status?: ExpenseStatusType,
-  _includeInTotal?: boolean
-): DerivedExpenseSettings {
+export function deriveExpenseSettings(status?: ExpenseStatusType): DerivedExpenseSettings {
   const shared = {
     splitIconKey: 'users' as const,
     nextSplit: 'personal' as const,
     splitButtonLabel: '除外',
+    splitButtonTone: 'danger' as const,
+  };
+  const excluded = {
+    splitIconKey: 'user' as const,
+    nextSplit: 'shared' as const,
+    splitButtonLabel: '戻す',
     splitButtonTone: 'danger' as const,
   };
   const noAdvance = {
@@ -238,21 +241,13 @@ export function deriveExpenseSettings(
     case 'shared':
       return { splitLabel: '共同費', ...shared, ...noAdvance, settled: false };
     case 'personal':
-      return {
-        splitLabel: '除外',
-        splitIconKey: 'user',
-        nextSplit: 'shared',
-        splitButtonLabel: '戻す',
-        splitButtonTone: 'danger',
-        ...noAdvance,
-        settled: false,
-      };
+      return { splitLabel: '除外', ...excluded, ...noAdvance, settled: false };
     case 'advance_pending':
       return { splitLabel: '共同費', ...shared, advanceLabel: 'あり（精算待ち）', ...withAdvance, settled: false };
     case 'advance_settled':
       return { splitLabel: '共同費', ...shared, advanceLabel: '精算済み', ...withAdvance, settled: true };
     default:
-      // pending / 未設定
+      // pending（未確認）/ status 未指定
       return { splitLabel: '共同費（未確認）', ...shared, ...noAdvance, settled: false };
   }
 }
@@ -360,10 +355,9 @@ function buildCurrentSettingsSection(opts: {
   source: ExpenseCardSource;
   category: string;
   status?: ExpenseStatusType;
-  includeInTotal?: boolean;
 }): FlexComponent {
-  const { expenseId, source, category, status, includeInTotal } = opts;
-  const derived = deriveExpenseSettings(status, includeInTotal);
+  const { expenseId, source, category, status } = opts;
+  const derived = deriveExpenseSettings(status);
 
   return {
     type: 'box',
@@ -450,7 +444,6 @@ function buildExpenseCard(opts: {
   category: string;
   source: ExpenseCardSource;
   status?: ExpenseStatusType;
-  includeInTotal?: boolean;
   /** 金額行の下に差し込むフロー固有の行（残り予算・支払い方法など） */
   detailRows?: FlexComponent[];
   /** 「修正」の遷移先。未指定なら押下者のIDで解決する postback にする。 */
@@ -466,7 +459,6 @@ function buildExpenseCard(opts: {
     category,
     source,
     status,
-    includeInTotal,
     detailRows = [],
     editUrl,
   } = opts;
@@ -532,8 +524,8 @@ function buildExpenseCard(opts: {
           ],
         },
         ...detailRows,
-        // 現在の設定（値の表示と [変更] 操作を分離）
-        buildCurrentSettingsSection({ expenseId, source, category, status, includeInTotal }),
+        // 現在の設定（値の表示と操作ボタンを分離）
+        buildCurrentSettingsSection({ expenseId, source, category, status }),
       ],
       paddingAll: 'lg',
     },
@@ -628,7 +620,7 @@ export interface CardUsageInfo {
   remainingBudget?: number;
   /** 現在の支出ステータス（未指定は pending 相当） */
   status?: ExpenseStatusType;
-  /** 集計に含めるか。pending のときの現在値表示に使う */
+  /** 集計に含めるか。カードの表示には使わない（pending は常に「共同費（未確認）」） */
   includeInTotal?: boolean;
 }
 
@@ -636,7 +628,7 @@ export interface CardUsageInfo {
  * カード利用通知のFlex Messageを生成
  */
 export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
-  const { expenseId, merchant, amount, category, date, remainingBudget, status, includeInTotal } = info;
+  const { expenseId, merchant, amount, category, date, remainingBudget, status } = info;
 
   // 残り予算の表示
   const detailRows = [];
@@ -660,9 +652,7 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
     date,
     category,
     source: 'gmail',
-    // Gmail自動取得は includeInTotal: true で作られる（未指定でも集計に入る扱い）
     status,
-    includeInTotal: includeInTotal ?? true,
     detailRows: detailRows as unknown as FlexComponent[],
   });
 }
@@ -695,7 +685,7 @@ export interface TextExpenseInfo {
   payerName?: string;
   /** 現在の支出ステータス（未指定は pending 相当） */
   status?: ExpenseStatusType;
-  /** 集計に含めるか。pending のときの現在値表示に使う */
+  /** 集計に含めるか。カードの表示には使わない（pending は常に「共同費（未確認）」） */
   includeInTotal?: boolean;
   /** 「修正」の遷移先（送信相手の lineId を含むWeb編集URL） */
   editUrl?: string;
@@ -714,7 +704,6 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     paymentMethod,
     payerName,
     status,
-    includeInTotal,
     editUrl,
   } = info;
 
@@ -739,8 +728,6 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     category,
     source: 'text',
     status,
-    // LINE手入力は includeInTotal: false で作られる（OK を押すまで集計に入らない）
-    includeInTotal: includeInTotal ?? false,
     detailRows: detailRows as unknown as FlexComponent[],
     editUrl,
   });
@@ -832,7 +819,6 @@ export function buildExpenseCardFromRecord(
     category: record.category || 'その他',
     source,
     status: record.status,
-    includeInTotal: record.includeInTotal,
     detailRows: detailRows as unknown as FlexComponent[],
     editUrl: opts.editUrl,
   });
