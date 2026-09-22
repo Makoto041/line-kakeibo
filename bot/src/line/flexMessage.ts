@@ -165,7 +165,7 @@ export type ExpenseCardSource = 'gmail' | 'text';
 /**
  * ボタンの色分け
  *
- * 外す・取り消すなど何かを消す操作は赤（danger）、加える・変える操作は青（primary）。
+ * 除外・戻す・取り消すなど現在の状態を外す／巻き戻す操作は赤（danger）、加える・変える操作は青（primary）。
  * 一般的な色分けに揃え、集計から外す操作を押す前に見分けられるようにする。
  */
 export type ActionTone = 'primary' | 'danger';
