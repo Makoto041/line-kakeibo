@@ -162,18 +162,34 @@ export const EXPENSE_LIST_URL = `${WEB_APP_BASE}/expenses`;
 /** 登録・編集カードの入力元 */
 export type ExpenseCardSource = 'gmail' | 'text';
 
-/** 「現在の設定」に出す表示値と、[変更] で設定する値 */
+/**
+ * ボタンの色分け
+ *
+ * 外す・取り消すなど何かを消す操作は赤（danger）、加える・変える操作は青（primary）。
+ * 一般的な色分けに揃え、集計から外す操作を押す前に見分けられるようにする。
+ */
+export type ActionTone = 'primary' | 'danger';
+
+/** 「現在の設定」に出す表示値と、行末ボタンで設定する値・表記 */
 export interface DerivedExpenseSettings {
   /** 支出区分の現在値 */
   splitLabel: string;
-  /** 支出区分の行頭に置くアイコン（共同費は複数人、個人費・未設定は単体） */
+  /** 支出区分の行頭に置くアイコン（共同費は複数人、除外は単体） */
   splitIconKey: 'users' | 'user';
-  /** 支出区分の [変更] で設定する値 */
+  /** 支出区分のボタンで設定する値 */
   nextSplit: 'shared' | 'personal';
+  /** 支出区分のボタン表記（除外 / 戻す） */
+  splitButtonLabel: string;
+  /** 支出区分のボタンの色 */
+  splitButtonTone: ActionTone;
   /** 立替の現在値 */
   advanceLabel: string;
-  /** 立替の [変更] で設定する値 */
+  /** 立替のボタンで設定する値 */
   nextAdvance: 'on' | 'off';
+  /** 立替のボタン表記（自分が立替 / 取り消す） */
+  advanceButtonLabel: string;
+  /** 立替のボタンの色 */
+  advanceButtonTone: ActionTone;
   /** 精算済みで変更を受け付けない状態か */
   settled: boolean;
 }
@@ -182,28 +198,62 @@ export interface DerivedExpenseSettings {
  * status から「支出区分」と「立替」の現在値を導出する
  *
  * 支出区分と立替は単一の status フィールドに排他的に格納されているため、
- * 表示上の2行はここで導出する。status が pending のときだけ、実際の集計挙動
- * （includeInTotal）に合わせて表示を分ける。Gmail自動取得は includeInTotal: true
- * （集計に入る）、LINE手入力は false（入らない）で作られ、意味が異なるため。
+ * 表示上の2行はここで導出する。
+ *
+ * 支出区分は運用上「共同費（集計に入る）」か「除外（集計に入らない）」の二択で、
+ * status の personal は includeInTotal: false ＝ 集計から外すことを意味する。
+ * 「個人費」という表記では集計に入らないことが伝わらないため「除外」と表示する。
+ *
+ * ボタンには押すと何が起きるかを書く（汎用の「変更」では操作が分からない）。
+ * - 支出区分: 共同費なら［除外］、除外なら［戻す］
+ * - 立替: なしなら［自分が立替］（押した人が立替者として記録される）、ありなら［取り消す］
+ *
+ * pending（未確認）は Gmail 取込（includeInTotal: true）と LINE 手入力
+ * （includeInTotal: false）で集計状態が異なるが、どちらも OK やカテゴリ選択で
+ * 共同費として確定する流れのため、表示は「共同費（未確認）」に揃える。
  */
 export function deriveExpenseSettings(
   status?: ExpenseStatusType,
-  includeInTotal?: boolean
+  _includeInTotal?: boolean
 ): DerivedExpenseSettings {
+  const shared = {
+    splitIconKey: 'users' as const,
+    nextSplit: 'personal' as const,
+    splitButtonLabel: '除外',
+    splitButtonTone: 'danger' as const,
+  };
+  const noAdvance = {
+    advanceLabel: 'なし',
+    nextAdvance: 'on' as const,
+    advanceButtonLabel: '自分が立替',
+    advanceButtonTone: 'primary' as const,
+  };
+  const withAdvance = {
+    nextAdvance: 'off' as const,
+    advanceButtonLabel: '取り消す',
+    advanceButtonTone: 'danger' as const,
+  };
+
   switch (status) {
     case 'shared':
-      return { splitLabel: '共同費', splitIconKey: 'users', nextSplit: 'personal', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
+      return { splitLabel: '共同費', ...shared, ...noAdvance, settled: false };
     case 'personal':
-      return { splitLabel: '個人費', splitIconKey: 'user', nextSplit: 'shared', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
+      return {
+        splitLabel: '除外',
+        splitIconKey: 'user',
+        nextSplit: 'shared',
+        splitButtonLabel: '戻す',
+        splitButtonTone: 'primary',
+        ...noAdvance,
+        settled: false,
+      };
     case 'advance_pending':
-      return { splitLabel: '共同費', splitIconKey: 'users', nextSplit: 'personal', advanceLabel: 'あり（精算待ち）', nextAdvance: 'off', settled: false };
+      return { splitLabel: '共同費', ...shared, advanceLabel: 'あり（精算待ち）', ...withAdvance, settled: false };
     case 'advance_settled':
-      return { splitLabel: '共同費', splitIconKey: 'users', nextSplit: 'personal', advanceLabel: '精算済み', nextAdvance: 'off', settled: true };
+      return { splitLabel: '共同費', ...shared, advanceLabel: '精算済み', ...withAdvance, settled: true };
     default:
       // pending / 未設定
-      return includeInTotal === false
-        ? { splitLabel: '未設定', splitIconKey: 'user', nextSplit: 'shared', advanceLabel: 'なし', nextAdvance: 'on', settled: false }
-        : { splitLabel: '共同費（未確認）', splitIconKey: 'users', nextSplit: 'personal', advanceLabel: 'なし', nextAdvance: 'on', settled: false };
+      return { splitLabel: '共同費（未確認）', ...shared, ...noAdvance, settled: false };
   }
 }
 
@@ -214,19 +264,31 @@ export function formatCardDate(date?: string): string {
   return matched ? `${Number(matched[2])}/${Number(matched[3])}` : date;
 }
 
+/** ボタンの色（背景・文字）。赤は外す・消す操作、青は加える・変える操作 */
+const ACTION_TONE_COLORS: Record<ActionTone, { background: string; text: string }> = {
+  primary: { background: '#EFF6FF', text: '#2563EB' },
+  danger: { background: '#FEF2F2', text: '#DC2626' },
+};
+
 /**
- * 現在値の行末に置く、変更操作だと分かるボタン
+ * 現在値の行末に置く操作ボタン
  *
+ * 表記には押すと何が起きるかを書き、色で操作の種類（消す＝赤／加える・変える＝青）を示す。
  * 余白と文字を最小指定にすると高さが文字とほぼ同じになり、指で狙いにくい。
  * 隣の行を誤って触らない程度の押し代を持たせる。
  */
-function changeButton(action: Record<string, unknown>): FlexComponent {
+function actionButton(
+  action: Record<string, unknown>,
+  label: string,
+  tone: ActionTone
+): FlexComponent {
+  const colors = ACTION_TONE_COLORS[tone];
   return {
     type: 'box',
     layout: 'vertical',
     flex: 0,
     action,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: colors.background,
     cornerRadius: '8px',
     paddingAll: 'lg',
     paddingStart: 'xl',
@@ -234,10 +296,10 @@ function changeButton(action: Record<string, unknown>): FlexComponent {
     contents: [
       {
         type: 'text',
-        text: '変更',
+        text: label,
         size: 'sm',
         weight: 'bold',
-        color: '#2563EB',
+        color: colors.text,
         align: 'center',
       },
     ],
@@ -245,7 +307,7 @@ function changeButton(action: Record<string, unknown>): FlexComponent {
 }
 
 /**
- * 行頭のアイコン、「ラベル：値」の現在値、右端の [変更] ボタンを1行に並べる
+ * 行頭のアイコン、「ラベル：値」の現在値、右端の操作ボタンを1行に並べる
  *
  * アイコンは値を一目で判別するための手がかり。ボタン化されていた頃と同じ絵柄を使い、
  * 表示だけになっても見た目の手がかりが減らないようにする。
@@ -256,6 +318,10 @@ function settingRow(opts: {
   label: string;
   value: string;
   action?: Record<string, unknown>;
+  /** ボタン表記（既定: 変更） */
+  buttonLabel?: string;
+  /** ボタンの色（既定: primary） */
+  buttonTone?: ActionTone;
 }): FlexComponent {
   return {
     type: 'box',
@@ -276,7 +342,9 @@ function settingRow(opts: {
           { type: 'span', text: opts.value, color: '#0F172A', weight: 'bold' },
         ],
       },
-      ...(opts.action ? [changeButton(opts.action)] : []),
+      ...(opts.action
+        ? [actionButton(opts.action, opts.buttonLabel ?? '変更', opts.buttonTone ?? 'primary')]
+        : []),
     ],
   } as unknown as FlexComponent;
 }
@@ -284,7 +352,7 @@ function settingRow(opts: {
 /**
  * 「現在の設定」セクション（支出区分・立替・カテゴリ）
  *
- * 現在値はリッチテキストで示し、ボタンは変更操作だけを担う。登録・編集カードで
+ * 現在値はリッチテキストで示し、ボタンは操作だけを担う。登録・編集カードで
  * 共通に使うことで、同じUIを使う画面全体で表現を揃える。
  */
 function buildCurrentSettingsSection(opts: {
@@ -314,11 +382,13 @@ function buildCurrentSettingsSection(opts: {
         iconUrl: iconUrl(derived.splitIconKey),
         label: '支出区分',
         value: derived.splitLabel,
+        buttonLabel: derived.splitButtonLabel,
+        buttonTone: derived.splitButtonTone,
         action: derived.settled
           ? undefined
           : {
               type: 'postback',
-              label: '支出区分を変更',
+              label: derived.nextSplit === 'personal' ? '集計から除外' : '共同費に戻す',
               data: JSON.stringify({
                 action: 'set_split',
                 expenseId,
@@ -331,11 +401,13 @@ function buildCurrentSettingsSection(opts: {
         iconUrl: iconUrl('wallet'),
         label: '立替',
         value: derived.advanceLabel,
+        buttonLabel: derived.advanceButtonLabel,
+        buttonTone: derived.advanceButtonTone,
         action: derived.settled
           ? undefined
           : {
               type: 'postback',
-              label: '立替を変更',
+              label: derived.nextAdvance === 'on' ? '自分が立替' : '立替を取り消す',
               data: JSON.stringify({
                 action: 'set_advance',
                 expenseId,
