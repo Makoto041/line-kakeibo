@@ -243,7 +243,7 @@ export function deriveExpenseSettings(
         splitIconKey: 'user',
         nextSplit: 'shared',
         splitButtonLabel: '戻す',
-        splitButtonTone: 'primary',
+        splitButtonTone: 'danger',
         ...noAdvance,
         settled: false,
       };
@@ -264,7 +264,7 @@ export function formatCardDate(date?: string): string {
   return matched ? `${Number(matched[2])}/${Number(matched[3])}` : date;
 }
 
-/** ボタンの色（背景・文字）。赤は外す・消す操作、青は加える・変える操作 */
+/** ボタンの色（背景・文字）。赤は除外・戻す・取り消すなど状態を外す／巻き戻す操作、青は加える・変える操作 */
 const ACTION_TONE_COLORS: Record<ActionTone, { background: string; text: string }> = {
   primary: { background: '#EFF6FF', text: '#2563EB' },
   danger: { background: '#FEF2F2', text: '#DC2626' },
