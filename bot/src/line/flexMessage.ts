@@ -165,7 +165,7 @@ export type ExpenseCardSource = 'gmail' | 'text';
 /**
  * ボタンの色分け
  *
- * 除外・戻す・取り消すなど現在の状態を外す／巻き戻す操作は赤（danger）、加える・変える操作は青（primary）。
+ * 除外・取り消すなど何かを外す操作は赤（danger）、戻す・加える・変える操作は青（primary）。
  * 一般的な色分けに揃え、集計から外す操作を押す前に見分けられるようにする。
  */
 export type ActionTone = 'primary' | 'danger';
@@ -223,7 +223,7 @@ export function deriveExpenseSettings(status?: ExpenseStatusType): DerivedExpens
     splitIconKey: 'user' as const,
     nextSplit: 'shared' as const,
     splitButtonLabel: '戻す',
-    splitButtonTone: 'danger' as const,
+    splitButtonTone: 'primary' as const,
   };
   const noAdvance = {
     advanceLabel: 'なし',
@@ -259,7 +259,7 @@ export function formatCardDate(date?: string): string {
   return matched ? `${Number(matched[2])}/${Number(matched[3])}` : date;
 }
 
-/** ボタンの色（背景・文字）。赤は除外・戻す・取り消すなど状態を外す／巻き戻す操作、青は加える・変える操作 */
+/** ボタンの色（背景・文字）。赤は除外・取り消すなど外す操作、青は戻す・加える・変える操作 */
 const ACTION_TONE_COLORS: Record<ActionTone, { background: string; text: string }> = {
   primary: { background: '#EFF6FF', text: '#2563EB' },
   danger: { background: '#FEF2F2', text: '#DC2626' },
@@ -268,7 +268,7 @@ const ACTION_TONE_COLORS: Record<ActionTone, { background: string; text: string 
 /**
  * 現在値の行末に置く操作ボタン
  *
- * 表記には押すと何が起きるかを書き、色で操作の種類（消す＝赤／加える・変える＝青）を示す。
+ * 表記には押すと何が起きるかを書き、色で操作の種類（外す・消す＝赤／戻す・加える・変える＝青）を示す。
  * 余白と文字を最小指定にすると高さが文字とほぼ同じになり、指で狙いにくい。
  * 隣の行を誤って触らない程度の押し代を持たせる。
  */
