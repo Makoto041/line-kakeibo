@@ -263,7 +263,7 @@ function common(name, msg) {
     [undefined, '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
     ['pending', '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
     ['shared', '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
-    ['personal', '戻す', RED, 'shared', '自分が立替', BLUE, 'on'],
+    ['personal', '戻す', BLUE, 'shared', '自分が立替', BLUE, 'on'],
     ['advance_pending', '除外', RED, 'personal', '取り消す', RED, 'off'],
   ];
   for (const [status, splitLabel, splitColor, splitTo, advLabel, advColor, advTo] of cases) {
