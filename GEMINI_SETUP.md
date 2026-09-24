@@ -32,22 +32,9 @@ npx ts-node test-gemini.ts
 
 ### APIエンドポイントのテスト
 
-開発サーバーを起動：
-```bash
-npm run dev
-```
-
-#### 分類統計の確認
-```bash
-curl http://localhost:8080/classification-stats
-```
-
-#### テスト分類の実行
-```bash
-curl -X POST http://localhost:8080/test-classification \\
-  -H "Content-Type: application/json" \\
-  -d '{"description": "スーパーで食材購入"}'
-```
+認証なしで Gemini を呼べてしまうため、以前の `/classification-stats` と
+`/test-classification` エンドポイントは削除した。分類の動作確認は上記の
+`test-gemini.ts` をローカルで実行して行う。
 
 ## 📊 機能説明
 
@@ -56,7 +43,6 @@ curl -X POST http://localhost:8080/test-classification \\
 1. **AI自動分類**: Gemini 1.5 Flash を使用した高精度なカテゴリ分類
 2. **フォールバック機能**: Gemini分類が失敗した場合のキーワードベース分類
 3. **統計トラッキング**: 分類成功率と信頼度の追跡
-4. **テストエンドポイント**: 分類機能の動作確認用API
 
 ### 分類プロセス
 

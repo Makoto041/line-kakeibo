@@ -1,5 +1,5 @@
 /* source(none) disables v4 の自動ソース検出。有効にすると content グロブ外の
-   web/test.html・web/public/index.html まで走査され CSS が肥大化するため、
+   ファイルまで走査され CSS が肥大化するため、
    tailwind.config.js の content と同じ範囲だけを @source で明示する。 */
 @import "tailwindcss" source(none);
 @config "../tailwind.config.js";

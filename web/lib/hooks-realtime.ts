@@ -103,7 +103,7 @@ export function useRealtimeExpenses(userId: string | null, periodDays: number = 
         }
         setError(null);
         
-        console.log("リアルタイムリスナー設定開始 - userId:", userId, "period:", periodDays);
+        console.log("リアルタイムリスナー設定開始 - period:", periodDays);
         
         // Firebase接続の再確認
         if (!db) {
@@ -115,7 +115,7 @@ export function useRealtimeExpenses(userId: string | null, periodDays: number = 
           ? dayjs(customStartDate).startOf('day').format('YYYY-MM-DD')
           : dayjs().subtract(periodDays, 'day').format('YYYY-MM-DD');
         
-        console.log("データ取得条件:", { userId, startDate, limitCount });
+        console.log("データ取得条件:", { startDate, limitCount });
         
         // リアルタイムクエリの設定（最適化）
         const q = query(

@@ -10,16 +10,140 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { parseJSTWallClock, toJSTDateString } from '../time';
 
 /**
+ * ヘッダー値から quoted-string（"..."）とコメント（(...)）を取り除く。
+ * 表示名の中に書かれた `<x@vpass.ne.jp>` などでアドレス抽出を騙されないようにするため。
+ * 引用符や括弧の対応が取れていない場合は null。
+ */
+function stripQuotedStringsAndComments(value: string): string | null {
+  let out = '';
+  let inQuote = false;
+  let commentDepth = 0;
+
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (inQuote) {
+      if (ch === '\\') {
+        i++; // エスケープされた次の1文字も読み飛ばす
+      } else if (ch === '"') {
+        inQuote = false;
+        out += ' ';
+      }
+      continue;
+    }
+    if (commentDepth > 0) {
+      if (ch === '\\') {
+        i++;
+      } else if (ch === '(') {
+        commentDepth++;
+      } else if (ch === ')') {
+        commentDepth--;
+        if (commentDepth === 0) out += ' ';
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inQuote = true;
+    } else if (ch === '(') {
+      commentDepth = 1;
+    } else {
+      out += ch;
+    }
+  }
+
+  if (inQuote || commentDepth > 0) return null;
+  return out;
+}
+
+/** 単純な addr-spec（local@domain）。quoted local-part や IP リテラルは受け付けない */
+const ADDR_SPEC_PATTERN =
+  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
+
+/**
+ * From ヘッダーの値から送信元アドレスを1つだけ取り出す（RFC 5322 の mailbox を簡易パース）。
+ *
+ * - `表示名 <local@domain>` / `<local@domain>` / `local@domain` を受け付ける
+ * - 表示名・コメント内の文字列は判定に使わない（表示名に "vpass.ne.jp" と書く偽装を防ぐ）
+ * - アドレスが複数ある、`<...>` の後ろに文字列が続く（"... via smbc-card.com" 等）、
+ *   表示名に angle-addr と異なる裸のアドレスが混ざっている、といった曖昧な形は null（= 不一致扱い）
+ */
+export function extractSenderAddress(fromHeader: string): string | null {
+  if (typeof fromHeader !== 'string' || !fromHeader.trim()) return null;
+
+  const cleaned = stripQuotedStringsAndComments(fromHeader);
+  if (cleaned === null) return null;
+
+  const open = cleaned.indexOf('<');
+  let address: string;
+
+  if (open === -1) {
+    if (cleaned.includes('>')) return null;
+    address = cleaned.trim();
+  } else {
+    const close = cleaned.indexOf('>', open);
+    if (close === -1) return null;
+    // angle-addr は1つだけ
+    if (cleaned.indexOf('<', open + 1) !== -1 || cleaned.indexOf('>', close + 1) !== -1) {
+      return null;
+    }
+    const displayName = cleaned.slice(0, open);
+    const trailing = cleaned.slice(close + 1);
+    address = cleaned.slice(open + 1, close).trim();
+    // 表示名に '>' がある / '>' の後ろに何か続く場合は曖昧なので拒否
+    if (displayName.includes('>') || trailing.trim() !== '') {
+      return null;
+    }
+    // 表示名に裸のアドレスがある場合は、angle-addr と完全に同じときだけ許す
+    // （`statement@vpass.ne.jp <statement@vpass.ne.jp>` は RFC 外だが実在する形）。
+    // `statement@vpass.ne.jp <x@evil.example>` のような食い違いは拒否する。
+    if (
+      displayName.includes('@') &&
+      displayName.trim().toLowerCase() !== address.toLowerCase()
+    ) {
+      return null;
+    }
+  }
+
+  if (!ADDR_SPEC_PATTERN.test(address)) return null;
+  return address.toLowerCase();
+}
+
+/**
+ * 送信元アドレスのドメインが許可リスト（SMBC_CARD_FILTER.fromDomains）に一致するか。
+ *
+ * ドメインは完全一致、または許可ドメインのサブドメイン（ラベル境界で一致。
+ * 例: `mail.vpass.ne.jp`）だけを通す。`vpass.ne.jp.evil.example` や
+ * `evilvpass.ne.jp` のような文字列上の一致は通さない。
+ * サブドメインを通すのは、正規の通知が配信用サブドメインから届いても取り込みを
+ * 止めないため（サブドメインは親ドメインの管理者しか作れない）。
+ */
+export function isAllowedSenderAddress(address: string): boolean {
+  const at = address.lastIndexOf('@');
+  if (at <= 0) return false;
+  const domain = address.slice(at + 1).toLowerCase();
+  return SMBC_CARD_FILTER.fromDomains.some(
+    (allowed) => domain === allowed || domain.endsWith(`.${allowed}`)
+  );
+}
+
+/**
  * メールが三井住友ゴールドVISA（NL）の利用通知かどうか判定
  */
 export function isSMBCGoldVISANL(from: string, body: string): boolean {
-  // Fromドメインチェック
-  const fromLower = from.toLowerCase();
-  const isValidDomain = SMBC_CARD_FILTER.fromDomains.some(domain =>
-    fromLower.includes(domain)
-  );
-
-  if (!isValidDomain) {
+  // 送信元チェック: From ヘッダーをパースしてアドレスのドメインで判定する。
+  // 以前は From ヘッダー全体の部分一致だったため、表示名に "vpass.ne.jp" と
+  // 書いただけの偽装メールでも通ってしまっていた。
+  const sender = extractSenderAddress(from);
+  if (!sender || !isAllowedSenderAddress(sender)) {
+    // 旧来の部分一致なら通っていた（= From に許可ドメインの文字列を含む）のに
+    // 厳密な判定で弾いたときだけ警告する。偽装メールか、正規通知の From の形が
+    // 想定外で取り込みが止まっているかを見分けられるようにするため。
+    // INBOX の全メールがここを通るので、無関係なメールでは何も出さない。
+    // アドレス本体は出さずドメインだけ残す。
+    const lowerFrom = typeof from === 'string' ? from.toLowerCase() : '';
+    if (SMBC_CARD_FILTER.fromDomains.some((d) => lowerFrom.includes(d))) {
+      const domain = sender ? sender.slice(sender.lastIndexOf('@') + 1) : 'none';
+      console.warn(`SMBC sender rejected by strict From check: domain=${domain}`);
+    }
     return false;
   }
 
@@ -144,10 +268,12 @@ export function decodeEmailBody(payload: any): string {
  * メールヘッダーから送信元アドレスを取得
  */
 export function getFromAddress(headers: Array<{ name: string; value: string }>): string {
-  const fromHeader = headers.find(
+  const fromHeaders = headers.filter(
     h => h.name.toLowerCase() === 'from'
   );
-  return fromHeader?.value || '';
+  // From ヘッダーが複数ある不正なメールは、どれを信じるか曖昧なので送信元なし扱い
+  if (fromHeaders.length !== 1) return '';
+  return fromHeaders[0].value || '';
 }
 
 /**

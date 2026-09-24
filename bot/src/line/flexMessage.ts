@@ -7,6 +7,7 @@
 import { messagingApi } from '@line/bot-sdk';
 import { ExpenseStatusType } from '../firestore';
 import { getPaymentMethodLabel, PaymentMethod } from '../textParser';
+import { maskId } from '../logSafe';
 
 type FlexMessage = messagingApi.FlexMessage;
 type FlexBubble = messagingApi.FlexBubble;
@@ -668,7 +669,7 @@ export async function sendCardUsageNotification(
   const message = buildCardUsageFlexMessage(info);
 
   await client.pushMessage({ to: lineGroupId, messages: [message] });
-  console.log(`Card usage notification sent to ${lineGroupId}`);
+  console.log(`Card usage notification sent to ${maskId(lineGroupId)}`);
 }
 
 /**
@@ -841,7 +842,7 @@ export async function sendTextExpenseNotification(
   if (replyToken) {
     try {
       await client.replyMessage({ replyToken: replyToken, messages: [message] });
-      console.log(`Text expense notification sent via replyMessage (free) to ${targetId}`);
+      console.log(`Text expense notification sent via replyMessage (free) to ${maskId(targetId)}`);
       return;
     } catch (replyError) {
       console.warn(
@@ -852,7 +853,7 @@ export async function sendTextExpenseNotification(
   }
 
   await client.pushMessage({ to: targetId, messages: [message] });
-  console.log(`Text expense notification sent via pushMessage to ${targetId}`);
+  console.log(`Text expense notification sent via pushMessage to ${maskId(targetId)}`);
 }
 
 /**

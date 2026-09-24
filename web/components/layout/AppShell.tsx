@@ -10,7 +10,7 @@ import { initLineAuth } from '@/lib/lineAuth';
 
 // Routes that should render without the app navigation chrome
 // (single-purpose / standalone screens opened from outside the app).
-const BARE_ROUTES = ['/attach', '/link', '/debug'];
+const BARE_ROUTES = ['/attach', '/link'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';

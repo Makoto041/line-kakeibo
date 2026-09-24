@@ -3,7 +3,12 @@
  *
  *   node bot/scripts/smoke-gmail-parse.js
  */
-const { parseSMBCCardEmail } = require('../dist/gmail/parser');
+const {
+  parseSMBCCardEmail,
+  isSMBCGoldVISANL,
+  extractSenderAddress,
+  getFromAddress,
+} = require('../dist/gmail/parser');
 const { toJSTDateString, formatJST } = require('../dist/time');
 
 let failed = 0;
@@ -58,6 +63,101 @@ check('時刻が無ければ 00:00 として当日になる', dateOnly && toJSTD
   dateOnly && toJSTDateString(dateOnly.usedAt));
 
 check('金額が無いメールは null', parseSMBCCardEmail('msg-5', 'ご利用日時：2026/03/14 19:20') === null);
+
+// ------------------------------------------------------------
+// 送信元（From ヘッダー）の判定
+// 表示名や末尾の文字列に正規ドメインを書いただけの偽装を通さないこと。
+// ------------------------------------------------------------
+console.log('\nisSMBCGoldVISANL (sender check)');
+
+// 厳密判定で弾いたときの console.warn を拾う（出力を汚さないよう差し替える）
+const realWarn = console.warn;
+let warnings = [];
+console.warn = (...args) => { warnings.push(args.join(' ')); };
+function judge(from, body) {
+  warnings = [];
+  return isSMBCGoldVISANL(from, body);
+}
+
+const validBody = buildBody('2026/03/14 19:20', 'イオン〇〇店', '3,240');
+
+const legitimateFroms = [
+  'statement@vpass.ne.jp',
+  '<statement@vpass.ne.jp>',
+  '三井住友カード <statement@vpass.ne.jp>',
+  '"三井住友カード" <statement@vpass.ne.jp>',
+  '"=?UTF-8?B?5LiJ5LqV5L2P5Y+L44Kr44O844OJ?=" <statement@vpass.ne.jp>',
+  'Statement@VPASS.NE.JP',
+  'info@smbc-card.com',
+  '三井住友カード <info@smbc-card.com>',
+  'SMBC <noreply@mail.vpass.ne.jp>', // 正規ドメインのサブドメイン
+  'statement@vpass.ne.jp (三井住友カード)',
+  // 表示名に angle-addr と同じアドレスを引用符なしで書く形（RFC 外だが実在する）
+  'statement@vpass.ne.jp <statement@vpass.ne.jp>',
+  'Statement@VPASS.ne.jp <statement@vpass.ne.jp>',
+];
+for (const from of legitimateFroms) {
+  check(`正規の送信元を通す: ${from}`, judge(from, validBody) === true && warnings.length === 0);
+}
+
+const spoofedFroms = [
+  'evil.com <x@evil.com> via smbc-card.com',
+  '"vpass.ne.jp" <x@evil.example>',
+  'vpass.ne.jp <x@evil.example>',
+  '"三井住友カード <statement@vpass.ne.jp>" <x@evil.example>',
+  '"a \\" <statement@vpass.ne.jp>" <x@evil.example>',
+  'statement@vpass.ne.jp <x@evil.example>',
+  'statement@vpass.ne.jp <statement@vpass.ne.jp.evil.example>',
+  'x@evil.example <x@evil.example>',
+  'statement@vpass.ne.jp statement@vpass.ne.jp <x@evil.example>',
+  'x@evil.example (statement@vpass.ne.jp)',
+  'x@evil.example <statement@vpass.ne.jp>',
+  '<statement@vpass.ne.jp> x@evil.example',
+  '<statement@vpass.ne.jp> via evil.example',
+  'statement@vpass.ne.jp.evil.example',
+  '三井住友カード <statement@vpass.ne.jp.evil.example>',
+  'statement@evilvpass.ne.jp',
+  'statement@smbc-card.com.evil.example',
+  'statement@vpass-ne.jp',
+  'x@evil.example, statement@vpass.ne.jp',
+  'a <x@evil.example>, b <statement@vpass.ne.jp>',
+  'statement@vpass.ne.jp@evil.example',
+  'statement@vpass.ne.jp>',
+  '"unterminated <statement@vpass.ne.jp>',
+  '',
+];
+for (const from of spoofedFroms) {
+  check(`偽装した送信元を弾く: ${from || '(empty)'}`, judge(from, validBody) === false);
+}
+
+check('正規の送信元でも本文キーワードが無ければ弾く',
+  judge('statement@vpass.ne.jp', 'ご利用金額：3,240円') === false);
+check('本文キーワードで弾いたときは送信元の警告を出さない', warnings.length === 0, JSON.stringify(warnings));
+
+judge('"vpass.ne.jp" <x@evil.example>', validBody);
+check('許可ドメインを騙る送信元は警告に実ドメインだけを出す',
+  warnings.length === 1 &&
+    warnings[0].includes('SMBC sender rejected by strict From check') &&
+    warnings[0].includes('domain=evil.example') &&
+    !warnings[0].includes('x@'),
+  JSON.stringify(warnings));
+judge('x@evil.example <statement@vpass.ne.jp>', validBody);
+check('アドレスを取り出せない形は domain=none で警告する',
+  warnings.length === 1 && warnings[0].includes('domain=none') && !warnings[0].includes('statement@'),
+  JSON.stringify(warnings));
+check('無関係なメールは弾くが警告は出さない',
+  judge('friend@example.com', validBody) === false && warnings.length === 0, JSON.stringify(warnings));
+
+console.warn = realWarn;
+check('アドレスは小文字で取り出す',
+  extractSenderAddress('三井住友カード <Statement@VPASS.ne.jp>') === 'statement@vpass.ne.jp');
+check('From ヘッダーが複数あるメールは送信元なし扱い',
+  getFromAddress([
+    { name: 'From', value: 'x@evil.example' },
+    { name: 'From', value: 'statement@vpass.ne.jp' },
+  ]) === '');
+check('From ヘッダーが1つなら値を返す',
+  getFromAddress([{ name: 'from', value: 'statement@vpass.ne.jp' }]) === 'statement@vpass.ne.jp');
 
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`);

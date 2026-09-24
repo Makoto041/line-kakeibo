@@ -1,6 +1,12 @@
 // Version: 2026-03-28-2200 - Force redeploy
 import express, { Express, Request, Response } from "express";
-import { messagingApi, middleware } from "@line/bot-sdk";
+import { isAdminAuthorized } from "./adminAuth";
+import {
+  messagingApi,
+  middleware,
+  SignatureValidationFailed,
+  JSONParseError,
+} from "@line/bot-sdk";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import dayjs from "dayjs";
@@ -41,11 +47,12 @@ import { parseTextExpense } from "./textParser";
 import { nowJST } from "./time";
 import { resolveAppUidForExpense, getOrCreateAppUidForLineId } from "./linkUserResolver";
 import { getAuth } from "firebase-admin/auth";
-import { getClassificationStats, classifyExpenseWithGemini, isGeminiAvailable, findCategoryWithGemini } from "./geminiCategoryClassifier";
+import { classifyExpenseWithGemini, isGeminiAvailable, findCategoryWithGemini } from "./geminiCategoryClassifier";
 import { createIssueFromFeedback } from "./issueCreator";
 // Money Forward Me Import
 import { importMoneyForward } from "./importMoneyForward";
 import rateLimit from "express-rate-limit";
+import { maskId, errorMessage } from "./logSafe";
 
 dotenv.config();
 
@@ -56,9 +63,11 @@ const port = process.env.PORT || 8080;
 console.log("LINE_CHANNEL_TOKEN loaded:", !!process.env.LINE_CHANNEL_TOKEN);
 console.log("LINE_CHANNEL_SECRET loaded:", !!process.env.LINE_CHANNEL_SECRET);
 
+// channelSecret はここに持たない。署名検証はリクエスト時に環境変数から読む
+// （verifyLineSignature を参照）。ダミー値へのフォールバックは公開値で署名を
+// 検証する fail-open になるため廃止した。
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_TOKEN || "dummy-token-for-build",
-  channelSecret: process.env.LINE_CHANNEL_SECRET || "dummy-secret-for-build",
 };
 
 let client: messagingApi.MessagingApiClient;
@@ -87,17 +96,69 @@ if (!getApps().length) {
   }
 }
 
-// Express JSON middleware for parsing request bodies
-app.use(express.json({ limit: '10mb' }));
+// ============================================
+// LINE Webhook: 本文サイズ制限 → 署名検証
+// ============================================
 
-app.use("/webhook", middleware(config));
+// 画像OCRは廃止済みで、Webhook のイベントJSONは数KB程度。10MB は過大だったため 1MB に絞る。
+const WEBHOOK_BODY_LIMIT = "1mb";
+const WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
 
-// No longer needed - LINE ID only authentication
+/**
+ * 本文サイズの上限チェック（署名の HMAC 計算より前に弾く）
+ *
+ * Cloud Functions では関数フレームワークが先に本文を読み、req.rawBody に入れている。
+ * その場合 express.raw() は何もしないため、rawBody の長さでここで判定する。
+ */
+const limitWebhookBody = (req: Request, res: Response, next: express.NextFunction) => {
+  const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+  const size = Buffer.isBuffer(rawBody)
+    ? rawBody.length
+    : Number(req.headers["content-length"] || 0);
+  if (size > WEBHOOK_BODY_LIMIT_BYTES) {
+    console.warn(`Rejected webhook request: body too large (${size} bytes)`);
+    return res.status(413).end();
+  }
+  return next();
+};
+
+/**
+ * LINE 署名検証（fail-closed）
+ *
+ * デプロイ時の関数解析では Secret が注入されないため、モジュール読み込み時に
+ * middleware() を作ると "no channel secret" で落ちる。そこでリクエスト時に生成する。
+ * 実行時に LINE_CHANNEL_SECRET が無ければ、署名を検証できないので必ず拒否する。
+ */
+let lineSignatureMiddleware: ReturnType<typeof middleware> | null = null;
+let lineSignatureSecret: string | null = null;
+
+const verifyLineSignature = (req: Request, res: Response, next: express.NextFunction) => {
+  const channelSecret = process.env.LINE_CHANNEL_SECRET;
+  if (!channelSecret) {
+    console.error("LINE_CHANNEL_SECRET is not configured; rejecting webhook request (fail-closed)");
+    return res.status(503).end();
+  }
+  if (!lineSignatureMiddleware || lineSignatureSecret !== channelSecret) {
+    lineSignatureMiddleware = middleware({ channelSecret });
+    lineSignatureSecret = channelSecret;
+  }
+  return lineSignatureMiddleware(req, res, next);
+};
+
+// /webhook だけ生の本文（Buffer）で受ける。JSON のパースは署名検証の後に
+// LINE SDK の middleware が行う。ローカル実行（rawBody が無い環境）でも
+// ここで読んだ Buffer がそのまま署名検証に使われる。
+app.use(
+  "/webhook",
+  limitWebhookBody,
+  express.raw({ type: "*/*", limit: WEBHOOK_BODY_LIMIT }),
+  verifyLineSignature
+);
 
 // Webhook endpoint
 app.post("/webhook", async (req: Request, res: Response) => {
   try {
-    const events = req.body.events;
+    const events = Array.isArray(req.body?.events) ? req.body.events : [];
     console.log("Received webhook events:", events.length);
 
     // Process events sequentially to avoid reply token issues and resource conflicts
@@ -172,8 +233,9 @@ app.post("/webhook", async (req: Request, res: Response) => {
 async function handleTextMessage(event: any) {
   try {
     const text = event.message.text.trim();
+    // 本文は個人情報を含みうるためログに出さない（長さと送信元の種別だけ）
     console.log(
-      `=== TEXT MESSAGE DEBUG: Received text: "${text}" from user: ${event.source.userId} ===`
+      `=== TEXT MESSAGE DEBUG: source=${event.source.type} user=${maskId(event.source.userId)} length=${text.length} ===`
     );
 
     // レシート一覧コマンド
@@ -293,7 +355,7 @@ async function handleTextMessage(event: any) {
     }
     if (feedbackText !== null) {
       console.log(
-        `=== FEEDBACK COMMAND MATCHED: Creating GitHub issue from feedback: "${feedbackText}" ===`
+        `=== FEEDBACK COMMAND MATCHED: Creating GitHub issue from feedback (length=${feedbackText.length}) ===`
       );
       if (!feedbackText) {
         await client.replyMessage({ replyToken: event.replyToken, messages: [{
@@ -386,7 +448,7 @@ async function handleTextMessage(event: any) {
         category = text.replace("カテゴリー　", "").trim();
       }
       console.log(
-        `=== CATEGORY COMMAND: Extracted category: "${category}" ===`
+        `=== CATEGORY COMMAND: Extracted category (length=${category.length}) ===`
       );
       if (!category) {
         await client.replyMessage({ replyToken: event.replyToken, messages: [{
@@ -420,18 +482,11 @@ async function handleTextMessage(event: any) {
 
       try {
         console.log(
-          `=== CATEGORY DEBUG: Setting default category for user ${event.source.userId} to ${category} ===`
+          `=== CATEGORY DEBUG: Setting default category for user ${maskId(event.source.userId)} to ${category} ===`
         );
         await saveUserSettings(event.source.userId, category);
         console.log(
           `=== CATEGORY DEBUG: Successfully saved category ${category} ===`
-        );
-
-        // Verify the setting was saved
-        const verifySettings = await getUserSettings(event.source.userId);
-        console.log(
-          `=== CATEGORY DEBUG: Verification - Retrieved settings:`,
-          verifySettings
         );
 
         await client.replyMessage({ replyToken: event.replyToken, messages: [{
@@ -727,7 +782,7 @@ async function handleTextMessage(event: any) {
       return;
     }
 
-    console.log(`=== TEXT PROCESSING: Successfully parsed expense:`, parsed);
+    console.log(`=== TEXT PROCESSING: Successfully parsed expense ===`);
 
     // 注: 中間メッセージ（「登録中です...」）は送信しない。
     // replyTokenを最終のFlex Message通知に温存し、replyMessage（無料）で
@@ -809,7 +864,7 @@ async function processExpenseInBackground(
         console.log("Cache miss or invalid cache, fetching user profile (parallel)");
 
         // プロファイル取得を並列実行（リトライ機能付き）
-        console.log(`=== PROFILE DEBUG: Starting profile fetch for group context. LineGroupId: ${lineGroupId}, UserId: ${event.source.userId} ===`);
+        console.log(`=== PROFILE DEBUG: Starting profile fetch for group context. LineGroupId: ${maskId(lineGroupId)}, UserId: ${maskId(event.source.userId)} ===`);
         promises.push(
           (async () => {
             let profile = null;
@@ -826,7 +881,7 @@ async function processExpenseInBackground(
                   client.getGroupMemberProfile(lineGroupId, event.source.userId),
                   new Promise((_, reject) => setTimeout(() => reject(new Error(`Group profile timeout (attempt ${attempt})`)), timeout))
                 ]);
-                console.log(`=== PROFILE DEBUG: getGroupMemberProfile SUCCESS on attempt ${attempt}:`, profile);
+                console.log(`=== PROFILE DEBUG: getGroupMemberProfile SUCCESS on attempt ${attempt} ===`);
                 break;
               } catch (groupError) {
                 console.warn(`=== PROFILE DEBUG: getGroupMemberProfile FAILED on attempt ${attempt}:`, groupError);
@@ -839,7 +894,7 @@ async function processExpenseInBackground(
                       client.getProfile(event.source.userId),
                       new Promise((_, reject) => setTimeout(() => reject(new Error("Individual profile timeout")), 6000)) // Increased timeout
                     ]);
-                    console.log(`=== PROFILE DEBUG: getProfile SUCCESS:`, profile);
+                    console.log(`=== PROFILE DEBUG: getProfile SUCCESS ===`);
                   } catch (individualError) {
                     console.warn(`=== PROFILE DEBUG: getProfile ALSO FAILED:`, individualError);
                     // グループの場合はフォールバック名を返さないでエラーにする
@@ -868,10 +923,9 @@ async function processExpenseInBackground(
         console.log("Using cached individual user data (fast path)");
         activeGroup = cached.groups[0] || null;
         userDisplayName = cached.profile?.displayName;
-        console.log(`=== CACHED PROFILE DEBUG: Using cached displayName: ${userDisplayName} ===`);
       } else {
         // 個人チャットの場合もプロファイルを取得（リトライ機能付き）
-        console.log(`=== PROFILE DEBUG: Starting profile fetch for individual context. UserId: ${event.source.userId} ===`);
+        console.log(`=== PROFILE DEBUG: Starting profile fetch for individual context. UserId: ${maskId(event.source.userId)} ===`);
         promises.push(
           (async () => {
             let profile = null;
@@ -888,7 +942,7 @@ async function processExpenseInBackground(
                   client.getProfile(event.source.userId),
                   new Promise((_, reject) => setTimeout(() => reject(new Error(`Profile timeout (attempt ${attempt})`)), timeout))
                 ]);
-                console.log(`=== PROFILE DEBUG: Individual getProfile SUCCESS on attempt ${attempt}:`, profile);
+                console.log(`=== PROFILE DEBUG: Individual getProfile SUCCESS on attempt ${attempt} ===`);
                 return { type: 'profile', data: profile };
               } catch (error) {
                 console.warn(`=== PROFILE DEBUG: Individual getProfile FAILED on attempt ${attempt}:`, error);
@@ -902,7 +956,7 @@ async function processExpenseInBackground(
 
             // すべてのリトライが失敗した場合のみフォールバック
             const fallbackName = `User_${event.source.userId.slice(-6)}`;
-            console.warn(`=== PROFILE DEBUG: All retry attempts failed for individual chat, using fallback: ${fallbackName} ===`);
+            console.warn(`=== PROFILE DEBUG: All retry attempts failed for individual chat, using fallback display name ===`);
             return { type: 'profile', error: new Error('All retries failed'), data: { displayName: fallbackName } };
           })()
         );
@@ -987,7 +1041,11 @@ async function processExpenseInBackground(
     if (!userDisplayName || profileFetchError) {
       // プロファイル取得に失敗した場合は、グループでも個人でもエラーとして処理
       const context = event.source.type === "group" ? "グループ" : "個人チャット";
-      console.error(`PROFILE ERROR (${context}): Failed to get user profile for ${event.source.userId}`, profileFetchError);
+      console.error("PROFILE ERROR: Failed to get user profile", {
+        context,
+        user: maskId(event.source.userId),
+        error: errorMessage(profileFetchError),
+      });
 
       const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
       const profileErrorMessage = {
@@ -1011,7 +1069,6 @@ async function processExpenseInBackground(
       return; // 処理を中断（データは書き込まない）
     }
     
-    console.log(`=== FINAL USER DEBUG: Final userDisplayName: ${userDisplayName} ===`);
 
     // カテゴリの決定
     //
@@ -1073,10 +1130,9 @@ async function processExpenseInBackground(
     };
 
     // Save expense to database
-    console.log(`=== SAVING TEXT EXPENSE WITH APPUID: ${expense.appUid} ===`);
     const expenseId = await saveExpense(expense);
     console.log(
-      `Text expense saved with ID: ${expenseId} for lineId: ${event.source.userId}, appUid: ${expense.appUid}`
+      `Text expense saved with ID: ${expenseId} for lineId: ${maskId(event.source.userId)}, appUid: ${maskId(expense.appUid)}`
     );
 
     // Flex Messageで確認通知を送信
@@ -1144,7 +1200,8 @@ async function processExpenseInBackground(
 
 async function handleJoin(event: any) {
   try {
-    console.log("Bot joined group:", event);
+    // イベント全体には replyToken や ID が含まれるためそのまま出さない
+    console.log(`Bot joined group: ${maskId(event.source?.groupId)}`);
 
     const lineGroupId = event.source.groupId;
     if (!lineGroupId) {
@@ -1163,7 +1220,7 @@ async function handleJoin(event: any) {
       }] });
 
       console.log(
-        `Bot successfully joined and sent welcome to LINE group: ${lineGroupId}`
+        `Bot successfully joined and sent welcome to LINE group: ${maskId(lineGroupId)}`
       );
     } catch (messageError) {
       console.error("Failed to send welcome message:", messageError);
@@ -1177,7 +1234,7 @@ async function handleJoin(event: any) {
 
 async function handleMemberJoined(event: any) {
   try {
-    console.log("Member joined event:", event);
+    console.log(`Member joined event: group=${maskId(event.source?.groupId)}`);
 
     const lineGroupId = event.source.groupId;
     if (!lineGroupId) {
@@ -1198,7 +1255,7 @@ async function handleMemberJoined(event: any) {
         }] });
 
         console.log(
-          `Successfully sent welcome message for new member in group: ${lineGroupId}`
+          `Successfully sent welcome message for new member in group: ${maskId(lineGroupId)}`
         );
       } catch (messageError) {
         console.error("Failed to send member welcome message:", messageError);
@@ -1243,60 +1300,27 @@ app.get("/health", async (_req: Request, res: Response) => {
   }
 });
 
-// Gemini分類統計エンドポイント
-app.get("/classification-stats", async (_req: Request, res: Response) => {
-  try {
-    const stats = getClassificationStats();
-    res.status(200).json({
-      ...stats,
-      geminiAvailable: isGeminiAvailable(),
-      successRate: stats.totalAttempts > 0 
-        ? Math.round((stats.geminiSuccessCount / stats.totalAttempts) * 100) 
-        : 0,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("Classification stats error:", error);
-    res.status(500).json({
-      error: (error as Error).message,
-      timestamp: new Date().toISOString(),
-    });
-  }
-});
+// 注: 以前ここにあった認証なしの /classification-stats と /test-classification
+// （誰でも Gemini を呼べるデバッグ用エンドポイント）は削除した。
 
-// Gemini分類テストエンドポイント
-app.post("/test-classification", async (req: Request, res: Response) => {
-  try {
-    const { description, lineId } = req.body;
-    
-    if (!description) {
-      return res.status(400).json({ error: "description is required" });
-    }
-    
-    // テスト用のlineIdを設定（実際のユーザーIDまたはダミー）
-    const testLineId = lineId || "test-user-12345";
-    
-    console.log(`=== CLASSIFICATION TEST: Testing "${description}" ===`);
-    
-    const result = await classifyExpenseWithGemini(testLineId, description);
-    
-    res.status(200).json({
-      input: description,
-      result: {
-        category: result.category,
-        confidence: result.confidence,
-        reasoning: result.reasoning,
-      },
-      geminiAvailable: isGeminiAvailable(),
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("Classification test error:", error);
-    res.status(500).json({
-      error: (error as Error).message,
-      timestamp: new Date().toISOString(),
-    });
+// Webhook app のエラーハンドラ（スタックトレースを返さない）
+app.use((err: unknown, _req: Request, res: Response, _next: express.NextFunction) => {
+  if (err instanceof SignatureValidationFailed) {
+    console.warn("LINE webhook signature validation failed");
+    return res.status(401).end();
   }
+  if (err instanceof JSONParseError) {
+    console.warn("LINE webhook body is not valid JSON");
+    return res.status(400).end();
+  }
+  const status = (err as { status?: number; statusCode?: number })?.status
+    ?? (err as { statusCode?: number })?.statusCode;
+  if (status === 413) {
+    console.warn("Rejected webhook request: body too large");
+    return res.status(413).end();
+  }
+  console.error("Unhandled webhook app error:", errorMessage(err));
+  return res.status(500).end();
 });
 
 // Local development only (not in Cloud Functions)
@@ -1310,8 +1334,18 @@ if (require.main === module) {
 export const webhook = onRequest(
   {
     region: "asia-northeast1",
-    memory: "512MiB", // Increased from 256MiB to handle image processing
-    timeoutSeconds: 540, // Increased from 300s to 540s (9 minutes max)
+    // 画像OCRは廃止済み。全関数が同じエントリポイントで googleapis 等を読み込むため
+    // メモリは据え置き（下げる場合はコールドスタート時の使用量を計測してから）。
+    memory: "512MiB",
+    // 1 回の配信に含まれるイベントは直列に処理して待つ。1 イベントの最悪ケースは
+    // プロフィール取得のリトライ（最大 ~30 秒）+ Gemini 分類（8 秒で打ち切り）+ Firestore
+    // + 返信で ~40 秒。LINE API 劣化時に数イベントの配信が来ても途中で打ち切られて
+    // 残りのイベントが保存されない、ということが無いよう 300 秒の余裕を持たせる
+    // （540 秒はハング時の課金を 9 分まで伸ばすだけなので下げる）。
+    timeoutSeconds: 300,
+    // 悪用・暴走時のスケール上限。cpu を指定していない（1 vCPU 未満）ため
+    // 1 インスタンスの同時実行数は 1 で、同時に処理できるリクエストは最大 10。
+    maxInstances: 10,
     invoker: "public",
     // GITHUB_TOKEN: LINEフィードバックGitHub Issue自動作成に使用（issueCreator）。
     secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "GITHUB_TOKEN"],
@@ -1329,6 +1363,7 @@ exports.importMoneyForward = onSchedule(
     region: "asia-northeast1",
     timeoutSeconds: 300,
     memory: "512MiB",
+    maxInstances: 2,
   },
   importMoneyForward
 );
@@ -1368,6 +1403,7 @@ export const gmailPubSubHandler = onMessagePublished(
     region: "asia-northeast1",
     memory: "256MiB",
     timeoutSeconds: 60,
+    maxInstances: 3,
     secrets: [
       "LINE_CHANNEL_TOKEN",
       "LINE_CHANNEL_SECRET",
@@ -1392,6 +1428,7 @@ export const renewGmailWatch = onSchedule(
     region: "asia-northeast1",
     timeoutSeconds: 60,
     memory: "256MiB",
+    maxInstances: 2,
     secrets: ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
   },
   async () => {
@@ -1403,32 +1440,30 @@ export const renewGmailWatch = onSchedule(
 
 /**
  * Admin認証ミドルウェア
- * ヘッダー (X-Admin-Secret, Authorization: Bearer) で認証
- * ヘッダー (X-Admin-Secret, Authorization: Bearer) またはクエリパラメータ (adminSecret) で認証
+ * `Authorization: Bearer <ADMIN_SECRET>` ヘッダーでのみ認証する。
+ *
+ * クエリパラメータ（?adminSecret=）での受け付けは廃止した。URL はアクセスログや
+ * ブラウザ履歴に残り、秘密値が漏れる経路になるため。
  */
 const requireAdminAuth = (req: Request, res: Response, next: express.NextFunction) => {
-  const adminSecret = process.env.ADMIN_SECRET;
+  // 前後の空白・改行は落として比較する（Secret 登録時に末尾改行が混入しても、
+  // 改行を載せられないヘッダーで認証できるように）
+  const adminSecret = process.env.ADMIN_SECRET?.trim();
 
   // ADMIN_SECRETが設定されていない場合はアクセスを拒否
   if (!adminSecret) {
     console.error("ADMIN_SECRET is not configured");
     return res.status(503).json({ error: "Admin API is not configured" });
   }
-  // ヘッダーからシークレットを取得
-  // ヘッダーまたはクエリパラメータからシークレットを取得
-  const authHeader = req.headers.authorization;
-  const queryAdminSecret = req.query.adminSecret as string | undefined;
 
-  let providedSecret: string | undefined;
-
-  if (authHeader?.startsWith("Bearer ")) {
-    providedSecret = authHeader.substring(7);
-  } else if (queryAdminSecret) {
-    providedSecret = queryAdminSecret;
-  }
-
-  if (!providedSecret || providedSecret !== adminSecret) {
-    console.warn("Unauthorized admin API access attempt");
+  // 比較は定数時間（adminAuth.ts の secretsMatch）
+  if (!isAdminAuthorized(req.headers.authorization, adminSecret)) {
+    if (req.query && "adminSecret" in req.query) {
+      // 値は出さない。旧手順（クエリ渡し）のままの呼び出しに気付けるようにだけ記録する
+      console.warn("Unauthorized admin API access: adminSecret query parameter is no longer accepted");
+    } else {
+      console.warn("Unauthorized admin API access attempt");
+    }
     return res.status(401).json({ error: "Unauthorized" });
   }
 
@@ -1467,12 +1502,11 @@ gmailRouter.get("/auth", adminApiLimiter as any, requireAdminAuth, async (_req, 
 
 /**
  * Gmail OAuth2コールバックエンドポイント
- * Admin認証が必要（クエリパラメータ adminSecret で認証）
+ * Google からのリダイレクトで呼ばれるため Admin 認証は掛けない。
  *
  * セキュリティ:
- * - Admin認証（クエリパラメータ対応）
  * - stateパラメータを検証（CSRF攻撃防止）
- * - adminVerifiedフラグでAdmin認証済みフローを検証
+ * - state は Admin 認証済みの /gmail/auth でだけ発行される（adminVerified フラグ）
  */
 const gmailCallbackLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
@@ -1907,6 +1941,9 @@ gmailApp.use("/auth", authRouter);
 export const api = onRequest(
   {
     region: "us-central1",
+    // 管理 API と LIFF ログイン用。cpu 未指定（1 vCPU 未満）のため同時実行は 1/インスタンスで、
+    // 同時に処理できるリクエストは最大 5（家計簿の利用規模では十分）。
+    maxInstances: 5,
     secrets: ["ADMIN_SECRET", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "LINE_LIFF_CHANNEL_ID"],
   },
   gmailApp

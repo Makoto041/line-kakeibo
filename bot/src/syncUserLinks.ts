@@ -1,6 +1,7 @@
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { getFirestore } from 'firebase-admin/firestore';
 import { initializeApp, getApps } from 'firebase-admin/app';
+import { maskId } from './logSafe';
 
 // Initialize Firebase Admin SDK if not already initialized
 if (!getApps().length) {
@@ -16,7 +17,8 @@ export const syncUserLinks = onDocumentCreated(
     document: 'expenses/{expenseId}',
     region: 'asia-northeast1',
     memory: '256MiB',
-    timeoutSeconds: 60
+    timeoutSeconds: 60,
+    maxInstances: 3,
   },
   async (event) => {
     try {
@@ -28,7 +30,7 @@ export const syncUserLinks = onDocumentCreated(
 
       const { lineId, appUid } = data;
       
-      console.log('Processing expense with lineId:', lineId, 'appUid:', appUid);
+      console.log(`Processing expense with lineId: ${maskId(lineId)}, appUid: ${maskId(appUid)}`);
       
       // appUidが設定されていない場合はスキップ
       if (!appUid) {
@@ -59,9 +61,9 @@ export const syncUserLinks = onDocumentCreated(
           };
           
           transaction.set(ref, updateData, { merge: true });
-          console.log(`Added lineId ${lineId} to userLinks/${appUid}`);
+          console.log(`Added lineId ${maskId(lineId)} to userLinks/${maskId(appUid)}`);
         } else {
-          console.log(`LineId ${lineId} already exists in userLinks/${appUid}`);
+          console.log(`LineId ${maskId(lineId)} already exists in userLinks/${maskId(appUid)}`);
         }
       });
       

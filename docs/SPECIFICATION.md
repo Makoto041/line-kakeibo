@@ -143,7 +143,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → Gemini でカテゴリ分類 → **アトミック保存**（`gmailMessageId` および `date+amount+usedAt(±1分)` で重複排除、`firestore.ts:137`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 3 行＋[変更] ボタン）
 - 保存フィールド: `inputSource: 'gmail_auto'`, `usedAt`（カード利用日時）
 - watch は7日で失効するため、**6日ごとの cron**（`renewGmailWatch`）で更新
-- 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。認証は `ADMIN_SECRET` を **`X-Admin-Secret` / `Authorization: Bearer` ヘッダーまたは `?adminSecret=` クエリパラメータ**で受け付け（`index.ts:1396` `requireAdminAuth`）＋レートリミット（OAuth callback のみ CSRF state 検証）。⚠️ クエリ渡しはアクセスログ等にシークレットが残るリスクあり
+- 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。認証は `ADMIN_SECRET` を **`Authorization: Bearer` ヘッダーでのみ**受け付け、定数時間で比較する（`requireAdminAuth`）＋レートリミット（OAuth callback のみ CSRF state 検証）。`?adminSecret=` クエリ渡しはアクセスログ等に秘密値が残るため廃止した
 
 ### 3.2 MoneyForward CSV インポート
 
@@ -181,7 +181,6 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | `/attach` | **レシート添付**。`?expenseId=` の支出にカメラ/アルバムから画像を選択→クライアント側で圧縮（リサイズ＋JPEG 再エンコード）→ Firebase Storage `receipts/{expenseId}/` へレジューマブルアップロード→ `receiptUrl` を書き戻し。アンマウント後もバックグラウンド継続 |
 | `/link` | アカウント連携確認画面（`token` + `lineId` クエリの存在チェックのみ） |
 | `/dashboard` | `/` へのリダイレクト（レガシー） |
-| `/debug/firebase` | Firebase 初期化・接続テストのデバッグページ |
 | `/terms` `/privacy` | 静的な規約・プライバシーページ |
 
 ### 5.2 UI/UX
@@ -189,11 +188,11 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - Tailwind CSS（CSS 変数トークン、`darkMode: 'class'`、ライト/ダーク/システム切替）
 - framer-motion による SPA 風ページ遷移アニメーション＋メモリ内 SWR キャッシュ（`lib/swrCache.ts`）で再読込感を排除
 - レスポンシブ: デスクトップはサイドバー、モバイルはボトムタブ
-- `/attach` `/link` `/debug` はナビ chrome なし（BARE_ROUTES）
+- `/attach` `/link` はナビ chrome なし（BARE_ROUTES）
 
 ### 5.3 データアクセス
 
-- **API Route は実質なし**（`/api/link` `/api/health` は無効化スタブ）。全て**クライアントから Firestore/Storage SDK 直アクセス**
+- **API Route は無し**（旧 `/api/link` `/api/health` の空スタブは削除済み）。全て**クライアントから Firestore/Storage SDK 直アクセス**
 - `lib/hooks.ts`: `useLineAuth`（URL の `?lineId=` から識別）、`useExpenses`（個人分＋ユーザーが関わった全 `lineGroupId` のグループ分をマージ）、`useBudgetConfig` ほか
 
 ---
@@ -236,7 +235,7 @@ Storage: `receipts/{expenseId}/{fileName}` — 公開読取、書込は 10MB 未
 3. **カテゴリ正準リストの乖離**: `types/shared.ts`（10種）vs `categoryNormalization.ts`（19種）
 4. **`userLinks` の 2 形式併存**: `lineId`（1:1）と `lineIds[]`（1:N）
 5. **Firestore ルールが実質無防備**（§7）
-6. **未使用コード**: `web/lib/firebaseAdmin.ts`、`web/lib/hooks-realtime.ts`、`web/lib/analytics.ts`（テストのみ参照）、無効化された API Route
+6. **未使用コード**: `web/lib/hooks-realtime.ts`、`web/lib/analytics.ts`（テストのみ参照）（`web/lib/firebaseAdmin.ts`・空の API Route・`/debug/firebase` は削除済み）
 7. **テスト未整備**: `web/__tests__/analytics.test.ts` のみ（自前ランナー、CI 未接続）。`next.config.ts` は `ignoreBuildErrors: true` / `ignoreDuringBuilds: true`
 8. **MoneyForward インポート先 `/api/mf/import` が web 側に見当たらない**（API Route は無効化済みのため要確認）
 
