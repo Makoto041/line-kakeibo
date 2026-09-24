@@ -1041,7 +1041,11 @@ async function processExpenseInBackground(
     if (!userDisplayName || profileFetchError) {
       // プロファイル取得に失敗した場合は、グループでも個人でもエラーとして処理
       const context = event.source.type === "group" ? "グループ" : "個人チャット";
-      console.error(`PROFILE ERROR (${context}): Failed to get user profile for ${maskId(event.source.userId)}`, errorMessage(profileFetchError));
+      console.error("PROFILE ERROR: Failed to get user profile", {
+        context,
+        user: maskId(event.source.userId),
+        error: errorMessage(profileFetchError),
+      });
 
       const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
       const profileErrorMessage = {

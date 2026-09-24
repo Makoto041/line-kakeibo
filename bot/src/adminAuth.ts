@@ -23,8 +23,13 @@ export function secretsMatch(provided: string, expected: string): boolean {
  */
 export function parseBearerToken(headerValue: unknown): string {
   if (typeof headerValue !== "string") return "";
-  const match = /^Bearer\s+(.+)$/i.exec(headerValue);
-  return match ? match[1].trim() : "";
+  // 正規表現を使わずに切り出す（空白の繰り返しで処理時間が伸びる ReDoS を避ける）
+  const value = headerValue.trim();
+  const scheme = "bearer";
+  if (value.length <= scheme.length || value.slice(0, scheme.length).toLowerCase() !== scheme) return "";
+  const rest = value.slice(scheme.length);
+  if (!/^\s/.test(rest)) return "";
+  return rest.trim();
 }
 
 /**
