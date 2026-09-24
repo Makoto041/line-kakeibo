@@ -347,9 +347,9 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
           # 未設定時のフォールバック（空文字を渡すと deploy が落ちるため）
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID || 'line-kakeibo-0410' }}
-          # preflight ステップ自体が実行されず未出力の場合は従来どおり全ターゲット
-          # （ステップ内では set +e のため、実行されれば必ず targets を出力する）
-          DEPLOY_TARGETS: ${{ steps.storage_iam.outputs.targets || 'functions,firestore:rules,firestore:indexes,storage' }}
+          # preflight ステップが実行されず未出力の場合も storage は含めない
+          # （storage.rules はロールを確認できたときだけデプロイする）
+          DEPLOY_TARGETS: ${{ steps.storage_iam.outputs.targets || 'functions,firestore:rules,firestore:indexes' }}
 
   # デプロイ後の健全性チェック
   post-deploy-check:

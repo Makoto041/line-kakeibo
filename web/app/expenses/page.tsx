@@ -498,7 +498,10 @@ function ExpensesPageContent() {
     if (editForm.date !== original?.date && !/^\d{4}-\d{2}-\d{2}$/.test(editForm.date)) {
       return "日付を入力してください";
     }
-    if (!Number.isFinite(editForm.amount) || editForm.amount < 0 || editForm.amount > 10_000_000) {
+    if (
+      editForm.amount !== original?.amount &&
+      (!Number.isFinite(editForm.amount) || editForm.amount < 0 || editForm.amount > 10_000_000)
+    ) {
       return "金額は 0〜10,000,000 円の範囲で入力してください";
     }
     if (editForm.description !== original?.description && editForm.description.length > 500) {
