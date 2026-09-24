@@ -5,10 +5,10 @@
  * （express.json() → app.use("/household", householdRouter, householdErrorHandler)）で素の express に載せ、
  * Auth エミュレータで発行した ID トークンで叩く。本番のプロジェクトには接続しない（demo-* 以外は即終了）。
  *
- * 実行例（firebase-tools は package.json に入れず、リポジトリ外に `npm i --no-save` しておく）:
- *   npm -w bot run build
- *   firebase emulators:exec --only firestore,auth --project demo-kakeibo \
- *     "node bot/scripts/emulator-household-api.js"
+ * 実行例（firebase-tools は依存に入れず、リポジトリ外に `npm i --no-save` するかグローバルに入れて PATH に置く）:
+ *   npm -w bot run test:emulator
+ *   （= ビルドしてから firebase emulators:exec --only firestore,auth --project demo-kakeibo \
+ *       "node scripts/emulator-household-api.js"。ポートは既定の 8080 / 9099）
  *
  * サンドボックスなどでプロキシ環境変数があると gRPC がエミュレータへ届かないので、
  * HTTP_PROXY / HTTPS_PROXY / JAVA_TOOL_OPTIONS を外して実行する。
@@ -99,6 +99,16 @@ async function seed(db) {
   set('groupMembers/g1_Ualice', { groupId: 'g1', lineId: 'Ualice', displayName: 'Alice', isActive: true, joinedAt: ts('2026-01-01T00:00:00Z') });
   set('groupMembers/g1_Ubob', { groupId: 'g1', lineId: 'Ubob', displayName: 'Bob', isActive: true, joinedAt: ts('2026-01-02T00:00:00Z') });
   set('groupMembers/g1_Uleft', { groupId: 'g1', lineId: 'Uleft', displayName: 'Left', isActive: false, joinedAt: ts('2026-01-03T00:00:00Z') });
+
+  // 世帯 g1_x のメンバー Umallory。文書 ID `g1_x_Umallory` は「lineId が x_Umallory の人の g1 の文書 ID」と
+  // 同じ文字列になるので、ID だけで判定すると g1 に入れてしまう
+  set('groups/g1_x', { name: 'collision', inviteCode: '444444', createdBy: 'Umallory' });
+  set('groupMembers/g1_x_Umallory', { groupId: 'g1_x', lineId: 'Umallory', displayName: 'Mallory', isActive: true, joinedAt: ts('2026-01-01T00:00:00Z') });
+
+  // 世帯 g4（LINE グループなし）: Frank と Gina（精算の記録のレート制限を確かめる）
+  set('groups/g4', { name: 'limit', inviteCode: '555555', createdBy: 'Ufrank' });
+  set('groupMembers/g4_Ufrank', { groupId: 'g4', lineId: 'Ufrank', displayName: 'Frank', isActive: true, joinedAt: ts('2026-01-01T00:00:00Z') });
+  set('groupMembers/g4_Ugina', { groupId: 'g4', lineId: 'Ugina', displayName: 'Gina', isActive: true, joinedAt: ts('2026-01-02T00:00:00Z') });
 
   // 世帯 g2（LINE グループなし）: Carol だけ → 1 人だけの立替は計算できない（Q17）
   set('groups/g2', { name: 'solo', inviteCode: '222222', createdBy: 'Ucarol' });
@@ -194,9 +204,13 @@ async function main() {
     dave: await idTokenFor('uid-dave', { lineId: 'Udave' }),
     left: await idTokenFor('uid-left', { lineId: 'Uleft' }),
     stranger: await idTokenFor('uid-stranger', { lineId: 'Ustranger' }),
+    collider: await idTokenFor('uid-collider', { lineId: 'x_Umallory' }),
+    frank: await idTokenFor('uid-frank', { lineId: 'Ufrank' }),
+    gina: await idTokenFor('uid-gina', { lineId: 'Ugina' }),
     noLineId: await idTokenFor('uid-nolineid'),
     anonymous: await anonymousIdToken(),
   };
+  const tokensIssuedAt = Date.now();
 
   try {
     // ---------------- CORS ----------------
@@ -238,6 +252,8 @@ async function main() {
       check('脱退者（isActive:false）は 403', left.status === 403);
       const other = await call('GET', '/household/settlement?groupId=g1', { token: tokens.carol });
       check('他の世帯のメンバーは 403', other.status === 403);
+      const collider = await call('GET', '/household/settlement?groupId=g1', { token: tokens.collider });
+      check('文書 ID が一致しても中身の groupId・lineId が違えば 403', collider.status === 403 && collider.body.error === 'forbidden', collider.body);
       const missing = await call('GET', '/household/settlement?groupId=nope', { token: tokens.alice });
       check('存在しない世帯（メンバーでもない）は 403', missing.status === 403);
       const arr = await call('GET', '/household/settlement?groupId=g1&groupId=g2', { token: tokens.alice });
@@ -253,7 +269,7 @@ async function main() {
       const v = r.body;
       check('メンバーは 200', r.status === 200, v);
       check('LINE グループ基準（scope=line_group）', v.scope === 'line_group');
-      check('メンバーは joinedAt 順で脱退者を含まない', JSON.stringify(v.members) === JSON.stringify([{ lineId: 'Ualice', displayName: 'Alice' }, { lineId: 'Ubob', displayName: 'Bob' }]), v.members);
+      check('関係者は joinedAt 順の有効メンバーで脱退者を含まない', JSON.stringify(v.participants) === JSON.stringify([{ lineId: 'Ualice', displayName: 'Alice', isMember: true }, { lineId: 'Ubob', displayName: 'Bob', isMember: true }]), v.participants);
       check('立替合計（Alice 12,400 / Bob 4,000）', v.totals.Ualice === 12400 && v.totals.Ubob === 4000, v.totals);
       check('basis=pair', v.basis === 'pair' && v.reason === null);
       check('Bob → Alice ¥4,200', v.settlement && v.settlement.fromUserId === 'Ubob' && v.settlement.toUserId === 'Ualice' && v.settlement.amount === 4200, v.settlement);
@@ -350,10 +366,17 @@ async function main() {
       check('409 にも CORS ヘッダー', acao(stale) === ORIGIN);
       const staleExtra = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1', 'adv_private'] } });
       check('余分な ID があっても 409 stale', staleExtra.status === 409 && staleExtra.body.error === 'stale');
+      const ids = ['adv_a1', 'adv_a2', 'adv_b1'];
+      const badFigure = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ids, expectedSettlement: { fromUserId: 'Ubob', toUserId: 'Ualice', amount: '4200' } } });
+      check('expectedSettlement の形が不正なら 400', badFigure.status === 400 && badFigure.body.error === 'invalid_request', badFigure.body);
+      const staleAmount = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ids, expectedSettlement: { fromUserId: 'Ubob', toUserId: 'Ualice', amount: 4000 } } });
+      check('ID が同じでも表示した精算額と違えば 409 stale', staleAmount.status === 409 && staleAmount.body.error === 'stale' && staleAmount.body.current.settlement.amount === 4200, staleAmount.body && staleAmount.body.error);
+      const staleNull = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ids, expectedSettlement: null } });
+      check('精算額なし（null）を表示していたのに額があれば 409 stale', staleNull.status === 409 && staleNull.body.error === 'stale');
       const stillPending = (await db.doc('expenses/adv_a1').get()).data();
       check('stale のときは書き込まない', stillPending.status === 'advance_pending');
 
-      const ok = await call('POST', '/household/settlement/settle', { token: tokens.bob, body: { groupId: 'g1', expectedExpenseIds: ['adv_b1', 'adv_a1', 'adv_a2', 'adv_a1'] } });
+      const ok = await call('POST', '/household/settlement/settle', { token: tokens.bob, body: { groupId: 'g1', expectedExpenseIds: ['adv_b1', 'adv_a1', 'adv_a2', 'adv_a1'], expectedSettlement: { fromUserId: 'Ubob', toUserId: 'Ualice', amount: 4200 } } });
       check('一致すれば 200（重複 ID は除く）', ok.status === 200 && ok.body.ok === true && ok.body.settled === 3 && ok.body.skipped === 0, ok.body);
       check('応答の精算額（Bob → Alice ¥4,200）', ok.body.basis === 'pair' && ok.body.settlement && ok.body.settlement.fromUserId === 'Ubob' && ok.body.settlement.amount === 4200, ok.body.settlement);
       const settledDocs = await Promise.all(['adv_a1', 'adv_a2', 'adv_b1'].map(async (id) => (await db.doc(`expenses/${id}`).get()).data()));
@@ -361,8 +384,10 @@ async function main() {
       const priv = (await db.doc('expenses/adv_private').get()).data();
       check('LINE グループ外の立替は精算しない', priv.status === 'advance_pending');
 
+      const staleEmpty = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ids } });
+      check('精算済みの画面から送ると 409 stale（current は 0 件）', staleEmpty.status === 409 && staleEmpty.body.error === 'stale' && staleEmpty.body.current && staleEmpty.body.current.expenseIds.length === 0 && staleEmpty.body.current.basis === 'none', staleEmpty.body);
       const nothing = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: [] } });
-      check('未精算が無ければ 409 nothing_to_settle', nothing.status === 409 && nothing.body.error === 'nothing_to_settle', nothing.body);
+      check('未精算が無く画面も 0 件なら 409 nothing_to_settle', nothing.status === 409 && nothing.body.error === 'nothing_to_settle', nothing.body);
       const after = await call('GET', '/household/settlement?groupId=g1', { token: tokens.alice });
       check('精算後は basis=none・金額なし・0 円で並ぶ', after.body.basis === 'none' && after.body.settlement === null && after.body.totals.Ualice === 0 && after.body.totals.Ubob === 0, after.body);
     }
@@ -380,6 +405,16 @@ async function main() {
       const line = await computeLineGroupSettlement('C_line1', await getAdvanceSummaryByUser('C_line1', true));
       check('LINE 側も single_advancer で同じ金額', line.basis === 'single_advancer' && line.settlement && line.settlement.amount === 1500 && line.settlement.fromUserId === 'Ualice', line);
       check('LINE の表示名はメンバー名で補う', line.settlement && line.settlement.fromUserName === 'Alice');
+
+      // 脱退した Left にも未精算の立替がある（関係者 3 人）
+      await db.doc('expenses/adv_left1').set({ lineId: 'Uleft', payerId: 'Uleft', groupId: 'g1', lineGroupId: 'C_line1', amount: 1000, description: '脱退前', date: '2026-09-21', category: '食費', status: 'advance_pending', advanceBy: 'Uleft', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-21T01:00:00Z') });
+      const withLeft = await call('GET', '/household/settlement?groupId=g1', { token: tokens.alice });
+      check('脱退者の立替があると Web は undeterminable / more_than_two', withLeft.body.basis === 'undeterminable' && withLeft.body.reason === 'more_than_two' && withLeft.body.settlement === null, withLeft.body.basis);
+      check('脱退者は isMember:false で末尾に並ぶ', JSON.stringify(withLeft.body.participants.map((p) => [p.lineId, p.isMember])) === JSON.stringify([['Ualice', true], ['Ubob', true], ['Uleft', false]]), withLeft.body.participants);
+      const settleWithLeft = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: withLeft.body.expenseIds } });
+      check('同上の記録は 409 undeterminable', settleWithLeft.status === 409 && settleWithLeft.body.error === 'undeterminable' && settleWithLeft.body.reason === 'more_than_two', settleWithLeft.body);
+      const lineWithLeft = await computeLineGroupSettlement('C_line1', await getAdvanceSummaryByUser('C_line1', true));
+      check('LINE は立替者 2 人なので従来どおり pair（Left → Bob ¥1,000）', lineWithLeft.basis === 'pair' && lineWithLeft.settlement && lineWithLeft.settlement.fromUserId === 'Uleft' && lineWithLeft.settlement.toUserId === 'Ubob' && lineWithLeft.settlement.amount === 1000, lineWithLeft.settlement);
     }
 
     // ---------------- Q17: 計算できない世帯 ----------------
@@ -404,25 +439,63 @@ async function main() {
     }
 
     // ---------------- レート制限 ----------------
-    console.log('\nレート制限（lineId 単位、settle は 5 回/分）');
+    console.log('\nレート制限（lineId 単位。全体 60 回/分、精算の記録は成功だけを数えて 5 回/分）');
     {
-      const statuses = [];
-      let last;
-      for (let i = 0; i < 6; i++) {
-        last = await call('POST', '/household/settlement/settle', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: [] } });
-        statuses.push(last.status);
+      const addAdvance = (i) => db.doc(`expenses/lim_${i}`).set({ lineId: 'Ufrank', payerId: 'Ufrank', groupId: 'g4', amount: 100 * (i + 1), description: `lim ${i}`, date: '2026-09-22', category: '食費', status: 'advance_pending', advanceBy: 'Ufrank', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-22T01:00:00Z') });
+
+      // 失敗（409 stale）は精算の枠を使わない
+      await addAdvance(0);
+      const failures = [];
+      for (let i = 0; i < 3; i++) {
+        failures.push((await call('POST', '/household/settlement/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: ['nope'] } })).status);
       }
-      // stranger は上で 1 回 settle を呼んでいるので 5 回目で上限に達する
-      check('上限を超えると 429 rate_limited', last.status === 429 && last.body && last.body.error === 'rate_limited', statuses);
-      check('429 にも CORS ヘッダー', acao(last) === ORIGIN);
-      const other = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: [] } });
-      check('他のユーザーは制限されない', other.status !== 429, other.status);
+      check('失敗した記録（409）は 429 にならない', failures.every((st) => st === 409), failures);
+
+      const statuses = [];
+      for (let i = 0; i < 5; i++) {
+        if (i > 0) await addAdvance(i);
+        const view = await call('GET', '/household/settlement?groupId=g4', { token: tokens.frank });
+        const r = await call('POST', '/household/settlement/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: view.body.expenseIds } });
+        statuses.push(r.status);
+      }
+      check('失敗 3 回の後でも成功は 5 回まで通る', statuses.every((st) => st === 200), statuses);
+      await addAdvance(5);
+      const view = await call('GET', '/household/settlement?groupId=g4', { token: tokens.frank });
+      const limited = await call('POST', '/household/settlement/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: view.body.expenseIds } });
+      check('6 回目の記録は 429 rate_limited', limited.status === 429 && limited.body && limited.body.error === 'rate_limited', limited.status);
+      check('429 にも CORS ヘッダー', acao(limited) === ORIGIN);
+      const pending = (await db.doc('expenses/lim_5').get()).data();
+      check('429 のときは書き込まない', pending.status === 'advance_pending');
+      const other = await call('POST', '/household/settlement/settle', { token: tokens.gina, body: { groupId: 'g4', expectedExpenseIds: view.body.expenseIds } });
+      check('他のユーザーは制限されない', other.status === 200, other.status);
+
+      // 全ルート共通の上限は失敗も数える（メンバー外が 403 を連打しても 60 回/分で止まる）
+      const seen = [];
+      for (let i = 0; i < 61 && seen[seen.length - 1] !== 429; i++) {
+        seen.push((await call('GET', '/household/settlement?groupId=g1', { token: tokens.stranger })).status);
+      }
+      check('403 の連打も 60 回/分で 429', seen[seen.length - 1] === 429 && seen.slice(0, -1).every((st) => st === 403), `${seen.length} 回目 ${seen[seen.length - 1]}`);
+      const strangerSettle = await call('POST', '/household/settlement/settle', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: [] } });
+      check('上限に達すると精算の記録も 429', strangerSettle.status === 429);
     }
 
     // ---------------- 未定義のルート ----------------
     {
       const r = await call('GET', '/household/unknown', { token: tokens.alice });
       check('未定義のルートは 404 JSON', r.status === 404 && r.body && r.body.error === 'not_found');
+    }
+
+    // ---------------- 失効したトークン ----------------
+    console.log('\n失効したトークン（verifyIdToken の checkRevoked）');
+    {
+      const before = await call('GET', '/household/settlement?groupId=g1', { token: tokens.bob });
+      check('失効前は 200', before.status === 200, before.status);
+      // 失効時刻は秒単位で、auth_time がそれより前のトークンだけが失効扱いになる
+      const wait = tokensIssuedAt + 1100 - Date.now();
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      await getAuth().revokeRefreshTokens('uid-bob');
+      const revoked = await call('GET', '/household/settlement?groupId=g1', { token: tokens.bob });
+      check('revokeRefreshTokens 後の古いトークンは 401', revoked.status === 401 && revoked.body.error === 'unauthenticated' && acao(revoked) === ORIGIN, revoked.body);
     }
   } finally {
     await new Promise((resolve) => server.close(resolve));

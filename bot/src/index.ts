@@ -677,7 +677,7 @@ async function handleTextMessage(event: any) {
           totalAdvances += summary.totalAdvanced;
         }
 
-        // 精算額を計算（関係者が2人の場合。Web のふたりタブと同じ共有関数）
+        // 精算額を計算（立替者が2人、または1人だけ立替で有効メンバーが2人の場合。householdSettlement.ts の共有関数）
         const household = await computeLineGroupSettlement(lineGroupId, summaries);
         if (isSettlementComputable(household.basis)) {
           const settlement = household.settlement;
@@ -731,7 +731,7 @@ async function handleTextMessage(event: any) {
 
         const summaries = await getAdvanceSummaryByUser(lineGroupId, true);
 
-        // 精算額を計算（関係者が2人の場合。Web のふたりタブと同じ共有関数）
+        // 精算額を計算（立替者が2人、または1人だけ立替で有効メンバーが2人の場合。householdSettlement.ts の共有関数）
         let settlementText = "";
         const household = await computeLineGroupSettlement(lineGroupId, summaries);
         if (isSettlementComputable(household.basis)) {

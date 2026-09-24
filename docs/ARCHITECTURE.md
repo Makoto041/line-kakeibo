@@ -128,7 +128,7 @@ LINEのリンク(?lineId=xxx) → Next.js（クライアント）
 - 支出を `status: 'advance_pending'` + `advanceBy` でマーク
 - `立替一覧` コマンドで未精算集計と精算額計算、`精算` で `advance_settled` へ一括更新
 - Web のふたりタブは `api` 関数の `GET /household/settlement` / `POST /household/settlement/settle` で同じ集合（`lineGroupId` 基準）を表示・精算する（Web からの精算では LINE へ通知しない）
-- 精算額の決め方（関係者がちょうど 2 人のときだけ。1 人だけ立替なら相手を 0 円で補う）は `householdSettlement.ts` の共有関数で、LINE と Web が同じ結果を出す
+- 精算額の決め方は `householdSettlement.ts` の共有関数（1 人だけ立替・有効メンバー 2 人なら相手を 0 円で補う点は LINE と Web で同じ。Web は有効メンバー 2 人の世帯に限り、LINE は立替者 2 人なら従来どおり計算する。SPECIFICATION.md §5.4）
 - 支出の確認（LINE の OK / Web の確認ボタン）は `expenseActions.ts` の `applyExpenseChange` + `decideConfirm` を共用する
 - Web の支出一覧では支払者（`payerId`/`payerDisplayName`）別集計を表示
 

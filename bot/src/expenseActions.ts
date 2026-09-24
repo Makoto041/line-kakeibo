@@ -102,14 +102,15 @@ export async function applyExpenseChange(
   return db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
 
+    // expenseId は Web API では利用者の入力なので、ログ行を偽造されないよう JSON 文字列にして出す
     if (!snapshot.exists) {
-      console.warn('Expense not found:', expenseId);
+      console.warn(`Expense not found: ${JSON.stringify(expenseId)}`);
       return null;
     }
 
     const data = snapshot.data();
     if (!data) {
-      console.warn('Expense data is empty:', expenseId);
+      console.warn(`Expense data is empty: ${JSON.stringify(expenseId)}`);
       return null;
     }
 

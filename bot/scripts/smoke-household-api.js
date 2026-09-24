@@ -19,6 +19,8 @@ const {
   isPlainObject,
   parseExpectedExpenseIds,
   sameIdSet,
+  parseExpectedSettlement,
+  sameSettlement,
   authorizeExpenseWrite,
   householdErrorHandler,
   MAX_SETTLE_IDS,
@@ -142,21 +144,47 @@ const member = (lineId, displayName = `${lineId}さん`) => ({ lineId, displayNa
 {
   const r = computeHouseholdSettlement([summary('x', 10000)], [member('a'), member('b')]);
   check('立替者がメンバー外（メンバー2人）→ more_than_two', r.basis === 'undeterminable' && r.reason === 'more_than_two' && r.settlement === null);
+  check('メンバー外の立替者は isMember:false で末尾', deepEqual(r.participants.map((p) => [p.userId, p.isMember]), [['a', true], ['b', true], ['x', false]]));
+}
+{
+  // 脱退した・登録していない相手だけが立て替えている（関係者は 2 人だが、有効メンバーは 1 人）
+  const r = computeHouseholdSettlement([summary('left', 3000)], [member('a')]);
+  check('メンバー1人・メンバー外の1人だけが立替 → partner_unknown（相手を補わない）', r.basis === 'undeterminable' && r.reason === 'partner_unknown' && r.settlement === null, JSON.stringify(r));
+  const line = computeHouseholdSettlement([summary('left', 3000)], [member('a')], { legacyPair: true });
+  check('同上（LINE）も金額なし（従来どおり）', line.basis === 'undeterminable' && line.settlement === null);
 }
 {
   const r = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [member('a'), member('b'), member('c')]);
-  check('メンバー3人以上 → more_than_two（金額なし）', r.basis === 'undeterminable' && r.reason === 'more_than_two');
+  check('メンバー3人・2人が立替 → Web は more_than_two（金額なし。Q17）', r.basis === 'undeterminable' && r.reason === 'more_than_two');
+  const line = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [member('a'), member('b'), member('c')], { legacyPair: true });
+  check('同上（LINE）は pair（従来どおり b → a ¥1,000）', line.basis === 'pair' && line.settlement && line.settlement.fromUserId === 'b' && line.settlement.amount === 1000, JSON.stringify(line.settlement));
 }
 {
   const r = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000), summary('c', 500)], []);
   check('立替者3人 → more_than_two', r.basis === 'undeterminable' && r.reason === 'more_than_two');
+  const line = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000), summary('c', 500)], [member('a'), member('b')], { legacyPair: true });
+  check('立替者3人（LINE）も金額なし（従来どおり）', line.basis === 'undeterminable' && line.settlement === null);
 }
 {
-  // LINE でパートナーがボタンだけ押していて groupMembers に居ない場合（従来どおり計算する）
+  // LINE でパートナーがボタンだけ押していて groupMembers に居ない / 脱退済み / groups 文書が無い場合
   const r = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [member('a')]);
-  check('2人とも立替・メンバー登録が1人でも pair（従来の LINE と同じ）', r.basis === 'pair' && r.settlement && r.settlement.amount === 1000);
+  check('2人とも立替・メンバー登録が1人 → Web は partner_unknown', r.basis === 'undeterminable' && r.reason === 'partner_unknown');
   const r0 = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], []);
-  check('2人とも立替・メンバー0人でも pair', r0.basis === 'pair' && r0.settlement && r0.settlement.amount === 1000);
+  check('2人とも立替・メンバー0人 → Web は partner_unknown', r0.basis === 'undeterminable' && r0.reason === 'partner_unknown');
+  const line = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [member('a')], { legacyPair: true });
+  check('2人とも立替・メンバー登録が1人（LINE）は pair（従来どおり）', line.basis === 'pair' && line.settlement && line.settlement.amount === 1000);
+  const line0 = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [], { legacyPair: true });
+  check('2人とも立替・メンバー0人（LINE。読み込み失敗・groups 無し）は pair', line0.basis === 'pair' && line0.settlement && line0.settlement.amount === 1000);
+  check('LINE の pair は既存の calculateSettlement と同じ', deepEqual(line0.settlement, calculateSettlement([summary('a', 3000), summary('b', 1000)])));
+}
+{
+  // LINE でも Q15 は Web と同じ条件
+  const line = computeHouseholdSettlement([summary('a', 10000)], [member('a'), member('b', 'ゆい')], { legacyPair: true });
+  check('1人だけ立替・メンバー2人（LINE）→ single_advancer（Q15）', line.basis === 'single_advancer' && line.settlement && line.settlement.amount === 5000 && line.settlement.fromUserName === 'ゆい');
+  const lineOut = computeHouseholdSettlement([summary('x', 10000)], [member('a'), member('b')], { legacyPair: true });
+  check('立替者がメンバー外（LINE）は金額なし', lineOut.basis === 'undeterminable' && lineOut.settlement === null);
+  const line1 = computeHouseholdSettlement([summary('a', 10000)], [member('a')], { legacyPair: true });
+  check('1人だけ立替・メンバー1人（LINE）は金額なし（従来どおり）', line1.basis === 'undeterminable' && line1.settlement === null);
 }
 {
   const r = computeHouseholdSettlement([summary('a', 100)], [member('a'), member('a', '重複'), member('b')]);
@@ -196,13 +224,24 @@ check(`expectedExpenseIds: ${MAX_SETTLE_IDS} 件までは可`, parseExpectedExpe
 check(`expectedExpenseIds: ${MAX_SETTLE_IDS + 1} 件は不可`, parseExpectedExpenseIds(Array.from({ length: MAX_SETTLE_IDS + 1 }, (_, i) => `e${i}`)) === null);
 check('sameIdSet: 順序は無視', sameIdSet(['a', 'b'], ['b', 'a']));
 check('sameIdSet: 過不足は不一致', !sameIdSet(['a', 'b'], ['a']) && !sameIdSet(['a'], ['a', 'c']) && !sameIdSet(['a', 'b'], ['a', 'c']));
+check('expectedSettlement: null は可（精算額なし）', parseExpectedSettlement(null) === null);
+check('expectedSettlement: 正しい形は可', deepEqual(parseExpectedSettlement({ fromUserId: 'b', toUserId: 'a', amount: 4200, extra: 1 }), { fromUserId: 'b', toUserId: 'a', amount: 4200 }));
+check('expectedSettlement: 金額が文字列・負・小数は不可', ['4200', -1, 1.5, NaN, Infinity].every((amount) => parseExpectedSettlement({ fromUserId: 'b', toUserId: 'a', amount }) === 'invalid'));
+check('expectedSettlement: ID が不正・欠けていれば不可', parseExpectedSettlement({ fromUserId: 'a/b', toUserId: 'a', amount: 1 }) === 'invalid' && parseExpectedSettlement({ toUserId: 'a', amount: 1 }) === 'invalid');
+check('expectedSettlement: 配列・文字列は不可', parseExpectedSettlement([]) === 'invalid' && parseExpectedSettlement('x') === 'invalid');
+check('sameSettlement: null 同士は一致・片方だけ null は不一致', sameSettlement(null, null) && !sameSettlement(null, { fromUserId: 'b', toUserId: 'a', amount: 1 }));
+check('sameSettlement: 向き・金額が違えば不一致', !sameSettlement({ fromUserId: 'b', toUserId: 'a', amount: 1 }, { fromUserId: 'a', toUserId: 'b', amount: 1 }) && !sameSettlement({ fromUserId: 'b', toUserId: 'a', amount: 1 }, { fromUserId: 'b', toUserId: 'a', amount: 2 }));
 
 // ------------------------------------------------------------
 console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
 (async () => {
   const members = {
-    g1_me: { isActive: true },
-    g1_left: { isActive: false },
+    g1_me: { groupId: 'g1', lineId: 'me', isActive: true },
+    g1_left: { groupId: 'g1', lineId: 'left', isActive: false },
+    // 世帯 g1_x のメンバー mallory の文書。ID は lineId が x_mallory の人の g1 の文書 ID と同じになる
+    g1_x_mallory: { groupId: 'g1_x', lineId: 'mallory', isActive: true },
+    // groupId / lineId の無い文書（決定的 ID と中身が照合できない）
+    g1_nofields: { isActive: true },
   };
   const reads = [];
   const fakeDb = {
@@ -225,6 +264,8 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
   check('個人支出の所有者は可', (await authorizeExpenseWrite(fakeTx, fakeDb, { lineId: 'me' }, 'me')) === true);
   check('個人支出の他人は不可', (await authorizeExpenseWrite(fakeTx, fakeDb, { lineId: 'me' }, 'other')) === false);
   check('lineGroupId だけの旧形式は不可（所有者でも）', (await authorizeExpenseWrite(fakeTx, fakeDb, { lineId: 'me', lineGroupId: 'C1' }, 'me')) === false);
+  check('文書 ID が一致しても中身の groupId・lineId が違えば不可', (await authorizeExpenseWrite(fakeTx, fakeDb, { groupId: 'g1', lineId: 'x' }, 'x_mallory')) === false);
+  check('groupId・lineId の無いメンバー文書は不可', (await authorizeExpenseWrite(fakeTx, fakeDb, { groupId: 'g1', lineId: 'x' }, 'nofields')) === false);
   check('不正な groupId は読まずに不可', (await authorizeExpenseWrite(fakeTx, fakeDb, { groupId: 'a/b', lineId: 'me' }, 'me')) === false && !reads.some((p) => p.includes('a/b')));
 
   // ------------------------------------------------------------
