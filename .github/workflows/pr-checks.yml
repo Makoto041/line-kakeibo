@@ -7,6 +7,10 @@ on:
 env:
   NODE_VERSION: '22'
 
+# GITHUB_TOKEN は既定で読み取りのみ。追加の権限が必要なジョブだけ個別に広げる。
+permissions:
+  contents: read
+
 jobs:
   code-quality:
     name: Code Quality Checks
@@ -50,6 +54,11 @@ jobs:
     name: Deploy Preview
     runs-on: ubuntu-latest
     if: github.event.pull_request.base.ref == 'develop'
+    # vercel-action と github-script がプレビュー URL を PR にコメントする
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     
     steps:
     - name: Checkout code

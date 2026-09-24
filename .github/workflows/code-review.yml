@@ -4,15 +4,18 @@ on:
   pull_request:
     types: [opened, synchronize]
 
+# 既定は読み取りのみ。PR にコメントする auto-review だけ書き込みを許可する。
 permissions:
   contents: read
-  pull-requests: write
-  issues: write
 
 jobs:
   # 自動レビュー
   auto-review:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
