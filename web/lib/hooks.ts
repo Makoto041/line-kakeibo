@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   collection, 
   query, 
@@ -15,10 +15,18 @@ import {
 } from 'firebase/firestore';
 import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
 import { db, auth, getFirebaseStatus, ensureFirebaseInitialized } from './firebase';
-import { initLineAuth, getLineIdClaim } from './lineAuth';
+import { initLineAuth, getLineIdClaim, isLineAuthSettled, onLineAuthSettled } from './lineAuth';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
-import { getCached, setCached, hasCached } from './swrCache';
+import { getCached, setCached, hasCached, clearCached, updateCachedByPrefix } from './swrCache';
+import { timestampToMillis } from './expenseState';
+import {
+  fetchSettlement,
+  householdErrorCode,
+  isHouseholdApiConfigured,
+  type HouseholdErrorCode,
+  type SettlementResponse,
+} from './householdApi';
 
 // Firestore document data shape for expenses (avoids explicit any)
 export type FirestoreExpenseData = Partial<Expense> & { category?: string };
@@ -213,6 +221,10 @@ let cachedLineAuth: LineAuthState | null = null;
 export function useLineAuth() {
   const [state, setState] = useState<LineAuthState | null>(() => cachedLineAuth);
   const [loading, setLoading] = useState(() => cachedLineAuth === null);
+  // 起動時サインイン（initLineAuth）が終わったか
+  const [initSettled, setInitSettled] = useState(() => isLineAuthSettled());
+
+  useEffect(() => onLineAuthSettled(() => setInitSettled(true)), []);
 
   useEffect(() => {
     ensureFirebaseInitialized();
@@ -262,11 +274,17 @@ export function useLineAuth() {
   // URL への付与は不要。互換のため関数は残し、パスをそのまま返す。
   const getUrlWithLineId = (path: string) => path;
 
+  // 認証の確定: 起動時サインインが終わり、その時点のユーザーについて lineId の解決が済んだ。
+  // 未確定の間（匿名セッションの復元直後など）は、ゲスト表示ではなく読み込み中として扱う。
+  const currentUid = auth?.currentUser?.uid ?? null;
+  const settled = initSettled && !loading && (state?.uid ?? null) === currentUid;
+
   return {
     user: state ? { uid: state.uid, isAnonymous: state.isAnonymous } : null,
     uid: state?.uid ?? null,
     lineId: state?.lineId ?? null,
     loading,
+    settled,
     signOut: signOutUser,
     isAnonymous: state?.isAnonymous ?? true,
     getUrlWithLineId,
@@ -551,12 +569,20 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
     }
   };
 
+  // サーバー経由の変更（確認など）の結果を、再取得せずに一覧へ反映する。
+  // 他の画面が持つ同じ支出のキャッシュも揃える。
+  const patchLocal = useCallback((id: string, patch: Partial<Expense>) => {
+    setExpenses(prev => prev.map(expense => (expense.id === id ? { ...expense, ...patch } : expense)));
+    patchCachedExpenses([id], patch);
+  }, []);
+
   return { 
     expenses, 
     loading, 
     error, 
     updateExpense, 
     deleteExpense,
+    patchLocal,
     refetch: () => {
       if (userId) {
         setLoading(true);
@@ -572,6 +598,8 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
   const [stats, setStats] = useState<ExpenseStats | null>(() => getCached<ExpenseStats>(statsCacheKey) ?? null);
   const [loading, setLoading] = useState(() => !hasCached(statsCacheKey));
   const [error, setError] = useState<string | null>(null);
+  // refetch() で増やして再取得する（キャッシュは先に出したまま裏で取り直す）
+  const [refetchNonce, setRefetchNonce] = useState(0);
 
   useEffect(() => {
     if (!userId || userId === 'guest') {
@@ -706,9 +734,13 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
     };
 
     fetchStats();
-  }, [userId, year, month, startDay, customStartDate, customEndDate, statsCacheKey]);
+  }, [userId, year, month, startDay, customStartDate, customEndDate, statsCacheKey, refetchNonce]);
 
-  return { stats, loading, error };
+  const refetch = useCallback(() => {
+    setRefetchNonce(n => n + 1);
+  }, []);
+
+  return { stats, loading, error, refetch };
 }
 
 export function useUserGroups(userId: string | null) {
@@ -1022,4 +1054,240 @@ export function useBudgetConfig(userId: string | null) {
   };
 
   return { config, loading, error, refetch };
+}
+
+// ---------------------------------------------------------------------------
+// キャッシュの同期（書き込み後に、別の画面が持つ古い値を出さないため）
+// ---------------------------------------------------------------------------
+
+/** 読み込み済みの支出一覧（expenses:* のキャッシュ）の該当 ID をまとめて書き換える */
+export function patchCachedExpenses(ids: readonly string[], patch: Partial<Expense>): void {
+  if (ids.length === 0) return;
+  const targets = new Set(ids);
+  updateCachedByPrefix<Expense[]>('expenses:', (list) => {
+    if (!Array.isArray(list) || !list.some((e) => targets.has(e.id))) return list;
+    return list.map((e) => (targets.has(e.id) ? { ...e, ...patch } : e));
+  });
+}
+
+/**
+ * 支出を変更したあとに呼ぶ。集計（stats:*）のキャッシュを捨て、次に開いたホームが
+ * 古い予算残りを出さずに読み込み直すようにする。
+ */
+export function invalidateStatsCache(): void {
+  clearCached('stats:');
+}
+
+// ---------------------------------------------------------------------------
+// 世帯（所属グループ・メンバー）
+// ---------------------------------------------------------------------------
+
+export interface HouseholdMember {
+  lineId: string;
+  displayName: string;
+}
+
+export interface HouseholdInfo {
+  /** 有効に所属しているグループ（書き込み可否の判定に使う） */
+  activeGroupIds: string[];
+  /** 主世帯（最初に参加したグループ）。所属が無ければ null */
+  household: {
+    groupId: string;
+    name: string;
+    lineGroupId: string | null;
+    /** 有効メンバー（参加順） */
+    members: HouseholdMember[];
+  } | null;
+}
+
+interface MembershipRow {
+  groupId: string;
+  lineId: string;
+  displayName: string;
+  joinedAtMs: number;
+}
+
+function toMembershipRow(data: Record<string, unknown>): MembershipRow | null {
+  const groupId = typeof data.groupId === 'string' ? data.groupId : '';
+  const lineId = typeof data.lineId === 'string' ? data.lineId : '';
+  if (!groupId || !lineId) return null;
+  const joinedAtMs = data.joinedAt == null ? Number.POSITIVE_INFINITY : timestampToMillis(data.joinedAt);
+  return {
+    groupId,
+    lineId,
+    displayName: typeof data.displayName === 'string' ? data.displayName : '',
+    joinedAtMs,
+  };
+}
+
+/** 参加順（joinedAt 昇順、同じなら lineId 順）。どの端末でも同じ並びにする */
+function byJoinedAt(a: MembershipRow, b: MembershipRow): number {
+  if (a.joinedAtMs !== b.joinedAtMs) return a.joinedAtMs < b.joinedAtMs ? -1 : 1;
+  return a.lineId < b.lineId ? -1 : a.lineId > b.lineId ? 1 : 0;
+}
+
+async function loadHousehold(lineId: string): Promise<HouseholdInfo> {
+  if (!db) throw new Error('Firestoreデータベースが利用できません');
+  // 自分の有効なメンバーシップ（fetchMyActiveGroupIds と同じクエリ形）
+  const mine = await getDocs(
+    query(collection(db, 'groupMembers'), where('lineId', '==', lineId), where('isActive', '==', true))
+  );
+  const myRows = mine.docs
+    .map((d) => toMembershipRow(d.data() as Record<string, unknown>))
+    .filter((r): r is MembershipRow => r !== null)
+    .sort(byJoinedAt);
+  const activeGroupIds = Array.from(new Set(myRows.map((r) => r.groupId)));
+  if (activeGroupIds.length === 0) return { activeGroupIds, household: null };
+
+  const groupId = myRows[0].groupId;
+  const [groupSnap, membersSnap] = await Promise.all([
+    // グループ名などは表示の補助なので、読めなくても世帯の判定は続ける
+    getDoc(doc(db, 'groups', groupId)).catch((err: unknown) => {
+      console.error('Failed to read household group:', err);
+      return null;
+    }),
+    getDocs(query(collection(db, 'groupMembers'), where('groupId', '==', groupId), where('isActive', '==', true))),
+  ]);
+  const groupData = groupSnap?.exists() ? (groupSnap.data() as Record<string, unknown>) : {};
+
+  // 自動 ID の古い文書と決定的 ID の文書が重なることがあるので lineId で 1 人にまとめる
+  const members = new Map<string, MembershipRow>();
+  membersSnap.docs
+    .map((d) => toMembershipRow(d.data() as Record<string, unknown>))
+    .filter((r): r is MembershipRow => r !== null)
+    .sort(byJoinedAt)
+    .forEach((row) => {
+      const existing = members.get(row.lineId);
+      if (!existing) members.set(row.lineId, row);
+      else if (!existing.displayName && row.displayName) members.set(row.lineId, { ...existing, displayName: row.displayName });
+    });
+
+  return {
+    activeGroupIds,
+    household: {
+      groupId,
+      name: typeof groupData.name === 'string' ? groupData.name : '',
+      lineGroupId: typeof groupData.lineGroupId === 'string' && groupData.lineGroupId ? groupData.lineGroupId : null,
+      members: Array.from(members.values()).map((m) => ({ lineId: m.lineId, displayName: m.displayName })),
+    },
+  };
+}
+
+interface FetchStatus<E> {
+  key: string;
+  nonce: number;
+  error: E | null;
+}
+
+/**
+ * 所属グループと主世帯のメンバー。読み取りは既存と同じクエリ形なので、
+ * master / PR #172 のどちらのルールでも通る。
+ * activeGroupIds は所属がまだ分からない（読み込み中・失敗）とき null。
+ */
+export function useHousehold(lineId: string | null) {
+  const key = lineId && lineId !== 'guest' ? `household:${lineId}` : '';
+  const [nonce, setNonce] = useState(0);
+  // 取得結果の値は swrCache に置き、ここでは完了と失敗だけを持つ
+  const [status, setStatus] = useState<FetchStatus<string> | null>(null);
+
+  useEffect(() => {
+    if (!key || !lineId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const connected = await waitForFirebase();
+        if (!connected) throw new Error('Firebase接続エラー');
+        const value = await loadHousehold(lineId);
+        if (cancelled) return;
+        setCached(key, value);
+        setStatus({ key, nonce, error: null });
+      } catch (err) {
+        if (cancelled) return;
+        setStatus({ key, nonce, error: handleFirestoreError(err) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [key, lineId, nonce]);
+
+  const refetch = useCallback(() => setNonce((n) => n + 1), []);
+
+  if (!key) {
+    return { household: null, activeGroupIds: [] as string[], loading: false, error: null, refetch };
+  }
+  const info = getCached<HouseholdInfo>(key) ?? null;
+  const current = status && status.key === key ? status : null;
+  const done = !!current && current.nonce === nonce;
+  return {
+    household: info?.household ?? null,
+    activeGroupIds: info ? info.activeGroupIds : null,
+    loading: !done && !info,
+    // 再試行中は前回の失敗を出さない（読み込み中として扱う）
+    error: done ? (current?.error ?? null) : null,
+    refetch,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ふたりの精算（bot の /household/settlement）
+// ---------------------------------------------------------------------------
+
+/**
+ * 未精算の立替と精算額。キャッシュを先に出して裏で取り直す（コールドスタートの待ちを隠す）。
+ * API が未設定のときは取得しない（available=false。画面は ¥0 とボタン無効）。
+ */
+export function useSettlement(groupId: string | null) {
+  const available = isHouseholdApiConfigured();
+  const key = groupId && available ? `settlement:${groupId}` : '';
+  const [nonce, setNonce] = useState(0);
+  const [status, setStatus] = useState<FetchStatus<HouseholdErrorCode> | null>(null);
+  // setData で差し替えたときに描き直すためのカウンタ（値は swrCache）
+  const [, setVersion] = useState(0);
+
+  useEffect(() => {
+    if (!key || !groupId) return;
+    let cancelled = false;
+    fetchSettlement(groupId).then(
+      (value) => {
+        if (cancelled) return;
+        setCached(key, value);
+        setStatus({ key, nonce, error: null });
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        setStatus({ key, nonce, error: householdErrorCode(err) });
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [key, groupId, nonce]);
+
+  /** 最新の内容で差し替える（精算を記録したときの 409 stale など） */
+  const setData = useCallback(
+    (value: SettlementResponse) => {
+      if (!key) return;
+      setCached(key, value);
+      setVersion((v) => v + 1);
+    },
+    [key]
+  );
+  const refetch = useCallback(() => setNonce((n) => n + 1), []);
+
+  if (!key) {
+    return { data: null, loading: false, error: null, available, setData, refetch };
+  }
+  const data = getCached<SettlementResponse>(key) ?? null;
+  const current = status && status.key === key ? status : null;
+  const done = !!current && current.nonce === nonce;
+  return {
+    data,
+    loading: !done && !data,
+    // 再試行中は前回の失敗を出さない（読み込み中として扱う）
+    error: done ? (current?.error ?? null) : null,
+    available,
+    setData,
+    refetch,
+  };
 }

@@ -11,6 +11,49 @@ import { auth, ensureFirebaseInitialized } from './firebase';
 // 二重実行や再マウントでも初回の Promise を使い回す。
 let initPromise: Promise<void> | null = null;
 
+// 起動時サインインが終わったか（LINE 認証・匿名フォールバックのどちらかに落ち着いたか）。
+// 画面は終わるまでゲスト表示を出さずに待つ（匿名 → LINE の順に 2 回状態が変わるため）。
+let settled = false;
+// LINE ログイン画面へ遷移中（ページが離れるので、確定扱いにしない）
+let loginRedirectPending = false;
+const settleListeners = new Set<() => void>();
+// ログイン画面への遷移が起きなかった場合に、待ち続けないための上限
+const LOGIN_REDIRECT_SETTLE_FALLBACK_MS = 10_000;
+
+function markSettled(): void {
+  if (settled) return;
+  settled = true;
+  const listeners = Array.from(settleListeners);
+  settleListeners.clear();
+  for (const listener of listeners) {
+    try {
+      listener();
+    } catch (e) {
+      console.error('LINE auth settle listener failed:', e);
+    }
+  }
+}
+
+/** 起動時サインインが終わっているか */
+export function isLineAuthSettled(): boolean {
+  return settled;
+}
+
+/**
+ * 起動時サインインが終わったら 1 回だけ呼ぶ（終わっていれば即座に呼ぶ）。
+ * 戻り値は登録の解除。
+ */
+export function onLineAuthSettled(listener: () => void): () => void {
+  if (settled) {
+    listener();
+    return () => {};
+  }
+  settleListeners.add(listener);
+  return () => {
+    settleListeners.delete(listener);
+  };
+}
+
 /**
  * サインイン状態を確立する。
  * - NEXT_PUBLIC_LIFF_ID あり: LIFF で LINE ログイン → ID トークンを
@@ -62,6 +105,7 @@ export function initLineAuth(): Promise<void> {
       if (!liff.isLoggedIn()) {
         // LINE ログイン画面へリダイレクト（この後の処理は戻ってきてから再実行される）
         liff.login();
+        loginRedirectPending = true;
         return;
       }
 
@@ -110,6 +154,15 @@ export function initLineAuth(): Promise<void> {
       }
     }
   })();
+
+  const onDone = () => {
+    if (loginRedirectPending) {
+      setTimeout(markSettled, LOGIN_REDIRECT_SETTLE_FALLBACK_MS);
+    } else {
+      markSettled();
+    }
+  };
+  initPromise.then(onDone, onDone);
 
   return initPromise;
 }

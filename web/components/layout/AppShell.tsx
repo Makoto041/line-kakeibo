@@ -7,10 +7,7 @@ import { Sidebar } from './Sidebar';
 import { BottomTabBar } from './BottomTabBar';
 import { TopBar } from './TopBar';
 import { initLineAuth } from '@/lib/lineAuth';
-
-// Routes that should render without the app navigation chrome
-// (single-purpose / standalone screens opened from outside the app).
-const BARE_ROUTES = ['/attach', '/link'];
+import { isBareRoute } from '@/lib/routes';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
@@ -24,7 +21,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const hrefFor = (path: string) => path;
 
-  const bare = BARE_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
+  // Routes that should render without the app navigation chrome
+  // (single-purpose / standalone screens opened from outside the app).
+  const bare = isBareRoute(pathname);
 
   if (bare) {
     return (
