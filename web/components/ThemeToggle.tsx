@@ -1,27 +1,26 @@
 'use client';
 
+// テーマの切り替え（ライト / ダーク / 自動）。設定の「表示」の中で使う。
+// 選んだ時点で反映し、端末に保存する（ThemeProvider）。
 import { Sun, Moon, Monitor } from 'lucide-react';
+import { cx } from '@/lib/cx';
+import { T } from '@/lib/uiText';
 import { useTheme } from './theme/ThemeProvider';
 
-type ThemeToggleProps = {
-  size?: 'sm' | 'md';
-};
-
 const OPTIONS = [
-  { key: 'light', label: 'ライト', Icon: Sun },
-  { key: 'dark', label: 'ダーク', Icon: Moon },
-  { key: 'system', label: '自動', Icon: Monitor },
+  { key: 'light', label: T.settings.themeLight, Icon: Sun },
+  { key: 'dark', label: T.settings.themeDark, Icon: Moon },
+  { key: 'system', label: T.settings.themeSystem, Icon: Monitor },
 ] as const;
 
-export function ThemeToggle({ size = 'md' }: ThemeToggleProps) {
+export function ThemeToggle({ className }: { className?: string }) {
   const { themeSetting, isReady, setTheme } = useTheme();
-  const pad = size === 'sm' ? 'p-1.5' : 'p-2';
 
   return (
     <div
       role="radiogroup"
-      aria-label="テーマ"
-      className="inline-flex items-center gap-0.5 rounded-full border border-line/70 bg-card/60 p-0.5 shadow-sm"
+      aria-label={T.settings.theme}
+      className={cx('kb-seg grid h-[52px] grid-cols-3 rounded-full p-[2px]', className)}
     >
       {OPTIONS.map(({ key, label, Icon }) => {
         const active = themeSetting === key;
@@ -31,17 +30,15 @@ export function ThemeToggle({ size = 'md' }: ThemeToggleProps) {
             type="button"
             role="radio"
             aria-checked={active}
-            aria-label={label}
-            title={label}
             disabled={!isReady}
             onClick={() => setTheme(key)}
-            className={`${pad} inline-flex items-center justify-center rounded-full transition-colors disabled:opacity-50 ${
-              active
-                ? 'bg-accent text-accent-fg shadow-sm'
-                : 'text-muted hover:bg-fg/5 hover:text-fg'
-            }`}
+            className={cx(
+              'inline-flex h-full min-w-0 items-center justify-center gap-2 rounded-full text-kb-seg transition-colors duration-150 disabled:opacity-50',
+              active ? 'kb-seg-on font-semibold' : 'text-ink'
+            )}
           >
-            <Icon className={size === 'sm' ? 'h-4 w-4' : 'h-[18px] w-[18px]'} strokeWidth={2} />
+            <Icon size={18} strokeWidth={2} />
+            <span className="truncate">{label}</span>
           </button>
         );
       })}

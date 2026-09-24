@@ -1,40 +1,39 @@
 'use client';
 
 import Link from 'next/link';
+import { cx } from '@/lib/cx';
+import { T } from '@/lib/uiText';
 import { NAV_ITEMS, isActivePath } from './nav';
 
-interface BottomTabBarProps {
-  pathname: string;
-  hrefFor: (path: string) => string;
-}
-
-/** Mobile-only bottom tab bar (hidden on md+). */
-export function BottomTabBar({ pathname, hrefFor }: BottomTabBarProps) {
+/**
+ * 画面下に浮かぶガラスのナビ（ホーム / 明細 / ふたり）。スマホ・PC とも同じ形で、
+ * 440px の列の中に左右 16px で置く。選択中はピルの中に塗りのアイコンと太字のラベル。
+ */
+export function BottomTabBar({ pathname }: { pathname: string }) {
   return (
     <nav
-      aria-label="メインナビゲーション"
-      className="md:hidden fixed inset-x-0 bottom-0 z-40 glass-bar border-t border-line/60 pb-safe"
+      aria-label={T.nav.label}
+      className="kb-nav fixed left-1/2 z-40 h-[82px] -translate-x-1/2 rounded-full p-1"
+      style={{
+        bottom: 'calc(var(--kb-nav-bottom) + var(--kb-safe-bottom))',
+        width: 'min(calc(100% - 32px), 408px)',
+      }}
     >
-      <ul className="grid grid-cols-3">
-        {NAV_ITEMS.map(({ path, label, Icon }) => {
+      <ul className="grid h-full grid-cols-3">
+        {NAV_ITEMS.map(({ path, label, Icon, ActiveIcon }) => {
           const active = isActivePath(pathname, path);
           return (
-            <li key={path}>
+            <li key={path} className="h-full min-w-0">
               <Link
-                href={hrefFor(path)}
+                href={path}
                 aria-current={active ? 'page' : undefined}
-                className={`flex flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-medium transition-colors ${
-                  active ? 'text-accent' : 'text-muted'
-                }`}
+                className={cx(
+                  'flex h-full flex-col items-center gap-[6px] rounded-full pt-[11px] text-kb-nav transition-colors duration-150',
+                  active ? 'kb-nav-sel font-bold text-accent-strong' : 'border border-transparent text-nav-ink'
+                )}
               >
-                <span
-                  className={`grid h-8 w-12 place-items-center rounded-full transition-colors ${
-                    active ? 'bg-accent/12' : ''
-                  }`}
-                >
-                  <Icon className="h-[22px] w-[22px]" strokeWidth={active ? 2.4 : 2} />
-                </span>
-                <span>{label}</span>
+                {active ? <ActiveIcon size={28} /> : <Icon size={28} strokeWidth={1.9} />}
+                <span className="whitespace-nowrap">{label}</span>
               </Link>
             </li>
           );

@@ -13,17 +13,25 @@ import {
   Sparkles,
   Inbox,
   AlertTriangle,
+  Eye,
+  Settings,
+  Users,
 } from 'lucide-react';
-import { useLineAuth, useMonthlyStats, useBudgetConfig, ExpenseStats, BudgetConfig } from '../lib/hooks';
+import { useLineAuth, useMonthlyStats, useBudgetConfig, useHousehold, ExpenseStats, BudgetConfig } from '../lib/hooks';
 import { CategoryPieChart, DailyLineChart } from '../components/Charts';
-import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
+import { getEffectiveDateRange } from '../lib/dateSettings';
 import { getCategoryVisual } from '../lib/categoryVisuals';
 import PreviewModeBanner from '../components/PreviewModeBanner';
 import GuestGuide from '../components/GuestGuide';
 import { getSampleStats } from '../lib/sampleData';
-import { getCached, setCached, hasCached } from '../lib/swrCache';
 import dayjs from 'dayjs';
 import { db } from '../lib/firebase';
+import { T } from '../lib/uiText';
+import { usePeriod } from '../components/period/PeriodProvider';
+import { ScreenHeader } from '../components/layout/ScreenHeader';
+import { HeaderPill } from '../components/ui/HeaderPill';
+import { IconButton } from '../components/ui/IconButton';
+import { CommonSheets, useCommonSheet } from '../components/sheets/CommonSheets';
 
 const yen = (v: number) => `¥${Number(v).toLocaleString()}`;
 
@@ -252,15 +260,13 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
 
 /* ------------------------------- Page ----------------------------------- */
 export default function Dashboard() {
-  const { lineId, loading: authLoading } = useLineAuth();
-  const dsCacheKey = lineId ? `dateSettings:${lineId}` : '';
-  const [currentDate, setCurrentDate] = useState(dayjs());
-  const [dateSettings, setDateSettings] = useState<DateRangeSettings>(
-    () => (dsCacheKey && getCached<DateRangeSettings>(dsCacheKey)) || { mode: 'monthly' }
-  );
-  // 設定がキャッシュ済みなら全画面スピナーを出さない（再訪時の点滅防止）
-  const [settingsLoading, setSettingsLoading] = useState(() => !(dsCacheKey && hasCached(dsCacheKey)));
+  const { lineId, loading: authLoading, settled } = useLineAuth();
+  // 期間は 3 タブ共通（PeriodProvider）。設定の読み込みも Provider が行う
+  const { currentDate, dateSettings, settingsLoaded, canShift, shift, title: periodTitle } = usePeriod();
+  const settingsLoading = !settingsLoaded;
   const [firebaseError, setFirebaseError] = useState(false);
+  const { sheet, setSheet } = useCommonSheet();
+  const householdState = useHousehold(lineId);
 
   const { config: budgetConfig, loading: budgetLoading, error: budgetError, refetch: refetchBudget } =
     useBudgetConfig(lineId);
@@ -270,35 +276,6 @@ export default function Dashboard() {
   useEffect(() => {
     if (typeof window !== 'undefined' && !db) setFirebaseError(true);
   }, []);
-
-  useEffect(() => {
-    const load = async () => {
-      if (!lineId) {
-        setSettingsLoading(false);
-        return;
-      }
-      const key = `dateSettings:${lineId}`;
-      const cached = getCached<DateRangeSettings>(key);
-      // キャッシュがあれば即表示して裏で再取得（スピナーを出さない）
-      if (cached) {
-        setDateSettings(cached);
-        setSettingsLoading(false);
-      } else {
-        setSettingsLoading(true);
-      }
-      try {
-        const fresh = await getDateRangeSettings(lineId);
-        setCached(key, fresh);
-        setDateSettings(fresh);
-      } catch (e) {
-        console.error('Failed to load date settings:', e);
-        if (!cached) setDateSettings({ mode: 'monthly' });
-      } finally {
-        setSettingsLoading(false);
-      }
-    };
-    load();
-  }, [lineId]);
 
   const effectiveRange = getEffectiveDateRange(currentDate, dateSettings);
   const { stats, loading: statsLoading } = useMonthlyStats(
@@ -322,13 +299,44 @@ export default function Dashboard() {
     prevRange.endDate,
   );
 
-  const navigateMonth = (dir: 'prev' | 'next') => {
-    if (dateSettings.mode === 'custom') return;
-    setCurrentDate((prev) => (dir === 'prev' ? prev.subtract(1, 'month') : prev.add(1, 'month')));
-  };
+  const navigateMonth = (dir: 'prev' | 'next') => shift(dir === 'prev' ? -1 : 1);
+
+  // 見出し: 家計簿 ＋ 世帯（ふたり）またはゲストのピル ＋ 設定の歯車
+  const header = (
+    <ScreenHeader
+      title={T.home.title}
+      right={
+        <>
+          {settled && !lineId && (
+            <HeaderPill icon={Eye} label={T.home.guest} onClick={() => setSheet({ kind: 'guest' })} />
+          )}
+          {settled && lineId && householdState.household && (
+            <HeaderPill icon={Users} label={T.home.household} onClick={() => setSheet({ kind: 'household' })} />
+          )}
+          <IconButton
+            label={T.aria.settings}
+            icon={Settings}
+            aria-haspopup="dialog"
+            onClick={() => setSheet({ kind: 'settings', tab: 'budget' })}
+          />
+        </>
+      }
+    />
+  );
+  const sheets = (
+    <CommonSheets
+      sheet={sheet}
+      setSheet={setSheet}
+      household={householdState}
+      onSettingsSaved={refetchBudget}
+    />
+  );
 
   if (firebaseError) {
     return (
+      <>
+      {header}
+      {sheets}
       <div className="mx-auto flex min-h-[60vh] max-w-md items-center px-4">
         <GlassCard className="w-full p-8 text-center">
           <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-rose-500/12 text-rose-500">
@@ -338,17 +346,22 @@ export default function Dashboard() {
           <p className="mt-2 text-sm text-muted">アプリの初期化に失敗しました。時間をおいて再度お試しください。</p>
         </GlassCard>
       </div>
+      </>
     );
   }
 
   if (authLoading || settingsLoading) {
     return (
+      <>
+      {header}
+      {sheets}
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
           <div className="mx-auto h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" />
           <p className="mt-3 text-sm text-muted">読み込み中...</p>
         </div>
       </div>
+      </>
     );
   }
 
@@ -385,6 +398,9 @@ export default function Dashboard() {
       : null;
 
   return (
+    <>
+    {header}
+    {sheets}
     <div className="mx-auto w-full max-w-5xl px-4 py-5 md:px-8 md:py-7">
       {isGuest && (
         <div className="mb-4">
@@ -397,24 +413,27 @@ export default function Dashboard() {
         <div className="flex items-center justify-between">
           <button
             onClick={() => navigateMonth('prev')}
-            disabled={dateSettings.mode === 'custom'}
-            aria-label="前の期間"
+            disabled={!canShift}
+            aria-label={T.aria.prevMonth}
             className="grid h-10 w-10 place-items-center rounded-xl text-muted transition-colors hover:bg-fg/5 hover:text-fg disabled:opacity-30"
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
-          <div className="text-center">
-            <h1 className="text-base font-semibold tracking-tight text-fg">
-              {getDisplayTitle(currentDate, dateSettings)}
-            </h1>
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            onClick={() => setSheet({ kind: 'period' })}
+            className="rounded-xl px-2 py-1 text-center transition-colors hover:bg-fg/5"
+          >
+            <span className="block text-base font-semibold tracking-tight text-fg">{periodTitle}</span>
             {dateSettings.mode === 'monthly' && dateSettings.customStartDay && dateSettings.customStartDay !== 1 && (
-              <p className="text-[11px] text-muted">{dateSettings.customStartDay}日起算</p>
+              <span className="block text-[11px] text-muted">{dateSettings.customStartDay}日起算</span>
             )}
-          </div>
+          </button>
           <button
             onClick={() => navigateMonth('next')}
-            disabled={dateSettings.mode === 'custom'}
-            aria-label="次の期間"
+            disabled={!canShift}
+            aria-label={T.aria.nextMonth}
             className="grid h-10 w-10 place-items-center rounded-xl text-muted transition-colors hover:bg-fg/5 hover:text-fg disabled:opacity-30"
           >
             <ChevronRight className="h-5 w-5" />
@@ -548,5 +567,6 @@ export default function Dashboard() {
         </div>
       )}
     </div>
+    </>
   );
 }

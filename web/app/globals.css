@@ -10,59 +10,396 @@
 @source "../pages/**/*.{js,ts,jsx,tsx,mdx}";
 
 /* ============================================================
-   Design tokens (RGB triplets so Tailwind <alpha-value> works)
+   Design tokens
+   - 旧トークン（RGB の 3 つ組。Tailwind の <alpha-value> 用）は残し、値だけ新しい配色に寄せる
+     （規約ページ・グラフなど旧トークンを使う画面も同じ青系になる）
+   - --kb-* は新しい画面の配色・寸法・影
    ============================================================ */
 :root {
-  --bg: 248 250 252;        /* slate-50  */
-  --fg: 15 23 42;           /* slate-900 */
-  --muted: 100 116 139;     /* slate-500 */
-  --card: 255 255 255;      /* white     */
-  --border: 226 232 240;    /* slate-200 */
-  --accent: 16 185 129;     /* emerald-500 */
+  --bg: 242 248 253;        /* = --kb-bg-mid */
+  --fg: 11 24 64;           /* = --kb-ink */
+  --muted: 86 102 140;      /* = --kb-ink-3 */
+  --card: 255 255 255;
+  --border: 220 230 242;    /* = --kb-chip-rim */
+  --accent: 37 99 235;      /* = --kb-accent */
   --accent-fg: 255 255 255;
-  --ring: 16 185 129;
+  --ring: 37 99 235;
 
-  /* liquid-glass surface */
+  /* 旧ガラス（刷新前の画面が使う） */
   --glass-bg: 255 255 255;
   --glass-alpha: 0.62;
   --glass-border: 255 255 255;
   --glass-border-alpha: 0.55;
+
+  --kb-font: "Hiragino Sans", "Hiragino Kaku Gothic ProN", var(--font-noto-jp), "Noto Sans JP",
+    "Noto Sans CJK JP", system-ui, sans-serif;
+
+  /* 背景 */
+  --kb-bg-top: #eef6fe;
+  --kb-bg-mid: #f2f8fd;
+  --kb-bg-bottom: #e8f1fb;
+  --kb-bg-lilac: rgba(226, 222, 252, 0.55);
+  --kb-bg-periwinkle: rgba(220, 228, 252, 0.5);
+  --kb-bg-glow: rgba(255, 255, 255, 0.65);
+
+  /* 文字（紺系） */
+  --kb-ink: #0b1840;
+  --kb-ink-soft: #26386a;
+  --kb-ink-2: #3f5280;
+  --kb-ink-3: #56668c;
+  --kb-ink-4: #6b7b9e;
+  --kb-ink-5: #98a2b5;
+  --kb-dots: #7d8ca8;
+  --kb-edit-ink: #2b3a6b;
+
+  /* アクセント（青） */
+  --kb-accent: #2563eb;
+  --kb-accent-strong: #1a45d6;
+  --kb-accent-light: #4b9ffa;
+  --kb-accent-grad: linear-gradient(180deg, #3d8cf4 0%, #2468e8 55%, #2b76ec 100%);
+  --kb-accent-grad-seg: linear-gradient(160deg, #56a6fa 0%, #3a86f4 45%, #2263ec 100%);
+  --kb-bar-grad: linear-gradient(90deg, #4b9ffa 0%, #3079f0 60%, #1f5fec 100%);
+  --kb-bar-track: #cce4fb;
+
+  /* ガラス・カード */
+  --kb-glass-fill: rgba(255, 255, 255, 0.5);
+  --kb-glass-fill-2: rgba(255, 255, 255, 0.62);
+  --kb-glass-rim: rgba(255, 255, 255, 0.9);
+  --kb-glass-hi: rgba(255, 255, 255, 1);
+  --kb-card: rgba(255, 255, 255, 0.92);
+  --kb-card-2: rgba(255, 255, 255, 0.8);
+  --kb-card-rim: rgba(255, 255, 255, 0.95);
+  --kb-divider: rgba(20, 50, 110, 0.08);
+  --kb-solid: #f7fafe; /* 透明度を下げる設定のときの面 */
+  --kb-field: rgba(255, 255, 255, 0.85);
+  --kb-skeleton: rgba(11, 24, 64, 0.07);
+
+  /* 状態色 */
+  --kb-warn-bg: #fef5e7;
+  --kb-warn-grad: linear-gradient(90deg, #fdf2e2 0%, #fef7ea 100%);
+  --kb-warn-ink: #a8530f;
+  --kb-warn-icon: #c06a14;
+  --kb-warn-halo: rgba(251, 191, 36, 0.14);
+  --kb-ok-bg: #e8f0ee;
+  --kb-ok-ink: #4a7a6c;
+  --kb-ok-fill: #5e9383;
+  --kb-off-bg: #edf1f6;
+  --kb-off-ink: #56668c;
+  --kb-off-fill: #98a2b5;
+  --kb-danger: #e5484d;
+  --kb-danger-grad: linear-gradient(90deg, #f87171, #dc2626);
+
+  /* チップ */
+  --kb-chip-bg: #eef4fb;
+  --kb-chip-rim: #dce6f2;
+  --kb-chip-ink: #2b3859;
+  --kb-chip-hi: #ffffff;
+
+  /* アバター */
+  --kb-avatar-a: linear-gradient(180deg, #dcecfe 0%, #c0dbfd 100%);
+  --kb-avatar-b: linear-gradient(180deg, #e6defe 0%, #d2c8fb 100%);
+  --kb-avatar-hi: rgba(255, 255, 255, 0.7);
+
+  /* ナビ */
+  --kb-nav-ink: #4a5e84;
+  --kb-nav-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(232, 242, 252, 0.5));
+  --kb-nav-rim: rgba(255, 255, 255, 0.85);
+  --kb-nav-sel-bg: radial-gradient(120% 95% at 50% 100%, rgba(147, 197, 253, 0.6) 0%, rgba(205, 231, 253, 0.55) 45%, rgba(236, 246, 255, 0.55) 100%);
+  --kb-nav-sel-rim: rgba(255, 255, 255, 0.9);
+
+  /* 影 */
+  --kb-shadow-glass: inset 0 1px 0 var(--kb-glass-hi), 0 6px 16px rgba(30, 64, 120, 0.08), 0 1px 2px rgba(30, 64, 120, 0.06);
+  --kb-shadow-soft: 0 4px 12px rgba(30, 64, 120, 0.08);
+  --kb-shadow-card: 0 10px 30px rgba(30, 64, 120, 0.08), 0 1px 3px rgba(30, 64, 120, 0.05);
+  --kb-shadow-nav: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 12px 32px rgba(30, 64, 120, 0.14), 0 -2px 16px rgba(30, 64, 120, 0.05);
+  --kb-shadow-nav-sel: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(59, 130, 246, 0.18);
+  --kb-shadow-sheet: 0 -12px 40px rgba(30, 64, 120, 0.16);
+  --kb-backdrop: rgba(15, 23, 42, 0.28);
+  --kb-grabber: rgba(15, 27, 61, 0.18);
+
+  /* 寸法 */
+  --kb-gutter: 24px;
+  --kb-inset: 16px;
+  --kb-header-top: 26px;
+  --kb-nav-h: 82px;
+  --kb-nav-bottom: 18px;
+  --kb-safe-top: env(safe-area-inset-top, 0px);
+  --kb-safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* 本文の下余白（ナビの高さ + 下の余白 + 16px + 安全領域） */
+  --kb-content-bottom: calc(var(--kb-nav-h) + var(--kb-nav-bottom) + 16px + var(--kb-safe-bottom));
 }
 
 .dark {
-  --bg: 2 6 23;             /* slate-950 */
-  --fg: 226 232 240;        /* slate-200 */
-  --muted: 148 163 184;     /* slate-400 */
-  --card: 15 23 42;         /* slate-900 */
-  --border: 30 41 59;       /* slate-800 */
-  --accent: 16 185 129;
-  --accent-fg: 2 6 23;
-  --ring: 16 185 129;
+  --bg: 11 17 34;           /* = --kb-bg-mid */
+  --fg: 238 242 255;        /* = --kb-ink */
+  --muted: 140 153 184;     /* = --kb-ink-3 */
+  --card: 22 31 56;
+  --border: 44 56 88;
+  --accent: 59 130 246;     /* = --kb-accent */
+  --accent-fg: 255 255 255;
+  --ring: 96 165 250;
 
-  --glass-bg: 15 23 42;
-  --glass-alpha: 0.55;
+  --glass-bg: 22 31 56;
+  --glass-alpha: 0.6;
   --glass-border: 148 163 184;
   --glass-border-alpha: 0.16;
+
+  --kb-bg-top: #0c1326;
+  --kb-bg-mid: #0b1122;
+  --kb-bg-bottom: #090e1c;
+  --kb-bg-lilac: rgba(124, 108, 242, 0.2);
+  --kb-bg-periwinkle: rgba(59, 130, 246, 0.14);
+  --kb-bg-glow: rgba(59, 130, 246, 0.06);
+
+  --kb-ink: #eef2ff;
+  --kb-ink-soft: #d3dbef;
+  --kb-ink-2: #a9b6d3;
+  --kb-ink-3: #8c99b8;
+  --kb-ink-4: #75829f;
+  --kb-ink-5: #5e6a86;
+  --kb-dots: #8391ae;
+  --kb-edit-ink: #c9d3ea;
+
+  --kb-accent: #3b82f6;
+  --kb-accent-strong: #8db6ff;
+  --kb-accent-light: #60a5fa;
+  --kb-bar-track: rgba(96, 165, 250, 0.18);
+
+  --kb-glass-fill: rgba(30, 41, 70, 0.55);
+  --kb-glass-fill-2: rgba(38, 50, 84, 0.62);
+  --kb-glass-rim: rgba(255, 255, 255, 0.1);
+  --kb-glass-hi: rgba(255, 255, 255, 0.08);
+  --kb-card: rgba(22, 31, 56, 0.88);
+  --kb-card-2: rgba(22, 31, 56, 0.78);
+  --kb-card-rim: rgba(255, 255, 255, 0.1);
+  --kb-divider: rgba(255, 255, 255, 0.08);
+  --kb-solid: #141c33;
+  --kb-field: rgba(255, 255, 255, 0.05);
+  --kb-skeleton: rgba(255, 255, 255, 0.08);
+
+  --kb-warn-bg: rgba(245, 158, 11, 0.12);
+  --kb-warn-grad: linear-gradient(90deg, rgba(245, 158, 11, 0.14) 0%, rgba(245, 158, 11, 0.09) 100%);
+  --kb-warn-ink: #f6b36a;
+  --kb-warn-icon: #f59e0b;
+  --kb-warn-halo: rgba(245, 158, 11, 0.16);
+  --kb-ok-bg: rgba(52, 168, 120, 0.14);
+  --kb-ok-ink: #8fd3b6;
+  --kb-ok-fill: #3fa27e;
+  --kb-off-bg: rgba(255, 255, 255, 0.06);
+  --kb-off-ink: #a9b6d3;
+  --kb-off-fill: #5e6a86;
+  --kb-danger: #ff6b6e;
+
+  --kb-chip-bg: rgba(255, 255, 255, 0.06);
+  --kb-chip-rim: rgba(255, 255, 255, 0.1);
+  --kb-chip-ink: #c9d3ea;
+  --kb-chip-hi: rgba(255, 255, 255, 0.06);
+
+  --kb-avatar-a: linear-gradient(180deg, rgba(96, 165, 250, 0.4), rgba(59, 130, 246, 0.26));
+  --kb-avatar-b: linear-gradient(180deg, rgba(167, 139, 250, 0.4), rgba(139, 92, 246, 0.26));
+  --kb-avatar-hi: rgba(255, 255, 255, 0.12);
+
+  --kb-nav-ink: #8c9ab8;
+  --kb-nav-fill: linear-gradient(180deg, rgba(30, 41, 70, 0.74), rgba(20, 28, 50, 0.68));
+  --kb-nav-rim: rgba(255, 255, 255, 0.1);
+  --kb-nav-sel-bg: radial-gradient(120% 95% at 50% 100%, rgba(59, 130, 246, 0.42) 0%, rgba(59, 130, 246, 0.18) 55%, rgba(255, 255, 255, 0.04) 100%);
+  --kb-nav-sel-rim: rgba(255, 255, 255, 0.12);
+
+  --kb-shadow-glass: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 30px rgba(0, 0, 0, 0.4);
+  --kb-shadow-soft: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --kb-shadow-card: 0 10px 30px rgba(0, 0, 0, 0.4);
+  --kb-shadow-nav: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 32px rgba(0, 0, 0, 0.45);
+  --kb-shadow-nav-sel: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 4px 14px rgba(0, 0, 0, 0.35);
+  --kb-shadow-sheet: 0 -12px 40px rgba(0, 0, 0, 0.45);
+  --kb-backdrop: rgba(0, 0, 0, 0.5);
+  --kb-grabber: rgba(255, 255, 255, 0.22);
 }
 
 @layer base {
+  html {
+    background-color: var(--kb-bg-mid);
+  }
   body {
-    background-color: rgb(var(--bg));
-    color: rgb(var(--fg));
-    font-family: var(--font-geist-sans), system-ui, -apple-system, "Hiragino Kaku Gothic ProN",
-      "Noto Sans JP", Meiryo, sans-serif;
+    background-color: var(--kb-bg-mid);
+    color: var(--kb-ink);
+    font-family: var(--kb-font);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
   }
   /* Consistent, accessible focus ring */
   :focus-visible {
-    outline: 2px solid rgb(var(--ring));
+    outline: 2px solid var(--kb-accent);
     outline-offset: 2px;
   }
 }
 
 /* ============================================================
-   Liquid glass surfaces
+   新しい画面の部品（ガラス・カード・ナビ・シート）
+   文字は ::before / ::after に入れない（見えている文字として数えられる）
+   ============================================================ */
+@layer components {
+  /* ページ背景（iOS では background-attachment: fixed を使わない） */
+  .kb-page-bg {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(80% 45% at 100% 0%, var(--kb-bg-lilac) 0%, transparent 60%),
+      radial-gradient(70% 40% at 100% 100%, var(--kb-bg-lilac) 0%, transparent 60%),
+      radial-gradient(70% 40% at 0% 100%, var(--kb-bg-periwinkle) 0%, transparent 60%),
+      radial-gradient(90% 55% at 50% 40%, var(--kb-bg-glow) 0%, transparent 70%),
+      linear-gradient(180deg, var(--kb-bg-top) 0%, var(--kb-bg-mid) 45%, var(--kb-bg-bottom) 100%);
+  }
+
+  /* 小さいガラス（ヘッダーのピル・丸ボタン・月切替） */
+  .kb-glass {
+    background: var(--kb-glass-fill);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid var(--kb-glass-rim);
+    box-shadow: var(--kb-shadow-glass);
+  }
+  /* 少し濃いガラス（カード内の丸ボタン・副ボタン）。カードの上に置くのでぼかしは使わない */
+  .kb-glass-2 {
+    background: var(--kb-glass-fill-2);
+    border: 1px solid var(--kb-glass-rim);
+    box-shadow: var(--kb-shadow-soft);
+  }
+
+  /* 情報カード（不透明に近い白。backdrop-filter は使わない） */
+  .kb-card {
+    background: var(--kb-card);
+    border: 1px solid var(--kb-card-rim);
+    box-shadow: var(--kb-shadow-card);
+  }
+  .kb-card-2 {
+    background: var(--kb-card-2);
+    border: 1px solid var(--kb-card-rim);
+    box-shadow: var(--kb-shadow-card);
+  }
+
+  /* 下部ナビ */
+  .kb-nav {
+    background: var(--kb-nav-fill);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid var(--kb-nav-rim);
+    box-shadow: var(--kb-shadow-nav);
+  }
+  .kb-nav-sel {
+    background: var(--kb-nav-sel-bg);
+    border: 1px solid var(--kb-nav-sel-rim);
+    box-shadow: var(--kb-shadow-nav-sel);
+  }
+
+  /* 主ボタン（青） */
+  .kb-btn-primary {
+    background: var(--kb-accent-grad);
+    color: #fff;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.35),
+      inset 0 -3px 8px rgba(120, 180, 255, 0.3),
+      0 12px 24px -8px rgba(37, 99, 235, 0.45),
+      0 2px 6px rgba(37, 99, 235, 0.18);
+  }
+  .kb-btn-primary:disabled {
+    box-shadow: none;
+    opacity: 0.45;
+  }
+  .kb-btn-danger {
+    background: var(--kb-danger-grad);
+    color: #fff;
+    box-shadow: 0 10px 22px -10px rgba(220, 38, 38, 0.55);
+  }
+  .kb-btn-danger:disabled {
+    box-shadow: none;
+    opacity: 0.45;
+  }
+
+  /* セグメント */
+  .kb-seg {
+    background: var(--kb-glass-fill);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid var(--kb-glass-rim);
+    box-shadow: var(--kb-shadow-glass);
+  }
+  .kb-seg-on {
+    background: var(--kb-accent-grad-seg);
+    color: #fff;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.45),
+      inset 0 -2px 6px rgba(20, 70, 200, 0.25),
+      0 8px 18px -6px rgba(37, 99, 235, 0.55);
+  }
+
+  /* チップ */
+  .kb-chip {
+    background: var(--kb-chip-bg);
+    border: 1px solid var(--kb-chip-rim);
+    box-shadow: inset 0 1px 0 var(--kb-chip-hi);
+    color: var(--kb-chip-ink);
+  }
+
+  /* 状態の帯 */
+  .kb-strip-ok {
+    background: var(--kb-ok-bg);
+    color: var(--kb-ok-ink);
+  }
+  .kb-strip-off {
+    background: var(--kb-off-bg);
+    color: var(--kb-off-ink);
+  }
+
+  /* 要確認の行 */
+  .kb-warn-row {
+    background: var(--kb-warn-grad);
+    border: 1px solid var(--kb-glass-rim);
+    box-shadow: 0 4px 12px rgba(180, 120, 40, 0.06);
+    color: var(--kb-warn-ink);
+  }
+
+  /* アバター */
+  .kb-avatar-a,
+  .kb-avatar-b {
+    box-shadow: inset 0 1px 0 var(--kb-avatar-hi), 0 6px 16px rgba(30, 64, 120, 0.08);
+  }
+  .kb-avatar-a {
+    background: var(--kb-avatar-a);
+  }
+  .kb-avatar-b {
+    background: var(--kb-avatar-b);
+  }
+
+  /* 入力欄（シートの中） */
+  .kb-field {
+    background: var(--kb-field);
+    border: 1px solid var(--kb-chip-rim);
+    color: var(--kb-ink);
+  }
+  .kb-field:focus {
+    border-color: var(--kb-accent);
+    outline: none;
+  }
+
+  /* シート */
+  .kb-sheet {
+    background: var(--kb-card);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid var(--kb-card-rim);
+    border-bottom: 0;
+    box-shadow: var(--kb-shadow-sheet);
+  }
+  .kb-backdrop {
+    background: var(--kb-backdrop);
+  }
+}
+
+/* ============================================================
+   刷新前の画面が使うガラス（該当画面の置き換え後に削除する）
    ============================================================ */
 @layer components {
   .glass {
@@ -77,45 +414,11 @@
     backdrop-filter: blur(22px) saturate(180%);
     border: 1px solid rgb(var(--glass-border) / var(--glass-border-alpha));
   }
-  /* Nav / bars sit above content; slightly more opaque for legibility */
   .glass-bar {
     background-color: rgb(var(--glass-bg) / calc(var(--glass-alpha) + 0.18));
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     backdrop-filter: blur(20px) saturate(180%);
   }
-}
-
-/* Safe-area helpers (mobile bottom tab / notches) */
-.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-.h-safe-bottom { height: env(safe-area-inset-bottom); }
-
-/* Soft background blobs */
-.app-bg-blob {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  overflow: hidden;
-  pointer-events: none;
-}
-.app-bg-blob::before,
-.app-bg-blob::after {
-  content: "";
-  position: absolute;
-  width: 38rem;
-  height: 38rem;
-  border-radius: 9999px;
-  filter: blur(80px);
-  opacity: 0.35;
-}
-.app-bg-blob::before {
-  top: -10rem;
-  left: -8rem;
-  background: radial-gradient(circle at 30% 30%, rgb(var(--accent) / 0.45), transparent 70%);
-}
-.app-bg-blob::after {
-  bottom: -12rem;
-  right: -8rem;
-  background: radial-gradient(circle at 70% 70%, rgb(99 102 241 / 0.40), transparent 70%);
 }
 
 /* ============================================================
@@ -133,6 +436,17 @@
 }
 
 @media (prefers-reduced-transparency: reduce) {
+  .kb-glass,
+  .kb-glass-2,
+  .kb-seg,
+  .kb-nav,
+  .kb-sheet,
+  .kb-card,
+  .kb-card-2 {
+    background: var(--kb-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
   .glass,
   .glass-strong,
   .glass-bar {
@@ -140,5 +454,4 @@
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  .app-bg-blob { display: none; }
 }

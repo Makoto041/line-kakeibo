@@ -34,13 +34,18 @@ import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
 import { db, ensureFirebaseInitialized } from "../../lib/firebase";
+import { ScreenHeader } from "../../components/layout/ScreenHeader";
+import { T } from "../../lib/uiText";
 
 // Suspense boundary for useSearchParams
 export default function ExpensesPage() {
   return (
-    <Suspense fallback={<ExpensesPageLoading />}>
-      <ExpensesPageContent />
-    </Suspense>
+    <>
+      <ScreenHeader title={T.expenses.title} />
+      <Suspense fallback={<ExpensesPageLoading />}>
+        <ExpensesPageContent />
+      </Suspense>
+    </>
   );
 }
 
