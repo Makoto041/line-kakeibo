@@ -21,7 +21,21 @@ import {
   canClientDelete,
   canServerConfirm,
   isPersonalExpense,
+  DEFAULT_FILTER,
+  isFilterActive,
+  filterExpenses,
+  categoriesIn,
+  summarizeExpenses,
 } from '../lib/expenseState.ts';
+import {
+  computeBudgetHero,
+  computePeriodInsights,
+  getActualSpending,
+  calculatePace,
+  idealProgress,
+  buildCategoryBudgetRows,
+} from '../lib/budgetAnalytics.ts';
+import { getSampleExpenses, getSampleStats } from '../lib/sampleData.ts';
 import { shortPeriodLabel } from '../lib/periodLabel.ts';
 import {
   formFromExpense,
@@ -717,4 +731,114 @@ test('groupSettlementItems: 立替者ごとに合計', () => {
       ['U-x', '', 500, 1],
     ]
   );
+});
+
+
+// ---- 検索・絞り込み・集計（検索シート） -------------------------------------------
+
+test('filterExpenses / isFilterActive: 文字・予算・カテゴリの順に絞る', () => {
+  const list = [
+    expense({ id: 'a', description: 'スーパー 駅前', category: '食費', includeInTotal: true }),
+    expense({ id: 'b', description: 'カフェ', category: '食費', includeInTotal: false }),
+    expense({ id: 'c', description: '電車', category: '交通費', includeInTotal: true }),
+  ];
+  assert.equal(isFilterActive(DEFAULT_FILTER), false);
+  assert.deepEqual(filterExpenses(list, DEFAULT_FILTER).map((e) => e.id), ['a', 'b', 'c']);
+  assert.deepEqual(filterExpenses(list, { ...DEFAULT_FILTER, query: 'ｽｰﾊﾟｰ' }).map((e) => e.id), ['a']);
+  assert.deepEqual(filterExpenses(list, { ...DEFAULT_FILTER, query: '食費' }).map((e) => e.id), ['a', 'b']);
+  assert.deepEqual(filterExpenses(list, { ...DEFAULT_FILTER, budget: 'included' }).map((e) => e.id), ['a', 'c']);
+  assert.deepEqual(filterExpenses(list, { ...DEFAULT_FILTER, budget: 'excluded' }).map((e) => e.id), ['b']);
+  assert.deepEqual(filterExpenses(list, { ...DEFAULT_FILTER, category: '交通費' }).map((e) => e.id), ['c']);
+  assert.equal(isFilterActive({ ...DEFAULT_FILTER, query: '  ' }), false);
+  assert.equal(isFilterActive({ ...DEFAULT_FILTER, sortBy: 'amount' }), true);
+  assert.deepEqual(categoriesIn(list), ['食費', '交通費']);
+});
+
+test('summarizeExpenses: 刷新前の合計カード・支払い者別カードと同じ集計', () => {
+  const list = [
+    expense({ id: 'a', amount: 1000, includeInTotal: true, payerDisplayName: 'Aoi' }),
+    expense({ id: 'b', amount: 500, includeInTotal: false, payerDisplayName: 'Aoi' }),
+    expense({ id: 'c', amount: 3000, includeInTotal: true, payerDisplayName: 'Ben' }),
+    expense({ id: 'd', amount: 700, includeInTotal: false, payerDisplayName: 'Cat' }),
+  ];
+  const summary = summarizeExpenses(list, (e) => e.payerDisplayName);
+  assert.equal(summary.count, 4);
+  assert.equal(summary.total, 4000);
+  assert.equal(summary.excludedCount, 2);
+  // 計上するものが無い人（Cat）は出さない。件数は計上しないものも数える
+  assert.deepEqual(summary.payers, [
+    { name: 'Ben', total: 3000, count: 1 },
+    { name: 'Aoi', total: 1000, count: 2 },
+  ]);
+});
+
+// ---- 予算（ホームの予算残り・予算シート） ------------------------------------------
+
+test('computeBudgetHero: 残り・超過・使った割合', () => {
+  assert.deepEqual(computeBudgetHero(150000, 200000), {
+    spent: 150000, budget: 200000, remaining: 50000, over: false, pct: 75, barPct: 75,
+  });
+  const over = computeBudgetHero(230000, 200000);
+  assert.equal(over.remaining, -30000);
+  assert.equal(over.over, true);
+  assert.equal(over.pct, 115);
+  assert.equal(over.barPct, 100);
+  // 四捨五入（刷新前の Math.round(spent / budget * 100) と同じ）
+  assert.equal(computeBudgetHero(1234, 10000).pct, 12);
+  assert.equal(computeBudgetHero(1250, 10000).pct, 13);
+  assert.equal(computeBudgetHero(100, 0).pct, 0);
+});
+
+test('computePeriodInsights: 刷新前のホームと同じ式', () => {
+  const x = computePeriodInsights({
+    stats: { totalAmount: 90000, expenseCount: 12 },
+    prevStats: { totalAmount: 100000 },
+    monthlyBudget: 150000,
+    range: { startDate: '2026-09-01', endDate: '2026-09-30' },
+    mode: 'monthly',
+    now: '2026-09-24T20:00:00',
+  });
+  assert.equal(x.totalExpense, 90000);
+  assert.equal(x.expenseCount, 12);
+  assert.equal(x.dailyAverage, 3000);
+  assert.equal(x.budgetPct, 60);
+  assert.equal(x.budgetRemaining, 60000);
+  assert.equal(x.daysLeft, 6); // 9/24 20:00 → 9/30（刷新前と同じ日数差 + 1）
+  assert.equal(x.perDayAvailable, 10000);
+  assert.equal(x.momPct, -10);
+  // 期間指定では前月比を出さない。前期間が 0 でも出さない
+  assert.equal(computePeriodInsights({ stats: null, prevStats: { totalAmount: 5 }, monthlyBudget: 0, range: { startDate: '2026-09-01', endDate: '2026-09-30' }, mode: 'custom' }).momPct, null);
+  const none = computePeriodInsights({ stats: null, prevStats: null, monthlyBudget: 0, range: { startDate: '2026-09-01', endDate: '2026-09-30' }, mode: 'monthly', now: '2026-10-05' });
+  assert.equal(none.budgetPct, null);
+  assert.equal(none.daysLeft, 0);
+  assert.equal(none.perDayAvailable, null);
+  assert.equal(none.momPct, null);
+});
+
+test('カテゴリ別予算: 旧キーの逆引き・行の並び・ペース', () => {
+  assert.equal(getActualSpending('娯楽費', { 娯楽: 1000, 娯楽費: 200 }), 1200);
+  assert.equal(getActualSpending('独自', { 独自: 300 }), 300);
+  const rows = buildCategoryBudgetRows({ 食費: 30000, 家賃: 80000, ペット用品: 500 }, { 食費: 40000, 住居費: 80000, 旧キー: 1000 });
+  assert.deepEqual(rows.map((r) => [r.category, r.budget, r.actual]), [
+    ['住居費', 80000, 80000],
+    ['食費', 40000, 30000],
+    ['旧キー', 1000, 0],
+    ['ペット用品', 0, 500],
+  ]);
+  assert.equal(calculatePace(0, 0, '2026-09-15'), 'unset');
+  assert.equal(calculatePace(15000, 30000, '2026-09-15'), 'good');
+  assert.equal(calculatePace(16500, 30000, '2026-09-15'), 'warning');
+  assert.equal(calculatePace(20000, 30000, '2026-09-15'), 'danger');
+  assert.equal(Math.round(idealProgress('2026-09-15')), 50);
+});
+
+test('ゲスト用サンプル: 要確認 2 件・集計は計上するものだけ・参照デザインの金額を使わない', () => {
+  const list = getSampleExpenses();
+  assert.equal(countPending(list), 2);
+  const stats = getSampleStats();
+  assert.equal(stats.totalAmount, list.filter((e) => e.includeInTotal).reduce((s, e) => s + e.amount, 0));
+  assert.equal(stats.expenseCount, list.filter((e) => e.includeInTotal).length);
+  const referenceAmounts = [42600, 237400, 280000, 4200, 12400, 4000, 2480, 1200, 720];
+  for (const e of list) assert.equal(referenceAmounts.includes(e.amount), false, `${e.description} ${e.amount}`);
+  assert.equal(referenceAmounts.includes(stats.totalAmount), false);
 });

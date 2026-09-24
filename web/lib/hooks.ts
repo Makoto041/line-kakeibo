@@ -321,16 +321,26 @@ async function fetchMyActiveGroupIds(lineId: string): Promise<string[]> {
   return Array.from(groupIds);
 }
 
+const NO_EXPENSES: Expense[] = [];
+
 export function useExpenses(userId: string | null, periodDays: number = 50, limitCount: number = 200, customStartDate?: string) {
   const expensesCacheKey = `expenses:${userId}:${periodDays}:${limitCount}:${customStartDate || ''}`;
   const [expenses, setExpenses] = useState<Expense[]>(() => getCached<Expense[]>(expensesCacheKey) ?? []);
   const [loading, setLoading] = useState(() => !hasCached(expensesCacheKey));
   const [error, setError] = useState<string | null>(null);
+  // refetch() で増やして取り直す（キャッシュがあれば出したまま裏で取り直す）
+  const [refetchNonce, setRefetchNonce] = useState(0);
+  // 今の取得条件（キー）の結果が state に入っているか。条件が変わった直後の描画で、
+  // 前の条件の一覧や「読み込み済み・0 件」を出さないために使う
+  const [resultKey, setResultKey] = useState<string | null>(() =>
+    hasCached(expensesCacheKey) ? expensesCacheKey : null
+  );
 
   useEffect(() => {
     if (!userId || userId === 'guest') {
       setLoading(false);
       setExpenses([]);
+      setResultKey(expensesCacheKey);
       return;
     }
 
@@ -339,6 +349,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
     if (cached) {
       setExpenses(cached);
       setLoading(false);
+      setResultKey(expensesCacheKey);
     } else {
       setLoading(true);
     }
@@ -350,6 +361,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
         const status = getFirebaseStatus();
         setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
         setLoading(false);
+        setResultKey(expensesCacheKey);
         return;
       }
 
@@ -498,11 +510,12 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
         }
       } finally {
         setLoading(false);
+        setResultKey(expensesCacheKey);
       }
     };
 
     fetchExpenses();
-  }, [userId, periodDays, limitCount, customStartDate, expensesCacheKey]);
+  }, [userId, periodDays, limitCount, customStartDate, expensesCacheKey, refetchNonce]);
 
   const updateExpense = async (id: string, updates: Partial<Expense>) => {
     if (!checkFirebaseConnection()) {
@@ -576,19 +589,18 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
     patchCachedExpenses([id], patch);
   }, []);
 
+  // 条件が変わった直後（effect がまだ走っていない描画）は、新しい条件のキャッシュか空の読み込み中を返す
+  const current = resultKey === expensesCacheKey;
   return { 
-    expenses, 
-    loading, 
+    expenses: current ? expenses : (getCached<Expense[]>(expensesCacheKey) ?? NO_EXPENSES), 
+    loading: current ? loading : !hasCached(expensesCacheKey), 
     error, 
     updateExpense, 
     deleteExpense,
     patchLocal,
+    // 取り直す（以前の実装は effect を再実行できず読み込み中のまま止まっていた）
     refetch: () => {
-      if (userId) {
-        setLoading(true);
-        // Re-trigger useEffect
-        setExpenses([]);
-      }
+      if (userId) setRefetchNonce(n => n + 1);
     }
   };
 }
@@ -600,10 +612,15 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
   const [error, setError] = useState<string | null>(null);
   // refetch() で増やして再取得する（キャッシュは先に出したまま裏で取り直す）
   const [refetchNonce, setRefetchNonce] = useState(0);
+  // 今の条件（キー）の結果が state に入っているか（useExpenses と同じ。前の期間の値を出さないため）
+  const [resultKey, setResultKey] = useState<string | null>(() =>
+    hasCached(statsCacheKey) ? statsCacheKey : null
+  );
 
   useEffect(() => {
     if (!userId || userId === 'guest') {
       setLoading(false);
+      setResultKey(statsCacheKey);
       return;
     }
 
@@ -612,6 +629,7 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
     if (cached) {
       setStats(cached);
       setLoading(false);
+      setResultKey(statsCacheKey);
     } else {
       setLoading(true);
     }
@@ -623,6 +641,7 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
         const status = getFirebaseStatus();
         setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
         setLoading(false);
+        setResultKey(statsCacheKey);
         return;
       }
       try {
@@ -730,6 +749,7 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
         setError(errorMessage);
       } finally {
         setLoading(false);
+        setResultKey(statsCacheKey);
       }
     };
 
@@ -740,7 +760,13 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
     setRefetchNonce(n => n + 1);
   }, []);
 
-  return { stats, loading, error, refetch };
+  const current = resultKey === statsCacheKey;
+  return {
+    stats: current ? stats : (getCached<ExpenseStats>(statsCacheKey) ?? null),
+    loading: current ? loading : !hasCached(statsCacheKey),
+    error,
+    refetch,
+  };
 }
 
 export function useUserGroups(userId: string | null) {

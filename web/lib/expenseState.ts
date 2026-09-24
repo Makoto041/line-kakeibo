@@ -216,3 +216,88 @@ export function canServerConfirm(
 ): boolean {
   return canClientWrite(e, me, activeGroupIds);
 }
+
+// ---- 検索・絞り込み・集計（検索シート） -------------------------------------------
+// 刷新前の明細にあったフィルタ（すべて / 合計に含む / 合計から除外 / カテゴリ）・並び・合計カードと同じ計算。
+
+export type BudgetFilter = 'all' | 'included' | 'excluded';
+
+export interface ExpenseFilter {
+  /** 説明・カテゴリの部分一致（空なら絞らない） */
+  query: string;
+  budget: BudgetFilter;
+  /** カテゴリ（'all' なら絞らない） */
+  category: string;
+  sortBy: SortKey;
+}
+
+export const DEFAULT_FILTER: ExpenseFilter = { query: '', budget: 'all', category: 'all', sortBy: 'date' };
+
+/** 既定から変えているか（検索ボタンの印に使う） */
+export function isFilterActive(f: ExpenseFilter): boolean {
+  return f.query.trim() !== '' || f.budget !== 'all' || f.category !== 'all' || f.sortBy !== 'date';
+}
+
+type FilterFields = Pick<ExpenseFields, 'description' | 'category' | 'includeInTotal'>;
+
+/** 絞り込み（文字 → 予算 → カテゴリ）。並びは sortForList で行う */
+export function filterExpenses<E extends FilterFields>(list: readonly E[], f: ExpenseFilter): E[] {
+  return list.filter((e) => {
+    if (!matchesQuery(e, f.query)) return false;
+    if (f.budget === 'included' && !e.includeInTotal) return false;
+    if (f.budget === 'excluded' && e.includeInTotal) return false;
+    if (f.category !== 'all' && e.category !== f.category) return false;
+    return true;
+  });
+}
+
+/** 絞り込みの選択肢に出すカテゴリ（読み込み済みの明細に現れた順） */
+export function categoriesIn(list: ReadonlyArray<Pick<ExpenseFields, 'category'>>): string[] {
+  return Array.from(new Set(list.map((e) => e.category).filter((c): c is string => !!c)));
+}
+
+export interface PayerSummary {
+  name: string;
+  /** 予算に計上するものの合計 */
+  total: number;
+  /** 件数（計上しないものも含む） */
+  count: number;
+}
+
+export interface ExpenseSummary {
+  count: number;
+  /** 予算に計上するものの合計 */
+  total: number;
+  excludedCount: number;
+  /** 支払い者別（計上するものが 1 件以上ある人だけ。合計の多い順） */
+  payers: PayerSummary[];
+}
+
+/**
+ * 刷新前の明細の合計カード・支払い者別カードと同じ集計。
+ * 支払い者名は呼び出し側の規則（expenseEdit.resolvePayerName）で解決して渡す。
+ */
+export function summarizeExpenses<E extends Pick<ExpenseFields, 'amount' | 'includeInTotal'>>(
+  list: readonly E[],
+  payerName: (e: E) => string
+): ExpenseSummary {
+  const totals = new Map<string, number>();
+  const counts = new Map<string, number>();
+  let total = 0;
+  let excludedCount = 0;
+  for (const e of list) {
+    const name = payerName(e);
+    const amount = Number(e.amount) || 0;
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+    if (e.includeInTotal) {
+      totals.set(name, (totals.get(name) ?? 0) + amount);
+      total += amount;
+    } else {
+      excludedCount += 1;
+    }
+  }
+  const payers = Array.from(totals, ([name, t]) => ({ name, total: t, count: counts.get(name) ?? 0 })).sort(
+    (a, b) => b.total - a.total
+  );
+  return { count: list.length, total, excludedCount, payers };
+}

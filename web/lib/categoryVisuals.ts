@@ -1,6 +1,5 @@
 import {
   Utensils,
-  Bus,
   ShoppingBag,
   Gamepad2,
   Shirt,
@@ -21,6 +20,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { normalizeCategoryName } from "./categoryNormalization";
+import { TrainBoxy } from "./customIcons";
 
 export interface CategoryVisual {
   icon: LucideIcon;
@@ -38,7 +38,7 @@ export interface CategoryVisual {
 // Class strings are written in full so Tailwind's JIT keeps them.
 const VISUALS: Record<string, CategoryVisual> = {
   食費: { icon: Utensils, fg: "text-orange-600", bg: "bg-orange-100 dark:bg-orange-500/15", dot: "bg-orange-500", hex: "#f97316" },
-  交通費: { icon: Bus, fg: "text-sky-600", bg: "bg-sky-100 dark:bg-sky-500/15", dot: "bg-sky-500", hex: "#0ea5e9" },
+  交通費: { icon: TrainBoxy, fg: "text-sky-600", bg: "bg-sky-100 dark:bg-sky-500/15", dot: "bg-sky-500", hex: "#0ea5e9" },
   日用品: { icon: ShoppingBag, fg: "text-amber-600", bg: "bg-amber-100 dark:bg-amber-500/15", dot: "bg-amber-500", hex: "#f59e0b" },
   娯楽: { icon: Gamepad2, fg: "text-fuchsia-600", bg: "bg-fuchsia-100 dark:bg-fuchsia-500/15", dot: "bg-fuchsia-500", hex: "#d946ef" },
   衣服: { icon: Shirt, fg: "text-pink-600", bg: "bg-pink-100 dark:bg-pink-500/15", dot: "bg-pink-500", hex: "#ec4899" },
