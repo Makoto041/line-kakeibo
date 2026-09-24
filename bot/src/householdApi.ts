@@ -19,9 +19,10 @@
  *   app.use("/household", householdRouter, householdErrorHandler);
  */
 
+import { isIP } from 'node:net';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import rateLimit from 'express-rate-limit';
-import { getAuth } from 'firebase-admin/auth';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore, type DocumentData, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { parseBearerToken } from './adminAuth';
 import { applyExpenseChange, decideConfirm } from './expenseActions';
@@ -52,6 +53,7 @@ export const MAX_SETTLE_IDS = 500;
  * Firestore のドキュメント ID として安全な文字列か
  *
  * 1〜128 文字、`/` を含まない、`.` `..` ではない、`__…__`（予約 ID。Firestore が拒否して 500 になる）ではない。
+ * 予約 ID の判定は改行を含む値（`__a\nb__`）も対象にするため、正規表現の `.` ではなく前後の一致で見る。
  */
 export function isValidDocId(value: unknown): value is string {
   return (
@@ -61,7 +63,7 @@ export function isValidDocId(value: unknown): value is string {
     !value.includes('/') &&
     value !== '.' &&
     value !== '..' &&
-    !/^__.*__$/.test(value)
+    !(value.length >= 4 && value.startsWith('__') && value.endsWith('__'))
   );
 }
 
@@ -75,12 +77,14 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 /**
  * `expectedExpenseIds` を検証して重複を除く（不正なら null）
  *
- * 配列で 500 件以下、要素はすべて `isValidDocId` を満たす文字列。
+ * 配列で、要素はすべて `isValidDocId` を満たす文字列。重複を除いて 500 件を超えるものは照合に使わず
+ * `too_many` を返す（GET の expenseIds は 500 件を超えうるので、そのまま送られても 400 にはせず、
+ * 呼び出し側が 409 too_many / stale で返す）。本文の大きさは express.json() の上限（100kb）で抑えられる。
  */
-export function parseExpectedExpenseIds(value: unknown): string[] | null {
-  if (!Array.isArray(value) || value.length > MAX_SETTLE_IDS) return null;
-  if (!value.every(isValidDocId)) return null;
-  return Array.from(new Set(value as string[]));
+export function parseExpectedExpenseIds(value: unknown): string[] | 'too_many' | null {
+  if (!Array.isArray(value) || !value.every(isValidDocId)) return null;
+  const ids = Array.from(new Set(value as string[]));
+  return ids.length > MAX_SETTLE_IDS ? 'too_many' : ids;
 }
 
 /** 2 つの ID 集合が等しいか（順序・重複は無視） */
@@ -188,6 +192,8 @@ export function applyHouseholdCors(req: Request, res: Response): void {
     res.setHeader('Access-Control-Max-Age', '3600');
   }
   res.setHeader('Cache-Control', 'no-store');
+  // 応答は Firestore の利用者入力（description・displayName など）を含む JSON。型の推測をさせない
+  res.setHeader('X-Content-Type-Options', 'nosniff');
 }
 
 function householdCors(req: Request, res: Response, next: NextFunction) {
@@ -204,7 +210,6 @@ type ErrorCode =
   | 'unauthenticated'
   | 'forbidden'
   | 'not_found'
-  | 'rejected'
   | 'too_many'
   | 'nothing_to_settle'
   | 'stale'
@@ -242,11 +247,36 @@ export function householdErrorHandler(err: unknown, req: Request, res: Response,
 // 認証・レート制限
 // ============================================
 
+type TokenCheck = { decoded: DecodedIdToken } | { status: 401 | 500 };
+
+/** verifyIdToken の結果を 401（トークンの問題）/ 500（検証できない）に振り分ける。トークンはログに出さない */
+async function checkIdToken(token: string, checkRevoked: boolean): Promise<TokenCheck> {
+  try {
+    return { decoded: await getAuth().verifyIdToken(token, checkRevoked) };
+  } catch (error) {
+    const code = (error as { code?: unknown })?.code;
+    if (typeof code === 'string' && code.startsWith('auth/') && code !== 'auth/internal-error') {
+      console.warn(`household: ID token rejected (${code})`);
+      return { status: 401 };
+    }
+    console.error('household: ID token verification failed:', typeof code === 'string' ? code : errorMessage(error));
+    return { status: 500 };
+  }
+}
+
+function sendTokenError(res: Response, status: 401 | 500) {
+  sendError(res, status, status === 401 ? 'unauthenticated' : 'internal');
+}
+
 /**
  * Firebase ID トークンを検証し、res.locals.lineId に検証済みの LINE userId を入れる
  *
  * 受け付けるのは `/auth/line` のカスタムトークンでサインインしたユーザー（sign_in_provider が custom で
- * lineId クレームを持つ）だけ。匿名ユーザーは 403。トークンはログに出さない。
+ * lineId クレームを持つ）だけ。匿名ユーザーは 403。
+ *
+ * 検証は 2 段階: まず署名と有効期限だけを確かめ（公開鍵はキャッシュされるので通常はネットワークを使わない）、
+ * LINE のユーザーだと分かってから失効・無効化を確かめる（Auth API を呼ぶ）。誰でも作れる匿名トークンの
+ * 連打で Auth API を呼ばせないため。
  */
 async function requireLineUser(req: Request, res: Response, next: NextFunction) {
   const token = parseBearerToken(req.headers.authorization);
@@ -255,25 +285,22 @@ async function requireLineUser(req: Request, res: Response, next: NextFunction) 
     return;
   }
 
-  let decoded: Awaited<ReturnType<ReturnType<typeof getAuth>['verifyIdToken']>>;
-  try {
-    decoded = await getAuth().verifyIdToken(token, true);
-  } catch (error) {
-    const code = (error as { code?: unknown })?.code;
-    if (typeof code === 'string' && code.startsWith('auth/') && code !== 'auth/internal-error') {
-      console.warn(`household: ID token rejected (${code})`);
-      sendError(res, 401, 'unauthenticated');
-      return;
-    }
-    console.error('household: ID token verification failed:', typeof code === 'string' ? code : errorMessage(error));
-    sendError(res, 500, 'internal');
+  const signed = await checkIdToken(token, false);
+  if ('status' in signed) {
+    sendTokenError(res, signed.status);
     return;
   }
-
+  const decoded = signed.decoded;
   const lineId = (decoded as { lineId?: unknown }).lineId;
   if (decoded.firebase?.sign_in_provider !== 'custom' || !isValidDocId(lineId)) {
     console.warn(`household: token without LINE identity (uid ${maskId(decoded.uid)})`);
     sendError(res, 403, 'forbidden');
+    return;
+  }
+
+  const current = await checkIdToken(token, true);
+  if ('status' in current) {
+    sendTokenError(res, current.status);
     return;
   }
 
@@ -284,12 +311,28 @@ async function requireLineUser(req: Request, res: Response, next: NextFunction) 
 const RATE_LIMITED_BODY = { error: 'rate_limited' };
 
 /**
- * 認証前の IP 単位の上限
+ * 認証前のレート制限のキー（接続元の IP）
  *
- * `trust proxy` を設定していない（`/auth/line` の挙動を変えないため）ので、Cloud Run では req.ip が
- * 前段のアドレスにまとまり、実質インスタンス全体の上限になる。正規ユーザーを締め出さないよう大きめにし、
- * 実際の制限は lineId 単位の limiter に任せる。Bearer トークンの無い要求は requireLineUser が
- * verifyIdToken を呼ばずに 401 で返すので数えない（トークン無しの連打で正規ユーザーが 429 にならないように）。
+ * `trust proxy` は `/auth/line` の挙動を変えないため設定しておらず、Cloud Run では req.ip が前段の
+ * アドレスにまとまる（そのままだと 1 人の連打でインスタンス上の全員が 429 になる）。Google のフロント
+ * エンドは X-Forwarded-For の末尾に接続元の IP を足すので、末尾の値をキーにする（クライアントが送った値は
+ * その前に並ぶだけなので、末尾は詐称できない）。末尾が IP として読めなければ req.ip。IPv6 は
+ * ipKeyGenerator で /56 にまとめる。前段がさらに増えて末尾が共通のアドレスになった場合は、従来どおり
+ * インスタンス全体の上限として働く（そのため上限は大きめのまま）。
+ */
+export function clientIpKey(req: Pick<Request, 'headers' | 'ip'>): string {
+  const header = req.headers['x-forwarded-for'];
+  const hops = (Array.isArray(header) ? header.join(',') : header ?? '').split(',');
+  const last = hops[hops.length - 1].trim();
+  const ip = last && isIP(last) ? last : req.ip;
+  return ipKeyGenerator(ip || 'unknown');
+}
+
+/**
+ * 認証前の接続元 IP 単位の上限（clientIpKey）
+ *
+ * 正規ユーザーを締め出さないよう大きめにし、実際の制限は lineId 単位の limiter に任せる。Bearer トークンの
+ * 無い要求は requireLineUser が verifyIdToken を呼ばずに 401 で返すので数えない。
  */
 const preAuthLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -298,6 +341,8 @@ const preAuthLimiter = rateLimit({
   legacyHeaders: false,
   message: RATE_LIMITED_BODY,
   skip: (req) => !parseBearerToken(req.headers.authorization),
+  keyGenerator: (req) => clientIpKey(req),
+  validate: { ip: false, trustProxy: false, xForwardedForHeader: false, forwardedHeader: false },
 });
 
 /** 認証後の lineId 単位の上限（IP は見ないので IP 関連の検証は切る） */
@@ -329,6 +374,8 @@ const settleLimiter = lineIdLimiter(5, { skipFailedRequests: true });
 interface SettlementScope {
   id: string;
   isLine: boolean;
+  /** 世帯の作成者の lineId（仮名「作成者」を名前として扱わない対象。分からなければ null） */
+  createdBy: string | null;
 }
 
 /**
@@ -341,9 +388,11 @@ async function resolveScope(db: Firestore, groupId: string): Promise<SettlementS
   const group = await db.collection('groups').doc(groupId).get();
   if (!group.exists) return null;
   const lineGroupId = group.get('lineGroupId');
+  const createdBy = group.get('createdBy');
+  const creator = typeof createdBy === 'string' && createdBy.length > 0 ? createdBy : null;
   return typeof lineGroupId === 'string' && lineGroupId.length > 0
-    ? { id: lineGroupId, isLine: true }
-    : { id: groupId, isLine: false };
+    ? { id: lineGroupId, isLine: true, createdBy: creator }
+    : { id: groupId, isLine: false, createdBy: creator };
 }
 
 export interface SettlementView {
@@ -377,7 +426,7 @@ async function loadSettlement(groupId: string, scope: SettlementScope) {
     getAdvanceSummaryByUser(scope.id, scope.isLine),
     getGroupMembers(groupId),
   ]);
-  const result = computeHouseholdSettlement(summaries, sortActiveMembers(members));
+  const result = computeHouseholdSettlement(summaries, sortActiveMembers(members, scope.createdBy));
 
   // getPendingAdvances と同じ並び（createdAt 降順）
   const expenses = summaries.flatMap((s) => s.expenses).sort((a, b) => createdAtMillis(b) - createdAtMillis(a));
@@ -482,8 +531,8 @@ householdRouter.post(
       return;
     }
     if ('reject' in result) {
-      sendError(res, 409, 'rejected');
-      return;
+      // decideConfirm は拒否しない（精算済みも確認済みにするだけ）。ここに来たら判定関数の変更漏れなので 500
+      throw new Error('confirm decision unexpectedly rejected');
     }
 
     const record = result.record;
@@ -539,6 +588,7 @@ householdRouter.get(
  *
  * LINE の「精算」と同じ書き込み（settleAdvances）。表示した内容と対象（ID の集合）、または
  * 送られていれば精算額（expectedSettlement）がずれていれば、409 stale と最新の表示内容を返す。
+ * 未精算が 500 件を超えていれば（GET の expenseIds をそのまま送った場合も）409 too_many。
  * LINE グループへの通知（push）は送らない。
  */
 householdRouter.post(
@@ -554,7 +604,7 @@ householdRouter.post(
     }
     const groupId = body.groupId;
     const expected = parseExpectedExpenseIds(body.expectedExpenseIds);
-    if (!expected) {
+    if (expected === null) {
       sendError(res, 400, 'invalid_request');
       return;
     }
@@ -582,8 +632,10 @@ householdRouter.post(
       sendError(res, 409, 'too_many');
       return;
     }
-    // 未精算が 0 件になっていても、画面が古ければ stale（最新の内容で描き直せるように）
+    // 未精算が 0 件になっていても、画面が古ければ stale（最新の内容で描き直せるように）。
+    // 500 件を超える ID が送られたが現在は 500 件以下なら、その画面も古い
     if (
+      expected === 'too_many' ||
       !sameIdSet(current.expenseIds, expected) ||
       (expectedSettlement !== undefined && !sameSettlement(current.settlement, expectedSettlement))
     ) {

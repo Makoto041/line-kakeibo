@@ -138,6 +138,12 @@ async function seed(db) {
   set('groupMembers/g5_Uivan', { groupId: 'g5', lineId: 'Uivan', displayName: 'Ivan', isActive: true, joinedAt: ts('2026-01-02T00:00:00Z') });
   set('expenses/adv_i1', { ...base, lineId: 'Uivan', payerId: 'Uivan', userDisplayName: 'Ivan', groupId: 'g5', lineGroupId: 'C_line5', amount: 6000, description: '家電', status: 'advance_pending', advanceBy: 'Uivan', includeInTotal: true, confirmed: true });
 
+  // 世帯 g6（LINE グループ C_line6 に紐づく）: 作成者は Jun。Kai の本当の表示名が「作成者」（仮名ではない）
+  set('groups/g6', { name: 'LINEグループ realname', inviteCode: '777777', createdBy: 'Ujun', lineGroupId: 'C_line6' });
+  set('groupMembers/g6_Ujun', { groupId: 'g6', lineId: 'Ujun', displayName: 'Jun', isActive: true, joinedAt: ts('2026-01-01T00:00:00Z') });
+  set('groupMembers/g6_Ukai', { groupId: 'g6', lineId: 'Ukai', displayName: '作成者', isActive: true, joinedAt: ts('2026-01-02T00:00:00Z') });
+  set('expenses/adv_j1', { ...base, lineId: 'Ujun', payerId: 'Ujun', userDisplayName: 'Jun', groupId: 'g6', lineGroupId: 'C_line6', amount: 2000, description: '日用品', status: 'advance_pending', advanceBy: 'Ujun', includeInTotal: true, confirmed: true });
+
   // g2 の立替（Carol だけ）
   set('expenses/adv_c1', { ...base, lineId: 'Ucarol', payerId: 'Ucarol', groupId: 'g2', amount: 3000, description: 'solo', status: 'advance_pending', advanceBy: 'Ucarol', includeInTotal: true, confirmed: true });
   await batch.commit();
@@ -172,7 +178,8 @@ async function main() {
   });
   const base = `http://127.0.0.1:${server.address().port}`;
 
-  // 認証前の IP 上限（300 回/分）は 127.0.0.1 からの全要求で共有する（Bearer トークンの無い要求は数えない）。
+  // 認証前の上限（300 回/分）は接続元（X-Forwarded-For の末尾、無ければ req.ip）単位。X-Forwarded-For を付けない
+  // 要求は 127.0.0.1 として共有する（Bearer トークンの無い要求は数えない）。
   // テストはおよそ 1 分以内に終わるので、Bearer 付きの要求は合計 300 回未満に抑えること（最後に確かめる）。
   // 上限に掛かると、確かめたい内容と関係の無い 429 で FAIL になるため、想定外の 429 も最後にまとめて報告する。
   let bearerRequests = 0;
@@ -180,7 +187,8 @@ async function main() {
 
   async function call(method, path, { token, body, rawBody, origin = ORIGIN, headers = {}, allow429 = false } = {}) {
     const h = { ...headers };
-    if (token) bearerRequests++;
+    // X-Forwarded-For を付けた要求は別の接続元として数えられるので、127.0.0.1 の予算には入れない
+    if (token && !h['X-Forwarded-For']) bearerRequests++;
     if (origin) h.Origin = origin;
     if (token) h.Authorization = `Bearer ${token}`;
     if (body !== undefined || rawBody !== undefined) h['Content-Type'] = 'application/json';
@@ -225,6 +233,7 @@ async function main() {
     frank: await idTokenFor('uid-frank', { lineId: 'Ufrank' }),
     gina: await idTokenFor('uid-gina', { lineId: 'Ugina' }),
     ivan: await idTokenFor('uid-ivan', { lineId: 'Uivan' }),
+    jun: await idTokenFor('uid-jun', { lineId: 'Ujun' }),
     noLineId: await idTokenFor('uid-nolineid'),
     anonymous: await anonymousIdToken(),
   };
@@ -241,6 +250,7 @@ async function main() {
       check('Authorization を許可', (r.headers.get('access-control-allow-headers') || '').includes('Authorization'));
       check('GET, POST, OPTIONS を許可', r.headers.get('access-control-allow-methods') === 'GET, POST, OPTIONS');
       check('Allow-Credentials は付けない', r.headers.get('access-control-allow-credentials') === null);
+      check('X-Content-Type-Options: nosniff', r.headers.get('x-content-type-options') === 'nosniff');
       const evil = await call('OPTIONS', '/household/settlement?groupId=g1', { origin: EVIL_ORIGIN });
       check('許可外のオリジンは ACAO なし', evil.status === 204 && acao(evil) === null);
     }
@@ -252,6 +262,7 @@ async function main() {
       check('トークン無しは 401 unauthenticated', r.status === 401 && r.body && r.body.error === 'unauthenticated', r.body);
       check('401 にも CORS ヘッダー', acao(r) === ORIGIN);
       check('Cache-Control: no-store', r.headers.get('cache-control') === 'no-store');
+      check('401 にも X-Content-Type-Options: nosniff', r.headers.get('x-content-type-options') === 'nosniff');
       const bad = await call('GET', '/household/settlement?groupId=g1', { token: 'not-a-jwt' });
       check('不正なトークンは 401', bad.status === 401 && bad.body.error === 'unauthenticated');
       const basic = await call('GET', '/household/settlement?groupId=g1', { headers: { Authorization: `Basic ${tokens.alice}` } });
@@ -372,8 +383,10 @@ async function main() {
       check('expectedExpenseIds が配列でなければ 400', badIds.status === 400);
       const badElem = await call('POST', '/household/settlement/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 42] } });
       check('文字列以外の要素は 400', badElem.status === 400);
-      const tooLong = await call('POST', '/household/settlement/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: Array.from({ length: 501 }, (_, i) => `x${i}`) } });
-      check('501 件の expectedExpenseIds は 400', tooLong.status === 400);
+      const tooLongBad = await call('POST', '/household/settlement/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: [...Array.from({ length: 501 }, (_, i) => `x${i}`), 'a/b'] } });
+      check('件数が多くても不正な要素があれば 400', tooLongBad.status === 400);
+      const tooLongLeft = await call('POST', '/household/settlement/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: Array.from({ length: 501 }, (_, i) => `x${i}`) } });
+      check('501 件の expectedExpenseIds でもメンバー確認を先に行う（脱退者は 403）', tooLongLeft.status === 403, tooLongLeft.body);
       const badGroup = await call('POST', '/household/settlement/settle', { token: tokens.left, body: { groupId: ['g1'], expectedExpenseIds: [] } });
       check('groupId が文字列でなければ 400', badGroup.status === 400);
       const stranger = await call('POST', '/household/settlement/settle', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1'] } });
@@ -458,6 +471,20 @@ async function main() {
       check('Web: 作成者の立替があれば立替の名前（はな）', pair.body.basis === 'pair' && pair.body.participants[0].displayName === 'はな' && pair.body.settlement && pair.body.settlement.amount === 2500, pair.body);
     }
 
+    // ---------------- 作成者ではないメンバーの表示名「作成者」 ----------------
+    console.log('\n作成者ではないメンバーの表示名「作成者」（仮名として扱わない）');
+    {
+      const r = await call('GET', '/household/settlement?groupId=g6', { token: tokens.jun });
+      check('Web: Kai の表示名「作成者」はそのまま返す', r.status === 200 && JSON.stringify(r.body.participants) === JSON.stringify([{ lineId: 'Ujun', displayName: 'Jun', isMember: true }, { lineId: 'Ukai', displayName: '作成者', isMember: true }]), r.body.participants);
+      check('Web: single_advancer で Kai → Jun ¥1,000', r.body.basis === 'single_advancer' && r.body.settlement && r.body.settlement.fromUserId === 'Ukai' && r.body.settlement.amount === 1000, r.body.settlement);
+      const lookups = [];
+      const line = await computeLineGroupSettlement('C_line6', await getAdvanceSummaryByUser('C_line6', true), async (id) => {
+        lookups.push(id);
+        return 'LINE の名前';
+      });
+      check('LINE: メンバー名「作成者」をそのまま使い、プロフィールを引かない', line.settlement && line.settlement.fromUserName === '作成者' && lookups.length === 0, { settlement: line.settlement, lookups });
+    }
+
     // ---------------- Q17: 計算できない世帯 ----------------
     console.log('\nQ17（計算できない世帯）');
     {
@@ -477,6 +504,10 @@ async function main() {
       check('GET は 501 件を返す', r.status === 200 && r.body.expenseIds.length === 501);
       const s = await call('POST', '/household/settlement/settle', { token: tokens.dave, body: { groupId: 'g3', expectedExpenseIds: r.body.expenseIds.slice(0, 500) } });
       check('精算の記録は 409 too_many', s.status === 409 && s.body.error === 'too_many', s.body);
+      const echoed = await call('POST', '/household/settlement/settle', { token: tokens.dave, body: { groupId: 'g3', expectedExpenseIds: r.body.expenseIds } });
+      check('GET の 501 件をそのまま送っても 400 ではなく 409 too_many', echoed.status === 409 && echoed.body.error === 'too_many', echoed.body);
+      const staleMany = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: Array.from({ length: 501 }, (_, i) => `x${i}`) } });
+      check('501 件を送ったが現在は 500 件以下なら 409 stale（最新の内容付き）', staleMany.status === 409 && staleMany.body.error === 'stale' && staleMany.body.current && Array.isArray(staleMany.body.current.expenseIds), staleMany.body && staleMany.body.error);
     }
 
     // ---------------- レート制限 ----------------
@@ -505,6 +536,7 @@ async function main() {
       const limited = await call('POST', '/household/settlement/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: view.body.expenseIds }, allow429: true });
       check('6 回目の記録は 429 rate_limited', limited.status === 429 && limited.body && limited.body.error === 'rate_limited', limited.status);
       check('429 にも CORS ヘッダー', acao(limited) === ORIGIN);
+      check('429 にも X-Content-Type-Options: nosniff', limited.headers.get('x-content-type-options') === 'nosniff');
       const pending = (await db.doc('expenses/lim_5').get()).data();
       check('429 のときは書き込まない', pending.status === 'advance_pending');
       const other = await call('POST', '/household/settlement/settle', { token: tokens.gina, body: { groupId: 'g4', expectedExpenseIds: view.body.expenseIds } });
@@ -526,6 +558,35 @@ async function main() {
       check('未定義のルートは 404 JSON', r.status === 404 && r.body && r.body.error === 'not_found');
     }
 
+    // ---------------- 認証前の上限（接続元単位） ----------------
+    console.log('\n認証前の上限（接続元 IP 単位。X-Forwarded-For の末尾をキーにする）');
+    {
+      // 不正なトークン（誰でも送れる）の連打。前段が足す X-Forwarded-For の末尾で接続元を見分ける
+      const attacker = '203.0.113.50';
+      const flood = [];
+      // 拒否のたびに出る警告（household: ID token rejected）は 300 行になるので数えるだけにする
+      const origWarn = console.warn;
+      let floodWarnings = 0;
+      console.warn = () => floodWarnings++;
+      try {
+        for (let i = 0; i < 301; i++) {
+          flood.push((await call('GET', '/household/settlement?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': attacker }, allow429: true })).status);
+        }
+      } finally {
+        console.warn = origWarn;
+      }
+      check('429 になった要求はトークンを検証しない（警告は 300 回だけ）', floodWarnings === 300, floodWarnings);
+      check('同じ接続元は 300 回まで 401、301 回目は 429', flood.slice(0, 300).every((st) => st === 401) && flood[300] === 429, `${flood.filter((st) => st === 401).length}×401, last ${flood[300]}`);
+      const spoofed = await call('GET', '/household/settlement?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': `198.51.100.9, ${attacker}` }, allow429: true });
+      check('前に別の IP を足しても同じ接続元として 429（末尾は詐称できない）', spoofed.status === 429, spoofed.status);
+      const neighbour = await call('GET', '/household/settlement?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': `${attacker}, 198.51.100.10` } });
+      check('末尾が違う接続元は別に数える（401）', neighbour.status === 401, neighbour.status);
+      const legit = await call('GET', '/household/settlement?groupId=g1', { token: tokens.alice, headers: { 'X-Forwarded-For': '198.51.100.20' } });
+      check('他の利用者は締め出されない（200）', legit.status === 200, legit.status);
+      const direct = await call('GET', '/household/settlement?groupId=g1', { token: tokens.alice });
+      check('X-Forwarded-For の無い要求（req.ip）も締め出されない', direct.status === 200, direct.status);
+    }
+
     // ---------------- 失効したトークン ----------------
     console.log('\n失効したトークン（verifyIdToken の checkRevoked）');
     {
@@ -537,9 +598,12 @@ async function main() {
       await getAuth().revokeRefreshTokens('uid-bob');
       const revoked = await call('GET', '/household/settlement?groupId=g1', { token: tokens.bob });
       check('revokeRefreshTokens 後の古いトークンは 401', revoked.status === 401 && revoked.body.error === 'unauthenticated' && acao(revoked) === ORIGIN, revoked.body);
+      await getAuth().updateUser('uid-gina', { disabled: true });
+      const disabled = await call('GET', '/household/settlement?groupId=g4', { token: tokens.gina });
+      check('無効化したユーザーのトークンは 401', disabled.status === 401 && disabled.body.error === 'unauthenticated', disabled.body);
     }
     // ---------------- 要求数の予算 ----------------
-    console.log('\n要求数の予算（認証前の IP 上限 300 回/分）');
+    console.log('\n要求数の予算（127.0.0.1 の認証前の上限 300 回/分）');
     check(`Bearer 付きの要求は 300 回未満（${bearerRequests} 回）`, bearerRequests < 300);
     check('想定外の 429 が無い', unexpected429.length === 0, unexpected429);
   } finally {

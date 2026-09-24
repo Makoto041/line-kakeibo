@@ -15,9 +15,10 @@
  * メンバー登録に関係なく pair で計算する（`groups` 文書が無い・メンバーの読み込みに失敗した場合も同じ）。
  * 1 人だけのときの補完は Web と同じ条件、それ以外は従来どおり金額を出さない（「精算」は記録まで行う）。
  *
- * 表示名: groupMembers の displayName を優先するが、世帯作成時の仮名「作成者」（firestore.ts の createGroup）は
- * 名前として扱わない（立替サマリーの名前があればそちら、無ければ空文字）。LINE で補った相手（立替 0 円）の
- * 名前が分からないときは `fillPartnerName` で LINE のプロフィールから引く。
+ * 表示名: groupMembers の displayName を優先するが、世帯作成時に作成者のメンバー文書へ入る仮名「作成者」
+ * （firestore.ts の createGroup）は名前として扱わない（立替サマリーの名前があればそちら、無ければ空文字）。
+ * 仮名として扱うのは作成者（groups.createdBy）の文書だけで、作成者が分からないときは全員の文書で扱う。
+ * LINE で補った相手（立替 0 円）の名前が分からないときは `fillPartnerName` で LINE のプロフィールから引く。
  */
 
 import {
@@ -48,9 +49,14 @@ export type UndeterminableReason = 'partner_unknown' | 'more_than_two';
  */
 export const CREATOR_PLACEHOLDER_NAME = '作成者';
 
-/** groupMembers の displayName を表示名として使える形にする（文字列以外・仮名「作成者」は空文字） */
-export function memberDisplayName(name: unknown): string {
-  return typeof name === 'string' && name !== CREATOR_PLACEHOLDER_NAME ? name : '';
+/**
+ * groupMembers の displayName を表示名として使える形にする（文字列以外は空文字）
+ *
+ * @param mayBePlaceholder 作成者の文書（または作成者が分からない）なら true。このときだけ仮名「作成者」を空文字にする
+ */
+export function memberDisplayName(name: unknown, mayBePlaceholder = true): string {
+  if (typeof name !== 'string') return '';
+  return mayBePlaceholder && name === CREATOR_PLACEHOLDER_NAME ? '' : name;
 }
 
 /** 表示名が分からないときの代わり（index.ts のプロフィール取得失敗時と同じ形） */
@@ -91,7 +97,8 @@ export interface SettlementRuleOptions {
  * 立替のサマリーと有効メンバーから精算額を決める（純関数）
  *
  * @param summaries `getAdvanceSummaryByUser` の結果（立替者ごとに 1 件）
- * @param members 有効なメンバー（表示順。名前はここを優先し、空か仮名「作成者」なら立替サマリーの名前）
+ * @param members 有効なメンバー（`sortActiveMembers` の結果。表示順で、仮名「作成者」は空にしてある。
+ *   名前はここを優先し、空なら立替サマリーの名前）
  */
 export function computeHouseholdSettlement(
   summaries: AdvanceSummary[],
@@ -103,7 +110,7 @@ export function computeHouseholdSettlement(
     if (!member.lineId || byId.has(member.lineId)) continue;
     byId.set(member.lineId, {
       userId: member.lineId,
-      displayName: memberDisplayName(member.displayName),
+      displayName: typeof member.displayName === 'string' ? member.displayName : '',
       totalAdvanced: 0,
       isMember: true,
     });
@@ -164,8 +171,13 @@ function joinedAtMillis(member: GroupMember): number {
  * 有効メンバーを表示順（joinedAt 昇順、同時刻は lineId 順）に並べ、lineId の重複を除く
  *
  * 自動 ID の古い groupMembers 文書が決定的 ID の文書と並存していても 1 人として数える。
+ * 表示名は `memberDisplayName` で整える（仮名「作成者」を空にするのは createdBy の文書だけ。
+ * createdBy が分からなければ全員の文書で空にする）。
+ *
+ * @param createdBy 世帯の作成者の lineId（groups.createdBy）
  */
-export function sortActiveMembers(members: GroupMember[]): SettlementMember[] {
+export function sortActiveMembers(members: GroupMember[], createdBy?: string | null): SettlementMember[] {
+  const creatorKnown = typeof createdBy === 'string' && createdBy.length > 0;
   const sorted = members
     .filter((m) => m && m.isActive === true && typeof m.lineId === 'string' && m.lineId.length > 0)
     .sort((a, b) => joinedAtMillis(a) - joinedAtMillis(b) || (a.lineId < b.lineId ? -1 : a.lineId > b.lineId ? 1 : 0));
@@ -173,7 +185,7 @@ export function sortActiveMembers(members: GroupMember[]): SettlementMember[] {
   const seen = new Map<string, SettlementMember>();
   for (const m of sorted) {
     const existing = seen.get(m.lineId);
-    const displayName = memberDisplayName(m.displayName);
+    const displayName = memberDisplayName(m.displayName, !creatorKnown || m.lineId === createdBy);
     if (!existing) {
       seen.set(m.lineId, { lineId: m.lineId, displayName });
     } else if (!existing.displayName && displayName) {
@@ -192,7 +204,7 @@ async function loadLineGroupMembers(lineGroupId: string): Promise<SettlementMemb
   try {
     const group = await getGroupByLineGroupId(lineGroupId);
     if (!group?.id) return [];
-    return sortActiveMembers(await getGroupMembers(group.id));
+    return sortActiveMembers(await getGroupMembers(group.id), group.createdBy);
   } catch (error) {
     console.warn(`Failed to load members for LINE group ${maskId(lineGroupId)}:`, errorMessage(error));
     return [];
@@ -206,7 +218,9 @@ export type DisplayNameResolver = (userId: string) => Promise<string | undefined
  * single_advancer で補った相手（立替 0 円）の表示名が分からないとき、resolveName で補う
  *
  * 相手はメンバー文書だけから分かる人なので、displayName が空か仮名「作成者」だと LINE の文面が
- * 「 まこと」「作成者 まこと」になる。resolveName が無い・失敗した・空を返したときは `User_xxxxxx`。
+ * 「 まこと」「作成者 まこと」になる（仮名は sortActiveMembers で空にしてある）。resolveName が返すのは
+ * LINE のプロフィール名（本人の名前）なのでそのまま使う。resolveName が無い・失敗した・空を返したときは
+ * `User_xxxxxx`。
  * 立替者の名前は立替サマリー（支出に記録された名前）なので触らない。pair などはそのまま返す。
  */
 export async function fillPartnerName(
@@ -222,7 +236,8 @@ export async function fillPartnerName(
   let name = '';
   if (resolveName) {
     try {
-      name = memberDisplayName((await resolveName(partner.userId))?.trim());
+      const resolved = await resolveName(partner.userId);
+      name = typeof resolved === 'string' ? resolved.trim() : '';
     } catch (error) {
       console.warn(`Failed to resolve display name for ${maskId(partner.userId)}:`, errorMessage(error));
     }

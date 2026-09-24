@@ -25,6 +25,7 @@ const {
   sameSettlement,
   authorizeExpenseWrite,
   householdErrorHandler,
+  clientIpKey,
   MAX_SETTLE_IDS,
 } = require('../dist/householdApi');
 const { isAllowedWebOrigin } = require('../dist/webOrigins');
@@ -106,6 +107,13 @@ const summary = (userId, total, name = userId.toUpperCase()) => ({
   expenses: [],
 });
 const member = (lineId, displayName = `${lineId}さん`) => ({ lineId, displayName });
+const ts = (ms) => ({ toMillis: () => ms });
+/** groupMembers の文書（[lineId, displayName] の順に joinedAt を振る）を sortActiveMembers に通す */
+const activeMembers = (pairs, createdBy) =>
+  sortActiveMembers(
+    pairs.map(([lineId, displayName], i) => ({ groupId: 'g', lineId, displayName, joinedAt: ts(1000 * (i + 1)), isActive: true })),
+    createdBy
+  );
 
 {
   const r = computeHouseholdSettlement([], [member('a'), member('b')]);
@@ -193,17 +201,18 @@ const member = (lineId, displayName = `${lineId}さん`) => ({ lineId, displayNa
   check('メンバーの lineId 重複は 1 人として数える', r.basis === 'single_advancer' && r.participants.length === 2);
 }
 {
-  // 世帯作成時の仮名「作成者」（firestore.ts の createGroup）は名前として扱わない
-  const r = computeHouseholdSettlement([summary('a', 10000)], [member('a'), member('b', '作成者')]);
-  check('補った相手の仮名「作成者」は空文字（Web が補う）', r.basis === 'single_advancer' && r.participants[1].displayName === '' && r.settlement && r.settlement.fromUserName === '', JSON.stringify(r));
-  const own = computeHouseholdSettlement([summary('a', 3000, 'あきら'), summary('b', 1000)], [member('a', '作成者'), member('b')]);
+  // 世帯作成時に作成者の文書へ入る仮名「作成者」（firestore.ts の createGroup）は名前として扱わない
+  const r = computeHouseholdSettlement([summary('a', 10000)], activeMembers([['a', 'aさん'], ['b', '作成者']], 'b'));
+  check('補った相手（作成者）の仮名「作成者」は空文字（Web が補う）', r.basis === 'single_advancer' && r.participants[1].displayName === '' && r.settlement && r.settlement.fromUserName === '', JSON.stringify(r));
+  const own = computeHouseholdSettlement([summary('a', 3000, 'あきら'), summary('b', 1000)], activeMembers([['a', '作成者'], ['b', 'bさん']], 'a'));
   check('作成者に立替があれば立替の名前を使う', own.participants[0].displayName === 'あきら');
+  const real = computeHouseholdSettlement([summary('a', 10000)], activeMembers([['a', 'aさん'], ['b', '作成者']], 'a'));
+  check('作成者でないメンバーの表示名「作成者」はそのまま使う', real.participants[1].displayName === '作成者' && real.settlement && real.settlement.fromUserName === '作成者', JSON.stringify(real.participants));
 }
 
 // ------------------------------------------------------------
 console.log('\nsortActiveMembers');
 {
-  const ts = (ms) => ({ toMillis: () => ms });
   const sorted = sortActiveMembers([
     { groupId: 'g', lineId: 'b', displayName: 'B', joinedAt: ts(2000), isActive: true },
     { groupId: 'g', lineId: 'a', displayName: '', joinedAt: ts(1000), isActive: true },
@@ -218,7 +227,16 @@ console.log('\nsortActiveMembers');
     { groupId: 'g', lineId: 'a', displayName: 'あきら', joinedAt: ts(2000), isActive: true },
     { groupId: 'g', lineId: 'b', displayName: '作成者', joinedAt: ts(3000), isActive: true },
   ]);
-  check('仮名「作成者」は空として扱い、他の文書の名前で補う', placeholder[0].displayName === 'あきら' && placeholder[1].displayName === '', JSON.stringify(placeholder));
+  check('作成者が分からなければ全員の仮名「作成者」を空として扱い、他の文書の名前で補う', placeholder[0].displayName === 'あきら' && placeholder[1].displayName === '', JSON.stringify(placeholder));
+  const scoped = sortActiveMembers(
+    [
+      { groupId: 'g', lineId: 'a', displayName: '作成者', joinedAt: ts(1000), isActive: true },
+      { groupId: 'g', lineId: 'b', displayName: '作成者', joinedAt: ts(3000), isActive: true },
+    ],
+    'a'
+  );
+  check('作成者が分かれば仮名として扱うのは作成者の文書だけ', scoped[0].displayName === '' && scoped[1].displayName === '作成者', JSON.stringify(scoped));
+  check('createdBy が空文字なら分からない扱い', sortActiveMembers([{ groupId: 'g', lineId: 'b', displayName: '作成者', isActive: true }], '')[0].displayName === '');
 }
 
 // ------------------------------------------------------------
@@ -228,7 +246,8 @@ check('129 文字は不可', !isValidDocId('a'.repeat(129)));
 check('空・文字列以外は不可', !isValidDocId('') && !isValidDocId(123) && !isValidDocId(['a']) && !isValidDocId(undefined));
 check('/ を含むと不可', !isValidDocId('a/b') && !isValidDocId('/'));
 check('. と .. は不可', !isValidDocId('.') && !isValidDocId('..'));
-check('__…__ は不可', !isValidDocId('__name__') && !isValidDocId('____') && isValidDocId('__a') && isValidDocId('a__'));
+check('__…__ は不可', !isValidDocId('__name__') && !isValidDocId('____') && isValidDocId('__a') && isValidDocId('a__') && isValidDocId('___'));
+check('改行を含む __…__ も不可（Firestore の予約 ID）', !isValidDocId('__a\nb__') && !isValidDocId('__\n__'));
 check('isPlainObject: オブジェクトだけ', isPlainObject({ a: 1 }) && !isPlainObject([]) && !isPlainObject(null) && !isPlainObject('x'));
 check('expectedExpenseIds: 重複を除く', deepEqual(parseExpectedExpenseIds(['a', 'b', 'a']), ['a', 'b']));
 check('expectedExpenseIds: 空配列は可', deepEqual(parseExpectedExpenseIds([]), []));
@@ -236,7 +255,9 @@ check('expectedExpenseIds: 配列以外は不可', parseExpectedExpenseIds('a') 
 check('expectedExpenseIds: 文字列以外の要素は不可', parseExpectedExpenseIds(['a', 1]) === null);
 check('expectedExpenseIds: 不正な ID は不可', parseExpectedExpenseIds(['a/b']) === null && parseExpectedExpenseIds(['..']) === null);
 check(`expectedExpenseIds: ${MAX_SETTLE_IDS} 件までは可`, parseExpectedExpenseIds(Array.from({ length: MAX_SETTLE_IDS }, (_, i) => `e${i}`)).length === MAX_SETTLE_IDS);
-check(`expectedExpenseIds: ${MAX_SETTLE_IDS + 1} 件は不可`, parseExpectedExpenseIds(Array.from({ length: MAX_SETTLE_IDS + 1 }, (_, i) => `e${i}`)) === null);
+check(`expectedExpenseIds: ${MAX_SETTLE_IDS + 1} 件は too_many（400 にせず 409 で返す）`, parseExpectedExpenseIds(Array.from({ length: MAX_SETTLE_IDS + 1 }, (_, i) => `e${i}`)) === 'too_many');
+check('expectedExpenseIds: 重複を除いて 500 件以下なら可', parseExpectedExpenseIds([...Array.from({ length: MAX_SETTLE_IDS }, (_, i) => `e${i}`), 'e0']).length === MAX_SETTLE_IDS);
+check('expectedExpenseIds: 件数が多くても不正な要素があれば不可', parseExpectedExpenseIds([...Array.from({ length: MAX_SETTLE_IDS + 1 }, (_, i) => `e${i}`), 'a/b']) === null);
 check('sameIdSet: 順序は無視', sameIdSet(['a', 'b'], ['b', 'a']));
 check('sameIdSet: 過不足は不一致', !sameIdSet(['a', 'b'], ['a']) && !sameIdSet(['a'], ['a', 'c']) && !sameIdSet(['a', 'b'], ['a', 'c']));
 check('expectedSettlement: null は可（精算額なし）', parseExpectedSettlement(null) === null);
@@ -246,6 +267,20 @@ check('expectedSettlement: ID が不正・欠けていれば不可', parseExpect
 check('expectedSettlement: 配列・文字列は不可', parseExpectedSettlement([]) === 'invalid' && parseExpectedSettlement('x') === 'invalid');
 check('sameSettlement: null 同士は一致・片方だけ null は不一致', sameSettlement(null, null) && !sameSettlement(null, { fromUserId: 'b', toUserId: 'a', amount: 1 }));
 check('sameSettlement: 向き・金額が違えば不一致', !sameSettlement({ fromUserId: 'b', toUserId: 'a', amount: 1 }, { fromUserId: 'a', toUserId: 'b', amount: 1 }) && !sameSettlement({ fromUserId: 'b', toUserId: 'a', amount: 1 }, { fromUserId: 'b', toUserId: 'a', amount: 2 }));
+
+// ------------------------------------------------------------
+console.log('\nclientIpKey（認証前のレート制限のキー）');
+{
+  const key = (xff, ip = '169.254.1.1') => clientIpKey({ headers: xff === undefined ? {} : { 'x-forwarded-for': xff }, ip });
+  check('X-Forwarded-For の末尾（前段が足した接続元）を使う', key('203.0.113.7') === '203.0.113.7' && key('198.51.100.1, 203.0.113.7') === '203.0.113.7');
+  check('末尾が違えば別のキー（別々に数える）', key('203.0.113.7') !== key('203.0.113.8'));
+  check('クライアントが前に足した値では変わらない（詐称できない）', key('10.0.0.1, 203.0.113.7') === key('203.0.113.7') && key('203.0.113.9, 203.0.113.7') === key('203.0.113.7'));
+  check('ヘッダーが無ければ req.ip', key(undefined) === '169.254.1.1');
+  check('末尾が IP でなければ req.ip', key('203.0.113.7, garbage') === '169.254.1.1' && key('') === '169.254.1.1' && key('203.0.113.7,') === '169.254.1.1');
+  check('配列のヘッダーも末尾を使う', key(['198.51.100.1', '203.0.113.7']) === '203.0.113.7');
+  check('IPv6 は /56 にまとめる', key('2001:db8:1:1::1') === key('2001:db8:1:1:ffff::2') && key('2001:db8:1:1::1') !== key('2001:db8:1:200::1'));
+  check('req.ip も無ければ unknown', clientIpKey({ headers: {}, ip: undefined }) === 'unknown');
+}
 
 // ------------------------------------------------------------
 console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
@@ -286,7 +321,8 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
   // ------------------------------------------------------------
   console.log('\nfillPartnerName（LINE で補った相手の表示名）');
   {
-    const single = (partnerName) => computeHouseholdSettlement([summary('a', 10000, 'あきら')], [member('a'), member('b', partnerName)], { legacyPair: true });
+    // 相手 b は世帯の作成者（仮名「作成者」は sortActiveMembers で空になる）
+    const single = (partnerName) => computeHouseholdSettlement([summary('a', 10000, 'あきら')], activeMembers([['a', 'aさん'], ['b', partnerName]], 'b'), { legacyPair: true });
     const calls = [];
     const resolver = async (id) => {
       calls.push(id);
@@ -318,9 +354,11 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
     check('プロフィール取得に失敗したら User_xxxxxx（警告だけ出す）', failedLookup.settlement.fromUserName === 'User_b' && warned.length === 1);
 
     const blank = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], async () => '  ');
-    const placeholderAgain = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], async () => '作成者');
-    check('プロフィールが空・「作成者」でも User_xxxxxx', blank.settlement.fromUserName === 'User_b' && placeholderAgain.settlement.fromUserName === 'User_b');
-    check('どの結果にも「作成者」が出ない', ![resolved, empty, failedLookup, blank, placeholderAgain].some((x) => JSON.stringify(x).includes('作成者')));
+    const noProfile = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], async () => undefined);
+    check('プロフィールが空・取れなければ User_xxxxxx', blank.settlement.fromUserName === 'User_b' && noProfile.settlement.fromUserName === 'User_b');
+    check('仮名のまま出る結果が無い', ![resolved, empty, failedLookup, blank, noProfile].some((x) => JSON.stringify(x).includes('作成者')));
+    const realName = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], async () => '作成者');
+    check('LINE のプロフィール名はそのまま使う（本人の名前が「作成者」でも）', realName.settlement.fromUserName === '作成者');
 
     const pair = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [], { legacyPair: true });
     check('pair はそのまま返す', (await fillPartnerName(pair, [summary('a', 3000), summary('b', 1000)], resolver)) === pair);
@@ -385,6 +423,7 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
     check('許可オリジンなら ACAO が付く', res.headers['access-control-allow-origin'] === 'https://line-kakeibo.vercel.app');
     check('Authorization ヘッダーを許可', String(res.headers['access-control-allow-headers']).includes('Authorization'));
     check('Cache-Control: no-store', res.headers['cache-control'] === 'no-store');
+    check('X-Content-Type-Options: nosniff', res.headers['x-content-type-options'] === 'nosniff');
   }
   {
     const res = fakeRes();
