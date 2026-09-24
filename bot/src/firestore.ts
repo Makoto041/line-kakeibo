@@ -606,6 +606,12 @@ export async function createGroup(name: string, createdBy: string, lineGroupId?:
   }
 }
 
+/**
+ * @deprecated 呼び出し元なし。LINE の「参加」コマンドは無効化済みで、世帯は2名固定。
+ * メンバーの追加・再有効化は scripts/manage-group-members.mjs（または Bearer 認証の管理 API）で
+ * 行うこと。招待コードでメンバーを作れる経路なので、LINE のコマンド等へ再び配線しないこと。
+ * syncUserLinks の削除と同じ後続 PR で削除する予定。
+ */
 export async function joinGroup(inviteCode: string, lineId: string, displayName: string): Promise<string | null> {
   try {
     // Find group by invite code

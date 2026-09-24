@@ -7,7 +7,7 @@ rules_version = '2';
 // パスの expenseId から Firestore の支出ドキュメントを cross-service rules
 // （firestore.get() / firestore.exists()）で参照し、呼び出し元がその支出を扱えるかを
 // firestore.rules の expenses と同じ基準で判定する。
-//   - 個人支出（groupId なし）: 所有者（lineId が一致）だけ。
+//   - 個人支出（groupId も lineGroupId もなし）: 所有者（lineId が一致）だけ。
 //   - グループ支出（groupId あり）: そのグループの有効なメンバー（isActive == true）だけ。
 //     groupMembers のドキュメントIDは `${groupId}_${lineId}`（bot/src/firestore.ts の
 //     groupMemberDocId() と同じ規則）。
@@ -29,29 +29,36 @@ service firebase.storage {
     // 匿名サインインは公開 API キーだけで誰でも作れるため、request.auth != null は
     // 実質「誰でも」と同義。LINE 本人確認を経たセッションだけが lineId クレームを
     // 持つので、そちらを条件にする。
+    // クレームを持たないトークンで token.lineId を直接参照すると評価エラーになる
+    // （結果は拒否だがエラーログが出る）ため get(key, default) を使う。
+    function myLineId() {
+      return request.auth.token.get('lineId', null);
+    }
     function isLineUser() {
-      return request.auth != null && request.auth.token.lineId != null;
+      return request.auth != null && myLineId() != null;
     }
     function expensePath(expenseId) {
       return /databases/(default)/documents/expenses/$(expenseId);
     }
     function isActiveMember(groupId) {
-      let memberPath = /databases/(default)/documents/groupMembers/$(groupId + '_' + request.auth.token.lineId);
+      let memberPath = /databases/(default)/documents/groupMembers/$(groupId + '_' + myLineId());
       return firestore.exists(memberPath)
              && firestore.get(memberPath).data.get('isActive', false) == true;
     }
     // 支出を書き換えられるか（firestore.rules の update / delete の基準と同じ）。
+    // 個人支出は groupId も lineGroupId も持たないもの（lineGroupId だけを持つ旧形式は不可）。
     function canWriteExpense(expenseId) {
       let e = firestore.get(expensePath(expenseId)).data;
       let groupId = e.get('groupId', null);
-      return (groupId == null && e.get('lineId', null) == request.auth.token.lineId)
+      return (groupId == null && e.get('lineGroupId', null) == null
+              && e.get('lineId', null) == myLineId())
              || (groupId != null && isActiveMember(groupId));
     }
     // 支出を読めるか（firestore.rules の read の基準と同じ）。
     function canReadExpense(expenseId) {
       let e = firestore.get(expensePath(expenseId)).data;
       let groupId = e.get('groupId', null);
-      return e.get('lineId', null) == request.auth.token.lineId
+      return e.get('lineId', null) == myLineId()
              || (groupId != null && isActiveMember(groupId));
     }
     function expenseExists(expenseId) {

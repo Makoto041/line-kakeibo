@@ -8,7 +8,10 @@
 - 世帯（アプリ内グループ）の有効なメンバーはオーナーとパートナーの **2 名だけ**にする。
 - bot は **メンバーを自動で追加しない**。
   - LINE グループで支出らしい発言をしても、`groupMembers` は作られず、無効なメンバーが再有効化されることもない。
-    有効なメンバーでない人の支出は `groupId` を持たないので、世帯の Web 一覧には出ない。
+    LINE グループに紐づくアプリ内グループの有効なメンバーでない人（第三者、脱退済みの元メンバー、別の家計グループを
+    作った人など）が世帯の LINE グループで支出を登録すると、`groupId` も `lineGroupId` も付けない **個人支出** として
+    保存する（`bot/src/expenseGroupScope.ts`）。世帯の Web 一覧に出ないだけでなく、LINE 側の `家計簿` 集計・
+    `立替一覧`・`精算`（いずれも `lineGroupId` で引く）にも入らない。
   - LINE グループに紐づくアプリ内グループが無い場合も、自動では作らない。
   - LINE の「参加 <コード> <表示名>」コマンドは無効化済み（招待コードが漏れると第三者が参加できてしまうため）。
 - LINE グループから **退出・削除されたメンバー**（`memberLeft` イベント）は、bot が `isActive:false`、`leftAt`、
@@ -53,8 +56,13 @@ node scripts/manage-group-members.mjs add --group <groupId> --line-id <Uxxxxxxxx
   `amount` / `description` / `date` / `category` / `includeInTotal` / `payerId` / `payerDisplayName` / `receiptUrl` / `updatedAt`。
   それ以外（`lineId` / `groupId` / `lineGroupId` / `createdAt` / `inputSource` / `status` / `advanceBy` など）は不変。
   変更は bot（Admin SDK）だけが行う。`receiptUrl` は `https://firebasestorage.googleapis.com/` から始まる URL に限る。
-- 精算済み（`status == 'advance_settled'`）の支出は、金額・日付の変更と削除ができない。
+- 精算済み（`status == 'advance_settled'`）の支出は、金額・日付・支払者（`payerId` / `payerDisplayName`）の変更と削除ができない。
+  web の編集ドロワーは、精算済みの支出ではこれらを送らない。
 - グループ支出の更新・削除は有効なメンバーに限る。
+- 個人支出（`groupId` も `lineGroupId` も持たない）の更新・削除は所有者に限る。`groupId` を持たず `lineGroupId` だけを
+  持つ旧形式の支出は LINE 側の集計に入るため、クライアントからは更新・削除できない（Storage のレシート操作も同じ）。
+- クレーム `lineId` は `request.auth.token.get('lineId', null)` で参照する。クレームの無いトークン（匿名）でも評価エラーにならず、
+  単に拒否される。
 
 web で編集できる項目を増やすときは、`editableExpenseKeys()` と `test/firestore.rules.test.mjs` を更新すること。
 
@@ -102,6 +110,17 @@ gcloud projects get-iam-policy line-kakeibo-0410 \
 
 Firebase コンソールで過去に cross-service rules を有効にしたことがあれば、既に付いている場合がある。
 
+### マージ前チェック（必須）
+
+master へのマージで CI の `deploy-bot` ジョブが `firebase deploy --only functions,firestore:rules,firestore:indexes,storage`
+を実行し、このルールがそのまま本番に出る。上のロールが無い状態でマージすると、その瞬間から本番のレシート表示・
+アップロード・削除がすべて拒否される。したがって、**このルールを含む PR をマージする前に**、オーナーが上の確認コマンドで
+`serviceAccount:service-<PROJECT_NUMBER>@gcp-sa-firebasestorage.iam.gserviceaccount.com` が表示されることを確かめる
+（無ければ A か B で付与する）。PR 本文のチェックボックス「IAM ロール付与済み・確認済み」にチェックしてからマージする。
+
+CI 側での自動確認は入れていない。デプロイ用サービスアカウントが `resourcemanager.projects.getIamPolicy` を持つとは
+限らず、デプロイジョブに手を入れるとパイプラインを壊すおそれがあるため。
+
 ## 5. ルールのテスト
 
 `test/firestore.rules.test.mjs` と `test/storage.rules.test.mjs` を、エミュレータで実行する
@@ -124,3 +143,7 @@ cross-service 参照もプロキシに送られて失敗することがある。
 - レシートはトークン付きのダウンロード URL を `receiptUrl` に保存している。この URL は Storage ルールを経由しない（REC-SEC-2）。
   パスを保存する方式への移行は、別の PR で扱う。
 - LINE の postback（区分・立替の変更）で、押した人のメンバーシップを確認していない（SET-18）。
+- 脱退済み（`isActive:false`）の元メンバーも、自分が登録したグループ支出の **読み取り**（とそのレシートの取得）だけはできる。
+  web の個人支出クエリ `where('lineId','==',自分)` をルールで証明できるようにするため。閉じるには、個人支出クエリに
+  `groupId` の制約（または専用フラグ）を足し、read の所有者条件を `groupId` なしに限定する必要がある。
+- `joinGroup()`（bot/src/firestore.ts）は呼び出し元の無い非推奨関数として残している。`syncUserLinks` の削除と同じ後続 PR で消す。

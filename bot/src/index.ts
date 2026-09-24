@@ -44,6 +44,7 @@ import {
 } from "./line/flexMessage";
 import { getCategoryEmoji } from "./gmail/types";
 import { parseTextExpense } from "./textParser";
+import { resolveExpenseGroupScope } from "./expenseGroupScope";
 import { nowJST } from "./time";
 import { resolveAppUidForExpense, getOrCreateAppUidForLineId } from "./linkUserResolver";
 import { getAuth } from "firebase-admin/auth";
@@ -1081,12 +1082,21 @@ async function processExpenseInBackground(
       }
     }
 
+    // グループ所属の決定。発言元の LINE グループに紐づくグループの有効なメンバーで
+    // なければ lineGroupId も付けず個人支出にする（LINE 集計・精算への混入防止）。
+    const groupScope = resolveExpenseGroupScope(activeGroup, lineGroupId);
+    if (lineGroupId && !groupScope.lineGroupId) {
+      console.log(
+        `Poster ${maskId(event.source.userId)} is not an active member of the group linked to LINE group ${maskId(lineGroupId)}; saving as personal expense`
+      );
+    }
+
     // Create expense object with payment method
     const expense = {
       lineId: event.source.userId,
       appUid: appUid,
-      groupId: activeGroup?.id,
-      lineGroupId,
+      groupId: groupScope.groupId,
+      lineGroupId: groupScope.lineGroupId,
       userDisplayName,
       amount: parsed.amount,
       description: parsed.description,

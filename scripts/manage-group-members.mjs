@@ -197,11 +197,12 @@ async function cmdAdd() {
     process.exit(1);
   }
   const label = `${groupId} / ${mask(lineId)} (${name})`;
+  const existing = await api(`/groupMembers/${encodeURIComponent(memberDocId(groupId, lineId))}`);
+  const action = !existing ? '追加' : isActive(existing) ? '表示名の更新' : '再有効化';
   if (!APPLY) {
-    console.log(`[dry-run] 追加（または再有効化）予定: ${label}\n--apply を付けると実行します。`);
+    console.log(`[dry-run] ${action}予定: ${label}\n--apply を付けると実行します。`);
     return;
   }
-  const existing = await api(`/groupMembers/${encodeURIComponent(memberDocId(groupId, lineId))}`);
   const fields = {
     groupId: { stringValue: groupId },
     lineId: { stringValue: lineId },
@@ -216,7 +217,7 @@ async function cmdAdd() {
     fields,
     existing ? ['leftAt', 'deactivatedReason'] : []
   );
-  console.log(`追加しました: ${label}`);
+  console.log(`${action}しました: ${label}`);
 }
 
 switch (command) {

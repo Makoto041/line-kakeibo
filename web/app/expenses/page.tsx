@@ -488,12 +488,55 @@ function ExpensesPageContent() {
   // Keep the latest cancel handler available to the keydown listener.
   closeDrawerRef.current = handleEditCancel;
 
+  // 保存前の入力チェック（firestore.rules の expenses 更新条件に合わせる）。
+  // ルールで拒否されると「Missing or insufficient permissions」としか出ないため、
+  // 利用者が直せる内容はここで具体的に伝える。
+  const validateEditForm = (id: string): string | null => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(editForm.date)) {
+      return "日付を入力してください";
+    }
+    if (!Number.isFinite(editForm.amount) || editForm.amount < 0 || editForm.amount > 10_000_000) {
+      return "金額は 0〜10,000,000 円の範囲で入力してください";
+    }
+    if (editForm.description.length > 500) {
+      return "説明は 500 文字以内で入力してください";
+    }
+    if (editForm.category.length > 50) {
+      return "カテゴリは 50 文字以内で入力してください";
+    }
+    const original = expenses.find((e) => e.id === id);
+    if (
+      original?.status === "advance_settled" &&
+      (editForm.amount !== original.amount ||
+        editForm.date !== original.date ||
+        editForm.payerId !== (original.payerId || original.lineId))
+    ) {
+      return "精算済みの支出は金額・日付・支払者を変更できません";
+    }
+    return null;
+  };
+
   const handleEditSave = async (id: string) => {
+    const validationError = validateEditForm(id);
+    if (validationError) {
+      alert(validationError);
+      return;
+    }
     try {
-      const updateData = {
+      const updateData: Partial<Expense> = {
         ...editForm,
         updatedAt: new Date(),
       };
+      // 精算済みの支出は金額・日付・支払者を送らない（ルールで固定されている）。
+      // 支払者の表示名が未設定の支出では、フォームの既定値を送るとフィールドの追加と
+      // みなされて拒否されるため、変更できない項目はまとめて外す。
+      const original = expenses.find((e) => e.id === id);
+      if (original?.status === "advance_settled") {
+        delete updateData.amount;
+        delete updateData.date;
+        delete updateData.payerId;
+        delete updateData.payerDisplayName;
+      }
 
       await updateExpense(id, updateData);
       setEditingExpense(null);

@@ -38,6 +38,10 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'groupMembers/SG1_A'), { groupId: 'SG1', lineId: 'A', isActive: true });
   await setDoc(doc(db, 'groupMembers/SG1_B'), { groupId: 'SG1', lineId: 'B', isActive: true });
   await setDoc(doc(db, 'groupMembers/SG1_D'), { groupId: 'SG1', lineId: 'D', isActive: false });
+  // 別の世帯（SG2）の有効メンバー E
+  await setDoc(doc(db, 'groupMembers/SG2_E'), { groupId: 'SG2', lineId: 'E', isActive: true });
+  // groupId を持たず lineGroupId だけを持つ旧形式の支出（登録者は脱退済みの D）
+  await setDoc(doc(db, 'expenses/sLegacyD'), { lineId: 'D', lineGroupId: 'SL1', amount: 600, date: '2026-08-01' });
 
   // 既存ファイル（読み取り・削除の検証用）
   const st = ctx.storage();
@@ -55,6 +59,7 @@ const userA = storageOf('appuid-A', { lineId: 'A' }); // SG1 の有効メンバ�
 const userB = storageOf('appuid-B', { lineId: 'B' }); // SG1 の有効メンバー
 const userC = storageOf('appuid-C', { lineId: 'C' }); // メンバーではない LINE ユーザー
 const userD = storageOf('appuid-D', { lineId: 'D' }); // isActive:false の元メンバー
+const userE = storageOf('appuid-E', { lineId: 'E' }); // 別の世帯（SG2）の有効メンバー
 const anon = storageOf('anon-uid', {});
 const unauth = storageOf(null, null);
 
@@ -76,6 +81,9 @@ await test('有効メンバーは Gmail 取込のグループ支出にも上げ�
   await assertSucceeds(put(userB, 'receipts/sGmail/b.png', bytes(10), 'image/png'));
   await assertSucceeds(put(userB, 'receipts/sGmail/c.heic', bytes(10), 'image/heic'));
 });
+await test('有効メンバーは HEIF も上げられる', async () => {
+  await assertSucceeds(put(userA, 'receipts/sGroup/d.heif', bytes(10), 'image/heif'));
+});
 await test('個人支出は所有者が上げられる', async () => {
   await assertSucceeds(put(userA, 'receipts/sPersonalA/a.jpg', bytes(10), 'image/jpeg'));
 });
@@ -85,6 +93,17 @@ await test('★ 非メンバーはグループ支出に上げられない', asyn
 await test('★ 脱退済みメンバーは上げられない（自分が登録した支出でも）', async () => {
   await assertFails(put(userD, 'receipts/sGroup/d.jpg', bytes(10), 'image/jpeg'));
   await assertFails(put(userD, 'receipts/sByD/d.jpg', bytes(10), 'image/jpeg'));
+});
+await test('★ 別の世帯のメンバーはグループ支出に上げられない', async () => {
+  await assertFails(put(userE, 'receipts/sGroup/e.jpg', bytes(10), 'image/jpeg'));
+});
+await test('★ 非メンバー・脱退済み・別世帯は既存のレシートを上書き（update）できない', async () => {
+  await assertFails(put(userC, 'receipts/sGroup/existing.jpg', bytes(10), 'image/jpeg'));
+  await assertFails(put(userD, 'receipts/sGroup/existing.jpg', bytes(10), 'image/jpeg'));
+  await assertFails(put(userE, 'receipts/sGroup/existing.jpg', bytes(10), 'image/jpeg'));
+});
+await test('★ lineGroupId だけを持つ旧形式の支出には、登録した本人（脱退済み）でも上げられない', async () => {
+  await assertFails(put(userD, 'receipts/sLegacyD/d.jpg', bytes(10), 'image/jpeg'));
 });
 await test('★ 他人の個人支出には上げられない', async () => {
   await assertFails(put(userB, 'receipts/sPersonalA/b.jpg', bytes(10), 'image/jpeg'));
@@ -124,6 +143,9 @@ await test('★ 非メンバーはレシートを取得できない', async () =
 await test('★ 脱退済みメンバーは他人のレシートを取得できない', async () => {
   await assertFails(get(userD, 'receipts/sGroup/existing.jpg'));
 });
+await test('★ 別の世帯のメンバーはレシートを取得できない', async () => {
+  await assertFails(get(userE, 'receipts/sGroup/existing.jpg'));
+});
 await test('★ 他人の個人支出のレシートは取得できない', async () => {
   await assertFails(get(userB, 'receipts/sPersonalA/existing.jpg'));
 });
@@ -140,6 +162,9 @@ await test('★ 非メンバーはレシートを削除できない', async () =
 });
 await test('★ 脱退済みメンバーはレシートを削除できない', async () => {
   await assertFails(del(userD, 'receipts/sByD/existing.jpg'));
+});
+await test('★ 別の世帯のメンバーはレシートを削除できない', async () => {
+  await assertFails(del(userE, 'receipts/sGroup/toDelete.jpg'));
 });
 await test('有効メンバーはレシートを削除できる', async () => {
   await assertSucceeds(del(userA, 'receipts/sGroup/toDelete.jpg'));

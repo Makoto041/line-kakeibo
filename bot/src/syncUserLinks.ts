@@ -9,8 +9,9 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore';
  * トリガーを経由すると任意の userLinks 文書を作成・汚染できてしまう（SEC-16）。
  *
  * userLinks は `/auth/line`（linkUserResolver.getOrCreateAppUidForLineId →
- * firestore.createUserLink）が appUid ↔ lineId を 1 対 1 で管理しており、このトリガーが
- * 書く `lineIds` 配列はどこからも参照されていない。そのため書き込みを完全に止める。
+ * firestore.createUserLink）が appUid ↔ lineId を 1 対 1 で管理している。このトリガーが
+ * 書く `lineIds` 配列を読むのは bot/src/userLinks.ts だけで、そのモジュール自体が現在
+ * どこからも呼ばれていない。そのため書き込みを完全に止める。
  *
  * 関数そのものを export から外すと、CI の非対話 `firebase deploy` が「本番にだけ存在する
  * 関数」の削除確認で失敗するため、関数の削除は別途（手動で `firebase functions:delete

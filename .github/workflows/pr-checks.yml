@@ -53,6 +53,7 @@ jobs:
   rules-tests:
     name: Security Rules Tests (Emulator)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # firestore.rules / storage.rules をエミュレータで検証する。デプロイには関与しない。
     # テスト用ツールは package.json / package-lock.json に含めず、リポジトリ外に
     # --no-save で入れてから node_modules をシンボリックリンクで参照させる。

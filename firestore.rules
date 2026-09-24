@@ -28,11 +28,13 @@ service cloud.firestore {
     // 「誰でも」と同義になる。LINE 本人確認を経たセッションだけが lineId クレームを
     // 持つので、他人のデータに触れうる条件では必ずこちらを使うこと。
     function isLineUser() {
-      return isSignedIn() && request.auth.token.lineId != null;
+      return isSignedIn() && request.auth.token.get('lineId', null) != null;
     }
-    // 検証済み LINE userId（カスタムクレーム）。未サインイン/匿名では null 相当。
+    // 検証済み LINE userId（カスタムクレーム）。匿名では null。
+    // クレームを持たないトークンで token.lineId を直接参照すると評価エラー
+    // （結果は拒否だがエラーログが出る）になるため get(key, default) を使う。
     function myLineId() {
-      return request.auth.token.lineId;
+      return request.auth.token.get('lineId', null);
     }
     // 既存ドキュメントの所有者か（lineId フィールド一致）。
     function ownsDoc() {
@@ -137,9 +139,21 @@ service cloud.firestore {
               'payerId', 'payerDisplayName', 'paymentMethod', 'createdAt', 'updatedAt'];
     }
     // 精算済み（立替を精算した）支出か。精算額が後から変わらないよう、
-    // クライアントからは金額・日付の変更と削除を禁止する（status はそもそも不変）。
+    // クライアントからは金額・日付・支払者の変更と削除を禁止する（status はそもそも不変）。
     function isSettledDoc() {
       return resource.data.get('status', null) == 'advance_settled';
+    }
+    // 精算済みの支出で変更できないフィールド。精算額は「誰がいくら払ったか」から
+    // 計算されるため、支払者（payerId / payerDisplayName）も精算記録の一部として固定する。
+    function settledLockedKeys() {
+      return ['amount', 'date', 'payerId', 'payerDisplayName'];
+    }
+    // 個人支出か（groupId も lineGroupId も持たない）。
+    // groupId なしで lineGroupId だけを持つ旧形式の支出は LINE 側の集計に入るため、
+    // 個人支出として所有者だけで書き換えられるようにはしない（脱退済みの元メンバーが
+    // 世帯の LINE 集計に入る支出を書き換えられないようにする）。
+    function isPersonalDoc() {
+      return docGroupId() == null && resource.data.get('lineGroupId', null) == null;
     }
     // 作成しようとしている支出のグループ所属が正当か。
     //   - groupId なし: 個人支出。bot は lineGroupId だけで集計・精算するため、
@@ -158,9 +172,10 @@ service cloud.firestore {
     //   - グループ支出（groupId あり）: そのグループの有効なメンバーだけ。
     //     LINE グループを抜けて isActive:false になった元メンバーは、自分が登録した
     //     支出でも書き換えられない。
-    //   - 個人支出（groupId なし）: 所有者だけ。
+    //   - 個人支出（groupId も lineGroupId もなし）: 所有者だけ。
+    //   - groupId なしで lineGroupId だけを持つ旧形式: クライアントからは書き換えられない。
     function canWriteExistingExpense() {
-      return (docGroupId() == null && ownsDoc()) || isMemberOfDocGroup();
+      return (isPersonalDoc() && ownsDoc()) || isMemberOfDocGroup();
     }
 
     // ---- expenses -----------------------------------------------------------
@@ -193,21 +208,21 @@ service cloud.firestore {
       //   Gmail 自動取込の支出は lineId が固定のシステムユーザー
       //   ('gmail-auto-system') であり、どの実ユーザーの lineId とも一致しないため、
       //   グループメンバーであれば修正できる（LINE カードの「修正」導線）。
-      //   精算済みの支出は金額・日付を変えられない。
+      //   精算済みの支出は金額・日付・支払者を変えられない。
       allow update: if canWriteExistingExpense()
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(editableExpenseKeys())
                     && expenseFieldsValid(request.resource.data,
                                           request.resource.data.diff(resource.data).affectedKeys())
                     && (!isSettledDoc()
-                        || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['amount', 'date']));
+                        || !request.resource.data.diff(resource.data).affectedKeys().hasAny(settledLockedKeys()));
 
       // delete:
-      //   - 個人支出は所有者が削除可。
+      //   - 個人支出（groupId も lineGroupId もなし）は所有者が削除可。
       //   - グループ支出は、有効なメンバーのうち、登録した本人か、Gmail 自動取込分
       //     （誤取込メールを消すため）の場合だけ削除可。
       //   - 精算済みの支出はクライアントから削除できない。
       allow delete: if !isSettledDoc()
-                    && ((docGroupId() == null && ownsDoc())
+                    && ((isPersonalDoc() && ownsDoc())
                         || (isMemberOfDocGroup() && (ownsDoc() || isGmailSystemDoc())));
     }
 

@@ -84,6 +84,11 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'expenses/expByD'), { lineId: 'D', ...group, amount: 900, date: '2026-08-01' });
 
   await setDoc(doc(db, 'groups/G2'), { createdBy: 'C', inviteCode: 'INV999', lineGroupId: 'L2' });
+  // 別の世帯（G2）の有効なメンバー E。G1 のデータには触れないこと（世帯をまたぐ権限の確認）
+  await setDoc(doc(db, 'groupMembers/G2_E'), { groupId: 'G2', lineId: 'E', displayName: 'E', isActive: true });
+  await setDoc(doc(db, 'expenses/expG2'), { lineId: 'E', groupId: 'G2', lineGroupId: 'L2', amount: 100, date: '2026-08-01' });
+  // 脱退済みメンバー D が登録した、groupId を持たず lineGroupId だけを持つ旧形式の支出
+  await setDoc(doc(db, 'expenses/expLegacyD'), { lineId: 'D', lineGroupId: 'L1', amount: 650, date: '2026-08-01' });
   await setDoc(doc(db, 'budgetSettings/A'), { monthlyBudget: 1000 });
   await setDoc(doc(db, 'budgetSettings/B'), { monthlyBudget: 2000 });
   await setDoc(doc(db, 'linkTokens/t1'), { lineId: 'A' });
@@ -96,6 +101,7 @@ const userA = env.authenticatedContext('appuid-A', { lineId: 'A' }).firestore();
 const userB = env.authenticatedContext('appuid-B', { lineId: 'B' }).firestore(); // G1 のメンバー
 const userC = env.authenticatedContext('appuid-C', { lineId: 'C' }).firestore(); // LINE ユーザーだがメンバーではない
 const userD = env.authenticatedContext('appuid-D', { lineId: 'D' }).firestore(); // isActive:false のメンバー
+const userE = env.authenticatedContext('appuid-E', { lineId: 'E' }).firestore(); // 別の世帯（G2）の有効メンバー
 // 匿名フォールバック: サインイン済みだが lineId クレームなし。
 const anon = env.authenticatedContext('anon-uid', {}).firestore();
 
@@ -274,11 +280,21 @@ await test('★ 精算済み: 日付は変更できない', async () => {
 await test('★ 精算済み: status を戻せない', async () => {
   await assertFails(updateDoc(doc(userB, 'expenses/expSettled'), { status: 'advance_pending' }));
 });
-await test('精算済み: メモ・カテゴリの修正（金額・日付は同値で送信）は許可される', async () => {
+// web の編集ドロワーは精算済みの支出では amount / date / payerId / payerDisplayName を送らない
+// （web/app/expenses/page.tsx の handleEditSave）。
+await test('精算済み: メモ・カテゴリの修正（web の送信形）は許可される', async () => {
   await assertSucceeds(updateDoc(doc(userA, 'expenses/expSettled'), {
-    amount: 1000, date: '2026-08-01', description: '立替（修正）', category: '日用品',
-    includeInTotal: true, payerId: 'B', payerDisplayName: 'B', updatedAt: new Date(),
+    description: '立替（修正）', category: '日用品', includeInTotal: true, updatedAt: new Date(),
   }));
+});
+await test('精算済み: 金額・日付を同値で送っても（変更なし）許可される', async () => {
+  await assertSucceeds(updateDoc(doc(userB, 'expenses/expSettled'), {
+    amount: 1000, date: '2026-08-01', description: '立替（再修正）', updatedAt: new Date(),
+  }));
+});
+await test('★ 精算済み: 支払者（payerId / payerDisplayName）は変更できない', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expSettled'), { payerId: 'A' }));
+  await assertFails(updateDoc(doc(userB, 'expenses/expSettled'), { payerDisplayName: 'Aさん' }));
 });
 await test('★ 精算済み: 登録した本人でも削除できない', async () => {
   await assertFails(deleteDoc(doc(userB, 'expenses/expSettled')));
@@ -316,6 +332,36 @@ await test('脱退済みメンバーも自分が登録した支出の read は�
 await test('★ 脱退済みメンバーは groups / 他メンバーを読めない', async () => {
   await assertFails(getDoc(doc(userD, 'groups/G1')));
   await assertFails(getDoc(doc(userD, 'groupMembers/G1_A')));
+});
+
+// --- lineGroupId だけを持つ旧形式の支出 -------------------------------------
+await test('★ lineGroupId だけを持つ支出は、登録した本人（脱退済み）でも更新・削除できない', async () => {
+  await assertFails(updateDoc(doc(userD, 'expenses/expLegacyD'), { amount: 1 }));
+  await assertFails(deleteDoc(doc(userD, 'expenses/expLegacyD')));
+});
+await test('★ lineGroupId だけを持つ支出は、登録した本人（有効メンバー）でも更新できない', async () => {
+  await assertFails(updateDoc(doc(userB, 'expenses/expLegacy'), { amount: 1 }));
+});
+
+// --- 別の世帯のメンバー -----------------------------------------------------
+await test('別の世帯のメンバーは自分の世帯の支出を読める', async () => {
+  await assertSucceeds(getDoc(doc(userE, 'expenses/expG2')));
+  await assertSucceeds(getDocs(query(collection(userE, 'expenses'), where('groupId', '==', 'G2'))));
+});
+await test('★ 別の世帯のメンバーは G1 の支出を読めない・更新できない・削除できない', async () => {
+  await assertFails(getDoc(doc(userE, 'expenses/expG')));
+  await assertFails(updateDoc(doc(userE, 'expenses/expG'), { amount: 1 }));
+  await assertFails(deleteDoc(doc(userE, 'expenses/expGmail')));
+});
+await test('★ 別の世帯のメンバーは G1 の支出を一覧できない', async () => {
+  await assertFails(getDocs(query(collection(userE, 'expenses'), where('groupId', '==', 'G1'))));
+});
+await test('★ 別の世帯のメンバーは G1 に支出を作成できない', async () => {
+  await assertFails(setDoc(doc(userE, 'expenses/newEG1'), { lineId: 'E', groupId: 'G1', lineGroupId: 'L1', amount: 5, date: '2026-08-02' }));
+});
+await test('★ 別の世帯のメンバーは G1 の groups / メンバーを読めない', async () => {
+  await assertFails(getDoc(doc(userE, 'groups/G1')));
+  await assertFails(getDocs(query(collection(userE, 'groupMembers'), where('groupId', '==', 'G1'))));
 });
 
 // --- web が実際に投げるクエリ形 --------------------------------------------
