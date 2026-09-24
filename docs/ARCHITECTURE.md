@@ -82,7 +82,7 @@ flowchart LR
 
 | Function | トリガー | リージョン | 役割 |
 |---|---|---|---|
-| `webhook` | HTTPS（Express） | asia-northeast1 | LINE webhook 本体。`/health` `/classification-stats` `/test-classification` も同居 |
+| `webhook` | HTTPS（Express） | asia-northeast1 | LINE webhook 本体（署名検証は fail-closed、本文上限 1MB）。`/health` も同居（認証なしのデバッグ用 `/classification-stats` `/test-classification` は削除済み） |
 | `gmailPubSubHandler` | Pub/Sub `gmail-notifications` | asia-northeast1 | SMBC カード利用メールの取込 |
 | `renewGmailWatch` | cron `0 3 */6 * *` JST | asia-northeast1 | Gmail watch（7日失効）の更新 |
 | `importMoneyForward` | cron `0 5 * * *` JST | asia-northeast1 | Drive の MoneyForward CSV 取込 |
@@ -156,7 +156,7 @@ LINEのリンク(?lineId=xxx) → Next.js（クライアント）
 | Web ユーザー識別 | `?lineId=` クエリのみ。LIFF / Firebase Auth ログイン未使用 ⚠️ |
 | Firestore ルール | `userLinks` のみ `request.auth.uid == uid`。**他コレクションは `if true`** ⚠️ |
 | Storage ルール | 読取は公開、書込は `image/*` かつ 10MB 未満 ⚠️ |
-| Gmail 管理 API | `ADMIN_SECRET`（`X-Admin-Secret` / `Authorization: Bearer` ヘッダーに加え **`?adminSecret=` クエリでも受理** — ログ等への露出リスクあり）＋ レートリミット、OAuth callback は CSRF state ⚠️ |
+| Gmail 管理 API | `ADMIN_SECRET`（`Authorization: Bearer` ヘッダーのみ。定数時間比較。クエリ渡しは廃止）＋ レートリミット、OAuth callback は CSRF state |
 | Gmail スコープ | `gmail.readonly` に最小化 ✅ |
 
 ### 改善ロードマップ（推奨）

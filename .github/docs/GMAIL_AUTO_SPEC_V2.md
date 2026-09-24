@@ -400,15 +400,17 @@ bot/src/
    ```bash
    firebase deploy --only functions
 
-   # ブラウザで認証URLを取得（ADMIN_SECRET が必要）
-   curl "https://us-central1-<your-project>.cloudfunctions.net/api/gmail/auth?adminSecret=YOUR_ADMIN_SECRET"
+   # 認証URLを取得（ADMIN_SECRET は Authorization ヘッダーで渡す。クエリ渡しは廃止）
+   curl -H "Authorization: Bearer $ADMIN_SECRET" \
+     "https://us-central1-<your-project>.cloudfunctions.net/api/gmail/auth"
 
    # 返却されたauthUrlをブラウザで開いてGoogleアカウントで認証
    ```
 
 6. **Gmail Watch 登録**
    ```bash
-   curl -X POST "https://us-central1-<your-project>.cloudfunctions.net/api/gmail/register-watch?adminSecret=YOUR_ADMIN_SECRET"
+   curl -X POST -H "Authorization: Bearer $ADMIN_SECRET" \
+     "https://us-central1-<your-project>.cloudfunctions.net/api/gmail/register-watch"
    ```
 
 ### 将来ステップ（オプション）
@@ -441,15 +443,13 @@ Gmail管理用のAPIエンドポイント一覧:
 
 ### 認証方法
 
-Admin認証が必要なエンドポイントは以下のいずれかで認証:
+Admin認証が必要なエンドポイントは `Authorization: Bearer` ヘッダーでのみ認証する:
 
 ```bash
-# Authorization ヘッダー
-curl -H "Authorization: Bearer YOUR_ADMIN_SECRET" https://...
-
-# クエリパラメータ
-curl "https://...?adminSecret=YOUR_ADMIN_SECRET"
+curl -H "Authorization: Bearer $ADMIN_SECRET" https://...
 ```
+
+> クエリパラメータ（`?adminSecret=`）での認証は廃止した。URL はアクセスログやブラウザ履歴に残り、秘密値の漏洩経路になるため。比較は定数時間（SHA-256 ダイジェスト同士の `timingSafeEqual`）で行う。
 
 ### 使用例
 
