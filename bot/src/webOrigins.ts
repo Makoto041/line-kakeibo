@@ -1,8 +1,8 @@
 /**
  * Web（Next.js）のオリジン許可リスト
  *
- * `index.ts` の `/auth/line` と同じ判定。既定は本番 Vercel と localhost で、環境変数
- * `WEB_ORIGINS`（カンマ区切り）で上書きできる。このプロジェクトの Vercel プレビュー
+ * `/auth/line`（index.ts）と `/household`（householdApi.ts）が共用する唯一の定義。既定は本番 Vercel と
+ * localhost で、環境変数 `WEB_ORIGINS`（カンマ区切り）で上書きできる。このプロジェクトの Vercel プレビュー
  * （line-kakeibo*.vercel.app）も許可する。
  *
  * CORS は防御線ではない（正規表現は他人の Vercel プロジェクト名にも一致しうる）。API の

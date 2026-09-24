@@ -14,6 +14,10 @@
  * LINE（`legacyPair: true`）は Q15 以外の挙動を変えないため、立替者がちょうど 2 人なら従来どおり
  * メンバー登録に関係なく pair で計算する（`groups` 文書が無い・メンバーの読み込みに失敗した場合も同じ）。
  * 1 人だけのときの補完は Web と同じ条件、それ以外は従来どおり金額を出さない（「精算」は記録まで行う）。
+ *
+ * 表示名: groupMembers の displayName を優先するが、世帯作成時の仮名「作成者」（firestore.ts の createGroup）は
+ * 名前として扱わない（立替サマリーの名前があればそちら、無ければ空文字）。LINE で補った相手（立替 0 円）の
+ * 名前が分からないときは `fillPartnerName` で LINE のプロフィールから引く。
  */
 
 import {
@@ -36,6 +40,23 @@ export type SettlementBasis = 'none' | 'pair' | 'single_advancer' | 'undetermina
  *   立替者がメンバー外・脱退済み）
  */
 export type UndeterminableReason = 'partner_unknown' | 'more_than_two';
+
+/**
+ * 世帯作成時に作成者のメンバー文書へ入る仮の表示名（firestore.ts の createGroup → addGroupMember）
+ *
+ * LINE のグループで自動作成された世帯では、作成者が発言していてもこのまま更新されないことがある。
+ */
+export const CREATOR_PLACEHOLDER_NAME = '作成者';
+
+/** groupMembers の displayName を表示名として使える形にする（文字列以外・仮名「作成者」は空文字） */
+export function memberDisplayName(name: unknown): string {
+  return typeof name === 'string' && name !== CREATOR_PLACEHOLDER_NAME ? name : '';
+}
+
+/** 表示名が分からないときの代わり（index.ts のプロフィール取得失敗時と同じ形） */
+export function fallbackDisplayName(userId: string): string {
+  return `User_${userId.slice(-6)}`;
+}
 
 export interface SettlementMember {
   lineId: string;
@@ -70,7 +91,7 @@ export interface SettlementRuleOptions {
  * 立替のサマリーと有効メンバーから精算額を決める（純関数）
  *
  * @param summaries `getAdvanceSummaryByUser` の結果（立替者ごとに 1 件）
- * @param members 有効なメンバー（表示順。名前はここを優先し、無ければ立替サマリーの名前）
+ * @param members 有効なメンバー（表示順。名前はここを優先し、空か仮名「作成者」なら立替サマリーの名前）
  */
 export function computeHouseholdSettlement(
   summaries: AdvanceSummary[],
@@ -82,7 +103,7 @@ export function computeHouseholdSettlement(
     if (!member.lineId || byId.has(member.lineId)) continue;
     byId.set(member.lineId, {
       userId: member.lineId,
-      displayName: member.displayName || '',
+      displayName: memberDisplayName(member.displayName),
       totalAdvanced: 0,
       isMember: true,
     });
@@ -152,20 +173,20 @@ export function sortActiveMembers(members: GroupMember[]): SettlementMember[] {
   const seen = new Map<string, SettlementMember>();
   for (const m of sorted) {
     const existing = seen.get(m.lineId);
+    const displayName = memberDisplayName(m.displayName);
     if (!existing) {
-      seen.set(m.lineId, { lineId: m.lineId, displayName: m.displayName || '' });
-    } else if (!existing.displayName && m.displayName) {
-      existing.displayName = m.displayName;
+      seen.set(m.lineId, { lineId: m.lineId, displayName });
+    } else if (!existing.displayName && displayName) {
+      existing.displayName = displayName;
     }
   }
   return Array.from(seen.values());
 }
 
 /**
- * LINE グループに紐づく世帯の有効メンバー
+ * LINE グループに紐づく世帯の有効メンバー（computeLineGroupSettlement が立替者 1 人のときだけ読む）
  *
- * 読み取りに失敗しても LINE のコマンド自体は止めない（メンバー 0 人として扱う。`legacyPair` なので
- * 2 人とも立替がある場合は従来どおり金額を出し、1 人だけのときは従来どおり金額を出さない）。
+ * 読み取りに失敗しても LINE のコマンド自体は止めない（メンバー 0 人として扱い、従来どおり金額を出さない）。
  */
 async function loadLineGroupMembers(lineGroupId: string): Promise<SettlementMember[]> {
   try {
@@ -178,16 +199,64 @@ async function loadLineGroupMembers(lineGroupId: string): Promise<SettlementMemb
   }
 }
 
+/** 表示名を引く関数（LINE のグループメンバーのプロフィールなど）。分からなければ undefined */
+export type DisplayNameResolver = (userId: string) => Promise<string | undefined>;
+
+/**
+ * single_advancer で補った相手（立替 0 円）の表示名が分からないとき、resolveName で補う
+ *
+ * 相手はメンバー文書だけから分かる人なので、displayName が空か仮名「作成者」だと LINE の文面が
+ * 「 まこと」「作成者 まこと」になる。resolveName が無い・失敗した・空を返したときは `User_xxxxxx`。
+ * 立替者の名前は立替サマリー（支出に記録された名前）なので触らない。pair などはそのまま返す。
+ */
+export async function fillPartnerName(
+  result: HouseholdSettlement,
+  summaries: AdvanceSummary[],
+  resolveName?: DisplayNameResolver
+): Promise<HouseholdSettlement> {
+  const settlement = result.settlement;
+  if (result.basis !== 'single_advancer' || !settlement || summaries.length !== 1) return result;
+  const partner = result.participants.find((p) => p.isMember && p.userId !== summaries[0].userId);
+  if (!partner || partner.displayName) return result;
+
+  let name = '';
+  if (resolveName) {
+    try {
+      name = memberDisplayName((await resolveName(partner.userId))?.trim());
+    } catch (error) {
+      console.warn(`Failed to resolve display name for ${maskId(partner.userId)}:`, errorMessage(error));
+    }
+  }
+  if (!name) name = fallbackDisplayName(partner.userId);
+
+  return {
+    ...result,
+    settlement: {
+      ...settlement,
+      fromUserName: settlement.fromUserId === partner.userId ? name : settlement.fromUserName,
+      toUserName: settlement.toUserId === partner.userId ? name : settlement.toUserName,
+    },
+    participants: result.participants.map((p) => (p === partner ? { ...p, displayName: name } : p)),
+  };
+}
+
 /**
  * LINE の「立替一覧」「精算」用: LINE グループの立替サマリーから精算額を決める
  *
  * 従来の挙動（立替者がちょうど 2 人なら計算）を保ち、Q15（1 人だけ立替・有効メンバー 2 人）だけを足す。
+ * `legacyPair` では立替者が 0 人・2 人・3 人以上のときの結果はメンバーに左右されないので、世帯の
+ * メンバーを読むのは立替者が 1 人のときだけ（従来の経路に Firestore の読み取りを足さない）。
+ *
+ * @param resolveName 補った相手の表示名が分からないときに使う（index.ts は LINE のグループメンバーのプロフィール）
  */
 export async function computeLineGroupSettlement(
   lineGroupId: string,
-  summaries: AdvanceSummary[]
+  summaries: AdvanceSummary[],
+  resolveName?: DisplayNameResolver
 ): Promise<HouseholdSettlement> {
-  return computeHouseholdSettlement(summaries, await loadLineGroupMembers(lineGroupId), { legacyPair: true });
+  const members = summaries.length === 1 ? await loadLineGroupMembers(lineGroupId) : [];
+  const result = computeHouseholdSettlement(summaries, members, { legacyPair: true });
+  return fillPartnerName(result, summaries, resolveName);
 }
 
 /** 金額を出せる（pair / single_advancer）か */

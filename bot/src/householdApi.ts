@@ -148,11 +148,14 @@ async function isActiveMember(
 }
 
 /**
- * 支出を書き換えてよいか（Firestore ルールの「既存の支出を書ける人」と同じ条件）
+ * 支出を書き換えてよいか
  *
  * - groupId がある → そのグループの有効メンバー（脱退者は不可）
  * - groupId も lineGroupId も無い個人支出 → 所有者（lineId が一致）
  * - lineGroupId だけを持つ旧形式 → 不可（先に groupId の backfill が必要）
+ *
+ * Firestore ルールより厳しい（ルールは所有者の更新を広く認めることがある）: groupId のある支出は所有者で
+ * あっても、そのグループの有効メンバーでなければ 403。旧形式は所有者でも 403。
  *
  * メンバー文書はトランザクション内で読む（applyExpenseChange の authorize から呼ぶ）。
  */
@@ -285,7 +288,8 @@ const RATE_LIMITED_BODY = { error: 'rate_limited' };
  *
  * `trust proxy` を設定していない（`/auth/line` の挙動を変えないため）ので、Cloud Run では req.ip が
  * 前段のアドレスにまとまり、実質インスタンス全体の上限になる。正規ユーザーを締め出さないよう大きめにし、
- * 実際の制限は lineId 単位の limiter に任せる。
+ * 実際の制限は lineId 単位の limiter に任せる。Bearer トークンの無い要求は requireLineUser が
+ * verifyIdToken を呼ばずに 401 で返すので数えない（トークン無しの連打で正規ユーザーが 429 にならないように）。
  */
 const preAuthLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -293,6 +297,7 @@ const preAuthLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: RATE_LIMITED_BODY,
+  skip: (req) => !parseBearerToken(req.headers.authorization),
 });
 
 /** 認証後の lineId 単位の上限（IP は見ないので IP 関連の検証は切る） */

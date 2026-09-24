@@ -54,6 +54,7 @@ import rateLimit from "express-rate-limit";
 import { maskId, errorMessage } from "./logSafe";
 import { householdRouter, householdErrorHandler } from "./householdApi";
 import { computeLineGroupSettlement, isSettlementComputable } from "./householdSettlement";
+import { isAllowedWebOrigin } from "./webOrigins";
 
 dotenv.config();
 
@@ -678,7 +679,9 @@ async function handleTextMessage(event: any) {
         }
 
         // 精算額を計算（立替者が2人、または1人だけ立替で有効メンバーが2人の場合。householdSettlement.ts の共有関数）
-        const household = await computeLineGroupSettlement(lineGroupId, summaries);
+        const household = await computeLineGroupSettlement(lineGroupId, summaries, (userId) =>
+          client.getGroupMemberProfile(lineGroupId, userId).then((p) => p.displayName)
+        );
         if (isSettlementComputable(household.basis)) {
           const settlement = household.settlement;
           if (settlement) {
@@ -733,7 +736,9 @@ async function handleTextMessage(event: any) {
 
         // 精算額を計算（立替者が2人、または1人だけ立替で有効メンバーが2人の場合。householdSettlement.ts の共有関数）
         let settlementText = "";
-        const household = await computeLineGroupSettlement(lineGroupId, summaries);
+        const household = await computeLineGroupSettlement(lineGroupId, summaries, (userId) =>
+          client.getGroupMemberProfile(lineGroupId, userId).then((p) => p.displayName)
+        );
         if (isSettlementComputable(household.basis)) {
           const settlement = household.settlement;
           if (settlement) {
@@ -1801,22 +1806,8 @@ gmailRouter.post("/force-process/:messageId", adminApiLimiter as any, requireAdm
 // auth.currentUser.uid = appUid / claims.lineId = 検証済み LINE userId で本人特定できる。
 const authRouter = express.Router();
 
-// CORS: Web オリジンのみ許可。既定は本番 Vercel と localhost。
-// 追加/変更は環境変数 WEB_ORIGINS（カンマ区切り）で上書き可能。
-const WEB_ORIGIN_ALLOWLIST = (
-  process.env.WEB_ORIGINS || "https://line-kakeibo.vercel.app,http://localhost:3000"
-)
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-const isAllowedWebOrigin = (origin?: string): boolean => {
-  if (!origin) return false;
-  if (WEB_ORIGIN_ALLOWLIST.includes(origin)) return true;
-  // このプロジェクトの Vercel プレビュー(line-kakeibo*.vercel.app)も許可
-  return /^https:\/\/line-kakeibo[a-z0-9-]*\.vercel\.app$/.test(origin);
-};
-
+// CORS: Web オリジンのみ許可（webOrigins.ts。/household と共通）。既定は本番 Vercel と localhost、
+// このプロジェクトの Vercel プレビュー。追加/変更は環境変数 WEB_ORIGINS（カンマ区切り）で上書き可能。
 const authCors = (req: Request, res: Response, next: express.NextFunction) => {
   const origin = req.headers.origin as string | undefined;
   if (isAllowedWebOrigin(origin)) {

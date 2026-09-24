@@ -7,8 +7,9 @@
  *
  * 実行例（firebase-tools は依存に入れず、リポジトリ外に `npm i --no-save` するかグローバルに入れて PATH に置く）:
  *   npm -w bot run test:emulator
- *   （= ビルドしてから firebase emulators:exec --only firestore,auth --project demo-kakeibo \
- *       "node scripts/emulator-household-api.js"。ポートは既定の 8080 / 9099）
+ *   （= ビルドしてから firebase --config scripts/firebase.emulator.json emulators:exec --only firestore,auth \
+ *       --project demo-kakeibo "node scripts/emulator-household-api.js"。ポートは --config で指定した
+ *       bot/scripts/firebase.emulator.json の Firestore 18080 / Auth 19099）
  *
  * サンドボックスなどでプロキシ環境変数があると gRPC がエミュレータへ届かないので、
  * HTTP_PROXY / HTTPS_PROXY / JAVA_TOOL_OPTIONS を外して実行する。
@@ -130,6 +131,13 @@ async function seed(db) {
   // 個人チャットで登録した立替（groupId だけ）は LINE グループ基準の精算に入らない（LINE の「精算」と同じ）
   set('expenses/adv_private', { ...base, lineId: 'Ubob', payerId: 'Ubob', groupId: 'g1', amount: 777, description: '個人チャット', status: 'advance_pending', advanceBy: 'Ubob', includeInTotal: true, confirmed: true });
 
+  // 世帯 g5（LINE グループ C_line5 に紐づく）: 作成者 Hana のメンバー文書は仮名「作成者」のまま（createGroup の既定）。
+  // Ivan だけが立て替えている → Q15 で補う相手（Hana）の名前が分からない
+  set('groups/g5', { name: 'LINEグループ placeholder', inviteCode: '666666', createdBy: 'Uhana', lineGroupId: 'C_line5' });
+  set('groupMembers/g5_Uhana', { groupId: 'g5', lineId: 'Uhana', displayName: '作成者', isActive: true, joinedAt: ts('2026-01-01T00:00:00Z') });
+  set('groupMembers/g5_Uivan', { groupId: 'g5', lineId: 'Uivan', displayName: 'Ivan', isActive: true, joinedAt: ts('2026-01-02T00:00:00Z') });
+  set('expenses/adv_i1', { ...base, lineId: 'Uivan', payerId: 'Uivan', userDisplayName: 'Ivan', groupId: 'g5', lineGroupId: 'C_line5', amount: 6000, description: '家電', status: 'advance_pending', advanceBy: 'Uivan', includeInTotal: true, confirmed: true });
+
   // g2 の立替（Carol だけ）
   set('expenses/adv_c1', { ...base, lineId: 'Ucarol', payerId: 'Ucarol', groupId: 'g2', amount: 3000, description: 'solo', status: 'advance_pending', advanceBy: 'Ucarol', includeInTotal: true, confirmed: true });
   await batch.commit();
@@ -164,8 +172,15 @@ async function main() {
   });
   const base = `http://127.0.0.1:${server.address().port}`;
 
-  async function call(method, path, { token, body, rawBody, origin = ORIGIN, headers = {} } = {}) {
+  // 認証前の IP 上限（300 回/分）は 127.0.0.1 からの全要求で共有する（Bearer トークンの無い要求は数えない）。
+  // テストはおよそ 1 分以内に終わるので、Bearer 付きの要求は合計 300 回未満に抑えること（最後に確かめる）。
+  // 上限に掛かると、確かめたい内容と関係の無い 429 で FAIL になるため、想定外の 429 も最後にまとめて報告する。
+  let bearerRequests = 0;
+  const unexpected429 = [];
+
+  async function call(method, path, { token, body, rawBody, origin = ORIGIN, headers = {}, allow429 = false } = {}) {
     const h = { ...headers };
+    if (token) bearerRequests++;
     if (origin) h.Origin = origin;
     if (token) h.Authorization = `Bearer ${token}`;
     if (body !== undefined || rawBody !== undefined) h['Content-Type'] = 'application/json';
@@ -174,6 +189,7 @@ async function main() {
       headers: h,
       body: rawBody !== undefined ? rawBody : body !== undefined ? JSON.stringify(body) : undefined,
     });
+    if (res.status === 429 && !allow429) unexpected429.push(`${method} ${path}`);
     const text = await res.text();
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch { json = text; }
@@ -183,6 +199,7 @@ async function main() {
 
   /** fetch は URL の %2E%2E を .. として正規化してしまうので、パスをそのまま送る */
   function rawPost(path, token, body) {
+    bearerRequests++;
     return new Promise((resolve, reject) => {
       const req = http.request(
         { host: '127.0.0.1', port: server.address().port, path, method: 'POST', headers: { Origin: ORIGIN, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } },
@@ -207,6 +224,7 @@ async function main() {
     collider: await idTokenFor('uid-collider', { lineId: 'x_Umallory' }),
     frank: await idTokenFor('uid-frank', { lineId: 'Ufrank' }),
     gina: await idTokenFor('uid-gina', { lineId: 'Ugina' }),
+    ivan: await idTokenFor('uid-ivan', { lineId: 'Uivan' }),
     noLineId: await idTokenFor('uid-nolineid'),
     anonymous: await anonymousIdToken(),
   };
@@ -219,6 +237,7 @@ async function main() {
       const r = await call('OPTIONS', '/household/settlement?groupId=g1', { headers: { 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' } });
       check('プリフライトは 204', r.status === 204);
       check('許可オリジンに ACAO', acao(r) === ORIGIN);
+      check('Vary: Origin', r.headers.get('vary') === 'Origin');
       check('Authorization を許可', (r.headers.get('access-control-allow-headers') || '').includes('Authorization'));
       check('GET, POST, OPTIONS を許可', r.headers.get('access-control-allow-methods') === 'GET, POST, OPTIONS');
       check('Allow-Credentials は付けない', r.headers.get('access-control-allow-credentials') === null);
@@ -417,6 +436,28 @@ async function main() {
       check('LINE は立替者 2 人なので従来どおり pair（Left → Bob ¥1,000）', lineWithLeft.basis === 'pair' && lineWithLeft.settlement && lineWithLeft.settlement.fromUserId === 'Uleft' && lineWithLeft.settlement.toUserId === 'Ubob' && lineWithLeft.settlement.amount === 1000, lineWithLeft.settlement);
     }
 
+    // ---------------- Q15 の相手の表示名（仮名「作成者」） ----------------
+    console.log('\nQ15 の相手の表示名（メンバー文書が仮名「作成者」のまま）');
+    {
+      const r = await call('GET', '/household/settlement?groupId=g5', { token: tokens.ivan });
+      check('Web: single_advancer で Hana → Ivan ¥3,000', r.status === 200 && r.body.basis === 'single_advancer' && r.body.settlement && r.body.settlement.fromUserId === 'Uhana' && r.body.settlement.toUserId === 'Uivan' && r.body.settlement.amount === 3000, r.body);
+      check('Web: 仮名「作成者」は表示名として返さない（空文字）', JSON.stringify(r.body.participants) === JSON.stringify([{ lineId: 'Uhana', displayName: '', isMember: true }, { lineId: 'Uivan', displayName: 'Ivan', isMember: true }]), r.body.participants);
+
+      const summaries = await getAdvanceSummaryByUser('C_line5', true);
+      const resolved = await computeLineGroupSettlement('C_line5', summaries, async (id) => (id === 'Uhana' ? 'Hana' : undefined));
+      check('LINE: 補った相手の名前は LINE のプロフィールで補う', resolved.basis === 'single_advancer' && resolved.settlement && resolved.settlement.fromUserName === 'Hana' && resolved.settlement.toUserName === 'Ivan' && resolved.settlement.amount === 3000, resolved.settlement);
+      const noResolver = await computeLineGroupSettlement('C_line5', summaries);
+      check('LINE: 引けなければ User_xxxxxx（仮名を出さない）', noResolver.settlement && noResolver.settlement.fromUserName === 'User_Uhana', noResolver.settlement);
+      const rejected = await computeLineGroupSettlement('C_line5', summaries, () => Promise.reject(new Error('404')));
+      check('LINE: プロフィール取得が失敗しても User_xxxxxx で金額を出す', rejected.settlement && rejected.settlement.fromUserName === 'User_Uhana' && rejected.settlement.amount === 3000, rejected.settlement);
+      check('LINE: どの結果にも「作成者」が出ない', ![resolved, noResolver, rejected].some((x) => JSON.stringify(x).includes('作成者')));
+
+      // 作成者も立て替えれば、立替に記録された名前を使う
+      await db.doc('expenses/adv_h1').set({ lineId: 'Uhana', payerId: 'Uhana', userDisplayName: 'はな', groupId: 'g5', lineGroupId: 'C_line5', amount: 1000, description: '日用品', date: '2026-09-21', category: '日用品', status: 'advance_pending', advanceBy: 'Uhana', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-21T01:00:00Z') });
+      const pair = await call('GET', '/household/settlement?groupId=g5', { token: tokens.ivan });
+      check('Web: 作成者の立替があれば立替の名前（はな）', pair.body.basis === 'pair' && pair.body.participants[0].displayName === 'はな' && pair.body.settlement && pair.body.settlement.amount === 2500, pair.body);
+    }
+
     // ---------------- Q17: 計算できない世帯 ----------------
     console.log('\nQ17（計算できない世帯）');
     {
@@ -461,7 +502,7 @@ async function main() {
       check('失敗 3 回の後でも成功は 5 回まで通る', statuses.every((st) => st === 200), statuses);
       await addAdvance(5);
       const view = await call('GET', '/household/settlement?groupId=g4', { token: tokens.frank });
-      const limited = await call('POST', '/household/settlement/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: view.body.expenseIds } });
+      const limited = await call('POST', '/household/settlement/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: view.body.expenseIds }, allow429: true });
       check('6 回目の記録は 429 rate_limited', limited.status === 429 && limited.body && limited.body.error === 'rate_limited', limited.status);
       check('429 にも CORS ヘッダー', acao(limited) === ORIGIN);
       const pending = (await db.doc('expenses/lim_5').get()).data();
@@ -472,10 +513,10 @@ async function main() {
       // 全ルート共通の上限は失敗も数える（メンバー外が 403 を連打しても 60 回/分で止まる）
       const seen = [];
       for (let i = 0; i < 61 && seen[seen.length - 1] !== 429; i++) {
-        seen.push((await call('GET', '/household/settlement?groupId=g1', { token: tokens.stranger })).status);
+        seen.push((await call('GET', '/household/settlement?groupId=g1', { token: tokens.stranger, allow429: true })).status);
       }
       check('403 の連打も 60 回/分で 429', seen[seen.length - 1] === 429 && seen.slice(0, -1).every((st) => st === 403), `${seen.length} 回目 ${seen[seen.length - 1]}`);
-      const strangerSettle = await call('POST', '/household/settlement/settle', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: [] } });
+      const strangerSettle = await call('POST', '/household/settlement/settle', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: [] }, allow429: true });
       check('上限に達すると精算の記録も 429', strangerSettle.status === 429);
     }
 
@@ -497,6 +538,10 @@ async function main() {
       const revoked = await call('GET', '/household/settlement?groupId=g1', { token: tokens.bob });
       check('revokeRefreshTokens 後の古いトークンは 401', revoked.status === 401 && revoked.body.error === 'unauthenticated' && acao(revoked) === ORIGIN, revoked.body);
     }
+    // ---------------- 要求数の予算 ----------------
+    console.log('\n要求数の予算（認証前の IP 上限 300 回/分）');
+    check(`Bearer 付きの要求は 300 回未満（${bearerRequests} 回）`, bearerRequests < 300);
+    check('想定外の 429 が無い', unexpected429.length === 0, unexpected429);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

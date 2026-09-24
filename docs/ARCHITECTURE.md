@@ -192,7 +192,7 @@ line-kakeibo/
 │     ├─ expenseActions.ts   # 支出の確認の判定とトランザクション（LINE postback と Web API で共用）
 │     ├─ householdApi.ts     # Web 向け /household API（ID トークン認証・メンバー確認・CORS・レート制限）
 │     ├─ householdSettlement.ts # 精算額の決め方（LINE の立替一覧/精算と Web で共用）
-│     ├─ webOrigins.ts       # Web オリジンの許可リスト
+│     ├─ webOrigins.ts       # Web オリジンの許可リスト（/auth/line と /household で共用）
 │     ├─ geminiCategoryClassifier.ts / categoryNormalization.ts
 │     ├─ linkUserResolver.ts / userLinks.ts / syncUserLinks.ts
 │     ├─ issueCreator.ts     # フィードバック→GitHub Issue

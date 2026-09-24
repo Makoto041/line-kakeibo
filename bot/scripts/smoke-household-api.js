@@ -10,6 +10,8 @@ const assert = require('assert');
 const { decideConfirm, isPendingStatus, SETTLED_REJECTION } = require('../dist/expenseActions');
 const {
   computeHouseholdSettlement,
+  computeLineGroupSettlement,
+  fillPartnerName,
   sortActiveMembers,
   isSettlementComputable,
 } = require('../dist/householdSettlement');
@@ -190,6 +192,13 @@ const member = (lineId, displayName = `${lineId}さん`) => ({ lineId, displayNa
   const r = computeHouseholdSettlement([summary('a', 100)], [member('a'), member('a', '重複'), member('b')]);
   check('メンバーの lineId 重複は 1 人として数える', r.basis === 'single_advancer' && r.participants.length === 2);
 }
+{
+  // 世帯作成時の仮名「作成者」（firestore.ts の createGroup）は名前として扱わない
+  const r = computeHouseholdSettlement([summary('a', 10000)], [member('a'), member('b', '作成者')]);
+  check('補った相手の仮名「作成者」は空文字（Web が補う）', r.basis === 'single_advancer' && r.participants[1].displayName === '' && r.settlement && r.settlement.fromUserName === '', JSON.stringify(r));
+  const own = computeHouseholdSettlement([summary('a', 3000, 'あきら'), summary('b', 1000)], [member('a', '作成者'), member('b')]);
+  check('作成者に立替があれば立替の名前を使う', own.participants[0].displayName === 'あきら');
+}
 
 // ------------------------------------------------------------
 console.log('\nsortActiveMembers');
@@ -204,6 +213,12 @@ console.log('\nsortActiveMembers');
   ]);
   check('joinedAt 昇順・重複除去・脱退者除外・joinedAt 無しは末尾', deepEqual(sorted.map((m) => m.lineId), ['a', 'b', 'd']), JSON.stringify(sorted));
   check('重複した文書の表示名で空を補う', sorted[0].displayName === 'A');
+  const placeholder = sortActiveMembers([
+    { groupId: 'g', lineId: 'a', displayName: '作成者', joinedAt: ts(1000), isActive: true },
+    { groupId: 'g', lineId: 'a', displayName: 'あきら', joinedAt: ts(2000), isActive: true },
+    { groupId: 'g', lineId: 'b', displayName: '作成者', joinedAt: ts(3000), isActive: true },
+  ]);
+  check('仮名「作成者」は空として扱い、他の文書の名前で補う', placeholder[0].displayName === 'あきら' && placeholder[1].displayName === '', JSON.stringify(placeholder));
 }
 
 // ------------------------------------------------------------
@@ -269,6 +284,75 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
   check('不正な groupId は読まずに不可', (await authorizeExpenseWrite(fakeTx, fakeDb, { groupId: 'a/b', lineId: 'me' }, 'me')) === false && !reads.some((p) => p.includes('a/b')));
 
   // ------------------------------------------------------------
+  console.log('\nfillPartnerName（LINE で補った相手の表示名）');
+  {
+    const single = (partnerName) => computeHouseholdSettlement([summary('a', 10000, 'あきら')], [member('a'), member('b', partnerName)], { legacyPair: true });
+    const calls = [];
+    const resolver = async (id) => {
+      calls.push(id);
+      return 'ゆい（LINE）';
+    };
+
+    const named = await fillPartnerName(single('ゆい'), [summary('a', 10000, 'あきら')], resolver);
+    check('メンバー名があればそのまま（プロフィールを引かない）', named.settlement.fromUserName === 'ゆい' && calls.length === 0);
+
+    const resolved = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], resolver);
+    check('仮名「作成者」なら LINE のプロフィールで補う', resolved.settlement.fromUserName === 'ゆい（LINE）' && resolved.settlement.toUserName === 'あきら' && deepEqual(calls, ['b']), JSON.stringify(resolved.settlement));
+    check('participants の名前も補う', resolved.participants[1].displayName === 'ゆい（LINE）');
+    check('金額・向きは変えない', resolved.settlement.fromUserId === 'b' && resolved.settlement.toUserId === 'a' && resolved.settlement.amount === 5000);
+
+    const empty = await fillPartnerName(single(''), [summary('a', 10000, 'あきら')]);
+    check('空で resolveName も無ければ User_xxxxxx', empty.settlement.fromUserName === 'User_b');
+
+    const origWarn = console.warn;
+    const warned = [];
+    console.warn = (...args) => warned.push(args.join(' '));
+    let failedLookup;
+    try {
+      failedLookup = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], async () => {
+        throw new Error('404');
+      });
+    } finally {
+      console.warn = origWarn;
+    }
+    check('プロフィール取得に失敗したら User_xxxxxx（警告だけ出す）', failedLookup.settlement.fromUserName === 'User_b' && warned.length === 1);
+
+    const blank = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], async () => '  ');
+    const placeholderAgain = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], async () => '作成者');
+    check('プロフィールが空・「作成者」でも User_xxxxxx', blank.settlement.fromUserName === 'User_b' && placeholderAgain.settlement.fromUserName === 'User_b');
+    check('どの結果にも「作成者」が出ない', ![resolved, empty, failedLookup, blank, placeholderAgain].some((x) => JSON.stringify(x).includes('作成者')));
+
+    const pair = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [], { legacyPair: true });
+    check('pair はそのまま返す', (await fillPartnerName(pair, [summary('a', 3000), summary('b', 1000)], resolver)) === pair);
+  }
+
+  // ------------------------------------------------------------
+  console.log('\ncomputeLineGroupSettlement（メンバーを読むのは立替者 1 人のときだけ）');
+  {
+    // このスモークでは Firebase を初期化しないので、メンバーを読もうとすると失敗してログが出る
+    const origWarn = console.warn;
+    const origError = console.error;
+    const logs = [];
+    console.warn = (...args) => logs.push(args.join(' '));
+    console.error = (...args) => logs.push(args.join(' '));
+    let pair, many, none, single;
+    let logsAfterUnchanged;
+    try {
+      pair = await computeLineGroupSettlement('C1', [summary('a', 3000), summary('b', 1000)]);
+      many = await computeLineGroupSettlement('C1', [summary('a', 3000), summary('b', 1000), summary('c', 500)]);
+      none = await computeLineGroupSettlement('C1', []);
+      logsAfterUnchanged = logs.length;
+      single = await computeLineGroupSettlement('C1', [summary('a', 3000)]);
+    } finally {
+      console.warn = origWarn;
+      console.error = origError;
+    }
+    check('立替者 2 人は Firestore を読まずに従来どおり pair', logsAfterUnchanged === 0 && pair.basis === 'pair' && deepEqual(pair.settlement, calculateSettlement([summary('a', 3000), summary('b', 1000)])));
+    check('立替者 3 人・0 人も読まない（金額なし / none）', many.basis === 'undeterminable' && many.settlement === null && none.basis === 'none');
+    check('立替者 1 人だけメンバーを読む（読めなければ従来どおり金額なし）', logs.length > logsAfterUnchanged && single.basis === 'undeterminable' && single.settlement === null);
+  }
+
+  // ------------------------------------------------------------
   console.log('\nisAllowedWebOrigin');
   delete process.env.WEB_ORIGINS;
   check('本番は可', isAllowedWebOrigin('https://line-kakeibo.vercel.app'));
@@ -304,7 +388,16 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
   }
   {
     const res = fakeRes();
-    householdErrorHandler(new Error('boom'), { headers: { origin: 'https://evil.example.com' }, method: 'POST' }, res, () => {});
+    // 500 のときの console.error（household: unexpected error: boom）は期待どおりなので出さない
+    const origError = console.error;
+    const errors = [];
+    console.error = (...args) => errors.push(args.join(' '));
+    try {
+      householdErrorHandler(new Error('boom'), { headers: { origin: 'https://evil.example.com' }, method: 'POST' }, res, () => {});
+    } finally {
+      console.error = origError;
+    }
+    check('500 は原因をログに出す', errors.length === 1 && errors[0].includes('boom'));
     check('その他の例外は 500 internal', res.statusCode === 500 && deepEqual(res.body, { error: 'internal' }));
     check('許可外のオリジンには ACAO を付けない', res.headers['access-control-allow-origin'] === undefined);
   }
