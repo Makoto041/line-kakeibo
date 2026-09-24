@@ -41,6 +41,42 @@ export function toastKeyForWriteError(error: unknown): ToastKey {
   return 'failed';
 }
 
+/**
+ * 確認（LINE の OK と同じ処理を /household 経由で）。成功したら応答の状態を一覧に反映し、
+ * 集計のキャッシュを捨てる。失敗は短い語のトーストで、一覧は変えない（楽観更新はしない）。
+ */
+export function useConfirmExpense({
+  patchLocal,
+  onChanged,
+}: {
+  patchLocal: (id: string, patch: Partial<Expense>) => void;
+  onChanged?: () => void;
+}) {
+  const toast = useToast();
+  return useCallback(
+    async (id: string): Promise<boolean> => {
+      try {
+        const result = await confirmExpense(id);
+        patchLocal(id, {
+          ...(result.status ? { status: result.status } : {}),
+          includeInTotal: result.includeInTotal,
+          confirmed: result.confirmed,
+          advanceBy: result.advanceBy ?? undefined,
+          ...(result.category ? { category: normalizeCategoryName(result.category) } : {}),
+        });
+        invalidateStatsCache();
+        onChanged?.();
+        return true;
+      } catch (error) {
+        console.error('Failed to confirm expense:', error);
+        toast.show(householdErrorToast(error));
+        return false;
+      }
+    },
+    [patchLocal, onChanged, toast]
+  );
+}
+
 interface ExpenseSheetsProps {
   sheet: ExpenseSheet | null;
   setSheet: (sheet: ExpenseSheet | null) => void;
@@ -104,24 +140,10 @@ export function ExpenseSheets({
     }
   };
 
+  const confirmTarget = useConfirmExpense({ patchLocal, onChanged });
   const confirm = async (): Promise<boolean> => {
     if (!target || isGuest) return false;
-    try {
-      const result = await confirmExpense(target.id);
-      patchLocal(target.id, {
-        ...(result.status ? { status: result.status } : {}),
-        includeInTotal: result.includeInTotal,
-        confirmed: result.confirmed,
-        advanceBy: result.advanceBy ?? undefined,
-        ...(result.category ? { category: normalizeCategoryName(result.category) } : {}),
-      });
-      afterWrite();
-      return true;
-    } catch (error) {
-      console.error('Failed to confirm expense:', error);
-      toast.show(householdErrorToast(error));
-      return false;
-    }
+    return confirmTarget(target.id);
   };
 
   const save = async (update: Partial<EditForm>): Promise<boolean> => {

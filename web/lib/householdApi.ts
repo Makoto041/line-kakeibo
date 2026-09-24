@@ -15,10 +15,11 @@ import {
   type HouseholdErrorCode,
   type SettleResult,
   type SettlementResponse,
+  type SettlementTransfer,
 } from './householdContract';
 import type { ToastKey } from './uiText';
 
-export type { ConfirmedExpensePatch, HouseholdErrorCode, SettleResult, SettlementResponse };
+export type { ConfirmedExpensePatch, HouseholdErrorCode, SettleResult, SettlementResponse, SettlementTransfer };
 
 const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_SETTLE_IDS = 500;
@@ -140,17 +141,35 @@ export async function fetchSettlement(groupId: string): Promise<SettlementRespon
 export type SettleOutcome = ({ ok: true } & SettleResult) | { ok: false; stale: SettlementResponse };
 
 /**
- * 精算を記録する。表示した対象（expectedExpenseIds）とサーバーの未精算が食い違うときは
- * 例外ではなく最新の内容（stale）を返すので、画面を差し替えてもう一度押してもらう。
+ * 精算を記録する。表示した対象（expectedExpenseIds）・精算額（expectedSettlement）とサーバーの
+ * 現在の内容が食い違うときは、例外ではなく最新の内容（stale）を返すので、画面を差し替えてもう一度押してもらう。
  */
-export async function settle(groupId: string, expectedExpenseIds: readonly string[]): Promise<SettleOutcome> {
+export async function settle(
+  groupId: string,
+  expectedExpenseIds: readonly string[],
+  expectedSettlement?: SettlementTransfer | null
+): Promise<SettleOutcome> {
   const ids = Array.from(new Set(expectedExpenseIds));
   if (!isValidDocId(groupId) || ids.length === 0 || ids.length > MAX_SETTLE_IDS || !ids.every(isValidDocId)) {
     throw new HouseholdApiError('invalid_request');
   }
   const res = await send('/household/settlement/settle', {
     method: 'POST',
-    body: { groupId, expectedExpenseIds: ids },
+    body: {
+      groupId,
+      expectedExpenseIds: ids,
+      ...(expectedSettlement !== undefined
+        ? {
+            expectedSettlement: expectedSettlement
+              ? {
+                  fromUserId: expectedSettlement.fromUserId,
+                  toUserId: expectedSettlement.toUserId,
+                  amount: expectedSettlement.amount,
+                }
+              : null,
+          }
+        : {}),
+    },
   });
   if (res.status === 409) {
     const body = res.body as { error?: unknown; current?: unknown } | null;

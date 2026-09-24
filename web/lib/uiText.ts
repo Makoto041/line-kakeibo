@@ -42,6 +42,9 @@ export const T = {
     advanceOf: 'の立替',
     breakdown: '内訳',
     settle: '精算を記録',
+    // シートの中
+    count: (n: number) => `${n}件`,
+    cancel: 'キャンセル',
   },
   // アイコンだけのボタンのアクセシブルネーム（画面には出さない）
   aria: {

@@ -1,5 +1,6 @@
 import dayjs from 'dayjs';
 import type { Expense, ExpenseStats } from './hooks';
+import type { SettlementMember } from './householdContract';
 
 /**
  * ゲスト（プレビュー）モード用のサンプルデータ。
@@ -20,6 +21,8 @@ interface SampleState {
   status?: Expense['status'] | null;
   includeInTotal?: boolean;
   confirmed?: boolean;
+  /** 立替者（status が advance_* のとき） */
+  advanceBy?: string;
 }
 
 function buildSampleExpense(
@@ -41,13 +44,24 @@ function buildSampleExpense(
     includeInTotal: state.includeInTotal ?? true,
     confirmed: state.confirmed ?? true,
     ...(status ? { status } : {}),
+    ...(state.advanceBy ? { advanceBy: state.advanceBy } : {}),
     inputSource: 'line_text',
     // 同じ日の並び（登録の新しい順）を安定させる
     createdAt: new Date(dayjs().subtract(offsetDays, 'day').startOf('day').valueOf() + (100 - id) * 60_000),
   };
 }
 
-/** サンプル支出データ（要確認 2 件を含む。1 件はカード取込の未確認、1 件は手入力の未確認） */
+/** サンプルの世帯（ふたりタブ・立替の立替者） */
+export const SAMPLE_GROUP_ID = 'sample-household';
+export const SAMPLE_MEMBERS: readonly SettlementMember[] = [
+  { lineId: 'guest', displayName: 'あおい', isMember: true },
+  { lineId: 'guest-partner', displayName: 'はると', isMember: true },
+];
+
+/**
+ * サンプル支出データ（要確認 2 件を含む。1 件はカード取込の未確認、1 件は手入力の未確認）。
+ * 未精算の立替 3 件（ふたりタブのサンプル精算の元）と精算済み 1 件も含む。
+ */
 export function getSampleExpenses(): Expense[] {
   return [
     buildSampleExpense(1, 0, 850, 'ランチ', '食費'),
@@ -55,8 +69,12 @@ export function getSampleExpenses(): Expense[] {
     buildSampleExpense(3, 1, 440, '電車代', '交通費', { status: null, includeInTotal: false, confirmed: false }),
     buildSampleExpense(4, 3, 1280, 'ドラッグストア', '日用品'),
     buildSampleExpense(5, 5, 520, 'カフェ', '食費'),
-    buildSampleExpense(6, 7, 1900, '映画', '娯楽費'),
+    buildSampleExpense(6, 7, 1900, '映画', '娯楽'),
     buildSampleExpense(7, 10, 3980, '携帯料金', '通信費'),
+    buildSampleExpense(8, 2, 6480, '日用品まとめ買い', '日用品', { status: 'advance_pending', advanceBy: 'guest' }),
+    buildSampleExpense(9, 4, 2860, '外食', '食費', { status: 'advance_pending', advanceBy: 'guest' }),
+    buildSampleExpense(10, 6, 1740, 'ホームセンター', '日用品', { status: 'advance_pending', advanceBy: 'guest-partner' }),
+    buildSampleExpense(11, 12, 5200, 'ガス代', '光熱費', { status: 'advance_settled', advanceBy: 'guest-partner' }),
   ];
 }
 
@@ -83,3 +101,4 @@ export function getSampleStats(): ExpenseStats {
     dailyTotals,
   };
 }
+

@@ -109,12 +109,14 @@ export function buildLocalSettlementResponse(input: {
   for (const id of memberIds) totals[id] = 0;
   for (const s of summaries) totals[s.userId] = (totals[s.userId] ?? 0) + s.totalAdvanced;
   const { basis, settlement } = computeHouseholdSettlement(summaries, memberIds);
+  const people = new Set([...memberIds, ...summaries.map((s) => s.userId)]);
   return {
     groupId: input.groupId,
     scope: 'group',
     members: input.members.map((m) => ({ ...m })),
     totals,
     basis,
+    reason: basis === 'undeterminable' ? (people.size > 2 ? 'more_than_two' : 'partner_unknown') : null,
     settlement,
     items: pending.map((e) => ({
       id: e.id,
@@ -189,9 +191,14 @@ export interface SettlementViewModel {
   canOpenBreakdown: boolean;
 }
 
+/** 表示名（応答の名前が空なら、世帯のメンバー名で補う） */
+function displayNameOf(m: SettlementMember, fallbackNames?: Readonly<Record<string, string>>): string {
+  return m.displayName.trim() || fallbackNames?.[m.lineId]?.trim() || '';
+}
+
 export function buildSettlementViewModel(
   resp: SettlementResponse | null,
-  opts: { apiAvailable: boolean; guest: boolean }
+  opts: { apiAvailable: boolean; guest: boolean; fallbackNames?: Readonly<Record<string, string>> }
 ): SettlementViewModel {
   if (!resp) {
     return {
@@ -208,12 +215,12 @@ export function buildSettlementViewModel(
     };
   }
 
-  const initials = initialsFor(resp.members.map((m) => m.displayName));
+  const initials = initialsFor(resp.members.map((m) => displayNameOf(m, opts.fallbackNames)));
   const people = new Map<string, SettlementPerson>();
   resp.members.forEach((m, i) => {
     people.set(m.lineId, {
       lineId: m.lineId,
-      name: m.displayName,
+      name: displayNameOf(m, opts.fallbackNames),
       initial: initials[i],
       tone: i === 0 ? 'a' : i === 1 ? 'b' : 'neutral',
     });
@@ -253,10 +260,15 @@ export interface BreakdownGroup {
 }
 
 /** 内訳: 立替者ごと（メンバーの並び → メンバー外）に合計と明細をまとめる */
-export function groupSettlementItems(resp: SettlementResponse): BreakdownGroup[] {
-  const names = new Map(resp.members.map((m) => [m.lineId, m.displayName]));
+export function groupSettlementItems(
+  resp: SettlementResponse,
+  fallbackNames?: Readonly<Record<string, string>>
+): BreakdownGroup[] {
+  const names = new Map(resp.members.map((m) => [m.lineId, displayNameOf(m, fallbackNames)]));
   const groups = new Map<string, BreakdownGroup>();
-  for (const m of resp.members) groups.set(m.lineId, { lineId: m.lineId, name: m.displayName, total: 0, items: [] });
+  for (const m of resp.members) {
+    groups.set(m.lineId, { lineId: m.lineId, name: names.get(m.lineId) ?? '', total: 0, items: [] });
+  }
   for (const item of resp.items) {
     const key = item.advanceBy ?? '';
     let group = groups.get(key);
@@ -268,4 +280,20 @@ export function groupSettlementItems(resp: SettlementResponse): BreakdownGroup[]
     group.items.push(item);
   }
   return Array.from(groups.values()).filter((g) => g.items.length > 0);
+}
+
+/** 精算を記録できたあとの内容（未精算なし）。取り直しが終わるまで古い金額を出さないために使う */
+export function clearedSettlement(resp: SettlementResponse): SettlementResponse {
+  const totals: Record<string, number> = {};
+  for (const m of resp.members) if (m.isMember) totals[m.lineId] = 0;
+  return {
+    ...resp,
+    members: resp.members.filter((m) => m.isMember),
+    totals,
+    basis: 'none',
+    reason: null,
+    settlement: null,
+    items: [],
+    expenseIds: [],
+  };
 }

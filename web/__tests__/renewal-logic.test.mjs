@@ -35,7 +35,7 @@ import {
   idealProgress,
   buildCategoryBudgetRows,
 } from '../lib/budgetAnalytics.ts';
-import { getSampleExpenses, getSampleStats } from '../lib/sampleData.ts';
+import { getSampleExpenses, getSampleStats, SAMPLE_MEMBERS } from '../lib/sampleData.ts';
 import { shortPeriodLabel } from '../lib/periodLabel.ts';
 import {
   formFromExpense,
@@ -69,6 +69,7 @@ import {
   initialsFor,
   buildSettlementViewModel,
   groupSettlementItems,
+  clearedSettlement,
 } from '../lib/settlementView.ts';
 
 const ME = 'U-me';
@@ -841,4 +842,61 @@ test('ゲスト用サンプル: 要確認 2 件・集計は計上するものだ
   const referenceAmounts = [42600, 237400, 280000, 4200, 12400, 4000, 2480, 1200, 720];
   for (const e of list) assert.equal(referenceAmounts.includes(e.amount), false, `${e.description} ${e.amount}`);
   assert.equal(referenceAmounts.includes(stats.totalAmount), false);
+});
+
+test('parseSettlementResponse: bot の participants・reason を読む', () => {
+  const parsed = parseSettlementResponse({
+    groupId: 'g1',
+    scope: 'line_group',
+    participants: [
+      { lineId: 'U-a', displayName: 'aoi', isMember: true },
+      { lineId: 'U-b', displayName: '', isMember: true },
+      { lineId: 'U-x', displayName: 'old', isMember: false },
+    ],
+    totals: { 'U-a': 100, 'U-b': 0, 'U-x': 50 },
+    basis: 'undeterminable',
+    reason: 'more_than_two',
+    settlement: null,
+    items: [],
+    expenseIds: ['e1'],
+    asOf: 'now',
+  });
+  assert.equal(parsed.members.length, 3);
+  assert.equal(parsed.members[2].isMember, false);
+  assert.equal(parsed.reason, 'more_than_two');
+  // 計算できないときはメンバーの行を出さず、金額は —（null）、ボタンは無効
+  const vm = buildSettlementViewModel(parsed, { apiAvailable: true, guest: false, fallbackNames: { 'U-b': 'ben' } });
+  assert.equal(vm.amount, null);
+  assert.deepEqual(vm.rows, []);
+  assert.equal(vm.canSettle, false);
+  assert.equal(vm.right.initial, 'B'); // 空の名前は世帯のメンバー名で補う
+  // reason は undeterminable のときだけ
+  assert.equal(parseSettlementResponse({ ...sampleResponse, reason: 'more_than_two' }).reason, null);
+});
+
+test('clearedSettlement: 精算後は未精算なし・¥0・ボタン無効', () => {
+  const cleared = clearedSettlement(parseSettlementResponse(sampleResponse));
+  assert.equal(cleared.basis, 'none');
+  assert.deepEqual(cleared.expenseIds, []);
+  assert.deepEqual(cleared.totals, { 'U-a': 0, 'U-b': 0 });
+  const vm = buildSettlementViewModel(cleared, { apiAvailable: true, guest: false });
+  assert.equal(vm.amount, 0);
+  assert.equal(vm.idle, true);
+  assert.equal(vm.canSettle, false);
+  assert.equal(vm.canOpenBreakdown, false);
+});
+
+test('ゲスト用のサンプル精算: サンプル支出から導出し、参照画像の金額を使わない', () => {
+  const resp = buildLocalSettlementResponse({
+    groupId: 'sample',
+    members: SAMPLE_MEMBERS,
+    expenses: getSampleExpenses(),
+    asOf: 'now',
+  });
+  assert.equal(resp.basis, 'pair');
+  assert.equal(resp.expenseIds.length, 3);
+  const vm = buildSettlementViewModel(resp, { apiAvailable: true, guest: true });
+  assert.equal(vm.canSettle, false); // ゲストは記録できない
+  const shown = [vm.amount, ...vm.rows.map((r) => r.total)];
+  for (const reference of [4200, 12400, 4000]) assert.ok(!shown.includes(reference));
 });

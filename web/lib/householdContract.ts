@@ -10,7 +10,12 @@ export type SettlementBasis = 'none' | 'pair' | 'single_advancer' | 'undetermina
 export interface SettlementMember {
   lineId: string;
   displayName: string;
+  /** 有効メンバーか（false はメンバー外・脱退済みの立替者） */
+  isMember: boolean;
 }
+
+/** 計算できない理由（basis が undeterminable のときだけ） */
+export type UndeterminableReason = 'more_than_two' | 'partner_unknown';
 
 export interface SettlementTransfer {
   fromUserId: string;
@@ -31,11 +36,12 @@ export interface SettlementItem {
 export interface SettlementResponse {
   groupId: string;
   scope: 'line_group' | 'group';
-  /** 有効メンバー（joinedAt 昇順） */
+  /** 精算の関係者（応答の participants）。有効メンバー（joinedAt 昇順）→ メンバー外の立替者 */
   members: SettlementMember[];
-  /** 有効メンバー全員の立替合計（0 埋め） */
+  /** 関係者全員の立替合計（有効メンバーは 0 埋め） */
   totals: Record<string, number>;
   basis: SettlementBasis;
+  reason: UndeterminableReason | null;
   settlement: SettlementTransfer | null;
   items: SettlementItem[];
   expenseIds: string[];
@@ -144,19 +150,25 @@ function parseTransfer(value: unknown): SettlementTransfer | null {
 /** 応答の形を確かめて型に揃える。必須の形でなければ null */
 export function parseSettlementResponse(json: unknown): SettlementResponse | null {
   if (!isRecord(json)) return null;
-  if (!Array.isArray(json.members) || !Array.isArray(json.expenseIds)) return null;
+  // 関係者は participants（bot の応答）。古い形の members も受け付ける
+  const people = Array.isArray(json.participants) ? json.participants : json.members;
+  if (!Array.isArray(people) || !Array.isArray(json.expenseIds)) return null;
   const basis = BASES.includes(json.basis as SettlementBasis) ? (json.basis as SettlementBasis) : null;
   if (!basis) return null;
 
   const members: SettlementMember[] = [];
-  for (const m of json.members) {
+  for (const m of people) {
     if (!isRecord(m) || !toStr(m.lineId)) continue;
     if (members.some((x) => x.lineId === m.lineId)) continue;
-    members.push({ lineId: toStr(m.lineId), displayName: toStr(m.displayName) });
+    members.push({ lineId: toStr(m.lineId), displayName: toStr(m.displayName), isMember: m.isMember !== false });
   }
 
   const totals: Record<string, number> = {};
   for (const m of members) totals[m.lineId] = 0;
+  const reason: UndeterminableReason | null =
+    basis === 'undeterminable' && (json.reason === 'more_than_two' || json.reason === 'partner_unknown')
+      ? json.reason
+      : null;
   if (isRecord(json.totals)) {
     for (const [id, v] of Object.entries(json.totals)) totals[id] = toNumber(v);
   }
@@ -178,6 +190,7 @@ export function parseSettlementResponse(json: unknown): SettlementResponse | nul
     members,
     totals,
     basis,
+    reason,
     settlement: parseTransfer(json.settlement),
     items,
     expenseIds: json.expenseIds.filter((id): id is string => typeof id === 'string'),
