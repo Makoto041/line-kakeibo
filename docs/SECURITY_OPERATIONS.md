@@ -39,12 +39,17 @@ node scripts/manage-group-members.mjs deactivate --group <groupId> --line-id <li
 
 # メンバーを追加（または再有効化）する。有効なメンバーが既に2名いると拒否する
 node scripts/manage-group-members.mjs add --group <groupId> --line-id <Uxxxxxxxx...> --name <表示名> --apply
+
+# 読み取り専用: lineGroupId だけを持ち groupId を持たない旧形式の支出を数える
+node scripts/manage-group-members.mjs legacy-expenses
 ```
 
 環境変数: `FIREBASE_PROJECT_ID`（既定 `line-kakeibo-0410`）、`GCLOUD_BIN`（既定 `gcloud`）。
 
 **リリース後に一度やること**: `list` で有効なメンバーを確認する。過去の自動追加で 3 人目以降が有効になっていれば、
 `deactivate-unknown` で無効化する。
+あわせて `legacy-expenses` を実行する。新しいルールでは、groupId を持たずに lineGroupId だけを持つ旧形式の支出は、
+登録者本人でも Web から編集・削除できない。オーナーやパートナーの支出が該当していれば、groupId を backfill するか判断する。
 
 ## 3. Firestore ルールの要点（`firestore.rules`）
 
@@ -71,6 +76,8 @@ web で編集できる項目を増やすときは、`editableExpenseKeys()` と 
 レシート（`receipts/{expenseId}/{fileName}`）は cross-service rules（`firestore.get()` / `firestore.exists()`）で
 支出と `groupMembers` を参照し、所有者と有効なメンバーだけに get、アップロード、削除を許す。list はできない。
 アップロードは 5MB 以下の JPEG / PNG / WebP / HEIC / HEIF に限る（SVG と GIF は不可）。
+精算済み（`status == 'advance_settled'`）の支出では、既存レシート（精算額の証跡）の上書きと削除を禁止する。
+新しいレシートの追加（web は常に新しいファイル名で上げる）は、精算後に添付する導線として許可する。
 
 ### 必要な IAM ロール
 
@@ -118,8 +125,15 @@ master へのマージで CI の `deploy-bot` ジョブが `firebase deploy --on
 `serviceAccount:service-<PROJECT_NUMBER>@gcp-sa-firebasestorage.iam.gserviceaccount.com` が表示されることを確かめる
 （無ければ A か B で付与する）。PR 本文のチェックボックス「IAM ロール付与済み・確認済み」にチェックしてからマージする。
 
-CI 側での自動確認は入れていない。デプロイ用サービスアカウントが `resourcemanager.projects.getIamPolicy` を持つとは
-限らず、デプロイジョブに手を入れるとパイプラインを壊すおそれがあるため。
+**自走マージの対象外**: この PR（および cross-service rules を初めて含む PR）は、オーナーが上の確認を明示的に
+済ませるまでマージしない。
+
+補助として、CI の `deploy-bot` ジョブには事前確認ステップ（`Check Storage cross-service rules IAM (preflight)`）がある。
+
+- 上の確認コマンドと同じクエリを実行し、ロールが **無いと確定した場合だけ** `storage` を除外してデプロイし、警告を出す。
+  旧 Storage ルールが残るので、レシート機能がフェイルクローズで止まることはない。ロール付与後の次のデプロイで反映される。
+- デプロイ用サービスアカウントに `resourcemanager.projects.getIamPolicy` が無いなど、確認できない場合は、従来どおり `storage` を
+  含めてデプロイする（パイプラインを壊さない）。この場合は上の手動確認だけが頼りになる。
 
 ## 5. ルールのテスト
 
@@ -127,14 +141,30 @@ CI 側での自動確認は入れていない。デプロイ用サービスア�
 （PR では `pr-checks` の `rules-tests` ジョブが実行する）。
 
 ```bash
-npm i --no-save @firebase/rules-unit-testing firebase-tools@15
+npm i --no-save @firebase/rules-unit-testing@5 firebase@12 firebase-tools@15
 npx firebase emulators:exec --only firestore,storage --project demo-kakeibo \
   "node test/firestore.rules.test.mjs && node test/storage.rules.test.mjs"
 git checkout -- package.json package-lock.json   # --no-save でもロックファイルが変わった場合
 ```
 
-Java 21 以上が必要。HTTP(S) プロキシ環境では、Storage エミュレータから Firestore エミュレータへの
-cross-service 参照もプロキシに送られて失敗することがある。その場合は `HTTP_PROXY` / `HTTPS_PROXY` を外して実行する。
+Java 21 以上が必要。
+
+ローカルで Storage テストの許可ケース（cross-service の `firestore.get()` を含むもの）だけが失敗し、拒否ケースは通る場合は、
+ルールではなく環境の問題を疑う。
+
+- Storage エミュレータは、JVM が起動時に stderr へ出力したもの（例: `Picked up JAVA_TOOL_OPTIONS ...`）を
+  ルール実行時エラー（`Unexpected rules runtime error`）として扱う。`JAVA_TOOL_OPTIONS` が設定された環境では、これで全許可ケースが落ちる。
+- HTTP(S) プロキシ環境では、Storage エミュレータから Firestore エミュレータへの参照がプロキシに送られて失敗することがある。
+
+回避策として、これらの変数を外して実行する。
+
+```bash
+env -u JAVA_TOOL_OPTIONS -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy \
+  npx firebase emulators:exec --only firestore,storage --project demo-kakeibo \
+  "node test/firestore.rules.test.mjs && node test/storage.rules.test.mjs"
+```
+
+GitHub ホストランナーはこれらを設定しないため、CI には影響しない。
 
 ## 6. 既知の残課題
 

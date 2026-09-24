@@ -1,9 +1,14 @@
 // Cloud Storage セキュリティルールのユニットテスト（CI の pr-checks でも実行する）。
 // storage.rules は cross-service rules で Firestore の expenses / groupMembers を参照するため、
 // Firestore と Storage の両エミュレータが必要:
-//   npm i --no-save @firebase/rules-unit-testing firebase-tools@15
+//   npm i --no-save @firebase/rules-unit-testing@5 firebase@12 firebase-tools@15
 //   npx firebase emulators:exec --only firestore,storage --project demo-kakeibo \
 //     "node test/firestore.rules.test.mjs && node test/storage.rules.test.mjs"
+// 【ローカル実行の注意】JVM の起動時に stderr へ何か出力されると（例: JAVA_TOOL_OPTIONS の
+//   "Picked up JAVA_TOOL_OPTIONS ..."）、Storage エミュレータはそれをルール実行時エラーとして
+//   扱い、cross-service の firestore.get() を含む許可ケースだけが失敗する（拒否ケースは通る）。
+//   その場合は `env -u JAVA_TOOL_OPTIONS -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy`
+//   を前置して実行する。GitHub ホストランナーでは該当しない。
 import {
   initializeTestEnvironment,
   assertFails,
@@ -41,6 +46,8 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   // 別の世帯（SG2）の有効メンバー E
   await setDoc(doc(db, 'groupMembers/SG2_E'), { groupId: 'SG2', lineId: 'E', isActive: true });
   // groupId を持たず lineGroupId だけを持つ旧形式の支出（登録者は脱退済みの D）
+  // 精算済みのグループ支出（既存レシートは証跡として上書き・削除できない）
+  await setDoc(doc(db, 'expenses/sSettled'), { lineId: 'B', ...group, amount: 700, date: '2026-08-01', status: 'advance_settled' });
   await setDoc(doc(db, 'expenses/sLegacyD'), { lineId: 'D', lineGroupId: 'SL1', amount: 600, date: '2026-08-01' });
 
   // 既存ファイル（読み取り・削除の検証用）
@@ -50,6 +57,7 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await st.ref('receipts/sGroup/toDelete.jpg').put(new Uint8Array([1, 2, 3]), jpeg);
   await st.ref('receipts/sPersonalA/existing.jpg').put(new Uint8Array([1, 2, 3]), jpeg);
   await st.ref('receipts/sByD/existing.jpg').put(new Uint8Array([1, 2, 3]), jpeg);
+  await st.ref('receipts/sSettled/existing.jpg').put(new Uint8Array([1, 2, 3]), jpeg);
   await st.ref('other/file.jpg').put(new Uint8Array([1, 2, 3]), jpeg);
 });
 
@@ -73,8 +81,16 @@ const del = (st, path) => st.ref(path).delete();
 console.log('Storage rules tests:');
 
 // --- アップロード（create） -------------------------------------------------
+// 最初の許可ケース。cross-service の firestore.get() がエミュレータで評価できないと
+// 許可ケースだけが失敗するため、ここで失敗したら環境要因のヒントを出す。
 await test('有効メンバーはグループ支出にレシートを上げられる（JPEG）', async () => {
-  await assertSucceeds(put(userA, 'receipts/sGroup/a.jpg', bytes(1024), 'image/jpeg'));
+  try {
+    await assertSucceeds(put(userA, 'receipts/sGroup/a.jpg', bytes(1024), 'image/jpeg'));
+  } catch (e) {
+    console.error('       ヒント: 許可ケースが失敗する場合は cross-service rules の評価失敗を疑う'
+      + '（JAVA_TOOL_OPTIONS / HTTP(S)_PROXY を外して再実行。docs/SECURITY_OPERATIONS.md §5）');
+    throw e;
+  }
 });
 await test('有効メンバーは Gmail 取込のグループ支出にも上げられる（WebP / PNG / HEIC）', async () => {
   await assertSucceeds(put(userA, 'receipts/sGmail/a.webp', bytes(10), 'image/webp'));
@@ -165,6 +181,16 @@ await test('★ 脱退済みメンバーはレシートを削除できない', a
 });
 await test('★ 別の世帯のメンバーはレシートを削除できない', async () => {
   await assertFails(del(userE, 'receipts/sGroup/toDelete.jpg'));
+});
+await test('精算済み支出: メンバーはレシートを取得でき、新しいレシートの追加もできる', async () => {
+  await assertSucceeds(get(userA, 'receipts/sSettled/existing.jpg'));
+  await assertSucceeds(put(userA, 'receipts/sSettled/new.jpg', bytes(10), 'image/jpeg'));
+});
+await test('★ 精算済み支出: メンバーでも既存レシートを上書きできない', async () => {
+  await assertFails(put(userA, 'receipts/sSettled/existing.jpg', bytes(10), 'image/jpeg'));
+});
+await test('★ 精算済み支出: メンバーでも既存レシートを削除できない', async () => {
+  await assertFails(del(userA, 'receipts/sSettled/existing.jpg'));
 });
 await test('有効メンバーはレシートを削除できる', async () => {
   await assertSucceeds(del(userA, 'receipts/sGroup/toDelete.jpg'));

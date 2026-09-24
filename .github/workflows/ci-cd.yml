@@ -295,14 +295,47 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+      # storage.rules は cross-service rules（firestore.get()）を使うため、Storage の
+      # サービスエージェントに roles/firebaserules.firestoreServiceAgent が必要。
+      # 非対話の firebase deploy はこれを確認しないので、ここで事前確認する。
+      #   - ロールが「無い」と確定した場合だけ storage を除外してデプロイし、警告を出す
+      #     （旧 Storage ルールが残り、レシート機能がフェイルクローズで止まるのを防ぐ）。
+      #   - 権限不足・gcloud 不在などで確認できない場合は従来どおり storage を含める
+      #     （パイプラインを壊さない）。
+      # 詳細と付与手順: docs/SECURITY_OPERATIONS.md §4
+      - name: Check Storage cross-service rules IAM (preflight)
+        id: storage_iam
+        continue-on-error: true
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID || 'line-kakeibo-0410' }}
+        run: |
+          set +e
+          targets="functions,firestore:rules,firestore:indexes,storage"
+          members=$(gcloud projects get-iam-policy "$FIREBASE_PROJECT_ID" \
+            --flatten="bindings[].members" \
+            --filter="bindings.role:roles/firebaserules.firestoreServiceAgent" \
+            --format="value(bindings.members)" 2>/dev/null)
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "::warning::Storage サービスエージェントの IAM を確認できませんでした（exit $status）。storage を含めてデプロイします。"
+          elif ! printf '%s\n' "$members" | grep -q '@gcp-sa-firebasestorage\.iam\.gserviceaccount\.com'; then
+            echo "::warning::Storage サービスエージェントに roles/firebaserules.firestoreServiceAgent がありません。storage ルールのデプロイをスキップします（docs/SECURITY_OPERATIONS.md §4 の手順で付与してください）。"
+            targets="functions,firestore:rules,firestore:indexes"
+          else
+            echo "Storage サービスエージェントの IAM ロールを確認しました。"
+          fi
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
       - name: Deploy to Firebase
         run: |
           npm install -g firebase-tools@15
-          firebase deploy --only functions,firestore:rules,firestore:indexes,storage --project "$FIREBASE_PROJECT_ID"
+          firebase deploy --only "$DEPLOY_TARGETS" --project "$FIREBASE_PROJECT_ID"
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
           # 未設定時のフォールバック（空文字を渡すと deploy が落ちるため）
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID || 'line-kakeibo-0410' }}
+          # preflight が失敗・未出力の場合は従来どおり全ターゲット
+          DEPLOY_TARGETS: ${{ steps.storage_iam.outputs.targets || 'functions,firestore:rules,firestore:indexes,storage' }}
 
   # デプロイ後の健全性チェック
   post-deploy-check:

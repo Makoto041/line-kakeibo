@@ -37,12 +37,15 @@ service cloud.firestore {
       return request.auth.token.get('lineId', null);
     }
     // 既存ドキュメントの所有者か（lineId フィールド一致）。
+    // 匿名では myLineId() が null になるため、isSignedIn() だけで判定すると
+    // lineId を持たない（または null の）ドキュメントで null == null が成立してしまう。
+    // 必ず検証済み LINE クレームを要求する。
     function ownsDoc() {
-      return isSignedIn() && resource.data.get('lineId', null) == myLineId();
+      return isLineUser() && resource.data.get('lineId', null) == myLineId();
     }
-    // これから書き込むドキュメントの lineId が自分のものか。
+    // これから書き込むドキュメントの lineId が自分のものか（同上の理由で isLineUser 必須）。
     function writingAsSelf() {
-      return isSignedIn() && request.resource.data.lineId == myLineId();
+      return isLineUser() && request.resource.data.get('lineId', null) == myLineId();
     }
     // 支出ドキュメントが属するアプリ内グループのID（無ければ null）。
     // 直接 resource.data.groupId を参照すると、フィールドを持たないドキュメントで

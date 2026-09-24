@@ -792,6 +792,14 @@ async function handleTextMessage(event: any) {
   }
 }
 
+// 発言元の LINE グループに紐づくメンバーシップを優先して選ぶ（無ければ先頭）。
+// 複数のグループに所属していても、世帯の LINE グループでの発言が別グループの支出や
+// 個人支出として保存されないようにする。
+function pickActiveGroup(groups: any[] | undefined, lineGroupId: string | null) {
+  if (!groups || groups.length === 0) return null;
+  return (lineGroupId && groups.find((g) => g?.lineGroupId === lineGroupId)) || groups[0] || null;
+}
+
 // ユーザー情報キャッシュ（メモリ内、15分TTL）
 const userProfileCache = new Map<string, { profile: any; groups: any[]; timestamp: number }>();
 const CACHE_TTL = 15 * 60 * 1000; // 15分
@@ -802,6 +810,12 @@ async function processExpenseInBackground(
   replyToken?: string
 ) {
   try {
+    // LINE は利用規約に同意していないユーザーのグループ内イベントで userId を省く。
+    // lineId を持たない支出は所有者が定まらないため保存しない。
+    if (!event?.source?.userId) {
+      console.warn("Skipping expense: event.source.userId is missing (user has not consented to the LINE OA terms)");
+      return;
+    }
     console.log("Starting optimized background expense processing...");
 
     // 並列実行のためのプロミス配列
@@ -827,7 +841,7 @@ async function processExpenseInBackground(
         // キャッシュヒット - 高速化
         console.log("Using cached user profile (fast path)");
         userDisplayName = cached.profile.displayName;
-        activeGroup = cached.groups[0] || null;
+        activeGroup = pickActiveGroup(cached.groups, lineGroupId);
       }
 
       if (!hasCachedProfile) {
@@ -892,7 +906,7 @@ async function processExpenseInBackground(
       
       if (cached && (now - cached.timestamp < CACHE_TTL)) {
         console.log("Using cached individual user data (fast path)");
-        activeGroup = cached.groups[0] || null;
+        activeGroup = pickActiveGroup(cached.groups, lineGroupId);
         userDisplayName = cached.profile?.displayName;
       } else {
         // 個人チャットの場合もプロファイルを取得（リトライ機能付き）
@@ -967,7 +981,7 @@ async function processExpenseInBackground(
               break;
             case 'groups':
               if (!value.error && value.data.length > 0) {
-                activeGroup = value.data[0];
+                activeGroup = pickActiveGroup(value.data, lineGroupId);
                 // グループ情報からの名前は使用しない（LINEプロファイルを優先）
               }
               break;

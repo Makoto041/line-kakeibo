@@ -577,6 +577,11 @@ function ExpensesPageContent() {
   };
 
   const handleDeleteExpense = async (id: string) => {
+    const target = expenses.find((e) => e.id === id);
+    if (target?.status === "advance_settled") {
+      alert("精算済みの支出は削除できません");
+      return;
+    }
     if (confirm("この支出を削除しますか？")) {
       try {
         await deleteExpense(id);

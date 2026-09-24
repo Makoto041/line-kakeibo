@@ -22,6 +22,10 @@
  *   # メンバーを追加（または再有効化）する。有効なメンバーが既に 2 名なら拒否する。
  *   node scripts/manage-group-members.mjs add --group <groupId> --line-id <lineId> --name <表示名> [--apply]
  *
+ *   # 読み取り専用: lineGroupId だけを持ち groupId を持たない旧形式の支出を数える
+ *   # （firestore.rules ではクライアントから更新・削除できない形。件数を見て backfill を判断する）
+ *   node scripts/manage-group-members.mjs legacy-expenses [--show-ids]
+ *
  * 認証: gcloud のオーナー権限アクセストークンで Firestore REST API を呼ぶ（ルールを
  * バイパスする）。事前に `gcloud auth login` 済みであること。
  *   環境変数 FIREBASE_PROJECT_ID（既定 line-kakeibo-0410）、GCLOUD_BIN（既定 gcloud）
@@ -51,7 +55,7 @@ const SHOW_IDS = has('show-ids');
 
 function usage(msg) {
   if (msg) console.error(`エラー: ${msg}\n`);
-  console.error('使い方: node scripts/manage-group-members.mjs <list|deactivate-unknown|deactivate|add> [options]');
+  console.error('使い方: node scripts/manage-group-members.mjs <list|deactivate-unknown|deactivate|add|legacy-expenses> [options]');
   console.error('詳細はスクリプト冒頭のコメント、または docs/SECURITY_OPERATIONS.md を参照してください。');
   process.exit(2);
 }
@@ -220,6 +224,36 @@ async function cmdAdd() {
   console.log(`${action}しました: ${label}`);
 }
 
+async function cmdLegacyExpenses() {
+  // lineGroupId を持つ支出を引き、groupId を持たないものだけを数える（読み取り専用）。
+  const res = await fetch(`${BASE}:runQuery`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId: 'expenses' }],
+        where: { unaryFilter: { op: 'IS_NOT_NULL', field: { fieldPath: 'lineGroupId' } } },
+        select: { fields: [{ fieldPath: 'lineGroupId' }, { fieldPath: 'groupId' }, { fieldPath: 'lineId' }] },
+      },
+    }),
+  });
+  if (!res.ok) throw new Error(`runQuery -> HTTP ${res.status} ${await res.text()}`);
+  const rows = (await res.json()).map((r) => r.document).filter(Boolean);
+  const legacy = rows.filter((d) => !str(d, 'groupId'));
+  const groups = await listAll('groups');
+  const byLineGroup = new Map(groups.map((g) => [str(g, 'lineGroupId'), docId(g)]));
+  const counts = new Map();
+  for (const d of legacy) {
+    const key = `${mask(str(d, 'lineGroupId'))} / 登録者 ${mask(str(d, 'lineId'))} / 紐づくグループ ${byLineGroup.get(str(d, 'lineGroupId')) ?? '(なし)'}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  console.log(`lineGroupId を持つ支出: ${rows.length} 件 / うち groupId なし: ${legacy.length} 件`);
+  for (const [key, n] of counts) console.log(`  ${n} 件  ${key}`);
+  if (legacy.length > 0) {
+    console.log('\nこれらは Web から編集・削除できません。必要なら groups.lineGroupId から groupId を backfill してください。');
+  }
+}
+
 switch (command) {
   case 'list':
     await cmdList();
@@ -232,6 +266,9 @@ switch (command) {
     break;
   case 'add':
     await cmdAdd();
+    break;
+  case 'legacy-expenses':
+    await cmdLegacyExpenses();
     break;
   default:
     usage(command ? `不明なコマンド: ${command}` : undefined);

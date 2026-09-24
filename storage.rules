@@ -20,6 +20,10 @@ rules_version = '2';
 //   付与されていないと firestore.get() が失敗し、レシートの読み書きがすべて拒否される
 //   （フェイルクローズ）。CI の非対話デプロイでは firebase-tools はこの確認と付与を
 //   行わないため、初回だけオーナーが付与する（docs/SECURITY_OPERATIONS.md 参照）。
+//   CI の deploy-bot は事前にロールを確認し、無いと確定した場合は storage を除外してデプロイする。
+//
+// 精算済み（status == 'advance_settled'）の支出では、既存レシートの上書き・削除を禁止する
+// （新しいレシートの追加は許可）。
 //
 // 1 回の参照は Firestore の 1 読み取りとして課金される（同一評価内の同一パスは 1 回）。
 // ============================================================================
@@ -61,6 +65,10 @@ service firebase.storage {
       return e.get('lineId', null) == myLineId()
              || (groupId != null && isActiveMember(groupId));
     }
+    // 精算済み（立替を精算した）支出か。firestore.rules の精算済みロックに合わせる。
+    function isSettledExpense(expenseId) {
+      return firestore.get(expensePath(expenseId)).data.get('status', null) == 'advance_settled';
+    }
     function expenseExists(expenseId) {
       return firestore.exists(expensePath(expenseId));
     }
@@ -79,16 +87,24 @@ service firebase.storage {
       allow list: if false;
 
       // create / update: 支出を書き換えられる人が、許可した画像形式で 5MB 以下の場合のみ。
+      // 精算済みの支出では、既存レシート（精算額の証跡）の上書きは禁止する。
+      // 新しいファイルの追加（web は常に `${timestamp}_${name}` の新規パスに上げる）は
+      // 精算後にレシートを添付する導線として許可する。
+      // 既存オブジェクトへのアップロードは create として評価されることがある（エミュレータで確認）
+      // ため、create / update を区別せず「既存オブジェクトがあるか（resource != null）」で判定する。
       allow create, update: if isLineUser()
                             && expenseExists(expenseId)
                             && canWriteExpense(expenseId)
+                            && (resource == null || !isSettledExpense(expenseId))
                             && request.resource.size <= 5 * 1024 * 1024
                             && isAllowedImage();
 
-      // delete: 支出を書き換えられる人だけ。
+      // delete: 支出を書き換えられる人だけ。精算済みの支出のレシートは削除できない
+      // （firestore.rules で精算済み支出の削除を禁止しているのと同じ理由）。
       allow delete: if isLineUser()
                     && expenseExists(expenseId)
-                    && canWriteExpense(expenseId);
+                    && canWriteExpense(expenseId)
+                    && !isSettledExpense(expenseId);
     }
 
     // デフォルト拒否（receipts 以外のパスはクライアントから触れない）。

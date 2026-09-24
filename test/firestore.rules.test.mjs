@@ -1,7 +1,7 @@
 // Firestore セキュリティルールのユニットテスト（CI の pr-checks でも実行する）。
 // テスト用ツール（firebase-tools / @firebase/rules-unit-testing）は依存肥大化・
 // 監査影響を避けるため package.json には含めていない。実行する場合はアドホックに:
-//   npm i --no-save @firebase/rules-unit-testing firebase-tools@15
+//   npm i --no-save @firebase/rules-unit-testing@5 firebase@12 firebase-tools@15
 //   npx firebase emulators:exec --only firestore,storage --project demo-kakeibo \
 //     "node test/firestore.rules.test.mjs && node test/storage.rules.test.mjs"
 // （Java 21 以上 + エミュレータが必要。リポジトリ直下の firestore.rules を読み込んで検証する）
@@ -93,6 +93,11 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'budgetSettings/B'), { monthlyBudget: 2000 });
   await setDoc(doc(db, 'linkTokens/t1'), { lineId: 'A' });
   await setDoc(doc(db, 'userLinks/appuid-A'), { lineId: 'A' });
+  // lineId を持たない / null の支出（LINE が userId を省いたイベント等で生まれうる形）。
+  // 匿名セッションでは myLineId() が null になるため、null == null で所有者扱い
+  // されないことを確認する。
+  await setDoc(doc(db, 'expenses/noLine'), { amount: 10, date: '2026-08-01' });
+  await setDoc(doc(db, 'expenses/nullLine'), { lineId: null, amount: 20, date: '2026-08-01' });
 });
 
 const unauth = env.unauthenticatedContext().firestore();
@@ -457,6 +462,27 @@ await test('userLinks: 他人の appUid のドキュメントは読めない', a
 await test('★ userLinks: クライアントからは書けない（appUid 解決の汚染防止）', async () => {
   await assertFails(setDoc(doc(userA, 'userLinks/appuid-A'), { lineIds: ['A', 'B'] }));
 });
+// --- lineId を持たない支出（匿名の null == null 対策） -----------------------
+for (const id of ['noLine', 'nullLine']) {
+  await test(`★ 匿名は lineId なしの支出（${id}）を読めない・更新できない・削除できない`, async () => {
+    await assertFails(getDoc(doc(anon, `expenses/${id}`)));
+    await assertFails(updateDoc(doc(anon, `expenses/${id}`), { amount: 1 }));
+    await assertFails(deleteDoc(doc(anon, `expenses/${id}`)));
+  });
+  await test(`★ LINE ユーザーも lineId なしの支出（${id}）は読めない・更新できない`, async () => {
+    await assertFails(getDoc(doc(userC, `expenses/${id}`)));
+    await assertFails(getDoc(doc(userA, `expenses/${id}`)));
+    await assertFails(updateDoc(doc(userC, `expenses/${id}`), { amount: 1 }));
+    await assertFails(deleteDoc(doc(userC, `expenses/${id}`)));
+  });
+}
+await test('★ 匿名は where(lineId == null) で支出を一覧できない', async () => {
+  await assertFails(getDocs(query(collection(anon, 'expenses'), where('lineId', '==', null))));
+});
+await test('★ 匿名は lineId なしの支出を作成できない', async () => {
+  await assertFails(setDoc(doc(anon, 'expenses/newAnonNoLine'), { amount: 5, date: '2026-08-02' }));
+});
+
 await test('default-deny: 未定義コレクションは読めない', async () => {
   await assertFails(getDoc(doc(userA, 'userCustomCategories/x')));
 });
