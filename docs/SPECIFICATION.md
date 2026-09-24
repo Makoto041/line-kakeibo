@@ -38,8 +38,8 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | `グループ作成 <名前>` | グループ作成＋6桁招待コード発行 |
 | `参加 <コード> <表示名>` | 招待コードでグループ参加 |
 | `グループ一覧` | 所属グループ一覧 |
-| `立替一覧` / `立替` | （グループのみ）未精算の立替一覧と精算額計算 |
-| `精算` | （グループのみ）立替を精算済みにする |
+| `立替一覧` / `立替` | （グループのみ）未精算の立替一覧と精算額計算（精算額の決め方は §5.4 の「精算額」。Web のふたりタブと同じ共有関数） |
+| `精算` | （グループのみ）立替を精算済みにする（精算額の表示は `立替一覧` と同じ。計算できない世帯でも記録は行う） |
 | `要望 / 改善 / 不具合 / フィードバック <本文>` | Gemini で内容を解析し GitHub Issue を自動起票（`Makoto041/line-kakeibo`） |
 | その他のテキスト | 支出テキストとしてパース（§2.2）。金額が取れない場合は**無反応**（誤爆防止） |
 
@@ -119,7 +119,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 **変更後の再表示**: LINE は送信済みメッセージを編集できないため、状態を変えたら最新値のカードを `replyToken` で返信する（`buildExpenseCardFromRecord()`）。登録直後のカードと同じビルダーを通すので表現がぶれない。
 
-**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
+**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`。OK の判定 `decideConfirm()` とともに `bot/src/expenseActions.ts` にあり、Web の確認（§5.4）も同じ関数を使う）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
 
 ### 2.6 メッセージ送信ポリシー
 
@@ -192,8 +192,31 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 ### 5.3 データアクセス
 
-- **API Route は無し**（旧 `/api/link` `/api/health` の空スタブは削除済み）。全て**クライアントから Firestore/Storage SDK 直アクセス**
+- **API Route は無し**（旧 `/api/link` `/api/health` の空スタブは削除済み）。読み取りと通常の編集は**クライアントから Firestore/Storage SDK 直アクセス**
+- 例外: 支出の確認（`status` / `confirmed` の変更）と立替の精算は、bot の `api` 関数の認証付き API（§5.4）を経由する（Firestore ルールではクライアントから書けないため）
 - `lib/hooks.ts`: `useLineAuth`（URL の `?lineId=` から識別）、`useExpenses`（個人分＋ユーザーが関わった全 `lineGroupId` のグループ分をマージ）、`useBudgetConfig` ほか
+
+### 5.4 Web 向け API（bot の `api` 関数 `/household`、`bot/src/householdApi.ts`）
+
+ベース URL は `https://us-central1-<project>.cloudfunctions.net/api`（`/auth/line` と同じ関数）。
+
+- **認証**: `Authorization: Bearer <Firebase ID トークン>`。`/auth/line` のカスタムトークンでサインインしたユーザー（`sign_in_provider=custom` かつ `lineId` クレームあり）だけを受け付け、`verifyIdToken(token, true)` で失効も確認する。無し・不正は 401、匿名・`lineId` 無しは 403
+- **認可**: `groupMembers/{groupId}_{lineId}` が `isActive: true`。支出は Firestore ルールの「既存の支出を書ける人」と同じ（`groupId` あり → その世帯の有効メンバー / 個人支出 → 所有者 / `lineGroupId` だけの旧形式 → 不可）。判定はトランザクション内で読む
+- **入力検証**: ID（`:expenseId`・`groupId`・`expectedExpenseIds[]`）は 1〜128 文字の文字列で、`/` を含まず `.` `..` `__…__` でないこと。body は JSON オブジェクト。違反は 400
+- **CORS**: 許可オリジンは `/auth/line` と同じ（`WEB_ORIGINS` / 本番 Vercel・localhost・`line-kakeibo*.vercel.app`）。`Allow-Methods: GET, POST, OPTIONS`、`Allow-Headers: Content-Type, Authorization`、Cookie は使わない。JSON の解析エラーやレート制限の応答にも付ける。**防御線はトークンとメンバー確認**で、CORS ではない
+- **レート制限**: 認証前は IP 単位 300 回/分（`trust proxy` 無しのため実質インスタンス全体の上限）。認証後は lineId 単位で 60 回/分、精算の記録だけ 5 回/分
+- 全応答 `Cache-Control: no-store`。エラーは `{ "error": "<code>" }`（`invalid_request` / `unauthenticated` / `forbidden` / `not_found` / `rate_limited` / `internal` ほか下表）
+
+| メソッド・パス | リクエスト | 成功時 | 主なエラー |
+|---|---|---|---|
+| `POST /household/expenses/:expenseId/actions` | `{ "action": "confirm" }`（これ以外の action は 400） | 200 `{ ok: true, expense: { id, status, includeInTotal, confirmed: true, advanceBy \| null, category, updatedAt(ISO) } }`。LINE の OK と同じ判定: status 無し / `pending` → `shared`・`includeInTotal: true`、それ以外は `confirmed: true` だけ（精算済みも 200） | 403 / 404 |
+| `GET /household/settlement?groupId=<id>` | − | 200 `{ groupId, scope: "line_group"\|"group", members: [{ lineId, displayName }], totals: { <lineId>: 円 }, basis, reason, settlement: { fromUserId, toUserId, amount } \| null, items: [{ id, date, description, amount, category, advanceBy }], expenseIds: [...], asOf }` | 403 / 404 |
+| `POST /household/settlement/settle` | `{ "groupId": "<id>", "expectedExpenseIds": ["…"] }`（500 件まで。重複は除く） | 200 `{ ok: true, settled, skipped, basis, settlement }`。LINE の `精算` と同じ `settleAdvances`（`advance_pending` → `advance_settled`）。**LINE への通知は送らない** | 409 `too_many`（未精算 500 件超）/ `nothing_to_settle` / `stale`（`current` に最新の GET 内容）/ `undeterminable`（`reason` 付き）/ `nothing_settled` |
+
+- **対象範囲**: `groups/{groupId}.lineGroupId` があれば `lineGroupId` 基準（LINE の `立替一覧` / `精算` と同じ集合）、無ければ `groupId` 基準。期間は見ず、未精算の全件
+- **精算額**（`bot/src/householdSettlement.ts`。LINE の `立替一覧` / `精算` と共通）: 関係者（有効メンバー ∪ 未精算の立替がある人）がちょうど 2 人のときだけ計算する。2 人とも立替あり → 従来の `calculateSettlement`（差額の 1/2 を `Math.round`）= `pair`。1 人だけ立替あり → 相手を 0 円として補って同じ計算 = `single_advancer`（例: A だけが ¥10,000 → B → A ¥5,000）。未精算が無い → `none`。それ以外は `undeterminable`（`reason`: `partner_unknown`=相手が分からない / `more_than_two`=3 人以上）で金額を出さず、Web からの記録も 409 にする
+- `members` は精算の関係者（有効メンバーを `joinedAt` 昇順、その後にメンバー外の立替者）。`items[].advanceBy` は集計キー（`advanceBy || payerId`）
+- テスト: 純関数は `bot/scripts/smoke-household-api.js`（`npm -w bot test`）。ルーター・認証・Firestore を通した確認は `bot/scripts/emulator-household-api.js`（`firebase emulators:exec --only firestore,auth --project demo-kakeibo "node bot/scripts/emulator-household-api.js"`。firebase-tools はリポジトリ外に用意する）
 
 ---
 

@@ -87,7 +87,7 @@ flowchart LR
 | `renewGmailWatch` | cron `0 3 */6 * *` JST | asia-northeast1 | Gmail watch（7日失効）の更新 |
 | `importMoneyForward` | cron `0 5 * * *` JST | asia-northeast1 | Drive の MoneyForward CSV 取込 |
 | `syncUserLinks` | Firestore `expenses/{id}` onCreate | asia-northeast1 | `userLinks/{appUid}.lineIds[]` へ lineId を追記 |
-| `api` | HTTPS（Express） | **us-central1** | Gmail OAuth / watch 管理エンドポイント（`ADMIN_SECRET` 認証） |
+| `api` | HTTPS（Express） | **us-central1** | Gmail OAuth / watch 管理エンドポイント（`ADMIN_SECRET` 認証）、LIFF ログイン `/auth/line`、Web の確認・精算 `/household/*`（Firebase ID トークン認証。SPECIFICATION.md §5.4） |
 
 ## 4. 主要データフロー
 
@@ -127,6 +127,9 @@ LINEのリンク(?lineId=xxx) → Next.js（クライアント）
 
 - 支出を `status: 'advance_pending'` + `advanceBy` でマーク
 - `立替一覧` コマンドで未精算集計と精算額計算、`精算` で `advance_settled` へ一括更新
+- Web のふたりタブは `api` 関数の `GET /household/settlement` / `POST /household/settlement/settle` で同じ集合（`lineGroupId` 基準）を表示・精算する（Web からの精算では LINE へ通知しない）
+- 精算額の決め方（関係者がちょうど 2 人のときだけ。1 人だけ立替なら相手を 0 円で補う）は `householdSettlement.ts` の共有関数で、LINE と Web が同じ結果を出す
+- 支出の確認（LINE の OK / Web の確認ボタン）は `expenseActions.ts` の `applyExpenseChange` + `decideConfirm` を共用する
 - Web の支出一覧では支払者（`payerId`/`payerDisplayName`）別集計を表示
 
 ## 5. カテゴリ分類パイプライン（コスト最適化）
@@ -186,6 +189,10 @@ line-kakeibo/
 │     ├─ index.ts            # Express webhook・全コマンドルーティング・Functionエクスポート
 │     ├─ textParser.ts       # 支出テキストパーサ
 │     ├─ firestore.ts        # Firestoreデータアクセス（支出/グループ/予算/精算）
+│     ├─ expenseActions.ts   # 支出の確認の判定とトランザクション（LINE postback と Web API で共用）
+│     ├─ householdApi.ts     # Web 向け /household API（ID トークン認証・メンバー確認・CORS・レート制限）
+│     ├─ householdSettlement.ts # 精算額の決め方（LINE の立替一覧/精算と Web で共用）
+│     ├─ webOrigins.ts       # Web オリジンの許可リスト
 │     ├─ geminiCategoryClassifier.ts / categoryNormalization.ts
 │     ├─ linkUserResolver.ts / userLinks.ts / syncUserLinks.ts
 │     ├─ issueCreator.ts     # フィードバック→GitHub Issue

@@ -28,7 +28,6 @@ import {
   // 立替機能
   getPendingAdvances,
   getAdvanceSummaryByUser,
-  calculateSettlement,
   settleAdvances,
   AdvanceSummary,
   // 月次サマリー
@@ -53,6 +52,8 @@ import { createIssueFromFeedback } from "./issueCreator";
 import { importMoneyForward } from "./importMoneyForward";
 import rateLimit from "express-rate-limit";
 import { maskId, errorMessage } from "./logSafe";
+import { householdRouter, householdErrorHandler } from "./householdApi";
+import { computeLineGroupSettlement, isSettlementComputable } from "./householdSettlement";
 
 dotenv.config();
 
@@ -676,9 +677,10 @@ async function handleTextMessage(event: any) {
           totalAdvances += summary.totalAdvanced;
         }
 
-        // 精算額を計算（2人の場合）
-        if (summaries.length === 2) {
-          const settlement = calculateSettlement(summaries);
+        // 精算額を計算（関係者が2人の場合。Web のふたりタブと同じ共有関数）
+        const household = await computeLineGroupSettlement(lineGroupId, summaries);
+        if (isSettlementComputable(household.basis)) {
+          const settlement = household.settlement;
           if (settlement) {
             replyText += `\n精算額:\n`;
             replyText += `${settlement.fromUserName} ${settlement.toUserName}\n`;
@@ -729,10 +731,11 @@ async function handleTextMessage(event: any) {
 
         const summaries = await getAdvanceSummaryByUser(lineGroupId, true);
 
-        // 精算額を計算
+        // 精算額を計算（関係者が2人の場合。Web のふたりタブと同じ共有関数）
         let settlementText = "";
-        if (summaries.length === 2) {
-          const settlement = calculateSettlement(summaries);
+        const household = await computeLineGroupSettlement(lineGroupId, summaries);
+        if (isSettlementComputable(household.basis)) {
+          const settlement = household.settlement;
           if (settlement) {
             settlementText = `\n\n精算内容:\n${settlement.fromUserName} ${settlement.toUserName}\n¥${settlement.amount.toLocaleString()}`;
           }
@@ -1934,6 +1937,7 @@ const gmailApp = express();
 gmailApp.use(express.json());
 gmailApp.use("/gmail", gmailRouter);
 gmailApp.use("/auth", authRouter);
+gmailApp.use("/household", householdRouter, householdErrorHandler);
 
 // Gmail API を Firebase Functions としてエクスポート（LINE webhook とは分離）
 // LINE通知を送信するためLINE認証情報、カテゴリ分類のためGEMINI_API_KEYも必要
