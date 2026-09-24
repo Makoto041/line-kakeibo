@@ -206,7 +206,7 @@ async function loadLineGroupMembers(lineGroupId: string): Promise<SettlementMemb
     if (!group?.id) return [];
     return sortActiveMembers(await getGroupMembers(group.id), group.createdBy);
   } catch (error) {
-    console.warn(`Failed to load members for LINE group ${maskId(lineGroupId)}:`, errorMessage(error));
+    console.warn("Failed to load members for LINE group", { lineGroup: maskId(lineGroupId), error: errorMessage(error) });
     return [];
   }
 }
@@ -239,7 +239,7 @@ export async function fillPartnerName(
       const resolved = await resolveName(partner.userId);
       name = typeof resolved === 'string' ? resolved.trim() : '';
     } catch (error) {
-      console.warn(`Failed to resolve display name for ${maskId(partner.userId)}:`, errorMessage(error));
+      console.warn("Failed to resolve display name", { user: maskId(partner.userId), error: errorMessage(error) });
     }
   }
   if (!name) name = fallbackDisplayName(partner.userId);

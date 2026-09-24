@@ -478,7 +478,7 @@ function route(name: string, handler: Handler) {
     try {
       await handler(req, res);
     } catch (error) {
-      console.error(`household ${name} error:`, errorMessage(error));
+      console.error("household handler error", { handler: name, error: errorMessage(error) });
       if (!res.headersSent) sendError(res, 500, 'internal');
     }
   };
