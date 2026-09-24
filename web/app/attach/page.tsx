@@ -10,6 +10,10 @@ import { isSafeImageUrl } from "../../lib/imageUrl";
 import { compressImage } from "../../lib/imageCompress";
 import dayjs from "dayjs";
 
+// storage.rules と揃える（SVG・GIF は不可、上限 5MB）
+const ALLOWED_RECEIPT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
+const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
+
 // Suspense boundary for useSearchParams（ビルドエラー防止）
 export default function AttachPage() {
   return (
@@ -107,8 +111,8 @@ function AttachPageContent() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      setError("画像ファイルを選択してください。");
+    if (!ALLOWED_RECEIPT_TYPES.includes(file.type)) {
+      setError("JPEG / PNG / WebP / HEIC 形式の画像を選択してください。");
       return;
     }
 
@@ -148,6 +152,11 @@ function AttachPageContent() {
           `レシート圧縮: ${(originalSize / 1024).toFixed(0)}KB → ${(outputSize / 1024).toFixed(0)}KB ` +
             `(${Math.round((1 - outputSize / originalSize) * 100)}%削減)`
         );
+      }
+
+      // Storage ルールと同じ上限（圧縮後のサイズで判定する）
+      if (uploadFile.size > MAX_RECEIPT_BYTES) {
+        throw new Error("画像が大きすぎます（5MB まで）。");
       }
 
       // パス: receipts/{expenseId}/{timestamp}_{filename}
