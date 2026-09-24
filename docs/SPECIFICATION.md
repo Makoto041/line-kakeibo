@@ -35,8 +35,8 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | `家計簿` | 当月サマリーの Flex メッセージを返信（予算プログレスバー・カテゴリ別・直近支出）。個人トークなら個人集計、グループトークならグループ集計。8秒タイムアウト時はテキストにフォールバック |
 | `カテゴリー` | 有効カテゴリ一覧と現在のデフォルトカテゴリを表示 |
 | `カテゴリー <名前>` | デフォルトカテゴリを設定（`userSettings`） |
-| `グループ作成 <名前>` | グループ作成＋6桁招待コード発行 |
-| `参加 <コード> <表示名>` | 招待コードでグループ参加 |
+| `グループ作成 <名前>` | グループ作成（作成者のみがメンバー。招待コードは内部互換のため生成するが表示しない） |
+| `参加 <コード> <表示名>` | **無効化済み**。世帯は2名固定で、メンバー追加は管理者が `scripts/manage-group-members.mjs` で行う旨を返信 |
 | `グループ一覧` | 所属グループ一覧 |
 | `立替一覧` / `立替` | （グループのみ）未精算の立替一覧と精算額計算 |
 | `精算` | （グループのみ）立替を精算済みにする |
@@ -202,11 +202,11 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | コレクション | 主なフィールド | 備考 |
 |---|---|---|
 | `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`), `inputSource`(`line_text\|gmail_auto`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `receiptUrl?`, `needsEdit?`（**レガシー**。書き込み・読み出しとも廃止済みで既存データにのみ存在）, `items?[]`, `ocrText?`, `createdAt`, `updatedAt` | 中核コレクション |
-| `groups` | `name`, `inviteCode`(6桁), `createdBy`, `lineGroupId?` | 汎用グループ機能はコード上「非推奨」— 実運用は LINE グループ共有 |
-| `groupMembers` | `groupId`, `lineId`, `displayName`, `isActive`, `joinedAt` | |
+| `groups` | `name`, `inviteCode`(8桁・暗号学的乱数。参加には使わない), `createdBy`, `lineGroupId?` | 汎用グループ機能はコード上「非推奨」— 実運用は LINE グループ共有 |
+| `groupMembers/{groupId}_{lineId}` | `groupId`, `lineId`, `displayName`, `isActive`, `joinedAt`, `leftAt?`, `deactivatedReason?` | `isActive == true` が Web アクセス権。LINE グループ退出（`memberLeft`）で bot が `false` にする。発言による自動追加はしない（世帯2名固定、追加は管理スクリプト）。 |
 | `userSettings/{lineId}` | `defaultCategory?`, `dateSettings` | 集計期間設定も格納 |
 | `budgetSettings/{lineId or lineGroupId}` | `monthlyBudget`, `categoryBudgets`, `alertThreshold` | Web が書き、Bot のサマリーも参照 |
-| `userLinks/{appUid}` | `lineId`（1:1, `firestore.ts`）／ `lineIds[]`（1:N, `userLinks.ts`＋`syncUserLinks` トリガー） | **2形式が併存**（§8） |
+| `userLinks/{appUid}` | `lineId`（1:1, `firestore.ts`）／ `lineIds[]`（1:N, `userLinks.ts`。`syncUserLinks` トリガーは書き込みを停止済み） | **2形式が併存**（§8） |
 | `linkTokens/{token}` | `lineId`, `expiresAt`(15分), `used` | |
 | `userCustomCategories` | `lineId`, `name`, `icon?`, `keywords?[]` | |
 | `categoryFeedback` | `originalCategory`, `correctedCategory`, `description` | 分類改善用ログ |
@@ -214,7 +214,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 複合インデックス: `expenses` の `lineId/groupId/lineGroupId × createdAt/date/status` 組合せ、`groupMembers` の `lineId+isActive` / `groupId+isActive`（`firestore.indexes.json`）。
 
-Storage: `receipts/{expenseId}/{fileName}` — 公開読取、書込は 10MB 未満かつ `image/*` のみ（`storage.rules`）。
+Storage: `receipts/{expenseId}/{fileName}` — cross-service rules で支出を参照し、個人支出は所有者、グループ支出は有効メンバーだけが get / 書込 / 削除できる（list は不可）。書込は 5MB 以下かつ JPEG / PNG / WebP / HEIC / HEIF のみ（`storage.rules`）。運用上の前提は `docs/SECURITY_OPERATIONS.md`。
 
 ---
 

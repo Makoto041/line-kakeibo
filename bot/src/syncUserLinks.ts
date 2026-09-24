@@ -1,17 +1,21 @@
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
-import { getFirestore } from 'firebase-admin/firestore';
-import { initializeApp, getApps } from 'firebase-admin/app';
-import { maskId } from './logSafe';
 
-// Initialize Firebase Admin SDK if not already initialized
-if (!getApps().length) {
-  initializeApp({
-    projectId: process.env.FIREBASE_PROJECT_ID || 'line-kakeibo-0410'
-  });
-}
-
-const db = getFirestore();
-
+/**
+ * 【無効化済み】expenses 作成時に userLinks/{appUid} へ lineIds を追記していたトリガー。
+ *
+ * 旧実装は、クライアントも書ける expenses ドキュメントの `appUid`（呼び出し元が自由に
+ * 決められる値）をそのままパスに使って `userLinks/${appUid}` へ Admin SDK で書き込んで
+ * いた。firestore.rules は userLinks へのクライアント書き込みを禁止しているのに、この
+ * トリガーを経由すると任意の userLinks 文書を作成・汚染できてしまう（SEC-16）。
+ *
+ * userLinks は `/auth/line`（linkUserResolver.getOrCreateAppUidForLineId →
+ * firestore.createUserLink）が appUid ↔ lineId を 1 対 1 で管理しており、このトリガーが
+ * 書く `lineIds` 配列はどこからも参照されていない。そのため書き込みを完全に止める。
+ *
+ * 関数そのものを export から外すと、CI の非対話 `firebase deploy` が「本番にだけ存在する
+ * 関数」の削除確認で失敗するため、関数の削除は別途（手動で `firebase functions:delete
+ * syncUserLinks`）行う前提で、ここでは何もしない関数として残す。
+ */
 export const syncUserLinks = onDocumentCreated(
   {
     document: 'expenses/{expenseId}',
@@ -20,57 +24,7 @@ export const syncUserLinks = onDocumentCreated(
     timeoutSeconds: 60,
     maxInstances: 3,
   },
-  async (event) => {
-    try {
-      const data = event.data?.data();
-      if (!data) {
-        console.log('No data in expense document');
-        return;
-      }
-
-      const { lineId, appUid } = data;
-      
-      console.log(`Processing expense with lineId: ${maskId(lineId)}, appUid: ${maskId(appUid)}`);
-      
-      // appUidが設定されていない場合はスキップ
-      if (!appUid) {
-        console.log('No appUid found, skipping userLinks sync');
-        return;
-      }
-
-      const ref = db.doc(`userLinks/${appUid}`);
-      
-      // トランザクションでuserLinksドキュメントを更新
-      await db.runTransaction(async (transaction) => {
-        const snap = await transaction.get(ref);
-        
-        let lineIds: string[] = [];
-        if (snap.exists) {
-          const existingData = snap.data();
-          lineIds = existingData?.lineIds || [];
-        }
-        
-        // lineIdが既に配列に含まれていない場合のみ追加
-        if (!lineIds.includes(lineId)) {
-          lineIds.push(lineId);
-          
-          const updateData = {
-            lineIds,
-            updatedAt: new Date(),
-            ...(snap.exists ? {} : { createdAt: new Date() })
-          };
-          
-          transaction.set(ref, updateData, { merge: true });
-          console.log(`Added lineId ${maskId(lineId)} to userLinks/${maskId(appUid)}`);
-        } else {
-          console.log(`LineId ${maskId(lineId)} already exists in userLinks/${maskId(appUid)}`);
-        }
-      });
-      
-    } catch (error) {
-      console.error('Error in syncUserLinks function:', error);
-      // Cloud Functionsではエラーを投げずにログに記録
-      // 実際のexpense作成処理には影響しないようにする
-    }
+  async () => {
+    // 意図的に何もしない（上記コメント参照）。
   }
 );
