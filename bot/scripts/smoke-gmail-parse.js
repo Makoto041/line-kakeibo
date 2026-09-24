@@ -70,6 +70,15 @@ check('金額が無いメールは null', parseSMBCCardEmail('msg-5', 'ご利用
 // ------------------------------------------------------------
 console.log('\nisSMBCGoldVISANL (sender check)');
 
+// 厳密判定で弾いたときの console.warn を拾う（出力を汚さないよう差し替える）
+const realWarn = console.warn;
+let warnings = [];
+console.warn = (...args) => { warnings.push(args.join(' ')); };
+function judge(from, body) {
+  warnings = [];
+  return isSMBCGoldVISANL(from, body);
+}
+
 const validBody = buildBody('2026/03/14 19:20', 'イオン〇〇店', '3,240');
 
 const legitimateFroms = [
@@ -83,9 +92,12 @@ const legitimateFroms = [
   '三井住友カード <info@smbc-card.com>',
   'SMBC <noreply@mail.vpass.ne.jp>', // 正規ドメインのサブドメイン
   'statement@vpass.ne.jp (三井住友カード)',
+  // 表示名に angle-addr と同じアドレスを引用符なしで書く形（RFC 外だが実在する）
+  'statement@vpass.ne.jp <statement@vpass.ne.jp>',
+  'Statement@VPASS.ne.jp <statement@vpass.ne.jp>',
 ];
 for (const from of legitimateFroms) {
-  check(`正規の送信元を通す: ${from}`, isSMBCGoldVISANL(from, validBody) === true);
+  check(`正規の送信元を通す: ${from}`, judge(from, validBody) === true && warnings.length === 0);
 }
 
 const spoofedFroms = [
@@ -95,6 +107,9 @@ const spoofedFroms = [
   '"三井住友カード <statement@vpass.ne.jp>" <x@evil.example>',
   '"a \\" <statement@vpass.ne.jp>" <x@evil.example>',
   'statement@vpass.ne.jp <x@evil.example>',
+  'statement@vpass.ne.jp <statement@vpass.ne.jp.evil.example>',
+  'x@evil.example <x@evil.example>',
+  'statement@vpass.ne.jp statement@vpass.ne.jp <x@evil.example>',
   'x@evil.example (statement@vpass.ne.jp)',
   'x@evil.example <statement@vpass.ne.jp>',
   '<statement@vpass.ne.jp> x@evil.example',
@@ -112,11 +127,28 @@ const spoofedFroms = [
   '',
 ];
 for (const from of spoofedFroms) {
-  check(`偽装した送信元を弾く: ${from || '(empty)'}`, isSMBCGoldVISANL(from, validBody) === false);
+  check(`偽装した送信元を弾く: ${from || '(empty)'}`, judge(from, validBody) === false);
 }
 
 check('正規の送信元でも本文キーワードが無ければ弾く',
-  isSMBCGoldVISANL('statement@vpass.ne.jp', 'ご利用金額：3,240円') === false);
+  judge('statement@vpass.ne.jp', 'ご利用金額：3,240円') === false);
+check('本文キーワードで弾いたときは送信元の警告を出さない', warnings.length === 0, JSON.stringify(warnings));
+
+judge('"vpass.ne.jp" <x@evil.example>', validBody);
+check('許可ドメインを騙る送信元は警告に実ドメインだけを出す',
+  warnings.length === 1 &&
+    warnings[0].includes('SMBC sender rejected by strict From check') &&
+    warnings[0].includes('domain=evil.example') &&
+    !warnings[0].includes('x@'),
+  JSON.stringify(warnings));
+judge('x@evil.example <statement@vpass.ne.jp>', validBody);
+check('アドレスを取り出せない形は domain=none で警告する',
+  warnings.length === 1 && warnings[0].includes('domain=none') && !warnings[0].includes('statement@'),
+  JSON.stringify(warnings));
+check('無関係なメールは弾くが警告は出さない',
+  judge('friend@example.com', validBody) === false && warnings.length === 0, JSON.stringify(warnings));
+
+console.warn = realWarn;
 check('アドレスは小文字で取り出す',
   extractSenderAddress('三井住友カード <Statement@VPASS.ne.jp>') === 'statement@vpass.ne.jp');
 check('From ヘッダーが複数あるメールは送信元なし扱い',

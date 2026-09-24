@@ -64,7 +64,7 @@ const ADDR_SPEC_PATTERN =
  * - `表示名 <local@domain>` / `<local@domain>` / `local@domain` を受け付ける
  * - 表示名・コメント内の文字列は判定に使わない（表示名に "vpass.ne.jp" と書く偽装を防ぐ）
  * - アドレスが複数ある、`<...>` の後ろに文字列が続く（"... via smbc-card.com" 等）、
- *   表示名に裸のアドレスが混ざっている、といった曖昧な形は null（= 不一致扱い）
+ *   表示名に angle-addr と異なる裸のアドレスが混ざっている、といった曖昧な形は null（= 不一致扱い）
  */
 export function extractSenderAddress(fromHeader: string): string | null {
   if (typeof fromHeader !== 'string' || !fromHeader.trim()) return null;
@@ -87,11 +87,20 @@ export function extractSenderAddress(fromHeader: string): string | null {
     }
     const displayName = cleaned.slice(0, open);
     const trailing = cleaned.slice(close + 1);
-    // 表示名に裸のアドレスや '>' がある / '>' の後ろに何か続く場合は曖昧なので拒否
-    if (displayName.includes('@') || displayName.includes('>') || trailing.trim() !== '') {
+    address = cleaned.slice(open + 1, close).trim();
+    // 表示名に '>' がある / '>' の後ろに何か続く場合は曖昧なので拒否
+    if (displayName.includes('>') || trailing.trim() !== '') {
       return null;
     }
-    address = cleaned.slice(open + 1, close).trim();
+    // 表示名に裸のアドレスがある場合は、angle-addr と完全に同じときだけ許す
+    // （`statement@vpass.ne.jp <statement@vpass.ne.jp>` は RFC 外だが実在する形）。
+    // `statement@vpass.ne.jp <x@evil.example>` のような食い違いは拒否する。
+    if (
+      displayName.includes('@') &&
+      displayName.trim().toLowerCase() !== address.toLowerCase()
+    ) {
+      return null;
+    }
   }
 
   if (!ADDR_SPEC_PATTERN.test(address)) return null;
@@ -125,6 +134,16 @@ export function isSMBCGoldVISANL(from: string, body: string): boolean {
   // 書いただけの偽装メールでも通ってしまっていた。
   const sender = extractSenderAddress(from);
   if (!sender || !isAllowedSenderAddress(sender)) {
+    // 旧来の部分一致なら通っていた（= From に許可ドメインの文字列を含む）のに
+    // 厳密な判定で弾いたときだけ警告する。偽装メールか、正規通知の From の形が
+    // 想定外で取り込みが止まっているかを見分けられるようにするため。
+    // INBOX の全メールがここを通るので、無関係なメールでは何も出さない。
+    // アドレス本体は出さずドメインだけ残す。
+    const lowerFrom = typeof from === 'string' ? from.toLowerCase() : '';
+    if (SMBC_CARD_FILTER.fromDomains.some((d) => lowerFrom.includes(d))) {
+      const domain = sender ? sender.slice(sender.lastIndexOf('@') + 1) : 'none';
+      console.warn(`SMBC sender rejected by strict From check: domain=${domain}`);
+    }
     return false;
   }
 

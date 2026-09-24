@@ -188,11 +188,11 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - Tailwind CSS（CSS 変数トークン、`darkMode: 'class'`、ライト/ダーク/システム切替）
 - framer-motion による SPA 風ページ遷移アニメーション＋メモリ内 SWR キャッシュ（`lib/swrCache.ts`）で再読込感を排除
 - レスポンシブ: デスクトップはサイドバー、モバイルはボトムタブ
-- `/attach` `/link` `/debug` はナビ chrome なし（BARE_ROUTES）
+- `/attach` `/link` はナビ chrome なし（BARE_ROUTES）
 
 ### 5.3 データアクセス
 
-- **API Route は実質なし**（`/api/link` `/api/health` は無効化スタブ）。全て**クライアントから Firestore/Storage SDK 直アクセス**
+- **API Route は無し**（旧 `/api/link` `/api/health` の空スタブは削除済み）。全て**クライアントから Firestore/Storage SDK 直アクセス**
 - `lib/hooks.ts`: `useLineAuth`（URL の `?lineId=` から識別）、`useExpenses`（個人分＋ユーザーが関わった全 `lineGroupId` のグループ分をマージ）、`useBudgetConfig` ほか
 
 ---

@@ -1,6 +1,6 @@
 // Version: 2026-03-28-2200 - Force redeploy
 import express, { Express, Request, Response } from "express";
-import { createHash, timingSafeEqual } from "crypto";
+import { isAdminAuthorized } from "./adminAuth";
 import {
   messagingApi,
   middleware,
@@ -1333,11 +1333,14 @@ export const webhook = onRequest(
     // 画像OCRは廃止済み。全関数が同じエントリポイントで googleapis 等を読み込むため
     // メモリは据え置き（下げる場合はコールドスタート時の使用量を計測してから）。
     memory: "512MiB",
-    // LINE の replyToken は短時間で失効し、1イベントの処理（プロフィール取得の
-    // リトライ最大 ~30 秒 + Gemini 分類 + Firestore）も 1 分未満で終わる。
-    // 540 秒はハング時の課金を 9 分まで伸ばすだけなので 120 秒に下げる。
-    timeoutSeconds: 120,
-    // 悪用・暴走時のスケール上限（同時実行 80/インスタンスのため通常は 1 台で足りる）
+    // 1 回の配信に含まれるイベントは直列に処理して待つ。1 イベントの最悪ケースは
+    // プロフィール取得のリトライ（最大 ~30 秒）+ Gemini 分類（8 秒で打ち切り）+ Firestore
+    // + 返信で ~40 秒。LINE API 劣化時に数イベントの配信が来ても途中で打ち切られて
+    // 残りのイベントが保存されない、ということが無いよう 300 秒の余裕を持たせる
+    // （540 秒はハング時の課金を 9 分まで伸ばすだけなので下げる）。
+    timeoutSeconds: 300,
+    // 悪用・暴走時のスケール上限。cpu を指定していない（1 vCPU 未満）ため
+    // 1 インスタンスの同時実行数は 1 で、同時に処理できるリクエストは最大 10。
     maxInstances: 10,
     invoker: "public",
     // GITHUB_TOKEN: LINEフィードバックGitHub Issue自動作成に使用（issueCreator）。
@@ -1432,18 +1435,6 @@ export const renewGmailWatch = onSchedule(
 );
 
 /**
- * 秘密値の比較（定数時間）
- *
- * 両辺を SHA-256 にかけて同じ長さ（32バイト）にそろえてから timingSafeEqual で比べる。
- * 長さの違いで早期に false を返すと、比較時間から秘密値の長さが漏れるため。
- */
-const secretsMatch = (provided: string, expected: string): boolean => {
-  const providedDigest = createHash("sha256").update(provided, "utf8").digest();
-  const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
-  return timingSafeEqual(providedDigest, expectedDigest);
-};
-
-/**
  * Admin認証ミドルウェア
  * `Authorization: Bearer <ADMIN_SECRET>` ヘッダーでのみ認証する。
  *
@@ -1461,11 +1452,8 @@ const requireAdminAuth = (req: Request, res: Response, next: express.NextFunctio
     return res.status(503).json({ error: "Admin API is not configured" });
   }
 
-  const authHeader = req.headers.authorization;
-  const match = typeof authHeader === "string" ? /^Bearer\s+(.+)$/i.exec(authHeader) : null;
-  const providedSecret = match ? match[1].trim() : "";
-
-  if (!providedSecret || !secretsMatch(providedSecret, adminSecret)) {
+  // 比較は定数時間（adminAuth.ts の secretsMatch）
+  if (!isAdminAuthorized(req.headers.authorization, adminSecret)) {
     if (req.query && "adminSecret" in req.query) {
       // 値は出さない。旧手順（クエリ渡し）のままの呼び出しに気付けるようにだけ記録する
       console.warn("Unauthorized admin API access: adminSecret query parameter is no longer accepted");
@@ -1949,6 +1937,8 @@ gmailApp.use("/auth", authRouter);
 export const api = onRequest(
   {
     region: "us-central1",
+    // 管理 API と LIFF ログイン用。cpu 未指定（1 vCPU 未満）のため同時実行は 1/インスタンスで、
+    // 同時に処理できるリクエストは最大 5（家計簿の利用規模では十分）。
     maxInstances: 5,
     secrets: ["ADMIN_SECRET", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "LINE_LIFF_CHANNEL_ID"],
   },

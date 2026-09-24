@@ -42,6 +42,10 @@ const firebaseAuthOrigin = originOf(
  * - bot の `api` 関数（LIFF ログイン → カスタムトークン発行）
  * - フォントは next/font がビルド時に自己ホストするため Google Fonts への通信は無い
  * - Next.js はインラインスクリプトを使うため script-src に 'unsafe-inline' が必要（nonce 化は別途）
+ *
+ * report-uri / report-to は未設定のため、違反はブラウザの DevTools コンソールでしか見えない。
+ * 強制に切り替える前に、実機（iPhone の LINE アプリ内ブラウザ / PC）で LIFF ログイン・
+ * 支出編集・レシート添付を一通り行い、Report Only の違反が出ないことを確認すること。
  */
 const cspDirectives: Record<string, string[]> = {
   "default-src": ["'self'"],
@@ -74,7 +78,8 @@ const cspDirectives: Record<string, string[]> = {
     "https://access.line.me",
     "https://liffsdk.line-scdn.net",
     "https://uts-front.line-apps.com",
-    ...(isDev ? ["ws:", "wss:"] : []),
+    // 開発時: HMR の WebSocket と Firestore エミュレータ（web/lib/firebase.ts、localhost:8080）
+    ...(isDev ? ["ws:", "wss:", "http://localhost:8080"] : []),
     ...(isVercelPreview ? ["https://vercel.live", "wss://ws-us3.pusher.com"] : []),
   ],
   "frame-src": [
@@ -96,6 +101,8 @@ const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "X-Frame-Options", value: "DENY" },
+  // /attach のカメラ撮影は <input type="file" capture> で、camera ポリシーの対象（getUserMedia）ではない。
+  // 実機でカメラが起動しなくなった場合は camera=() を外す。
   {
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), payment=()",

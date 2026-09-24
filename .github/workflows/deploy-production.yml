@@ -48,9 +48,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint-and-test
     environment: production
-    # vercel-action がデプロイ URL をコミットにコメントする
+    # workflow_dispatch 専用のため vercel-action はコメントを書かない
+    # （コメントは PR イベントか push のときだけ）。コミット情報の取得に読み取りだけ使う。
+    # google-github-actions/auth（credentials_json）と firebase-tools は GITHUB_TOKEN を使わない。
     permissions:
-      contents: write
+      contents: read
     
     steps:
     - name: Checkout code

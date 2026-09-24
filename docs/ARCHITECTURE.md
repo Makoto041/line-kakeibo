@@ -193,7 +193,7 @@ line-kakeibo/
 │     ├─ line/               # flexMessage.ts / postback.ts
 │     └─ gmail/              # auth.ts / watch.ts / parser.ts / handler.ts / types.ts
 ├─ web/                      # Next.js 15 (Vercel)
-│  ├─ app/                   # / , /expenses , /settings , /attach , /link , /debug ほか
+│  ├─ app/                   # / , /expenses , /settings , /attach , /link ほか
 │  ├─ components/            # AppShell, Charts, theme ほか
 │  └─ lib/                   # firebase.ts, hooks.ts, swrCache.ts, categoryNormalization.ts ほか
 ├─ types/shared.ts           # 共通型（※一部乖離あり）

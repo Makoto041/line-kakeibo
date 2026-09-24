@@ -55,7 +55,8 @@ jobs:
     needs: lint-and-test
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     # このジョブは develop への push でのみ動き、vercel-action はデプロイ URL を
-    # コミットコメントとして書く（PR コメントの step は push では実行されない）
+    # コミットコメントとして書く（PR コメントの step は push では実行されない）。
+    # コメントのためだけの write なので、将来 github-comment: false にすれば read に下げられる。
     permissions:
       contents: write
     
