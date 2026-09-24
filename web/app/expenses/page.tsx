@@ -176,7 +176,6 @@ function ExpensesPageContent() {
     if (editExpenseId && expenses.length > 0 && !editingExpense && !editConsumed) {
       const expenseToEdit = expenses.find(e => e.id === editExpenseId);
       if (expenseToEdit) {
-        console.log("Auto-opening edit mode for expense:", editExpenseId);
         setEditingExpense(expenseToEdit.id);
         setEditForm({
           amount: expenseToEdit.amount,
@@ -257,28 +256,16 @@ function ExpensesPageContent() {
 
   // グループ支出には必ず groupId が付くため、lineGroupId 由来のフォールバックは廃止した。
   // セキュリティルールがメンバーシップを groupId で判定するようになったこととも整合する。
-  const { members: groupMembers, loading: membersLoading, error: membersError } = useGroupMembers(editingGroupId);
+  const { members: groupMembers } = useGroupMembers(editingGroupId);
   
   // Get all users who have ever created expenses (across all groups)
   // 入力者と支払い者の両方を含める
   const allHistoricalUsers = useMemo(() => {
     const usersMap = new Map();
 
-    console.log("=== allHistoricalUsers 生成中 ===");
-    console.log("総支出件数:", expenses.length);
-
-    expenses.forEach((expense, index) => {
-      console.log(`支出[${index}]:`, {
-        id: expense.id,
-        lineId: expense.lineId,
-        userDisplayName: expense.userDisplayName,
-        payerId: expense.payerId,
-        payerDisplayName: expense.payerDisplayName
-      });
-
+    expenses.forEach((expense) => {
       // 入力者を追加
       if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
-        console.log(`入力者追加: ${expense.lineId} -> ${expense.userDisplayName}`);
         usersMap.set(expense.lineId, {
           lineId: expense.lineId,
           displayName: expense.userDisplayName
@@ -289,7 +276,6 @@ function ExpensesPageContent() {
       if (expense.payerId && expense.payerDisplayName &&
           expense.payerDisplayName !== "個人" &&
           expense.payerId !== expense.lineId) {
-        console.log(`支払い者追加: ${expense.payerId} -> ${expense.payerDisplayName}`);
         usersMap.set(expense.payerId, {
           lineId: expense.payerId,
           displayName: expense.payerDisplayName
@@ -298,7 +284,6 @@ function ExpensesPageContent() {
     });
 
     const result = Array.from(usersMap.values());
-    console.log("allHistoricalUsers 結果:", result);
     return result;
   }, [expenses]);
   
@@ -399,49 +384,6 @@ function ExpensesPageContent() {
 
     return Array.from(combinedMap.values());
   }, [groupMembers, groupExpenseUsers, allHistoricalUsers]);
-  
-  // Debug logging - より詳細な情報を追加
-  if (editingExpense) {
-    console.log("=== EXPENSE EDITING DEBUG (詳細版) ===");
-    console.log("編集中の支出ID:", editingExpense);
-    console.log("全支出データ数:", expenses.length);
-    console.log("全支出データ（最初の5件）:", expenses.slice(0, 5).map(e => ({
-      id: e.id,
-      userDisplayName: e.userDisplayName,
-      groupId: e.groupId,
-      lineGroupId: e.lineGroupId,
-      lineId: e.lineId,
-      payerId: e.payerId,
-      payerDisplayName: e.payerDisplayName
-    })));
-    
-    console.log("--- 編集中の支出データ ---");
-    console.log("EditingExpenseData:", editingExpenseData);
-    console.log("EditingGroupId:", editingGroupId);
-    
-    console.log("--- ユーザー取得結果 ---");
-    console.log("GroupMembers (正式メンバー):", groupMembers);
-    console.log("GroupExpenseUsers (このグループの履歴):", groupExpenseUsers);
-    console.log("AllHistoricalUsers (全履歴ユーザー):", allHistoricalUsers);
-    console.log("AvailableMembers (最終的な選択肢):", availableMembers);
-    
-    console.log("--- ローディング状態 ---");
-    console.log("MembersLoading:", membersLoading);
-    console.log("MembersError:", membersError);
-    
-    // 選択肢の詳細を表示
-    console.log("--- 選択肢の内訳 ---");
-    const groupCount = availableMembers.filter(m => m.source === 'group').length;
-    const groupHistoryCount = availableMembers.filter(m => m.source === 'group-history').length;
-    const allHistoryCount = availableMembers.filter(m => m.source === 'all-history').length;
-    console.log(`グループメンバー: ${groupCount}人`);
-    console.log(`このグループの履歴: ${groupHistoryCount}人`);
-    console.log(`他グループの履歴: ${allHistoryCount}人`);
-    console.log(`合計: ${availableMembers.length}人`);
-    
-    console.log("=== END DEBUG ===");
-  }
-
 
   if (authLoading || (editExpenseId && !editMonthResolved)) {
     return (
@@ -515,22 +457,7 @@ function ExpensesPageContent() {
     (a, b) => b[1] - a[1]
   );
 
-  // Debug log for person totals
-  console.log("Person totals:", personTotals);
-  console.log(
-    "Filtered expenses:",
-    filteredExpenses.map((e) => ({
-      userDisplayName: e.userDisplayName,
-      amount: e.amount,
-      description: e.description,
-    }))
-  );
-
-
   const handleEditStart = (expense: Expense) => {
-    console.log("Edit button clicked for expense:", expense.id);
-    console.log("Original expense data:", expense);
-    
     setEditingExpense(expense.id);
     const formData = {
       amount: expense.amount,
@@ -542,7 +469,6 @@ function ExpensesPageContent() {
       payerDisplayName: expense.payerDisplayName || expense.userDisplayName || "",
     };
     
-    console.log("Setting edit form data:", formData);
     setEditForm(formData);
   };
 
@@ -564,22 +490,12 @@ function ExpensesPageContent() {
 
   const handleEditSave = async (id: string) => {
     try {
-      console.log("=== SAVE DEBUG ===");
-      console.log("Saving expense with data:", {
-        id,
-        editForm,
-        originalExpense: editingExpenseData
-      });
-      
       const updateData = {
         ...editForm,
         updatedAt: new Date(),
       };
-      
-      console.log("Update data being sent:", updateData);
-      
+
       await updateExpense(id, updateData);
-      console.log("Save successful");
       setEditingExpense(null);
     } catch (error) {
       console.error("保存エラー:", error);
@@ -618,12 +534,9 @@ function ExpensesPageContent() {
   };
 
   const handleDeleteExpense = async (id: string) => {
-    console.log("handleDeleteExpense called with id:", id);
     if (confirm("この支出を削除しますか？")) {
       try {
-        console.log("Attempting to delete expense:", id);
         await deleteExpense(id);
-        console.log("Expense deleted successfully:", id);
       } catch (error) {
         console.error("Error deleting expense:", error);
         alert("エラーが発生しました");
@@ -941,7 +854,6 @@ function ExpensesPageContent() {
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            console.log("Toggle include in total clicked");
                             updateExpense(expense.id, { includeInTotal: !expense.includeInTotal });
                           }}
                           className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
@@ -960,10 +872,6 @@ function ExpensesPageContent() {
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            console.log(
-                              "Edit button clicked for expense:",
-                              expense.id
-                            );
                             handleEditStart(expense);
                           }}
                           className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-card px-3 py-2 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
@@ -1007,10 +915,6 @@ function ExpensesPageContent() {
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            console.log(
-                              "Delete button clicked for expense:",
-                              expense.id
-                            );
                             handleDeleteExpense(expense.id);
                           }}
                           className="flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-rose-600 transition-colors hover:bg-rose-500/10 dark:text-rose-400"

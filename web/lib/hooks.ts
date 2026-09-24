@@ -338,49 +338,14 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
       try {
         setError(null);
 
-        console.log("データ取得開始 - userId:", userId, "period:", periodDays);
-        
         // Firebase接続の再確認
         if (!db) {
           throw new Error('Firestoreデータベースが利用できません。設定を確認してください。');
         }
         
-        // DEBUG: First try simple query like the bot does
-        console.log("=== DEBUG: シンプルクエリテスト ===");
-        try {
-          const simpleQuery = query(
-            collection(db, 'expenses'),
-            where('lineId', '==', userId),
-            limit(10)
-          );
-          const simpleSnapshot = await getDocs(simpleQuery);
-          console.log("シンプルクエリ結果:", simpleSnapshot.docs.length, "件");
-          
-          if (simpleSnapshot.docs.length === 0) {
-            console.log("警告: ユーザーの支出データが見つかりません。新規ユーザーの可能性があります。");
-          }
-          
-          simpleSnapshot.docs.forEach(doc => {
-            const data = doc.data();
-            console.log("- 支出:", {
-              id: doc.id,
-              amount: data.amount,
-              description: data.description,
-              lineId: data.lineId,
-              groupId: data.groupId,
-              lineGroupId: data.lineGroupId,
-              date: data.date
-            });
-          });
-        } catch (debugError) {
-          console.error("デバッグクエリエラー:", debugError);
-          // デバッグクエリが失敗しても続行
-        }
-        
         // NOTE: 一般的なグループ機能は廃止、LINEグループのみを使用
         
         // Get user's personal expenses
-        console.log("=== 個人の支出取得 ===");
         let personalQuery;
         if (customStartDate) {
           const startDate = customStartDate;
@@ -420,20 +385,15 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
           } as Expense;
         });
         
-        console.log("個人の支出:", personalExpenses.length, "件");
-        
         // Get LINE group expenses where this user participates
-        console.log("=== LINEグループの支出取得 ===");
         let lineGroupExpenses: Expense[] = [];
         
         try {
           // 所属グループは groupMembers を正として引く（支出の走査はしない）
           const userGroupIds = await fetchMyActiveGroupIds(userId);
-          console.log("ユーザーが参加するグループID:", userGroupIds);
           
           // Get expenses from each group
           for (const groupId of userGroupIds) {
-            console.log("=== グループ", groupId, "の支出を取得中... ===");
             
             let lineGroupQuery;
             let startDate, endDate;
@@ -441,7 +401,6 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
             if (customStartDate) {
               startDate = customStartDate;
               endDate = dayjs(customStartDate).add(1, 'month').subtract(1, 'day').format('YYYY-MM-DD');
-              console.log("カスタム期間:", startDate, "〜", endDate);
               lineGroupQuery = query(
                 collection(db, 'expenses'),
                 where('groupId', '==', groupId),
@@ -452,7 +411,6 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
             } else if (periodDays > 0) {
               endDate = dayjs().format('YYYY-MM-DD');
               startDate = dayjs().subtract(periodDays, 'day').format('YYYY-MM-DD');
-              console.log("期間指定:", periodDays, "日間 (", startDate, "〜", endDate, ")");
               lineGroupQuery = query(
                 collection(db, 'expenses'),
                 where('groupId', '==', groupId),
@@ -461,7 +419,6 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
                 limit(Math.max(limitCount, 500)) // Ensure we get enough data
               );
             } else {
-              console.log("全期間での取得");
               lineGroupQuery = query(
                 collection(db, 'expenses'),
                 where('groupId', '==', groupId),
@@ -469,9 +426,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
               );
             }
             
-            console.log("クエリ実行開始...");
             const lineGroupSnapshot = await getDocs(lineGroupQuery);
-            console.log("クエリ結果:", lineGroupSnapshot.docs.length, "件");
             
             const lineGroupExpenseList = lineGroupSnapshot.docs.map(doc => {
               const data = doc.data() as FirestoreExpenseData;
@@ -482,23 +437,9 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
               } as Expense;
             });
             
-            // Log each expense found in the LINE group
-            lineGroupExpenseList.forEach((expense, index) => {
-              console.log(`LINEグループ支出 ${index + 1}:`, {
-                id: expense.id,
-                amount: expense.amount,
-                description: expense.description,
-                userDisplayName: expense.userDisplayName,
-                lineId: expense.lineId,
-                date: expense.date
-              });
-            });
-            
-            console.log("グループ", groupId, "の支出:", lineGroupExpenseList.length, "件");
             lineGroupExpenses = [...lineGroupExpenses, ...lineGroupExpenseList];
           }
           
-          console.log("LINEグループの支出合計:", lineGroupExpenses.length, "件");
         } catch (groupError) {
           console.error("LINEグループ支出取得エラー:", groupError);
           // LINEグループの取得が失敗しても個人支出は表示
@@ -507,28 +448,11 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
         // Combine all expenses and remove duplicates
         const allExpensesMap = new Map<string, Expense>();
         
-        console.log("=== 支出の統合処理 ===");
-        console.log("個人の支出数:", personalExpenses.length);
-        console.log("LINEグループの支出数:", lineGroupExpenses.length);
-        
         [...personalExpenses, ...lineGroupExpenses].forEach(expense => {
           allExpensesMap.set(expense.id, expense);
         });
         
         const allExpenses = Array.from(allExpensesMap.values());
-        
-        console.log("統合後の全体支出数:", allExpenses.length, "件");
-        console.log("=== 統合された支出一覧 ===");
-        allExpenses.forEach((expense, index) => {
-          console.log(`支出 ${index + 1}:`, {
-            id: expense.id,
-            amount: expense.amount,
-            description: expense.description,
-            userDisplayName: expense.userDisplayName,
-            lineGroupId: expense.lineGroupId ? "グループ" : "個人",
-            date: expense.date
-          });
-        });
         
         // Sort in memory to avoid index requirement
         const sortedExpenses = allExpenses.sort((a, b) => {
@@ -680,19 +604,15 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
           throw new Error('Firestoreデータベースが利用できません');
         }
         
-        console.log("月次統計取得開始 - userId:", userId, "year:", year, "month:", month);
-        
         let startDate: string;
         let endDate: string;
         
         if (customStartDate && customEndDate) {
           startDate = customStartDate;
           endDate = customEndDate;
-          console.log("カスタム日付範囲:", startDate, "〜", endDate);
         } else {
           startDate = dayjs(`${year}-${month.toString().padStart(2, '0')}-${startDay.toString().padStart(2, '0')}`).format('YYYY-MM-DD');
           endDate = dayjs(startDate).add(1, 'month').subtract(1, 'day').format('YYYY-MM-DD');
-          console.log("月次統計範囲:", startDate, "〜", endDate);
         }
         
         // NOTE: 一般的なグループ機能は廃止、LINEグループのみを使用
@@ -710,8 +630,6 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
           id: doc.id, 
           ...doc.data() 
         } as Expense));
-        
-        console.log("月次統計 - 個人の支出:", personalExpenses.length, "件");
         
         // Get LINE group expenses for monthly stats
         let lineGroupExpenses: Expense[] = [];
@@ -738,7 +656,6 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
             lineGroupExpenses = [...lineGroupExpenses, ...lineGroupExpenseList];
           }
           
-          console.log("月次統計 - グループの支出:", lineGroupExpenses.length, "件");
         } catch (groupError) {
           console.error("月次統計 - LINEグループ支出取得エラー:", groupError);
         }
@@ -751,8 +668,6 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
         });
         
         const allExpenses = Array.from(allExpensesMap.values());
-        
-        console.log("月次統計 - 全体の支出:", allExpenses.length, "件");
         
         // Sort in memory by date desc
         const expenses = allExpenses.sort((a, b) => b.date.localeCompare(a.date));
@@ -824,8 +739,6 @@ export function useUserGroups(userId: string | null) {
           throw new Error('Firestoreデータベースが利用できません');
         }
         
-        console.log("ユーザーグループ取得開始 - userId:", userId);
-        
         // Get user's group memberships
         const membershipQuery = query(
           collection(db, 'groupMembers'),
@@ -857,8 +770,6 @@ export function useUserGroups(userId: string | null) {
         
         const groupResults = await Promise.all(groupPromises);
         const validGroups = groupResults.filter(group => group !== null) as Group[];
-        
-        console.log("取得したグループ:", validGroups);
         
         setGroups(validGroups);
         setError(null);
@@ -905,8 +816,6 @@ export function useGroupExpenses(groupId: string | null, limitCount: number = 50
           throw new Error('Firestoreデータベースが利用できません');
         }
         
-        console.log("グループ支出取得開始 - groupId:", groupId);
-        
         const q = query(
           collection(db, 'expenses'),
           where('groupId', '==', groupId),
@@ -914,14 +823,11 @@ export function useGroupExpenses(groupId: string | null, limitCount: number = 50
         );
         
         const querySnapshot = await getDocs(q);
-        console.log("グループ支出クエリ結果:", querySnapshot.docs.length, "件");
         
         const expenseList = querySnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         } as Expense));
-        
-        console.log("取得したグループ支出:", expenseList);
         
         // Sort in memory by creation time desc
         const sortedExpenses = expenseList.sort((a, b) => {
@@ -953,7 +859,6 @@ export function useGroupExpenses(groupId: string | null, limitCount: number = 50
   return { expenses, loading, error };
 }
 
-
 // グループメンバーを取得するフック
 export function useGroupMembers(groupId: string | null) {
   const [members, setMembers] = useState<GroupMember[]>([]);
@@ -978,7 +883,6 @@ export function useGroupMembers(groupId: string | null) {
       }
       try {
         setLoading(true);
-        console.log("グループメンバー取得開始 - groupId:", groupId);
 
         const membersQuery = query(
           collection(db!, 'groupMembers'),
@@ -989,7 +893,6 @@ export function useGroupMembers(groupId: string | null) {
         const snapshot = await getDocs(membersQuery);
         
         if (snapshot.empty) {
-          console.log("グループメンバーが見つかりません");
           setMembers([]);
           setError(null);
           return;
@@ -997,14 +900,6 @@ export function useGroupMembers(groupId: string | null) {
 
         const memberList: GroupMember[] = snapshot.docs.map(doc => {
           const data = doc.data();
-          console.log("--- GroupMember生データ ---");
-          console.log("Document ID:", doc.id);
-          console.log("Raw data:", data);
-          console.log("displayName:", data.displayName, typeof data.displayName);
-          console.log("lineId:", data.lineId);
-          console.log("groupId:", data.groupId);
-          console.log("isActive:", data.isActive);
-          
           return {
             id: doc.id,
             groupId: data.groupId,
@@ -1015,7 +910,6 @@ export function useGroupMembers(groupId: string | null) {
           } as GroupMember;
         });
 
-        console.log("処理後のグループメンバー:", memberList);
         setMembers(memberList);
         setError(null);
       } catch (err) {
@@ -1032,7 +926,6 @@ export function useGroupMembers(groupId: string | null) {
 
   return { members, loading, error };
 }
-
 
 // 予算設定インターフェース
 export interface BudgetConfig {
