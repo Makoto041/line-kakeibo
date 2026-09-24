@@ -792,12 +792,18 @@ async function handleTextMessage(event: any) {
   }
 }
 
-// 発言元の LINE グループに紐づくメンバーシップを優先して選ぶ（無ければ先頭）。
-// 複数のグループに所属していても、世帯の LINE グループでの発言が別グループの支出や
-// 個人支出として保存されないようにする。
+// 支出を紐づけるグループを選ぶ。
+//   - LINE グループでの発言: 発言元の LINE グループに紐づくグループだけを返す（無ければ null）。
+//     一致しないグループを返すとキャッシュに残り、その後に世帯へ追加されても TTL の間
+//     findLineGroupId が呼ばれず個人支出として保存されてしまうため。
+//   - 個人チャット: LINE グループに紐づくグループ（世帯）を優先し、無ければ先頭。
+//     自分で「グループ作成」した LINE 非連携のグループに世帯の支出が入らないようにする。
 function pickActiveGroup(groups: any[] | undefined, lineGroupId: string | null) {
   if (!groups || groups.length === 0) return null;
-  return (lineGroupId && groups.find((g) => g?.lineGroupId === lineGroupId)) || groups[0] || null;
+  if (lineGroupId) {
+    return groups.find((g) => g?.lineGroupId === lineGroupId) || null;
+  }
+  return groups.find((g) => g?.lineGroupId) || groups[0] || null;
 }
 
 // ユーザー情報キャッシュ（メモリ内、15分TTL）
@@ -814,6 +820,17 @@ async function processExpenseInBackground(
     // lineId を持たない支出は所有者が定まらないため保存しない。
     if (!event?.source?.userId) {
       console.warn("Skipping expense: event.source.userId is missing (user has not consented to the LINE OA terms)");
+      if (replyToken) {
+        await client
+          .replyMessage({
+            replyToken,
+            messages: [{
+              type: "text",
+              text: "支出を記録できませんでした。この Bot を友だち追加すると、支出を記録できるようになります。",
+            }],
+          })
+          .catch((replyError) => console.warn("Failed to reply to a message without userId:", replyError));
+      }
       return;
     }
     console.log("Starting optimized background expense processing...");
@@ -1100,7 +1117,7 @@ async function processExpenseInBackground(
     // なければ lineGroupId も付けず個人支出にする（LINE 集計・精算への混入防止）。
     const groupScope = resolveExpenseGroupScope(activeGroup, lineGroupId);
     if (lineGroupId && !groupScope.lineGroupId) {
-      console.log(
+      console.warn(
         `Poster ${maskId(event.source.userId)} is not an active member of the group linked to LINE group ${maskId(lineGroupId)}; saving as personal expense`
       );
     }

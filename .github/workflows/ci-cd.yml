@@ -298,10 +298,12 @@ jobs:
       # storage.rules は cross-service rules（firestore.get()）を使うため、Storage の
       # サービスエージェントに roles/firebaserules.firestoreServiceAgent が必要。
       # 非対話の firebase deploy はこれを確認しないので、ここで事前確認する。
-      #   - ロールが「無い」と確定した場合だけ storage を除外してデプロイし、警告を出す
-      #     （旧 Storage ルールが残り、レシート機能がフェイルクローズで止まるのを防ぐ）。
-      #   - 権限不足・gcloud 不在などで確認できない場合は従来どおり storage を含める
-      #     （パイプラインを壊さない）。
+      #   - ロールの存在を「確認できた」場合だけ storage を含めてデプロイする。
+      #   - ロールが無い／権限不足・gcloud 不在などで確認できない場合は storage を除外して
+      #     デプロイし、警告とジョブサマリーを出す（新ルールがロール無しで本番に出て
+      #     レシート機能がフェイルクローズで止まるのを防ぐ。パイプライン自体は落とさない）。
+      #     その場合はオーナーが一度 `firebase deploy --only storage` を対話実行する
+      #     （対話実行時は firebase-tools がロールを付与する）。
       # 詳細と付与手順: docs/SECURITY_OPERATIONS.md §4
       - name: Check Storage cross-service rules IAM (preflight)
         id: storage_iam
@@ -316,11 +318,22 @@ jobs:
             --filter="bindings.role:roles/firebaserules.firestoreServiceAgent" \
             --format="value(bindings.members)" 2>/dev/null)
           status=$?
+          skip_reason=""
           if [ $status -ne 0 ]; then
-            echo "::warning::Storage サービスエージェントの IAM を確認できませんでした（exit $status）。storage を含めてデプロイします。"
+            skip_reason="Storage サービスエージェントの IAM を確認できませんでした（exit $status）。デプロイ SA に resourcemanager.projects.getIamPolicy を付与するか、storage を一度手動デプロイしてください。"
           elif ! printf '%s\n' "$members" | grep -q '@gcp-sa-firebasestorage\.iam\.gserviceaccount\.com'; then
-            echo "::warning::Storage サービスエージェントに roles/firebaserules.firestoreServiceAgent がありません。storage ルールのデプロイをスキップします（docs/SECURITY_OPERATIONS.md §4 の手順で付与してください）。"
+            skip_reason="Storage サービスエージェントに roles/firebaserules.firestoreServiceAgent がありません（docs/SECURITY_OPERATIONS.md §4 の手順で付与してください）。"
+          fi
+          if [ -n "$skip_reason" ]; then
             targets="functions,firestore:rules,firestore:indexes"
+            echo "::warning::${skip_reason} storage ルールのデプロイをスキップしました（本番は旧 storage.rules のまま）。"
+            {
+              echo "### 警告: storage.rules は未デプロイ"
+              echo ""
+              echo "${skip_reason}"
+              echo ""
+              echo "本番の Storage ルールは旧版のままで、firestore.rules と不一致です。docs/SECURITY_OPERATIONS.md §4 を参照してください。"
+            } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Storage サービスエージェントの IAM ロールを確認しました。"
           fi
@@ -334,7 +347,8 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
           # 未設定時のフォールバック（空文字を渡すと deploy が落ちるため）
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID || 'line-kakeibo-0410' }}
-          # preflight が失敗・未出力の場合は従来どおり全ターゲット
+          # preflight ステップ自体が実行されず未出力の場合は従来どおり全ターゲット
+          # （ステップ内では set +e のため、実行されれば必ず targets を出力する）
           DEPLOY_TARGETS: ${{ steps.storage_iam.outputs.targets || 'functions,firestore:rules,firestore:indexes,storage' }}
 
   # デプロイ後の健全性チェック

@@ -18,6 +18,10 @@
   `deactivatedReason: 'line_member_left'` を書き込む。その時点から Web の閲覧・編集・レシート操作ができなくなる。
   - 自分が登録した支出の **読み取り**だけは残る。web の個人支出クエリ（`where('lineId','==',自分)`）を
     ルールで証明できるようにするため。更新・削除・レシート操作はできない。
+  - 無効化の対象は、その LINE グループに紐づくアプリ内グループ（`groups.lineGroupId` が一致）のメンバーシップだけ。
+    世帯グループが LINE グループに紐づいていない（`list` の「LINE:」が `(なし)`）と何も無効化できず、bot は
+    `No app group is linked to LINE group ...` の警告ログを出す。したがって `list` で世帯グループに LINE の ID が
+    表示されていることを確認しておく（§2 マージ前に確認すること）。
 - bot 自身がグループから外された場合（`leave` イベント）は、メンバーシップを変更しない。誤操作で世帯全員の Web アクセスを失わないようにするため。
 
 ## 2. メンバーの確認・追加・無効化（管理スクリプト）
@@ -42,14 +46,38 @@ node scripts/manage-group-members.mjs add --group <groupId> --line-id <Uxxxxxxxx
 
 # 読み取り専用: lineGroupId だけを持ち groupId を持たない旧形式の支出を数える
 node scripts/manage-group-members.mjs legacy-expenses
+
+# 旧形式の支出に groups.lineGroupId から groupId を補う（まず dry-run で件数を確認）
+node scripts/manage-group-members.mjs backfill-group-id
+node scripts/manage-group-members.mjs backfill-group-id --apply
 ```
 
 環境変数: `FIREBASE_PROJECT_ID`（既定 `line-kakeibo-0410`）、`GCLOUD_BIN`（既定 `gcloud`）。
 
-**リリース後に一度やること**: `list` で有効なメンバーを確認する。過去の自動追加で 3 人目以降が有効になっていれば、
-`deactivate-unknown` で無効化する。
-あわせて `legacy-expenses` を実行する。新しいルールでは、groupId を持たずに lineGroupId だけを持つ旧形式の支出は、
-登録者本人でも Web から編集・削除できない。オーナーやパートナーの支出が該当していれば、groupId を backfill するか判断する。
+**マージ前に必ず確認すること**（§4 のマージ前チェックと合わせて行う）: `list --show-ids` で次の 2 点を確かめる。
+
+- (a) 世帯グループの「LINE:」欄が、実際に使っている世帯の LINE グループ ID と一致している。
+- (b) オーナーとパートナーの 2 名が、**その**グループで「有効」になっている。
+
+bot は、発言元の LINE グループに紐づくグループ（`groups.lineGroupId` が一致）で発言者が有効なメンバーでない限り、
+LINE グループでの発言を `groupId` も `lineGroupId` も持たない個人支出として保存する（`bot/src/expenseGroupScope.ts`）。
+(a) か (b) が崩れていると、マージ直後からオーナー本人の LINE グループでの発言が Web 一覧・LINE 集計・精算から消える。
+このとき bot は `... is not an active member of the group linked to LINE group ...; saving as personal expense` の
+警告ログ（`console.warn`）を出す。
+
+**マージ前後に一度やること**:
+
+1. `list` で有効なメンバーを確認する。過去の自動追加で 3 人目以降が有効になっていれば、`deactivate-unknown` で無効化する。
+2. `legacy-expenses` を実行する。新しいルールでは、groupId を持たずに lineGroupId だけを持つ旧形式の支出は、
+   登録者本人でも Web から編集・削除できない（レシートの添付もできない）。
+3. 該当があれば `backfill-group-id`（dry-run で件数を確認してから `--apply`）で、`groups.lineGroupId` から `groupId` を補う。
+   紐づくグループがちょうど 1 つの支出だけを対象にし、`groupId` 以外は変更しない。補った後は、その支出はグループ支出として
+   有効なメンバーが編集・削除できる。
+
+**無効化の反映タイミング**: スクリプトでの無効化は、Firestore ルール（Web の閲覧・編集・レシート操作）には即時に反映される。
+一方、bot プロセス内のユーザー情報キャッシュ（15 分 TTL）は `memberLeft` 経路でしか消えないため、スクリプトで無効化した
+元メンバーの LINE グループでの発言は、最大 15 分間は世帯の支出として保存されうる。即時に切りたい場合は関数を再デプロイ
+（再起動）する。
 
 ## 3. Firestore ルールの要点（`firestore.rules`）
 
@@ -123,17 +151,22 @@ master へのマージで CI の `deploy-bot` ジョブが `firebase deploy --on
 を実行し、このルールがそのまま本番に出る。上のロールが無い状態でマージすると、その瞬間から本番のレシート表示・
 アップロード・削除がすべて拒否される。したがって、**このルールを含む PR をマージする前に**、オーナーが上の確認コマンドで
 `serviceAccount:service-<PROJECT_NUMBER>@gcp-sa-firebasestorage.iam.gserviceaccount.com` が表示されることを確かめる
-（無ければ A か B で付与する）。PR 本文のチェックボックス「IAM ロール付与済み・確認済み」にチェックしてからマージする。
+（無ければ A か B で付与する）。あわせて §2 の「マージ前に必ず確認すること」(a)(b) を確認する。PR 本文のチェックボックス「IAM ロール付与済み・確認済み」にチェックしてからマージする。
 
 **自走マージの対象外**: この PR（および cross-service rules を初めて含む PR）は、オーナーが上の確認を明示的に
 済ませるまでマージしない。
 
 補助として、CI の `deploy-bot` ジョブには事前確認ステップ（`Check Storage cross-service rules IAM (preflight)`）がある。
 
-- 上の確認コマンドと同じクエリを実行し、ロールが **無いと確定した場合だけ** `storage` を除外してデプロイし、警告を出す。
-  旧 Storage ルールが残るので、レシート機能がフェイルクローズで止まることはない。ロール付与後の次のデプロイで反映される。
-- デプロイ用サービスアカウントに `resourcemanager.projects.getIamPolicy` が無いなど、確認できない場合は、従来どおり `storage` を
-  含めてデプロイする（パイプラインを壊さない）。この場合は上の手動確認だけが頼りになる。
+- 上の確認コマンドと同じクエリを実行し、ロールの存在を **確認できた場合だけ** `storage` を含めてデプロイする。
+- ロールが無い場合、またはデプロイ用サービスアカウントに `resourcemanager.projects.getIamPolicy` が無い・gcloud が使えない
+  などで確認できない場合は、`storage` を除外してデプロイし、警告（`::warning`）とジョブサマリーに
+  「storage.rules は未デプロイ」を出す。パイプライン自体は失敗させない。
+  旧 Storage ルールが残るので、レシート機能がフェイルクローズで止まることはないが、`firestore.rules` と `storage.rules` が
+  食い違った状態になる。ジョブサマリーに警告が出たら、上の A で付与して次のデプロイを待つか、B で一度手動デプロイする。
+- 事前確認ステップ自体が実行されなかった場合（ワークフロー編集ミスなど）だけ、従来どおり全ターゲットをデプロイする。
+- このステップはパイプラインを壊さないための必須要素ではない（非対話デプロイはロールが無くても成功する）。
+  ロール無しで新ルールが本番に出る事故を防ぐための、防御的な追加である。
 
 ## 5. ルールのテスト
 
@@ -173,7 +206,18 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
 - レシートはトークン付きのダウンロード URL を `receiptUrl` に保存している。この URL は Storage ルールを経由しない（REC-SEC-2）。
   パスを保存する方式への移行は、別の PR で扱う。
 - LINE の postback（区分・立替の変更）で、押した人のメンバーシップを確認していない（SET-18）。
+  クライアントからは status / advanceBy を変えられないので、残る経路は LINE グループに居る非メンバーがカードのボタンを押すこと。
+  後続で `groupMembers/{groupId}_{event.source.userId}` を引き、`isActive` を要求してから status / advanceBy を変更する。
 - 脱退済み（`isActive:false`）の元メンバーも、自分が登録したグループ支出の **読み取り**（とそのレシートの取得）だけはできる。
   web の個人支出クエリ `where('lineId','==',自分)` をルールで証明できるようにするため。閉じるには、個人支出クエリに
   `groupId` の制約（または専用フラグ）を足し、read の所有者条件を `groupId` なしに限定する必要がある。
+  後続の対応案: bot / Gmail 取込が個人支出に `groupId: null` を明示的に書くようにし、web の個人支出クエリに
+  `where('groupId','==',null)` を足してから、read を `(ownsDoc() && docGroupId() == null) || isMemberOfDocGroup()` に絞る
+  （テスト「read は残る」も assertFails に変える）。
+- web から削除した支出のレシートは、クライアントからは取得も削除もできなくなり、バケットに残り続ける
+  （Storage ルールが支出ドキュメントの存在を要求するため。フェイルクローズ側なので許容する）。
+  後続で、web の削除時に `receipts/{id}/*` を先に消すか、bot（Admin SDK）で孤立レシートを掃除する。
+- `receiptUrl` は `https://firebasestorage.googleapis.com/` から始まる URL だけを許可する。ローカルの Storage エミュレータが
+  返す URL（`http://127.0.0.1:9199/...`）は拒否されるため、レシート添付の導線を端から端まで確認するときは本番（または
+  実バケットのある検証用プロジェクト）で行う。
 - `joinGroup()`（bot/src/firestore.ts）は呼び出し元の無い非推奨関数として残している。`syncUserLinks` の削除と同じ後続 PR で消す。

@@ -136,6 +136,9 @@ await test('★ SVG / GIF / 画像以外は上げられない', async () => {
   await assertFails(put(userA, 'receipts/sGroup/x.gif', bytes(10), 'image/gif'));
   await assertFails(put(userA, 'receipts/sGroup/x.html', bytes(10), 'text/html'));
 });
+await test('★ contentType を指定しないアップロードは拒否される', async () => {
+  await assertFails(put(userA, 'receipts/sGroup/noType', bytes(10)));
+});
 await test('5MB ちょうどは上げられる', async () => {
   await assertSucceeds(put(userA, 'receipts/sGroup/max.jpg', bytes(5 * 1024 * 1024), 'image/jpeg'));
 });

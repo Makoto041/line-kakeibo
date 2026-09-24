@@ -492,19 +492,21 @@ function ExpensesPageContent() {
   // ルールで拒否されると「Missing or insufficient permissions」としか出ないため、
   // 利用者が直せる内容はここで具体的に伝える。
   const validateEditForm = (id: string): string | null => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(editForm.date)) {
+    const original = expenses.find((e) => e.id === id);
+    // ルールは変更したフィールドだけを検証する。既存データが上限を超えていても、
+    // そのフィールドに触れない編集は保存できるよう、変更した値だけを確認する。
+    if (editForm.date !== original?.date && !/^\d{4}-\d{2}-\d{2}$/.test(editForm.date)) {
       return "日付を入力してください";
     }
     if (!Number.isFinite(editForm.amount) || editForm.amount < 0 || editForm.amount > 10_000_000) {
       return "金額は 0〜10,000,000 円の範囲で入力してください";
     }
-    if (editForm.description.length > 500) {
+    if (editForm.description !== original?.description && editForm.description.length > 500) {
       return "説明は 500 文字以内で入力してください";
     }
-    if (editForm.category.length > 50) {
+    if (editForm.category !== original?.category && editForm.category.length > 50) {
       return "カテゴリは 50 文字以内で入力してください";
     }
-    const original = expenses.find((e) => e.id === id);
     if (
       original?.status === "advance_settled" &&
       (editForm.amount !== original.amount ||

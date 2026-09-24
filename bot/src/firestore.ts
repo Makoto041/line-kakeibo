@@ -871,6 +871,15 @@ export async function deactivateLineGroupMembers(
     .where('lineGroupId', '==', lineGroupId)
     .get();
 
+  if (groupsSnapshot.empty) {
+    // 世帯グループが LINE グループに紐づいていないと、退出者の Web アクセスを外せない。
+    console.warn(
+      `No app group is linked to LINE group ${maskId(lineGroupId)}; cannot deactivate ${lineUserIds.length} leaving member(s). ` +
+        'Check `node scripts/manage-group-members.mjs list` (LINE 欄) and deactivate them manually.'
+    );
+    return 0;
+  }
+
   let deactivated = 0;
   const now = Timestamp.now();
   for (const groupDoc of groupsSnapshot.docs) {

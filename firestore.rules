@@ -200,8 +200,8 @@ service cloud.firestore {
       // create: LINE 本人確認済みで、自分の lineId を持ち、許可されたフィールドだけで、
       // 値が妥当で、グループ所属が正当な場合のみ。
       // （現状 web は支出を作成しない。登録は bot = Admin SDK が行う）
-      allow create: if isLineUser()
-                    && writingAsSelf()
+      // （writingAsSelf() は isLineUser() を含む）
+      allow create: if writingAsSelf()
                     && request.resource.data.keys().hasAll(['lineId', 'amount', 'date'])
                     && request.resource.data.keys().hasOnly(creatableExpenseKeys())
                     && expenseFieldsValid(request.resource.data, request.resource.data.keys())

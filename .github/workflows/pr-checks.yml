@@ -93,7 +93,9 @@ jobs:
           --only firestore,storage --project demo-kakeibo \
           "node test/firestore.rules.test.mjs && node test/storage.rules.test.mjs"
 
-    - name: Ensure package manifests are untouched
+    # 保険: 上ではテスト用ツールを $RUNNER_TEMP に入れるので通常は常に成功する。
+    # 将来リポジトリ内で npm i --no-save に変えた場合に、マニフェストの変更を検出するために残す。
+    - name: Ensure package manifests are untouched (safety net)
       run: git diff --exit-code -- package.json package-lock.json
 
   preview-deploy:

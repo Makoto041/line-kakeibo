@@ -270,6 +270,11 @@ await test('★ 型の検証: 金額を文字列・負数にできない、日�
   await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { date: '8/4' }));
   await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { description: 'x'.repeat(501) }));
 });
+await test('★ 検証対象のフィールドを削除する更新・updatedAt を文字列にする更新は拒否される', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { amount: deleteField() }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { date: deleteField() }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { updatedAt: 'now' }));
+});
 await test('★ 脱退済みメンバーは自分が登録したグループ支出でも更新できない', async () => {
   await assertFails(updateDoc(doc(userD, 'expenses/expByD'), { amount: 1 }));
 });

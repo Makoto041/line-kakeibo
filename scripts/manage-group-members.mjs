@@ -26,6 +26,10 @@
  *   # （firestore.rules ではクライアントから更新・削除できない形。件数を見て backfill を判断する）
  *   node scripts/manage-group-members.mjs legacy-expenses [--show-ids]
  *
+ *   # 旧形式の支出に groups.lineGroupId から groupId を補う（backfill）
+ *   # （lineGroupId に紐づくグループがちょうど 1 つの支出だけが対象。groupId 以外は変更しない）
+ *   node scripts/manage-group-members.mjs backfill-group-id [--apply]
+ *
  * 認証: gcloud のオーナー権限アクセストークンで Firestore REST API を呼ぶ（ルールを
  * バイパスする）。事前に `gcloud auth login` 済みであること。
  *   環境変数 FIREBASE_PROJECT_ID（既定 line-kakeibo-0410）、GCLOUD_BIN（既定 gcloud）
@@ -55,7 +59,7 @@ const SHOW_IDS = has('show-ids');
 
 function usage(msg) {
   if (msg) console.error(`エラー: ${msg}\n`);
-  console.error('使い方: node scripts/manage-group-members.mjs <list|deactivate-unknown|deactivate|add|legacy-expenses> [options]');
+  console.error('使い方: node scripts/manage-group-members.mjs <list|deactivate-unknown|deactivate|add|legacy-expenses|backfill-group-id> [options]');
   console.error('詳細はスクリプト冒頭のコメント、または docs/SECURITY_OPERATIONS.md を参照してください。');
   process.exit(2);
 }
@@ -224,8 +228,11 @@ async function cmdAdd() {
   console.log(`${action}しました: ${label}`);
 }
 
-async function cmdLegacyExpenses() {
-  // lineGroupId を持つ支出を引き、groupId を持たないものだけを数える（読み取り専用）。
+/**
+ * lineGroupId を持ち groupId を持たない（旧形式の）支出と、lineGroupId → groupId の対応を返す。
+ * 同じ lineGroupId に複数の groups が紐づく場合は曖昧なので対応表から外す（backfill しない）。
+ */
+async function fetchLegacyExpenses() {
   const res = await fetch(`${BASE}:runQuery`, {
     method: 'POST',
     headers: headers(),
@@ -241,17 +248,76 @@ async function cmdLegacyExpenses() {
   const rows = (await res.json()).map((r) => r.document).filter(Boolean);
   const legacy = rows.filter((d) => !str(d, 'groupId'));
   const groups = await listAll('groups');
-  const byLineGroup = new Map(groups.map((g) => [str(g, 'lineGroupId'), docId(g)]));
+  const candidates = new Map();
+  for (const g of groups) {
+    const lg = str(g, 'lineGroupId');
+    if (!lg) continue;
+    if (!candidates.has(lg)) candidates.set(lg, []);
+    candidates.get(lg).push(docId(g));
+  }
+  const byLineGroup = new Map();
+  const ambiguous = new Set();
+  for (const [lg, ids] of candidates) {
+    if (ids.length === 1) byLineGroup.set(lg, ids[0]);
+    else ambiguous.add(lg);
+  }
+  return { rows, legacy, byLineGroup, ambiguous };
+}
+
+function groupLabel(lineGroupId, byLineGroup, ambiguous) {
+  if (ambiguous.has(lineGroupId)) return '(複数のグループが同じ LINE グループに紐づく)';
+  return byLineGroup.get(lineGroupId) ?? '(なし)';
+}
+
+async function cmdLegacyExpenses() {
+  // 読み取り専用。
+  const { rows, legacy, byLineGroup, ambiguous } = await fetchLegacyExpenses();
   const counts = new Map();
   for (const d of legacy) {
-    const key = `${mask(str(d, 'lineGroupId'))} / 登録者 ${mask(str(d, 'lineId'))} / 紐づくグループ ${byLineGroup.get(str(d, 'lineGroupId')) ?? '(なし)'}`;
+    const lg = str(d, 'lineGroupId');
+    const key = `${mask(lg)} / 登録者 ${mask(str(d, 'lineId'))} / 紐づくグループ ${groupLabel(lg, byLineGroup, ambiguous)}`;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
   console.log(`lineGroupId を持つ支出: ${rows.length} 件 / うち groupId なし: ${legacy.length} 件`);
   for (const [key, n] of counts) console.log(`  ${n} 件  ${key}`);
   if (legacy.length > 0) {
-    console.log('\nこれらは Web から編集・削除できません。必要なら groups.lineGroupId から groupId を backfill してください。');
+    console.log('\nこれらは Web から編集・削除できません。backfill-group-id で groupId を補ってください。');
   }
+}
+
+async function cmdBackfillGroupId() {
+  const { legacy, byLineGroup, ambiguous } = await fetchLegacyExpenses();
+  const targets = [];
+  let skipped = 0;
+  for (const d of legacy) {
+    const groupId = byLineGroup.get(str(d, 'lineGroupId'));
+    if (groupId) targets.push([d, groupId]);
+    else skipped += 1;
+  }
+  console.log(`groupId なしの旧形式の支出: ${legacy.length} 件 / backfill 対象: ${targets.length} 件 / 対象外: ${skipped} 件`);
+  if (skipped > 0) {
+    console.log('  対象外 = lineGroupId に紐づくグループが無い、または複数ある支出（legacy-expenses で内訳を確認）');
+  }
+  if (ambiguous.size > 0) {
+    console.warn(`警告: 複数のグループに紐づく LINE グループがあります: ${[...ambiguous].map(mask).join(', ')}`);
+  }
+  const perGroup = new Map();
+  for (const [, groupId] of targets) perGroup.set(groupId, (perGroup.get(groupId) || 0) + 1);
+  for (const [groupId, n] of perGroup) console.log(`  ${n} 件 → groupId ${groupId}`);
+  if (!APPLY) {
+    if (targets.length) console.log('\n[dry-run] --apply を付けると実行します。');
+    return;
+  }
+  let done = 0;
+  for (const [d, groupId] of targets) {
+    // groupId だけを書く（updateMask）。消えたドキュメントを作り直さないよう存在を前提条件にする。
+    await api(
+      `/expenses/${encodeURIComponent(docId(d))}?updateMask.fieldPaths=groupId&currentDocument.exists=true`,
+      { method: 'PATCH', body: JSON.stringify({ fields: { groupId: { stringValue: groupId } } }) }
+    );
+    done += 1;
+  }
+  console.log(`groupId を補いました: ${done} 件`);
 }
 
 switch (command) {
@@ -269,6 +335,9 @@ switch (command) {
     break;
   case 'legacy-expenses':
     await cmdLegacyExpenses();
+    break;
+  case 'backfill-group-id':
+    await cmdBackfillGroupId();
     break;
   default:
     usage(command ? `不明なコマンド: ${command}` : undefined);
