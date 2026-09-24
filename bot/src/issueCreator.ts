@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import axios from 'axios';
+import { errorMessage } from './logSafe';
 
 // Gemini APIクライアントの初期化
 let genAI: GoogleGenerativeAI | null = null;
@@ -83,7 +84,8 @@ export async function analyzeFeedbackWithGemini(
     const response = result.response;
     const text = response.text().trim();
 
-    console.log(`Gemini Feedback Analysis - Input: "${feedbackText}", Response: ${text}`);
+    // フィードバック本文と応答本文はログに出さない
+    console.log(`Gemini feedback analysis response received (${text.length} chars)`);
 
     // JSONレスポンスをパース（Markdownコードブロック形式の場合も対応）
     let jsonText = text;
@@ -209,9 +211,12 @@ export async function createIssueFromFeedback(
       message: `Issueを作成しました。\n${analysis.title}\n${analysis.type}\n${issueUrl}`,
     };
   } catch (error) {
-    console.error('GitHub Issue creation error:', error);
+    // axios のエラーオブジェクトをそのまま出すと、リクエスト設定（Authorization ヘッダー＝
+    // GITHUB_TOKEN）までログに残る。ステータスとメッセージだけを出す。
     if (axios.isAxiosError(error)) {
-      console.error('GitHub API response:', error.response?.status, error.response?.data);
+      console.error('GitHub Issue creation error:', error.response?.status ?? 'no response', error.message);
+    } else {
+      console.error('GitHub Issue creation error:', errorMessage(error));
     }
     return {
       success: false,

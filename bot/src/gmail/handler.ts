@@ -48,7 +48,8 @@ export async function handleGmailPubSub(data: string): Promise<void> {
       Buffer.from(data, 'base64').toString('utf-8')
     );
 
-    console.log('Gmail Pub/Sub received:', payload);
+    // payload にはメールアドレスが含まれるため historyId だけを出す
+    console.log(`Gmail Pub/Sub received: historyId=${payload.historyId}`);
 
     // 新着メールを取得して処理
     await processNewEmails(payload.historyId);
@@ -280,7 +281,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     // アトミックに重複チェック＋保存（並行処理での二重登録を防止）
     const { expenseId, alreadyExists } = await saveGmailExpenseAtomic(expense as any);
     if (alreadyExists) {
-      console.log(`Skipping duplicate (atomic): ${parsed.merchant} ¥${parsed.amount} (messageId: ${messageId}, existingId: ${expenseId})`);
+      console.log(`Skipping duplicate (atomic): messageId: ${messageId}, existingId: ${expenseId}`);
       return;
     }
     console.log(`Expense saved from Gmail: ${expenseId}`);
@@ -499,7 +500,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
     // アトミックに重複チェック＋保存
     const { expenseId, alreadyExists } = await saveGmailExpenseAtomic(expense as any);
     if (alreadyExists) {
-      console.log(`Duplicate detected (atomic): ${parsed.merchant} ¥${parsed.amount} (existingId: ${expenseId})`);
+      console.log(`Duplicate detected (atomic): messageId: ${messageId}, existingId: ${expenseId}`);
       return {
         success: true,
         message: `Duplicate (same content already exists)`,

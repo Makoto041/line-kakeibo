@@ -210,7 +210,7 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
     try {
       actionData = JSON.parse(data);
     } catch {
-      console.log('Non-JSON postback data, skipping:', data);
+      console.log(`Non-JSON postback data, skipping (length=${String(data ?? '').length})`);
       return;
     }
 

@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getAllUserCategories, CategoryMaster, UserCustomCategory } from './firestore';
 import { normalizeCategoryName } from './categoryNormalization';
+import { maskId } from './logSafe';
 
 // Gemini APIクライアントの初期化
 let genAI: GoogleGenerativeAI | null = null;
@@ -177,7 +178,7 @@ export async function classifyExpenseWithGemini(
   // 分類結果キャッシュをチェック
   const cached = classificationCache.get(cacheKey);
   if (cached && (Date.now() - cached.timestamp < CLASSIFICATION_CACHE_TTL)) {
-    console.log(`Cache hit for classification: "${description}" -> ${cached.result.category}`);
+    console.log(`Cache hit for classification -> ${cached.result.category}`);
     return cached.result;
   }
   
@@ -192,7 +193,7 @@ export async function classifyExpenseWithGemini(
     
     // 結果をキャッシュ
     classificationCache.set(cacheKey, { result, timestamp: Date.now() });
-    console.log(`Fast local classification: "${description}" -> ${result.category} (confidence: ${result.confidence})`);
+    console.log(`Fast local classification -> ${result.category} (confidence: ${result.confidence})`);
     return result;
   }
 
@@ -208,7 +209,7 @@ export async function classifyExpenseWithGemini(
     const categoryCached = categoryCache.get(lineId);
     if (categoryCached && (Date.now() - categoryCached.timestamp < CATEGORY_CACHE_TTL)) {
       categoryNames = categoryCached.categories;
-      console.log(`Using cached categories for user ${lineId} (${categoryNames.length} categories)`);
+      console.log(`Using cached categories for user ${maskId(lineId)} (${categoryNames.length} categories)`);
     } else {
       // カテゴリを取得してキャッシュ
       try {
@@ -217,7 +218,7 @@ export async function classifyExpenseWithGemini(
         
         // キャッシュに保存
         categoryCache.set(lineId, { categories: categoryNames, timestamp: Date.now() });
-        console.log(`Fetched and cached ${categoryNames.length} categories for user ${lineId}`);
+        console.log(`Fetched and cached ${categoryNames.length} categories for user ${maskId(lineId)}`);
       } catch (firestoreError) {
         console.warn('Failed to get categories from Firestore, using default categories:', firestoreError);
         categoryNames = DEFAULT_CATEGORIES;
@@ -282,7 +283,8 @@ ${categoryNames.join(', ')}
     const response = result.response;
     const text = response.text().trim();
 
-    console.log(`Gemini Classification - Input: "${description}", Response: ${text}`);
+    // 入力（支出の摘要）と応答本文はログに出さない
+    console.log(`Gemini classification response received (${text.length} chars)`);
 
     // JSONレスポンスをパース（Markdownコードブロック形式の場合も対応）
     try {
@@ -291,11 +293,9 @@ ${categoryNames.join(', ')}
       // Markdownコードブロック形式の場合（```json ... ```）を処理
       if (text.startsWith('```json') && text.endsWith('```')) {
         jsonText = text.replace(/^```json\s*\n/, '').replace(/\n\s*```$/, '').trim();
-        console.log(`Extracted JSON from markdown: ${jsonText}`);
       } else if (text.startsWith('```') && text.endsWith('```')) {
         // 一般的なコードブロック形式も処理
         jsonText = text.replace(/^```\s*\n/, '').replace(/\n\s*```$/, '').trim();
-        console.log(`Extracted JSON from code block: ${jsonText}`);
       }
       
       const parsed = JSON.parse(jsonText);
@@ -311,7 +311,7 @@ ${categoryNames.join(', ')}
         
         // 結果をキャッシュ
         classificationCache.set(cacheKey, { result, timestamp: Date.now() });
-        console.log(`Gemini classification cached: "${description}" -> ${result.category}`);
+        console.log(`Gemini classification cached -> ${result.category}`);
         
         updateClassificationStats(true, result.confidence);
         return result;
@@ -320,8 +320,7 @@ ${categoryNames.join(', ')}
       updateClassificationStats(false, 0);
       return { category: null, confidence: 0 };
     } catch (parseError) {
-      console.error('Failed to parse Gemini response as JSON:', parseError);
-      console.error('Raw response:', text);
+      console.error('Failed to parse Gemini response as JSON:', (parseError as Error)?.message);
       updateClassificationStats(false, 0);
       return { category: null, confidence: 0 };
     }

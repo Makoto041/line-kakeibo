@@ -1,5 +1,6 @@
 import { findAppUidByLineId, createUserLink } from './firestore';
 import { getAuth } from 'firebase-admin/auth';
+import { maskId } from './logSafe';
 
 /**
  * LINE UserIdからappUidを取得する
@@ -7,17 +8,17 @@ import { getAuth } from 'firebase-admin/auth';
  */
 export async function getAppUidByLineId(lineId: string): Promise<string | null> {
   try {
-    console.log(`Resolving appUid for lineId: ${lineId}`);
+    console.log(`Resolving appUid for lineId: ${maskId(lineId)}`);
     
     // 新しい1:1マッピング構造で検索
     const appUid = await findAppUidByLineId(lineId);
     
     if (appUid) {
-      console.log(`Found existing appUid: ${appUid} for lineId: ${lineId}`);
+      console.log(`Found existing appUid: ${maskId(appUid)} for lineId: ${maskId(lineId)}`);
       return appUid;
     }
     
-    console.log(`No existing appUid found for lineId: ${lineId}`);
+    console.log(`No existing appUid found for lineId: ${maskId(lineId)}`);
     return null;
   } catch (error) {
     console.error('Error resolving appUid from lineId:', error);
@@ -39,7 +40,7 @@ export async function getOrCreateAppUidForLineId(lineId: string): Promise<string
     }
     
     // 存在しない場合は新しい匿名ユーザーを作成
-    console.log(`Creating new anonymous user for lineId: ${lineId}`);
+    console.log(`Creating new anonymous user for lineId: ${maskId(lineId)}`);
     
     const auth = getAuth();
     const userRecord = await auth.createUser({
@@ -47,7 +48,7 @@ export async function getOrCreateAppUidForLineId(lineId: string): Promise<string
     });
     
     appUid = userRecord.uid;
-    console.log(`Created new appUid: ${appUid} for lineId: ${lineId}`);
+    console.log(`Created new appUid: ${maskId(appUid)} for lineId: ${maskId(lineId)}`);
     
     // userLinksドキュメントを作成
     await createUserLink(appUid, lineId);
@@ -95,11 +96,11 @@ export async function resolveAppUidForExpense(lineId: string): Promise<string | 
     const appUid = await getOrCreateAppUidForLineId(lineId);
     
     if (!appUid) {
-      console.error(`Failed to resolve or create appUid for lineId: ${lineId}`);
+      console.error(`Failed to resolve or create appUid for lineId: ${maskId(lineId)}`);
       return null;
     }
     
-    console.log(`Resolved appUid: ${appUid} for expense from lineId: ${lineId}`);
+    console.log(`Resolved appUid: ${maskId(appUid)} for expense from lineId: ${maskId(lineId)}`);
     return appUid;
   } catch (error) {
     console.error('Error resolving appUid for expense:', error);

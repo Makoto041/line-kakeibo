@@ -1,5 +1,6 @@
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import dayjs from 'dayjs';
+import { maskId } from './logSafe';
 
 let db: ReturnType<typeof getFirestore> | null = null;
 
@@ -120,7 +121,7 @@ export async function saveExpense(expense: Omit<Expense, 'id' | 'createdAt' | 'u
       updatedAt: now
     });
 
-    console.log(`Expense saved with ID: ${docRef.id}, lineId: ${expense.lineId}`);
+    console.log(`Expense saved with ID: ${docRef.id}, lineId: ${maskId(expense.lineId)}`);
     return docRef.id;
   } catch (error) {
     console.error('Error saving expense:', error);
@@ -213,7 +214,7 @@ export async function saveGmailExpenseAtomic(
       updatedAt: now,
     });
 
-    console.log(`Expense saved with ID: ${newDocRef.id}, lineId: ${expense.lineId}`);
+    console.log(`Expense saved with ID: ${newDocRef.id}, lineId: ${maskId(expense.lineId)}`);
     return {
       expenseId: newDocRef.id,
       alreadyExists: false,
@@ -247,7 +248,7 @@ export async function getExpenses(lineId: string, limit: number = 50): Promise<E
 // Fast version for LINE Bot quick responses - minimal data transfer
 export async function getExpensesSummary(lineId: string, limit: number = 5): Promise<Expense[]> {
   try {
-    console.log(`Getting expenses summary for lineId: ${lineId}, limit: ${limit}`);
+    console.log(`Getting expenses summary for lineId: ${maskId(lineId)}, limit: ${limit}`);
     
     // Get user's groups to aggregate group expenses (same logic as web app)
     const membershipSnapshot = await getDb()
@@ -257,7 +258,7 @@ export async function getExpensesSummary(lineId: string, limit: number = 5): Pro
       .get();
     
     const userGroupIds = membershipSnapshot.docs.map(doc => doc.data().groupId);
-    console.log(`User belongs to groups: ${userGroupIds.join(', ')}`);
+    console.log(`User belongs to ${userGroupIds.length} group(s)`);
     
     // Fetch expenses: personal + group expenses
     const expensePromises: Promise<Expense[]>[] = [];
@@ -425,7 +426,7 @@ export async function getMonthlyBudget(
       }
     } catch (error) {
       // 注: ユーザー由来の id はフォーマット文字列に含めず引数で渡す（format string injection回避）
-      console.warn('Failed to read budgetSettings for id:', id, error);
+      console.warn('Failed to read budgetSettings for id:', maskId(id), error);
     }
   }
   return undefined;
@@ -534,7 +535,7 @@ export async function createUserLink(appUid: string, lineId: string): Promise<vo
       createdAt: now,
       updatedAt: now
     });
-    console.log(`UserLink created: ${appUid} -> ${lineId}`);
+    console.log(`UserLink created: ${maskId(appUid)} -> ${maskId(lineId)}`);
   } catch (error) {
     console.error('Error creating user link:', error);
     throw error;
@@ -596,7 +597,7 @@ export async function createGroup(name: string, createdBy: string, lineGroupId?:
     // Add creator as first member
     await addGroupMember(docRef.id, createdBy, "作成者");
     
-    console.log(`Group created: ${docRef.id} by ${createdBy}${lineGroupId ? ` (LINE Group: ${lineGroupId})` : ''}`);
+    console.log(`Group created: ${docRef.id} by ${maskId(createdBy)}${lineGroupId ? ` (LINE Group: ${maskId(lineGroupId)})` : ''}`);
     return docRef.id;
   } catch (error) {
     console.error('Error creating group:', error);
@@ -639,7 +640,7 @@ export async function joinGroup(inviteCode: string, lineId: string, displayName:
       await addGroupMember(groupId, lineId, displayName);
     }
     
-    console.log(`User ${lineId} joined group ${groupId}`);
+    console.log(`User ${maskId(lineId)} joined group ${groupId}`);
     return groupId;
   } catch (error) {
     console.error('Error joining group:', error);
@@ -804,7 +805,7 @@ export async function findOrCreateLineGroup(lineGroupId: string, lineUserId: str
       if (memberSnapshot.empty) {
         // Add user as member
         await addGroupMember(groupId, lineUserId, userDisplayName);
-        console.log(`Added user ${lineUserId} to existing LINE group ${groupId}`);
+        console.log(`Added user ${maskId(lineUserId)} to existing LINE group ${groupId}`);
       } else {
         // Update user display name if changed
         await getDb().collection('groupMembers').doc(memberSnapshot.docs[0].id).update({
@@ -820,7 +821,7 @@ export async function findOrCreateLineGroup(lineGroupId: string, lineUserId: str
     const groupName = `LINEグループ ${lineGroupId.substring(0, 8)}`;
     const groupId = await createGroup(groupName, lineUserId, lineGroupId);
     
-    console.log(`Created new group ${groupId} for LINE group ${lineGroupId}`);
+    console.log(`Created new group ${groupId} for LINE group ${maskId(lineGroupId)}`);
     return groupId;
   } catch (error) {
     console.error('Error finding or creating LINE group:', error);
@@ -864,7 +865,7 @@ export async function saveUserSettings(lineId: string, defaultCategory: string):
       createdAt: Timestamp.now()
     }, { merge: true });
     
-    console.log('User settings saved for:', lineId);
+    console.log('User settings saved for:', maskId(lineId));
   } catch (error) {
     console.error('Error saving user settings:', error);
     throw error;
@@ -900,7 +901,7 @@ export async function updateUserSettings(lineId: string, updates: Partial<UserSe
       updatedAt: Timestamp.now()
     });
     
-    console.log('User settings updated for:', lineId);
+    console.log('User settings updated for:', maskId(lineId));
   } catch (error) {
     console.error('Error updating user settings:', error);
     throw error;
@@ -912,7 +913,7 @@ export async function deleteUserSettings(lineId: string): Promise<void> {
     const db = getDb();
     await db.collection('userSettings').doc(lineId).delete();
     
-    console.log('User settings deleted for:', lineId);
+    console.log('User settings deleted for:', maskId(lineId));
   } catch (error) {
     console.error('Error deleting user settings:', error);
     throw error;
@@ -1038,7 +1039,7 @@ export async function recordCategoryFeedback(feedback: Omit<CategoryFeedback, 'i
       ...feedback,
       createdAt: Timestamp.now()
     });
-    console.log(`Category feedback recorded for ${feedback.lineId}`);
+    console.log(`Category feedback recorded for ${maskId(feedback.lineId)}`);
   } catch (error) {
     console.error('Error recording category feedback:', error);
     throw error;

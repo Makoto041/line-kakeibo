@@ -50,7 +50,8 @@ export async function storeLinkToken(lineId: string, token: string): Promise<voi
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 minute expiry
     
-    console.log('Storing link token:', { lineId, token, now, expiresAt });
+    // トークン本体と LINE ID はログに出さない
+    console.log('Storing link token (expires at):', expiresAt.toISOString());
     
     await getDb().collection('linkTokens').doc(token).set({
       lineId,
