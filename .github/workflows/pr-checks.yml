@@ -50,6 +50,51 @@ jobs:
         cd ../web && npm audit --audit-level=high --production
       continue-on-error: true
         
+  rules-tests:
+    name: Security Rules Tests (Emulator)
+    runs-on: ubuntu-latest
+    # firestore.rules / storage.rules をエミュレータで検証する。デプロイには関与しない。
+    # テスト用ツールは package.json / package-lock.json に含めず、リポジトリ外に
+    # --no-save で入れてから node_modules をシンボリックリンクで参照させる。
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Setup Java 21 (emulators)
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+    - name: Cache emulator binaries
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/firebase/emulators
+        key: firebase-emulators-${{ runner.os }}-v15
+
+    - name: Install test tools (outside the repo, --no-save)
+      run: |
+        mkdir -p "$RUNNER_TEMP/rules-tools"
+        cd "$RUNNER_TEMP/rules-tools"
+        npm init -y > /dev/null
+        npm i --no-save --no-audit --no-fund \
+          firebase-tools@15 @firebase/rules-unit-testing@5 firebase@12
+        ln -s "$RUNNER_TEMP/rules-tools/node_modules" "$GITHUB_WORKSPACE/node_modules"
+
+    - name: Run Firestore / Storage rules tests
+      run: |
+        "$RUNNER_TEMP/rules-tools/node_modules/.bin/firebase" emulators:exec \
+          --only firestore,storage --project demo-kakeibo \
+          "node test/firestore.rules.test.mjs && node test/storage.rules.test.mjs"
+
+    - name: Ensure package manifests are untouched
+      run: git diff --exit-code -- package.json package-lock.json
+
   preview-deploy:
     name: Deploy Preview
     runs-on: ubuntu-latest
