@@ -1,15 +1,27 @@
 rules_version = '2';
 
 // ============================================================================
-// Cloud Storage セキュリティルール — 認証必須
+// Cloud Storage セキュリティルール — 支出の所有者・世帯メンバー限定
 // ----------------------------------------------------------------------------
-// レシート画像は receipts/{expenseId}/{fileName} に保存される。
-// read/write ともにサインイン（Firebase Auth）を必須とする。
+// レシート画像は receipts/{expenseId}/{fileName} に保存される（web/app/attach/page.tsx）。
+// パスの expenseId から Firestore の支出ドキュメントを cross-service rules
+// （firestore.get() / firestore.exists()）で参照し、呼び出し元がその支出を扱えるかを
+// firestore.rules の expenses と同じ基準で判定する。
+//   - 個人支出（groupId なし）: 所有者（lineId が一致）だけ。
+//   - グループ支出（groupId あり）: そのグループの有効なメンバー（isActive == true）だけ。
+//     groupMembers のドキュメントIDは `${groupId}_${lineId}`（bot/src/firestore.ts の
+//     groupMemberDocId() と同じ規則）。
+// 読み取りは firestore.rules の expenses の read に合わせ、グループ支出を登録した本人も
+// 読める。書き込み・削除は有効なメンバー（個人支出は所有者）に限る。
 //
-// 【限界】expense 単位の所有者検証（当該レシートが呼び出し元の支出のものか）は、
-//   Firestore の expenses ドキュメントを参照しないと判定できないが、Storage ルール
-//   から Firestore への安価なルックアップ手段はない。したがって
-//   「サインイン済み」を現実的なゲートとする。
+// 【運用上の前提】cross-service rules を評価するには、Cloud Storage のサービス
+//   エージェント（service-<PROJECT_NUMBER>@gcp-sa-firebasestorage.iam.gserviceaccount.com）
+//   に roles/firebaserules.firestoreServiceAgent が付与されている必要がある。
+//   付与されていないと firestore.get() が失敗し、レシートの読み書きがすべて拒否される
+//   （フェイルクローズ）。CI の非対話デプロイでは firebase-tools はこの確認と付与を
+//   行わないため、初回だけオーナーが付与する（docs/SECURITY_OPERATIONS.md 参照）。
+//
+// 1 回の参照は Firestore の 1 読み取りとして課金される（同一評価内の同一パスは 1 回）。
 // ============================================================================
 
 service firebase.storage {
@@ -20,14 +32,61 @@ service firebase.storage {
     function isLineUser() {
       return request.auth != null && request.auth.token.lineId != null;
     }
+    function expensePath(expenseId) {
+      return /databases/(default)/documents/expenses/$(expenseId);
+    }
+    function isActiveMember(groupId) {
+      let memberPath = /databases/(default)/documents/groupMembers/$(groupId + '_' + request.auth.token.lineId);
+      return firestore.exists(memberPath)
+             && firestore.get(memberPath).data.get('isActive', false) == true;
+    }
+    // 支出を書き換えられるか（firestore.rules の update / delete の基準と同じ）。
+    function canWriteExpense(expenseId) {
+      let e = firestore.get(expensePath(expenseId)).data;
+      let groupId = e.get('groupId', null);
+      return (groupId == null && e.get('lineId', null) == request.auth.token.lineId)
+             || (groupId != null && isActiveMember(groupId));
+    }
+    // 支出を読めるか（firestore.rules の read の基準と同じ）。
+    function canReadExpense(expenseId) {
+      let e = firestore.get(expensePath(expenseId)).data;
+      let groupId = e.get('groupId', null);
+      return e.get('lineId', null) == request.auth.token.lineId
+             || (groupId != null && isActiveMember(groupId));
+    }
+    function expenseExists(expenseId) {
+      return firestore.exists(expensePath(expenseId));
+    }
+    // 受け付ける画像形式。SVG（スクリプトを含みうる）や GIF は許可しない。
+    function isAllowedImage() {
+      return request.resource.contentType in
+             ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+    }
 
     match /receipts/{expenseId}/{fileName} {
-      // read: サインイン済みのみ（従来の `if true` を廃止）。
-      allow read: if isLineUser();
-      // write: サインイン済み、かつ従来のサイズ/コンテンツタイプ制約を維持。
-      allow write: if isLineUser()
-                   && request.resource.size < 10 * 1024 * 1024
-                   && request.resource.contentType.matches('image/.*');
+      // get（getDownloadURL / getBlob）は支出を読める人だけ。
+      // list（フォルダ内の列挙）はクライアントから許可しない。
+      allow get: if isLineUser()
+                 && expenseExists(expenseId)
+                 && canReadExpense(expenseId);
+      allow list: if false;
+
+      // create / update: 支出を書き換えられる人が、許可した画像形式で 5MB 以下の場合のみ。
+      allow create, update: if isLineUser()
+                            && expenseExists(expenseId)
+                            && canWriteExpense(expenseId)
+                            && request.resource.size <= 5 * 1024 * 1024
+                            && isAllowedImage();
+
+      // delete: 支出を書き換えられる人だけ。
+      allow delete: if isLineUser()
+                    && expenseExists(expenseId)
+                    && canWriteExpense(expenseId);
+    }
+
+    // デフォルト拒否（receipts 以外のパスはクライアントから触れない）。
+    match /{allPaths=**} {
+      allow read, write: if false;
     }
   }
 }

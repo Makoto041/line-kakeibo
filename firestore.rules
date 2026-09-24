@@ -79,9 +79,88 @@ service cloud.firestore {
     function isGmailSystemDoc() {
       return resource.data.get('lineId', null) == 'gmail-auto-system';
     }
-    // 所有者の付け替えを伴わない更新か（lineId を書き換えさせない）。
-    function keepsOwner() {
-      return request.resource.data.get('lineId', null) == resource.data.get('lineId', null);
+    // ---- 支出の検証ヘルパー ----------------------------------------------
+    // 金額の上限（円）。bot の登録経路はいずれも 0 以上の整数・実額で書き込む。
+    // 負の金額（調整エントリ）はクライアントからは作らせない。
+    function validAmount(v) {
+      return v is number && v >= 0 && v <= 10000000;
+    }
+    function validDate(v) {
+      return v is string && v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+    function validStr(v, maxLen) {
+      return v is string && v.size() <= maxLen;
+    }
+    // レシート URL は Firebase Storage のダウンロード URL に限る（外部 URL の埋め込み防止）。
+    function validReceiptUrl(v) {
+      return validStr(v, 2048)
+             && v.matches('^https://firebasestorage[.]googleapis[.]com/.*');
+    }
+    // 変更されたキー（create は全キー）だけを検証する。既存データに上限を超える
+    // 値が残っていても、そのフィールドに触れない編集は通す。
+    function expenseFieldsValid(d, changed) {
+      return (!('amount' in changed) || validAmount(d.amount))
+          && (!('date' in changed) || validDate(d.date))
+          && (!('description' in changed) || validStr(d.description, 500))
+          && (!('category' in changed) || validStr(d.category, 50))
+          && (!('includeInTotal' in changed) || d.includeInTotal is bool)
+          && (!('payerId' in changed) || (validStr(d.payerId, 128) && d.payerId.size() > 0))
+          && (!('payerDisplayName' in changed) || validStr(d.payerDisplayName, 100))
+          && (!('userDisplayName' in changed) || validStr(d.userDisplayName, 100))
+          && (!('paymentMethod' in changed) || validStr(d.paymentMethod, 20))
+          && (!('receiptUrl' in changed) || validReceiptUrl(d.receiptUrl))
+          && (!('status' in changed) || d.status in ['pending', 'shared', 'personal'])
+          && (!('groupId' in changed) || validStr(d.groupId, 128))
+          && (!('lineGroupId' in changed) || validStr(d.lineGroupId, 128))
+          && (!('createdAt' in changed) || d.createdAt is timestamp)
+          && (!('updatedAt' in changed) || d.updatedAt is timestamp);
+    }
+    // web から編集できるフィールド（許可リスト）。
+    //   - 編集ドロワー（web/app/expenses/page.tsx の handleEditSave → web/lib/hooks.ts の
+    //     updateExpense）: amount / description / date / category / includeInTotal /
+    //     payerId / payerDisplayName / updatedAt
+    //   - 合計に含めるトグル: includeInTotal / updatedAt
+    //   - レシート添付（web/app/attach/page.tsx）: receiptUrl / updatedAt
+    // lineId / groupId / lineGroupId / createdAt / inputSource / status / advanceBy /
+    // advanceSettledAt / gmailMessageId / appUid などは不変（変更は bot = Admin SDK だけ）。
+    // web で編集対象を増やすときは、ここと test/firestore.rules.test.mjs を更新すること。
+    function editableExpenseKeys() {
+      return ['amount', 'description', 'date', 'category', 'includeInTotal',
+              'payerId', 'payerDisplayName', 'receiptUrl', 'updatedAt'];
+    }
+    // クライアントが作成時に書けるフィールド。inputSource / gmailMessageId / advanceBy /
+    // appUid などは bot 専用（Gmail 取込の重複判定や精算・userLinks 同期に使われるため
+    // クライアントに偽装させない）。
+    function creatableExpenseKeys() {
+      return ['lineId', 'groupId', 'lineGroupId', 'userDisplayName', 'amount',
+              'description', 'date', 'category', 'includeInTotal', 'status',
+              'payerId', 'payerDisplayName', 'paymentMethod', 'createdAt', 'updatedAt'];
+    }
+    // 精算済み（立替を精算した）支出か。精算額が後から変わらないよう、
+    // クライアントからは金額・日付の変更と削除を禁止する（status はそもそも不変）。
+    function isSettledDoc() {
+      return resource.data.get('status', null) == 'advance_settled';
+    }
+    // 作成しようとしている支出のグループ所属が正当か。
+    //   - groupId なし: 個人支出。bot は lineGroupId だけで集計・精算するため、
+    //     groupId を持たずに lineGroupId だけを持つ支出（web からは見えないのに LINE の
+    //     集計に入る）は作らせない。
+    //   - groupId あり: そのグループの有効なメンバーであり、lineGroupId を付けるなら
+    //     グループに紐づく LINE グループと一致すること。
+    function validExpenseGroupOnCreate(d) {
+      return (!('groupId' in d) && !('lineGroupId' in d))
+          || ('groupId' in d
+              && isMemberOf(d.groupId)
+              && (!('lineGroupId' in d)
+                  || d.lineGroupId == get(/databases/$(database)/documents/groups/$(d.groupId)).data.get('lineGroupId', null)));
+    }
+    // 単一ドキュメントの書き込み（update / delete）で、呼び出し元がその支出を扱えるか。
+    //   - グループ支出（groupId あり）: そのグループの有効なメンバーだけ。
+    //     LINE グループを抜けて isActive:false になった元メンバーは、自分が登録した
+    //     支出でも書き換えられない。
+    //   - 個人支出（groupId なし）: 所有者だけ。
+    function canWriteExistingExpense() {
+      return (docGroupId() == null && ownsDoc()) || isMemberOfDocGroup();
     }
 
     // ---- expenses -----------------------------------------------------------
@@ -95,33 +174,41 @@ service cloud.firestore {
       // 「呼び出し元が当該グループのメンバーか」を exists()/get() で検証できるように
       // なった。従来の「LINE 本人確認済みなら誰でも読める」状態はここで解消される。
       //
-      // 【前提】グループ支出には groupId が付いている必要がある。bot の登録経路は
-      //   いずれも groupId と lineGroupId を同時に設定するが、groupId は
-      //   getUserGroups()（= groupMembers 検索）由来のため、メンバー未登録の利用者が
-      //   LINEグループで登録すると groupId を持たない支出になりうる。その支出は
-      //   所有者本人しか読めない。招待コードでの参加を経てメンバーになることが前提。
+      // 【注】所有者の read は groupId の有無を問わない。web の個人支出クエリは
+      //   where('lineId','==',自分) で引くため、ここに groupId の条件を足すと
+      //   クエリがルールで証明できず一覧全体が拒否される。
       allow read: if ownsDoc() || isMemberOfDocGroup();
 
-      // create: サインイン済みで、自分の lineId を持つドキュメントのみ作成可。
-      allow create: if writingAsSelf();
+      // create: LINE 本人確認済みで、自分の lineId を持ち、許可されたフィールドだけで、
+      // 値が妥当で、グループ所属が正当な場合のみ。
+      // （現状 web は支出を作成しない。登録は bot = Admin SDK が行う）
+      allow create: if isLineUser()
+                    && writingAsSelf()
+                    && request.resource.data.keys().hasAll(['lineId', 'amount', 'date'])
+                    && request.resource.data.keys().hasOnly(creatableExpenseKeys())
+                    && expenseFieldsValid(request.resource.data, request.resource.data.keys())
+                    && validExpenseGroupOnCreate(request.resource.data);
 
-      // update:
-      //   - 所有者は従来どおり更新可（所有権の付け替えは禁止）。
-      //   - 加えて、グループ支出はそのグループのメンバーが更新可（所有権の付け替えは禁止）。
-      //     Gmail 自動取込の支出は lineId が固定のシステムユーザー
-      //     ('gmail-auto-system') であり、どの実ユーザーの lineId とも一致しない。
-      //     所有者限定のままだと、世帯の支出の大半（取込分）を web から修正できず、
-      //     LINE カードの「修正」導線が機能しない。
-      allow update: if (ownsDoc() && writingAsSelf())
-                    || (isMemberOfDocGroup() && keepsOwner());
+      // update: 扱える支出について、許可リストのフィールドだけを、妥当な値で変更できる。
+      //   Gmail 自動取込の支出は lineId が固定のシステムユーザー
+      //   ('gmail-auto-system') であり、どの実ユーザーの lineId とも一致しないため、
+      //   グループメンバーであれば修正できる（LINE カードの「修正」導線）。
+      //   精算済みの支出は金額・日付を変えられない。
+      allow update: if canWriteExistingExpense()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(editableExpenseKeys())
+                    && expenseFieldsValid(request.resource.data,
+                                          request.resource.data.diff(resource.data).affectedKeys())
+                    && (!isSettledDoc()
+                        || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['amount', 'date']));
 
       // delete:
-      //   - 所有者は従来どおり削除可。
-      //   - 加えて、グループ支出のうち Gmail 自動取込分のみメンバーが削除可。
-      //     誤取込メールを消せるようにするための最小限の緩和で、人が手入力した
-      //     支出は引き続き本人しか削除できない（不可逆な操作の露出を最小化する）。
-      allow delete: if ownsDoc()
-                    || (isMemberOfDocGroup() && isGmailSystemDoc());
+      //   - 個人支出は所有者が削除可。
+      //   - グループ支出は、有効なメンバーのうち、登録した本人か、Gmail 自動取込分
+      //     （誤取込メールを消すため）の場合だけ削除可。
+      //   - 精算済みの支出はクライアントから削除できない。
+      allow delete: if !isSettledDoc()
+                    && ((docGroupId() == null && ownsDoc())
+                        || (isMemberOfDocGroup() && (ownsDoc() || isGmailSystemDoc())));
     }
 
     // ---- groups -------------------------------------------------------------
