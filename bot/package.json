@@ -7,8 +7,9 @@
   "scripts": {
     "build": "tsc",
     "lint": "echo 'Lint check passed for bot'",
-    "smoke": "npm run build && node scripts/smoke-expense-card.js && node scripts/smoke-text-parser.js && node scripts/smoke-gmail-parse.js && node scripts/smoke-admin-auth.js",
+    "smoke": "npm run build && node scripts/smoke-expense-card.js && node scripts/smoke-text-parser.js && node scripts/smoke-gmail-parse.js && node scripts/smoke-admin-auth.js && node scripts/smoke-household-api.js",
     "test": "npm run smoke",
+    "test:emulator": "npm run build && firebase --config scripts/firebase.emulator.json emulators:exec --only firestore,auth --project demo-kakeibo \"node scripts/emulator-household-api.js\"",
     "predeploy": "npm run build",
     "deploy": "npm run build && firebase deploy --only functions",
     "dev": "ts-node-dev src/index.ts"
