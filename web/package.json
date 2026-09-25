@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test __tests__/*.test.mjs",
     "deploy": "./deploy.sh",
     "deploy:bot": "./deploy-bot.sh",
     "deploy:all": "./deploy-all.sh"

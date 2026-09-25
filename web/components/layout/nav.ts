@@ -1,15 +1,21 @@
-import { Home, Receipt, Settings, type LucideIcon } from "lucide-react";
+import { House } from "lucide-react";
+import { DocLines, DocLinesFilled, HouseFilled, UsersFilled, UsersOutline, type AnyIcon } from "@/components/ui/icons";
+import { T } from "@/lib/uiText";
 
 export interface NavItem {
   path: string;
   label: string;
-  Icon: LucideIcon;
+  /** 未選択（線画） */
+  Icon: AnyIcon;
+  /** 選択中（塗り） */
+  ActiveIcon: AnyIcon;
 }
 
+// 下部ナビは 3 つだけ（4 つ目のタブや＋ボタンは置かない）。設定はホームの歯車から開く。
 export const NAV_ITEMS: NavItem[] = [
-  { path: "/", label: "ホーム", Icon: Home },
-  { path: "/expenses", label: "支出", Icon: Receipt },
-  { path: "/settings", label: "設定", Icon: Settings },
+  { path: "/", label: T.nav.home, Icon: House, ActiveIcon: HouseFilled },
+  { path: "/expenses", label: T.nav.expenses, Icon: DocLines, ActiveIcon: DocLinesFilled },
+  { path: "/futari", label: T.nav.futari, Icon: UsersOutline, ActiveIcon: UsersFilled },
 ];
 
 export function isActivePath(pathname: string, itemPath: string): boolean {

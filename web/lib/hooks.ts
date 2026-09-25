@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   collection, 
   query, 
@@ -15,10 +15,18 @@ import {
 } from 'firebase/firestore';
 import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
 import { db, auth, getFirebaseStatus, ensureFirebaseInitialized } from './firebase';
-import { initLineAuth, getLineIdClaim } from './lineAuth';
+import { initLineAuth, getLineIdClaim, isLineAuthSettled, onLineAuthSettled } from './lineAuth';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
-import { getCached, setCached, hasCached } from './swrCache';
+import { getCached, setCached, hasCached, clearCached, updateCachedByPrefix } from './swrCache';
+import { timestampToMillis } from './expenseState';
+import {
+  fetchSettlement,
+  householdErrorCode,
+  isHouseholdApiConfigured,
+  type HouseholdErrorCode,
+  type SettlementResponse,
+} from './householdApi';
 
 // Firestore document data shape for expenses (avoids explicit any)
 export type FirestoreExpenseData = Partial<Expense> & { category?: string };
@@ -213,6 +221,10 @@ let cachedLineAuth: LineAuthState | null = null;
 export function useLineAuth() {
   const [state, setState] = useState<LineAuthState | null>(() => cachedLineAuth);
   const [loading, setLoading] = useState(() => cachedLineAuth === null);
+  // 起動時サインイン（initLineAuth）が終わったか
+  const [initSettled, setInitSettled] = useState(() => isLineAuthSettled());
+
+  useEffect(() => onLineAuthSettled(() => setInitSettled(true)), []);
 
   useEffect(() => {
     ensureFirebaseInitialized();
@@ -262,11 +274,17 @@ export function useLineAuth() {
   // URL への付与は不要。互換のため関数は残し、パスをそのまま返す。
   const getUrlWithLineId = (path: string) => path;
 
+  // 認証の確定: 起動時サインインが終わり、その時点のユーザーについて lineId の解決が済んだ。
+  // 未確定の間（匿名セッションの復元直後など）は、ゲスト表示ではなく読み込み中として扱う。
+  const currentUid = auth?.currentUser?.uid ?? null;
+  const settled = initSettled && !loading && (state?.uid ?? null) === currentUid;
+
   return {
     user: state ? { uid: state.uid, isAnonymous: state.isAnonymous } : null,
     uid: state?.uid ?? null,
     lineId: state?.lineId ?? null,
     loading,
+    settled,
     signOut: signOutUser,
     isAnonymous: state?.isAnonymous ?? true,
     getUrlWithLineId,
@@ -303,24 +321,49 @@ async function fetchMyActiveGroupIds(lineId: string): Promise<string[]> {
   return Array.from(groupIds);
 }
 
+const NO_EXPENSES: Expense[] = [];
+
+// 支出を書き換えた回数。取得の途中で書き換えがあったら、その取得結果（書き換え前の内容）は
+// 使わずに取り直す（確認したばかりの行が「要確認」に戻るのを防ぐ）
+let expensesWriteGen = 0;
+
 export function useExpenses(userId: string | null, periodDays: number = 50, limitCount: number = 200, customStartDate?: string) {
   const expensesCacheKey = `expenses:${userId}:${periodDays}:${limitCount}:${customStartDate || ''}`;
   const [expenses, setExpenses] = useState<Expense[]>(() => getCached<Expense[]>(expensesCacheKey) ?? []);
   const [loading, setLoading] = useState(() => !hasCached(expensesCacheKey));
   const [error, setError] = useState<string | null>(null);
+  // refetch() で増やして取り直す（キャッシュがあれば出したまま裏で取り直す）
+  const [refetchNonce, setRefetchNonce] = useState(0);
+  // 今の取得条件（キー）の結果が state に入っているか。条件が変わった直後の描画で、
+  // 前の条件の一覧や「読み込み済み・0 件」を出さないために使う
+  const [resultKey, setResultKey] = useState<string | null>(() =>
+    hasCached(expensesCacheKey) ? expensesCacheKey : null
+  );
+
+  // ローカル書き換えの土台を今の条件の一覧にするため、最新の resultKey を持っておく
+  const resultKeyRef = useRef(resultKey);
+  useEffect(() => {
+    resultKeyRef.current = resultKey;
+  }, [resultKey]);
 
   useEffect(() => {
     if (!userId || userId === 'guest') {
       setLoading(false);
       setExpenses([]);
+      setResultKey(expensesCacheKey);
       return;
     }
+
+    // 条件が変わった・アンマウントした後に届いた結果で state を上書きしない
+    let active = true;
+    const gen = expensesWriteGen;
 
     // 再訪時はキャッシュを即表示し、裏で再取得（スピナーを出さない）。
     const cached = getCached<Expense[]>(expensesCacheKey);
     if (cached) {
       setExpenses(cached);
       setLoading(false);
+      setResultKey(expensesCacheKey);
     } else {
       setLoading(true);
     }
@@ -328,13 +371,17 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
     const fetchExpenses = async () => {
       // Firebase初期化を待機
       const isConnected = await waitForFirebase();
+      if (!active) return;
       if (!isConnected) {
         const status = getFirebaseStatus();
         setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
         setLoading(false);
+        setResultKey(expensesCacheKey);
         return;
       }
 
+      // 取得の途中で書き換えがあった（結果は書き換え前の可能性がある）
+      let superseded = false;
       try {
         setError(null);
 
@@ -467,24 +514,56 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
           return bTime - aTime; // desc order
         });
         
+        if (gen !== expensesWriteGen) {
+          superseded = true;
+          if (active) setRefetchNonce(n => n + 1);
+          return;
+        }
+        // キーはこの取得の条件そのものなので、画面が離れていてもキャッシュは更新してよい
         setCached(expensesCacheKey, sortedExpenses);
+        if (!active) return;
         setExpenses(sortedExpenses);
         setError(null);
       } catch (err) {
         const errorMessage = handleFirestoreError(err);
         console.error('Error fetching expenses:', err);
+        if (!active) return;
         setError(errorMessage);
         // キャッシュがある場合は消さず、前回値を残す（取得失敗でも空にしない）
         if (!hasCached(expensesCacheKey)) {
           setExpenses([]);
         }
       } finally {
-        setLoading(false);
+        if (active && !superseded) {
+          setLoading(false);
+          setResultKey(expensesCacheKey);
+        }
       }
     };
 
     fetchExpenses();
-  }, [userId, periodDays, limitCount, customStartDate, expensesCacheKey]);
+    return () => {
+      active = false;
+    };
+  }, [userId, periodDays, limitCount, customStartDate, expensesCacheKey, refetchNonce]);
+
+  // ローカルの一覧とキャッシュを書き換える。前の条件の一覧が state に残っている間は、
+  // 今の条件のキャッシュを土台にする（前の条件の一覧で今の条件のキャッシュを上書きしない）
+  const applyLocal = (fn: (list: Expense[]) => Expense[]) => {
+    expensesWriteGen += 1;
+    if (!hasCached(expensesCacheKey) && resultKeyRef.current !== expensesCacheKey) {
+      // 今の条件の一覧がまだ無い（読み込み中）。書き換え後の内容で取り直す
+      setRefetchNonce(n => n + 1);
+      return;
+    }
+    setExpenses(prev => {
+      const base = getCached<Expense[]>(expensesCacheKey) ?? prev;
+      const next = fn(base);
+      setCached(expensesCacheKey, next);
+      return next;
+    });
+    setResultKey(expensesCacheKey);
+  };
 
   const updateExpense = async (id: string, updates: Partial<Expense>) => {
     if (!checkFirebaseConnection()) {
@@ -496,29 +575,27 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
     }
     
     try {
-      const normalizedUpdates = {
+      // category は渡されたときだけ正規化する（差分だけの保存で category を消さない）
+      const normalizedUpdates: Partial<Expense> = {
         ...updates,
-        category: updates.category ? normalizeCategoryName(updates.category) : updates.category,
-      } as Partial<Expense>;
+        ...(updates.category !== undefined ? { category: normalizeCategoryName(updates.category) } : {}),
+      };
 
       // Remove undefined values to avoid Firestore errors
       const cleanUpdates = Object.fromEntries(
         Object.entries(normalizedUpdates).filter(([, value]) => value !== undefined)
-      );
+      ) as Partial<Expense>;
 
+      expensesWriteGen += 1;
       await updateDoc(doc(db, 'expenses', id), {
         ...cleanUpdates,
         updatedAt: new Date()
       });
       
       // Update local state（キャッシュも同期して再訪時の巻き戻りを防ぐ）
-      setExpenses(prev => {
-        const next = prev.map(expense =>
-          expense.id === id ? { ...expense, ...normalizedUpdates } : expense
-        );
-        setCached(expensesCacheKey, next);
-        return next;
-      });
+      applyLocal(list =>
+        list.map(expense => (expense.id === id ? { ...expense, ...cleanUpdates } : expense))
+      );
     } catch (err) {
       const errorMessage = handleFirestoreError(err);
       console.error('Error updating expense:', err);
@@ -536,14 +613,11 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
     }
     
     try {
+      expensesWriteGen += 1;
       await deleteDoc(doc(db, 'expenses', id));
       
       // Update local state（キャッシュも同期）
-      setExpenses(prev => {
-        const next = prev.filter(expense => expense.id !== id);
-        setCached(expensesCacheKey, next);
-        return next;
-      });
+      applyLocal(list => list.filter(expense => expense.id !== id));
     } catch (err) {
       const errorMessage = handleFirestoreError(err);
       console.error('Error deleting expense:', err);
@@ -551,18 +625,26 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
     }
   };
 
+  // サーバー経由の変更（確認など）の結果を、再取得せずに一覧へ反映する。
+  // 他の画面が持つ同じ支出のキャッシュも揃える。
+  const patchLocal = useCallback((id: string, patch: Partial<Expense>) => {
+    expensesWriteGen += 1;
+    setExpenses(prev => prev.map(expense => (expense.id === id ? { ...expense, ...patch } : expense)));
+    patchCachedExpenses([id], patch);
+  }, []);
+
+  // 条件が変わった直後（effect がまだ走っていない描画）は、新しい条件のキャッシュか空の読み込み中を返す
+  const current = resultKey === expensesCacheKey;
   return { 
-    expenses, 
-    loading, 
-    error, 
+    expenses: current ? expenses : (getCached<Expense[]>(expensesCacheKey) ?? NO_EXPENSES), 
+    loading: current ? loading : !hasCached(expensesCacheKey), 
+    error: current ? error : null, 
     updateExpense, 
     deleteExpense,
+    patchLocal,
+    // 取り直す（以前の実装は effect を再実行できず読み込み中のまま止まっていた）
     refetch: () => {
-      if (userId) {
-        setLoading(true);
-        // Re-trigger useEffect
-        setExpenses([]);
-      }
+      if (userId) setRefetchNonce(n => n + 1);
     }
   };
 }
@@ -572,18 +654,29 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
   const [stats, setStats] = useState<ExpenseStats | null>(() => getCached<ExpenseStats>(statsCacheKey) ?? null);
   const [loading, setLoading] = useState(() => !hasCached(statsCacheKey));
   const [error, setError] = useState<string | null>(null);
+  // refetch() で増やして再取得する（キャッシュは先に出したまま裏で取り直す）
+  const [refetchNonce, setRefetchNonce] = useState(0);
+  // 今の条件（キー）の結果が state に入っているか（useExpenses と同じ。前の期間の値を出さないため）
+  const [resultKey, setResultKey] = useState<string | null>(() =>
+    hasCached(statsCacheKey) ? statsCacheKey : null
+  );
 
   useEffect(() => {
     if (!userId || userId === 'guest') {
       setLoading(false);
+      setResultKey(statsCacheKey);
       return;
     }
+
+    // 条件が変わった・アンマウントした後に届いた結果で state を上書きしない
+    let active = true;
 
     // 再訪時はキャッシュを即表示し、スピナーを出さずに裏で再取得する。
     const cached = getCached<ExpenseStats>(statsCacheKey);
     if (cached) {
       setStats(cached);
       setLoading(false);
+      setResultKey(statsCacheKey);
     } else {
       setLoading(true);
     }
@@ -591,10 +684,12 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
     const fetchStats = async () => {
       // Firebase初期化を待機
       const isConnected = await waitForFirebase();
+      if (!active) return;
       if (!isConnected) {
         const status = getFirebaseStatus();
         setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
         setLoading(false);
+        setResultKey(statsCacheKey);
         return;
       }
       try {
@@ -694,169 +789,39 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
           dailyTotals
         };
         setCached(statsCacheKey, nextStats);
+        if (!active) return;
         setStats(nextStats);
         setError(null);
       } catch (err) {
         const errorMessage = handleFirestoreError(err);
         console.error('Error fetching monthly stats:', err);
+        if (!active) return;
         setError(errorMessage);
       } finally {
-        setLoading(false);
+        if (active) {
+          setLoading(false);
+          setResultKey(statsCacheKey);
+        }
       }
     };
 
     fetchStats();
-  }, [userId, year, month, startDay, customStartDate, customEndDate, statsCacheKey]);
-
-  return { stats, loading, error };
-}
-
-export function useUserGroups(userId: string | null) {
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!userId || userId === 'guest') {
-      setLoading(false);
-      return;
-    }
-
-    const fetchGroups = async () => {
-      // Firebase初期化を待機
-      const isConnected = await waitForFirebase();
-      if (!isConnected) {
-        const status = getFirebaseStatus();
-        setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
-        setLoading(false);
-        return;
-      }
-      try {
-        setLoading(true);
-        setError(null);
-        
-        if (!db) {
-          throw new Error('Firestoreデータベースが利用できません');
-        }
-        
-        // Get user's group memberships
-        const membershipQuery = query(
-          collection(db, 'groupMembers'),
-          where('lineId', '==', userId),
-          where('isActive', '==', true)
-        );
-        
-        const membershipSnapshot = await getDocs(membershipQuery);
-        
-        if (membershipSnapshot.empty) {
-          setGroups([]);
-          setError(null);
-          return;
-        }
-        
-        // Get group details for each membership
-        const groupPromises = membershipSnapshot.docs.map(async (memberDoc) => {
-          const memberData = memberDoc.data();
-          const groupDoc = await getDoc(doc(db!, 'groups', memberData.groupId));
-          
-          if (groupDoc.exists()) {
-            return {
-              id: groupDoc.id,
-              ...groupDoc.data()
-            } as Group;
-          }
-          return null;
-        });
-        
-        const groupResults = await Promise.all(groupPromises);
-        const validGroups = groupResults.filter(group => group !== null) as Group[];
-        
-        setGroups(validGroups);
-        setError(null);
-      } catch (err) {
-        const errorMessage = handleFirestoreError(err);
-        console.error('Error fetching user groups:', err);
-        setError(errorMessage);
-      } finally {
-        setLoading(false);
-      }
+    return () => {
+      active = false;
     };
+  }, [userId, year, month, startDay, customStartDate, customEndDate, statsCacheKey, refetchNonce]);
 
-    fetchGroups();
-  }, [userId]);
+  const refetch = useCallback(() => {
+    setRefetchNonce(n => n + 1);
+  }, []);
 
-  return { groups, loading, error };
-}
-
-export function useGroupExpenses(groupId: string | null, limitCount: number = 50) {
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!groupId) {
-      setLoading(false);
-      return;
-    }
-
-    const fetchGroupExpenses = async () => {
-      // Firebase初期化を待機
-      const isConnected = await waitForFirebase();
-      if (!isConnected) {
-        const status = getFirebaseStatus();
-        setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
-        setLoading(false);
-        return;
-      }
-      try {
-        setLoading(true);
-        setError(null);
-        
-        if (!db) {
-          throw new Error('Firestoreデータベースが利用できません');
-        }
-        
-        const q = query(
-          collection(db, 'expenses'),
-          where('groupId', '==', groupId),
-          limit(limitCount)
-        );
-        
-        const querySnapshot = await getDocs(q);
-        
-        const expenseList = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as Expense));
-        
-        // Sort in memory by creation time desc
-        const sortedExpenses = expenseList.sort((a, b) => {
-          const aTime = a.createdAt ? 
-            (typeof a.createdAt === 'object' && 'seconds' in a.createdAt ? 
-              a.createdAt.seconds * 1000 : 
-              (a.createdAt as Date).getTime()) : 0;
-          const bTime = b.createdAt ? 
-            (typeof b.createdAt === 'object' && 'seconds' in b.createdAt ? 
-              b.createdAt.seconds * 1000 : 
-              (b.createdAt as Date).getTime()) : 0;
-          return bTime - aTime; // desc order
-        });
-        
-        setExpenses(sortedExpenses);
-        setError(null);
-      } catch (err) {
-        const errorMessage = handleFirestoreError(err);
-        console.error('Error fetching group expenses:', err);
-        setError(errorMessage);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchGroupExpenses();
-  }, [groupId, limitCount]);
-
-  return { expenses, loading, error };
+  const current = resultKey === statsCacheKey;
+  return {
+    stats: current ? stats : (getCached<ExpenseStats>(statsCacheKey) ?? null),
+    loading: current ? loading : !hasCached(statsCacheKey),
+    error: current ? error : null,
+    refetch,
+  };
 }
 
 // グループメンバーを取得するフック
@@ -935,8 +900,11 @@ export interface BudgetConfig {
 }
 
 // デフォルトの予算設定
+/** 予算を未設定のときの月の予算 */
+export const DEFAULT_MONTHLY_BUDGET = 200000;
+
 const defaultBudgetConfig: BudgetConfig = {
-  monthlyBudget: 200000,
+  monthlyBudget: DEFAULT_MONTHLY_BUDGET,
   categoryBudgets: {},
   alertThreshold: 20,
 };
@@ -1022,4 +990,241 @@ export function useBudgetConfig(userId: string | null) {
   };
 
   return { config, loading, error, refetch };
+}
+
+// ---------------------------------------------------------------------------
+// キャッシュの同期（書き込み後に、別の画面が持つ古い値を出さないため）
+// ---------------------------------------------------------------------------
+
+/** 読み込み済みの支出一覧（expenses:* のキャッシュ）の該当 ID をまとめて書き換える */
+export function patchCachedExpenses(ids: readonly string[], patch: Partial<Expense>): void {
+  if (ids.length === 0) return;
+  expensesWriteGen += 1;
+  const targets = new Set(ids);
+  updateCachedByPrefix<Expense[]>('expenses:', (list) => {
+    if (!Array.isArray(list) || !list.some((e) => targets.has(e.id))) return list;
+    return list.map((e) => (targets.has(e.id) ? { ...e, ...patch } : e));
+  });
+}
+
+/**
+ * 支出を変更したあとに呼ぶ。集計（stats:*）のキャッシュを捨て、次に開いたホームが
+ * 古い予算残りを出さずに読み込み直すようにする。
+ */
+export function invalidateStatsCache(): void {
+  clearCached('stats:');
+}
+
+// ---------------------------------------------------------------------------
+// 世帯（所属グループ・メンバー）
+// ---------------------------------------------------------------------------
+
+export interface HouseholdMember {
+  lineId: string;
+  displayName: string;
+}
+
+export interface HouseholdInfo {
+  /** 有効に所属しているグループ（書き込み可否の判定に使う） */
+  activeGroupIds: string[];
+  /** 主世帯（最初に参加したグループ）。所属が無ければ null */
+  household: {
+    groupId: string;
+    name: string;
+    lineGroupId: string | null;
+    /** 有効メンバー（参加順） */
+    members: HouseholdMember[];
+  } | null;
+}
+
+interface MembershipRow {
+  groupId: string;
+  lineId: string;
+  displayName: string;
+  joinedAtMs: number;
+}
+
+function toMembershipRow(data: Record<string, unknown>): MembershipRow | null {
+  const groupId = typeof data.groupId === 'string' ? data.groupId : '';
+  const lineId = typeof data.lineId === 'string' ? data.lineId : '';
+  if (!groupId || !lineId) return null;
+  const joinedAtMs = data.joinedAt == null ? Number.POSITIVE_INFINITY : timestampToMillis(data.joinedAt);
+  return {
+    groupId,
+    lineId,
+    displayName: typeof data.displayName === 'string' ? data.displayName : '',
+    joinedAtMs,
+  };
+}
+
+/** 参加順（joinedAt 昇順、同じなら lineId 順）。どの端末でも同じ並びにする */
+function byJoinedAt(a: MembershipRow, b: MembershipRow): number {
+  if (a.joinedAtMs !== b.joinedAtMs) return a.joinedAtMs < b.joinedAtMs ? -1 : 1;
+  return a.lineId < b.lineId ? -1 : a.lineId > b.lineId ? 1 : 0;
+}
+
+async function loadHousehold(lineId: string): Promise<HouseholdInfo> {
+  if (!db) throw new Error('Firestoreデータベースが利用できません');
+  // 自分の有効なメンバーシップ（fetchMyActiveGroupIds と同じクエリ形）
+  const mine = await getDocs(
+    query(collection(db, 'groupMembers'), where('lineId', '==', lineId), where('isActive', '==', true))
+  );
+  const myRows = mine.docs
+    .map((d) => toMembershipRow(d.data() as Record<string, unknown>))
+    .filter((r): r is MembershipRow => r !== null)
+    .sort(byJoinedAt);
+  const activeGroupIds = Array.from(new Set(myRows.map((r) => r.groupId)));
+  if (activeGroupIds.length === 0) return { activeGroupIds, household: null };
+
+  const groupId = myRows[0].groupId;
+  const [groupSnap, membersSnap] = await Promise.all([
+    // グループ名などは表示の補助なので、読めなくても世帯の判定は続ける
+    getDoc(doc(db, 'groups', groupId)).catch((err: unknown) => {
+      console.error('Failed to read household group:', err);
+      return null;
+    }),
+    getDocs(query(collection(db, 'groupMembers'), where('groupId', '==', groupId), where('isActive', '==', true))),
+  ]);
+  const groupData = groupSnap?.exists() ? (groupSnap.data() as Record<string, unknown>) : {};
+
+  // 自動 ID の古い文書と決定的 ID の文書が重なることがあるので lineId で 1 人にまとめる
+  const members = new Map<string, MembershipRow>();
+  membersSnap.docs
+    .map((d) => toMembershipRow(d.data() as Record<string, unknown>))
+    .filter((r): r is MembershipRow => r !== null)
+    .sort(byJoinedAt)
+    .forEach((row) => {
+      const existing = members.get(row.lineId);
+      if (!existing) members.set(row.lineId, row);
+      else if (!existing.displayName && row.displayName) members.set(row.lineId, { ...existing, displayName: row.displayName });
+    });
+
+  return {
+    activeGroupIds,
+    household: {
+      groupId,
+      name: typeof groupData.name === 'string' ? groupData.name : '',
+      lineGroupId: typeof groupData.lineGroupId === 'string' && groupData.lineGroupId ? groupData.lineGroupId : null,
+      members: Array.from(members.values()).map((m) => ({ lineId: m.lineId, displayName: m.displayName })),
+    },
+  };
+}
+
+interface FetchStatus<E> {
+  key: string;
+  nonce: number;
+  error: E | null;
+}
+
+/**
+ * 所属グループと主世帯のメンバー。読み取りは既存と同じクエリ形なので、
+ * master / PR #172 のどちらのルールでも通る。
+ * activeGroupIds は所属がまだ分からない（読み込み中・失敗）とき null。
+ */
+export function useHousehold(lineId: string | null) {
+  const key = lineId && lineId !== 'guest' ? `household:${lineId}` : '';
+  const [nonce, setNonce] = useState(0);
+  // 取得結果の値は swrCache に置き、ここでは完了と失敗だけを持つ
+  const [status, setStatus] = useState<FetchStatus<string> | null>(null);
+
+  useEffect(() => {
+    if (!key || !lineId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const connected = await waitForFirebase();
+        if (!connected) throw new Error('Firebase接続エラー');
+        const value = await loadHousehold(lineId);
+        if (cancelled) return;
+        setCached(key, value);
+        setStatus({ key, nonce, error: null });
+      } catch (err) {
+        if (cancelled) return;
+        setStatus({ key, nonce, error: handleFirestoreError(err) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [key, lineId, nonce]);
+
+  const refetch = useCallback(() => setNonce((n) => n + 1), []);
+
+  if (!key) {
+    return { household: null, activeGroupIds: [] as string[], loading: false, error: null, refetch };
+  }
+  const info = getCached<HouseholdInfo>(key) ?? null;
+  const current = status && status.key === key ? status : null;
+  const done = !!current && current.nonce === nonce;
+  return {
+    household: info?.household ?? null,
+    activeGroupIds: info ? info.activeGroupIds : null,
+    loading: !done && !info,
+    // 再試行中は前回の失敗を出さない（読み込み中として扱う）
+    error: done ? (current?.error ?? null) : null,
+    refetch,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ふたりの精算（bot の /household/settlement）
+// ---------------------------------------------------------------------------
+
+/**
+ * 未精算の立替と精算額。キャッシュを先に出して裏で取り直す（コールドスタートの待ちを隠す）。
+ * API が未設定のときは取得しない（available=false。画面は ¥0 とボタン無効）。
+ */
+export function useSettlement(groupId: string | null) {
+  const available = isHouseholdApiConfigured();
+  const key = groupId && available ? `settlement:${groupId}` : '';
+  const [nonce, setNonce] = useState(0);
+  const [status, setStatus] = useState<FetchStatus<HouseholdErrorCode> | null>(null);
+  // setData で差し替えたときに描き直すためのカウンタ（値は swrCache）
+  const [, setVersion] = useState(0);
+
+  useEffect(() => {
+    if (!key || !groupId) return;
+    let cancelled = false;
+    fetchSettlement(groupId).then(
+      (value) => {
+        if (cancelled) return;
+        setCached(key, value);
+        setStatus({ key, nonce, error: null });
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        setStatus({ key, nonce, error: householdErrorCode(err) });
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [key, groupId, nonce]);
+
+  /** 最新の内容で差し替える（精算を記録したときの 409 stale など） */
+  const setData = useCallback(
+    (value: SettlementResponse) => {
+      if (!key) return;
+      setCached(key, value);
+      setVersion((v) => v + 1);
+    },
+    [key]
+  );
+  const refetch = useCallback(() => setNonce((n) => n + 1), []);
+
+  if (!key) {
+    return { data: null, loading: false, error: null, available, setData, refetch };
+  }
+  const data = getCached<SettlementResponse>(key) ?? null;
+  const current = status && status.key === key ? status : null;
+  const done = !!current && current.nonce === nonce;
+  return {
+    data,
+    loading: !done && !data,
+    // 再試行中は前回の失敗を出さない（読み込み中として扱う）
+    error: done ? (current?.error ?? null) : null,
+    available,
+    setData,
+    refetch,
+  };
 }

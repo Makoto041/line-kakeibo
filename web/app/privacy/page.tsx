@@ -3,7 +3,7 @@
 export default function PrivacyPolicy() {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6 md:px-8 md:py-8">
-      <div className="glass rounded-2xl p-6 shadow-glass md:p-8">
+      <div className="kb-card rounded-kb-card p-6 md:p-8">
         <h1 className="mb-6 text-2xl font-bold text-fg">プライバシーポリシー</h1>
 
         <div className="space-y-6 text-muted">
