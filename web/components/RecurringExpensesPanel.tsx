@@ -161,6 +161,11 @@ export default function RecurringExpensesPanel({ lineId }: { lineId: string }) {
     try {
       const saved = await updateRecurring(item.id, { active: !item.active });
       setItems((prev) => prev.map((i) => (i.id === saved.id ? saved : i)));
+      setNotice(
+        saved.active
+          ? `「${saved.name}」を再開しました。今月の引き落とし日を過ぎている場合は来月から入ります`
+          : `「${saved.name}」を一時停止しました`
+      );
     } catch (e) {
       setError(recurringErrorMessage(e));
     } finally {
@@ -211,6 +216,8 @@ export default function RecurringExpensesPanel({ lineId }: { lineId: string }) {
             value={activeGroupId}
             onChange={(e) => {
               setLoading(true);
+              setItems([]);
+              setMembers([]);
               setEditing(null);
               setGroupId(e.target.value);
             }}
@@ -244,7 +251,7 @@ export default function RecurringExpensesPanel({ lineId }: { lineId: string }) {
           <span className="text-xs text-muted">毎月の合計: ¥{total.toLocaleString()}</span>
         </div>
         <p className="mb-4 text-xs text-muted">
-          引き落とし日の朝に、設定した金額で明細へ自動で入ります。光熱費など金額が変わるものは、請求が確定したら明細の金額を直してください。
+          引き落とし日の朝に、設定した金額で明細へ自動で入ります。光熱費など金額が変わるものは、請求が確定したら明細の金額を直してください。29〜30日の指定は、その日が無い月は末日に入ります。カードの利用通知メールで自動登録される支出は、二重になるので登録しないでください。
         </p>
 
         {items.length === 0 && editing !== 'new' && (
@@ -427,7 +434,7 @@ function DraftForm({
         <div>
           <label className="mb-1.5 block text-sm font-medium text-fg">引き落とし日</label>
           <select value={draft.dayOfMonth} onChange={(e) => set('dayOfMonth', Number(e.target.value))} className={INPUT}>
-            {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+            {Array.from({ length: 30 }, (_, i) => i + 1).map((d) => (
               <option key={d} value={d}>
                 毎月{d}日
               </option>

@@ -120,6 +120,12 @@ test('共通のカード・口座は共同費になる（立替ではない）',
   assert.equal(e.status, 'shared');
   assert.equal(e.lineId, RECURRING_SYSTEM_LINE_ID);
   assert.equal(e.advanceBy, undefined);
+  assert.equal(e.userDisplayName, undefined);
+  assert.equal(e.payerDisplayName, undefined);
+});
+test('立替者の表示名が分からないときは代わりの名前', () => {
+  const e = buildRecurringExpense(baseItem, '2026-09-27', { lineGroupId: null, names: new Map([['Uaaa', '']]) }, now);
+  assert.equal(e.payerDisplayName, 'User_Uaaa');
 });
 test('LINE グループに紐づかない世帯は lineGroupId を持たない', () => {
   const e = buildRecurringExpense(baseItem, '2026-09-27', { lineGroupId: null, names: new Map() }, now);

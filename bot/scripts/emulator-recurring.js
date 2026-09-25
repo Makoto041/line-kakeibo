@@ -183,6 +183,40 @@ async function main() {
     const e3 = await db.doc(`expenses/recurring_${rentId}_202610`).get();
     check('無効にした家賃は 10 月に計上しない', !e3.exists && s4.posted === 0, s4);
 
+    // 再開したとき、今月の引き落とし日を過ぎていれば今月分は遡らない（API は今日の JST で判定する）
+    const paused = await call('POST', '/household/recurring', { token: aki, body: { ...util, name: '水道代', dayOfMonth: 1, active: false } });
+    const pausedId = paused.body.item.id;
+    const resumed = await call('PATCH', `/household/recurring/${pausedId}`, { token: aki, body: { active: true } });
+    const thisMonth = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 7);
+    const todayDay = Number(new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(8, 10));
+    check(
+      '再開: 引き落とし日（1日）を過ぎていれば今月は計上済み扱い',
+      resumed.status === 200 && (todayDay > 1 ? resumed.body.item.lastPostedMonth === thisMonth : resumed.body.item.lastPostedMonth === null),
+      resumed.body
+    );
+
+    // 作成した月に、すでに過ぎた引き落とし日の分は API で作っても遡らない（startDate は作成日）
+    const late = await call('POST', '/household/recurring', { token: aki, body: { ...util, name: '通信費', category: '通信費', dayOfMonth: 1 } });
+    const lateDoc = await db.doc(`recurringExpenses/${late.body.item.id}`).get();
+    const today = new Date(Date.now() + 9 * 3600 * 1000);
+    const sLate = await postDueRecurringExpenses(db, new Date());
+    const lateExpense = await db.doc(`expenses/recurring_${late.body.item.id}_${thisMonth.replace('-', '')}`).get();
+    check(
+      '作成日より前の引き落とし日は遡らない（API 経由）',
+      lateDoc.get('startDate') === today.toISOString().slice(0, 10) && (todayDay > 1 ? !lateExpense.exists : true),
+      { startDate: lateDoc.get('startDate'), sLate }
+    );
+
+    // 立替者が世帯を抜けていたら計上しない
+    const benRent = await call('POST', '/household/recurring', { token: aki, body: { ...rent, name: '駐車場', payerLineId: 'Uben' } });
+    const benId = benRent.body.item.id;
+    await db.doc(`recurringExpenses/${benId}`).update({ startDate: '2026-09-01' });
+    await db.doc('groupMembers/h1_Uben').update({ isActive: false });
+    const sLeft = await postDueRecurringExpenses(db, new Date('2026-09-27T00:00:00Z'));
+    const benExpense = await db.doc(`expenses/recurring_${benId}_202609`).get();
+    check('立替者が脱退していたら計上しない', !benExpense.exists && sLeft.failed === 0, sLeft);
+    await db.doc('groupMembers/h1_Uben').update({ isActive: true });
+
     // 計上した明細は項目を消しても残る
     const del = await call('DELETE', `/household/recurring/${utilId}`, { token: aki });
     check('削除', del.status === 200);

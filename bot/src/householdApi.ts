@@ -43,6 +43,7 @@ import { errorMessage, maskId } from './logSafe';
 import {
   MAX_RECURRING_PER_GROUP,
   RECURRING_COLLECTION,
+  dueDateFor,
   isConsistentPayment,
   loadGroupContext,
   parseRecurringInput,
@@ -713,7 +714,11 @@ householdRouter.get(
     if (!ctx) return;
     const snapshot = await ctx.db.collection(RECURRING_COLLECTION).where('groupId', '==', ctx.groupId).get();
     const items = snapshot.docs
-      .map((doc) => toRecurringItem(doc.id, doc.data()))
+      .map((doc) => {
+        const item = toRecurringItem(doc.id, doc.data());
+        if (!item) console.warn('household recurring: skipped a malformed item', { item: maskId(doc.id) });
+        return item;
+      })
       .filter((item): item is NonNullable<typeof item> => item !== null)
       .sort((a, b) => a.dayOfMonth - b.dayOfMonth || a.name.localeCompare(b.name, 'ja'))
       .map(toRecurringView);
@@ -761,7 +766,7 @@ householdRouter.post(
   })
 );
 
-/** 固定費の文書を読み、世帯のメンバーか確かめる。だめなら応答を返して null */
+/** 固定費の文書を読み、世帯のメンバーか確かめる。だめなら応答を返して null（更新はこのあとトランザクションで読み直す） */
 async function loadOwnRecurring(req: Request, res: Response) {
   const lineId = res.locals.lineId as string;
   const id = req.params.id;
@@ -794,28 +799,51 @@ householdRouter.patch(
       sendError(res, 400, 'invalid_request');
       return;
     }
-    const merged: RecurringInput = {
-      name: ctx.item.name,
-      amount: ctx.item.amount,
-      category: ctx.item.category,
-      dayOfMonth: ctx.item.dayOfMonth,
-      payment: ctx.item.payment,
-      payerLineId: ctx.item.payerLineId,
-      active: ctx.item.active,
-      ...patch,
-    };
-    // shared に切り替えたら立替者を外す
-    if (merged.payment === 'shared') merged.payerLineId = null;
-    if (
-      !isConsistentPayment(merged) ||
-      (merged.payerLineId !== null && merged.payerLineId !== ctx.item.payerLineId && !ctx.group.names.has(merged.payerLineId))
-    ) {
+    // 同時に編集されても上書きし合わないよう、トランザクションで読み直してから書く
+    const result = await ctx.db.runTransaction(async (tx) => {
+      const fresh = await tx.get(ctx.ref);
+      const current = fresh.exists ? toRecurringItem(ctx.item.id, fresh.data()) : null;
+      if (!current || current.groupId !== ctx.item.groupId) return 'not_found' as const;
+      const merged: RecurringInput = {
+        name: current.name,
+        amount: current.amount,
+        category: current.category,
+        dayOfMonth: current.dayOfMonth,
+        payment: current.payment,
+        payerLineId: current.payerLineId,
+        active: current.active,
+        ...patch,
+      };
+      // shared に切り替えたら立替者を外す
+      if (merged.payment === 'shared') merged.payerLineId = null;
+      if (
+        !isConsistentPayment(merged) ||
+        (merged.payerLineId !== null && merged.payerLineId !== current.payerLineId && !ctx.group.names.has(merged.payerLineId))
+      ) {
+        return 'invalid' as const;
+      }
+      // 再開したとき、今月の引き落とし日を過ぎていれば今月分は遡って入れない（作成時と同じ扱い）
+      let lastPostedMonth = current.lastPostedMonth;
+      if (!current.active && merged.active) {
+        const today = todayJST();
+        const month = today.slice(0, 7);
+        if (dueDateFor(month, merged.dayOfMonth) < today && (lastPostedMonth === null || lastPostedMonth < month)) {
+          lastPostedMonth = month;
+        }
+      }
+      tx.update(ctx.ref, { ...merged, lastPostedMonth, updatedAt: new Date() });
+      return { ...current, ...merged, lastPostedMonth };
+    });
+    if (result === 'not_found') {
+      sendError(res, 404, 'not_found');
+      return;
+    }
+    if (result === 'invalid') {
       sendError(res, 400, 'invalid_request');
       return;
     }
-    await ctx.ref.update({ ...merged, updatedAt: new Date() });
     console.log('household recurring: updated', { item: maskId(ctx.item.id), user: maskId(ctx.lineId) });
-    res.status(200).json({ item: toRecurringView({ ...ctx.item, ...merged }) });
+    res.status(200).json({ item: toRecurringView(result) });
   })
 );
 

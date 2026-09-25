@@ -6,6 +6,8 @@
  * - 毎日のスケジュール関数（index.ts の postRecurringExpenses）が、引き落とし日を迎えた項目を明細に計上する。
  *   金額は設定した見込み額。請求が確定したら明細の金額を直す（光熱費など）。
  * - 計上は冪等: 明細の文書 ID を `recurring_{項目ID}_{YYYYMM}` に固定し、create で作る（同じ月に 2 回は入らない）。
+ * - 判定は「今月分」だけを見る。月をまたいで何日も止まった場合、前月分は遡って入らない（毎日のリトライで通常は起きない）。
+ * - カード利用通知メールで自動登録される支出（Gmail 自動取得）は、ここに登録すると二重になる（画面で案内する）。
  * - 支払い元
  *   - shared: 共通のカード・口座から引き落とし（Gmail 自動取得の共同費と同じ扱い）
  *   - advance: メンバーの個人口座から引き落とし（その人の立替。精算で相手が半分を払う）
@@ -15,6 +17,7 @@ import type { DocumentData, Firestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import { CANONICAL_CATEGORIES } from './categoryNormalization';
 import { errorMessage, maskId } from './logSafe';
+import { CREATOR_PLACEHOLDER_NAME, fallbackDisplayName } from './householdSettlement';
 import { dayjs, JST } from './time';
 
 export const RECURRING_COLLECTION = 'recurringExpenses';
@@ -252,22 +255,23 @@ export function buildRecurringExpense(item: RecurringItem, date: string, group: 
     updatedAt: now,
   };
   if (item.payment === 'advance' && item.payerLineId) {
-    const name = group.names.get(item.payerLineId) ?? '';
+    // 表示名が分からない（仮名「作成者」のまま等）ときは LINE の立替一覧と同じ代わりの名前
+    const name = group.names.get(item.payerLineId) || fallbackDisplayName(item.payerLineId);
     return {
       ...base,
       lineId: item.payerLineId,
       payerId: item.payerLineId,
-      ...(name ? { userDisplayName: name, payerDisplayName: name } : {}),
+      userDisplayName: name,
+      payerDisplayName: name,
       status: 'advance_pending' as const,
       advanceBy: item.payerLineId,
     };
   }
+  // Gmail 自動取得と同じく表示名は持たせない（Web の支払い者の候補に「人」として混ざらないように）
   return {
     ...base,
     lineId: RECURRING_SYSTEM_LINE_ID,
     payerId: RECURRING_SYSTEM_LINE_ID,
-    userDisplayName: '固定費',
-    payerDisplayName: '固定費',
     status: 'shared' as const,
   };
 }
@@ -290,7 +294,9 @@ export async function loadGroupContext(db: Firestore, groupId: string): Promise<
   for (const doc of members.docs) {
     const lineId = doc.get('lineId');
     const name = doc.get('displayName');
-    if (typeof lineId === 'string') names.set(lineId, typeof name === 'string' && name !== '作成者' ? name : '');
+    if (typeof lineId === 'string') {
+      names.set(lineId, typeof name === 'string' && name !== CREATOR_PLACEHOLDER_NAME ? name : '');
+    }
   }
   return { lineGroupId: typeof lineGroupId === 'string' && lineGroupId.length > 0 ? lineGroupId : null, names };
 }

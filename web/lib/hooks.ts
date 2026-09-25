@@ -47,7 +47,7 @@ export interface GroupMember {
 export type ExpenseStatus = 'pending' | 'shared' | 'personal' | 'advance_pending' | 'advance_settled';
 
 // Input source type (matches bot/src/firestore.ts InputSourceType)
-export type InputSource = 'line_text' | 'line_ocr' | 'gmail_auto';
+export type InputSource = 'line_text' | 'line_ocr' | 'gmail_auto' | 'recurring';
 
 // Firestore Timestamp-like type for client-side use
 export type FirestoreTimestamp = Date | { seconds: number; nanoseconds: number };

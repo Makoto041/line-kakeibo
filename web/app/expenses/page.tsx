@@ -431,6 +431,10 @@ function ExpensesPageContent() {
     if (expense.inputSource === 'gmail_auto') {
       return 'クレジットカード';
     }
+    // 固定費の自動計上（共通のカード・口座から引き落とし）
+    if (expense.inputSource === 'recurring' && expense.payerId === 'recurring-system') {
+      return '共通口座';
+    }
     const payerId = expense.payerId || expense.lineId;
     let payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
     if (payerName === 'メンバー' || payerName === '個人' || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
@@ -781,7 +785,9 @@ function ExpensesPageContent() {
                         {(() => {
                           // 支払い者の名前を共通ルールで解決（金額/件数集計と一致させる）
                           const isDefaultPayer = !expense.payerId || expense.payerId === expense.lineId;
-                          const isCardSource = expense.inputSource === 'gmail_auto';
+                          const isCardSource =
+                            expense.inputSource === 'gmail_auto' ||
+                            (expense.inputSource === 'recurring' && expense.payerId === 'recurring-system');
                           const payerName = resolvePayerName(expense);
 
                           return payerName !== "個人" && (
