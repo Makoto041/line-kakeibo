@@ -70,7 +70,7 @@ export default function GuestGuide({ className = '' }: { className?: string }) {
         <p className="mb-2 text-[11px] font-medium text-ink-4">トークのイメージ</p>
         <div className="space-y-2 text-[13px]">
           <div className="flex justify-end">
-            <span className="inline-block max-w-[80%] rounded-2xl rounded-tr-sm bg-accent px-3 py-2 text-white">
+            <span className="inline-block max-w-[80%] rounded-2xl rounded-tr-sm px-3 py-2 text-white" style={{ background: 'var(--kb-accent-bubble)' }}>
               500 ランチ
             </span>
           </div>
@@ -81,7 +81,7 @@ export default function GuestGuide({ className = '' }: { className?: string }) {
             </span>
           </div>
           <div className="flex justify-end">
-            <span className="inline-block max-w-[80%] rounded-2xl rounded-tr-sm bg-accent px-3 py-2 text-white">
+            <span className="inline-block max-w-[80%] rounded-2xl rounded-tr-sm px-3 py-2 text-white" style={{ background: 'var(--kb-accent-bubble)' }}>
               家計簿
             </span>
           </div>

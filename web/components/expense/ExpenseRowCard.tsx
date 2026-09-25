@@ -53,7 +53,7 @@ export function ExpenseRowCard({
         size={24}
         strokeWidth={2}
         aria-hidden="true"
-        className={cx('shrink-0 text-ink-5', pending ? 'ml-2.5 max-[389px]:ml-1.5' : 'ml-4')}
+        className={cx('shrink-0 text-ink-4', pending ? 'ml-2.5 max-[389px]:ml-1.5' : 'ml-4')}
       />
     </button>
   );

@@ -28,20 +28,30 @@ export function PrimaryButton({
   className,
   children,
   type = 'button',
+  onClick,
   ...rest
 }: PrimaryButtonProps) {
   const Icon = icon;
   return (
     <button
       type={type}
-      disabled={disabled || loading}
+      // 処理中は disabled にしない（押した直後にフォーカスがシートの外へ落ちないように）
+      disabled={disabled}
+      aria-disabled={loading || undefined}
       aria-busy={loading || undefined}
+      onClick={(e) => {
+        if (loading) {
+          e.preventDefault();
+          return;
+        }
+        onClick?.(e);
+      }}
       className={cx(
-        'inline-flex w-full items-center justify-center gap-3 rounded-full px-5 transition-[transform,opacity] duration-150 active:scale-[0.98] disabled:pointer-events-none',
+        'inline-flex w-full items-center justify-center gap-3 rounded-full px-5 transition-[transform,opacity] duration-150 active:scale-[0.98] disabled:pointer-events-none aria-disabled:pointer-events-none',
         HEIGHT_CLASS[height],
         variant === 'primary' && 'kb-btn-primary',
         variant === 'danger' && 'kb-btn-danger',
-        variant === 'soft' && 'kb-glass-2 text-ink disabled:opacity-45',
+        variant === 'soft' && 'kb-glass-2 text-ink disabled:opacity-45 aria-disabled:opacity-45',
         className
       )}
       {...rest}

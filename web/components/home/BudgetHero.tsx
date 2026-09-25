@@ -55,7 +55,7 @@ export function BudgetHero({ loading, spent, budget, onOpen, onRetry }: BudgetHe
             className={n.over ? 'text-danger' : 'text-ink'}
           />
         </span>
-        <span className="mt-3 flex h-5 items-center gap-[18px]">
+        <span className="mt-2 flex h-5 items-center gap-[18px]">
           <span className="relative h-3 flex-1 overflow-hidden rounded-full bg-[var(--kb-bar-track)]">
             {!failed && (
               <span
@@ -68,7 +68,7 @@ export function BudgetHero({ loading, spent, budget, onOpen, onRetry }: BudgetHe
             {failed ? '0%' : `${n.pct}%`}
           </span>
         </span>
-        <span className="mt-1 block text-kb-sub text-ink-3">
+        <span className="mt-2 block text-kb-sub text-ink-3">
           {yen(n.spent)}
           <span className="mx-[0.6em]">/</span>
           {failed ? '—' : yen(n.budget)}

@@ -115,6 +115,9 @@ export function Sheet({
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // 入力のある検索欄では、まずブラウザ標準の「消去」に任せる（もう一度押すと閉じる）
+        const t = document.activeElement;
+        if (t instanceof HTMLInputElement && t.type === 'search' && t.value !== '') return;
         e.preventDefault();
         onCloseRef.current();
         return;

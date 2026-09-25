@@ -210,7 +210,8 @@ function DetailBody({
         labelId={includeLabelId}
         checked={includeValue}
         onChange={toggleInclude}
-        disabled={!writable || pendingInclude !== null}
+        disabled={!writable}
+        busy={pendingInclude !== null}
       />
 
       <div className="mt-4 space-y-3">

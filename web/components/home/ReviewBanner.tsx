@@ -8,7 +8,7 @@ export function ReviewBanner({ count }: { count: number }) {
   return (
     <Link
       href="/expenses/?filter=pending"
-      className="kb-warn-row mx-4 mt-6 flex h-[52px] items-center rounded-kb-banner pl-[17px] pr-2 transition-opacity active:opacity-80"
+      className="kb-warn-row mx-4 mt-5 flex h-[52px] items-center rounded-kb-banner pl-[17px] pr-2 transition-opacity active:opacity-80"
     >
       <Clock size={28} strokeWidth={2} aria-hidden="true" className="shrink-0 text-warn-icon" />
       <span className="ml-[19px] text-kb-banner">{T.home.review}</span>

@@ -17,7 +17,6 @@ export const T = {
     over: '予算超過',
     review: '要確認',
     recent: '最近の明細',
-    connectionError: '接続エラー',
   },
   expenses: {
     title: '明細',

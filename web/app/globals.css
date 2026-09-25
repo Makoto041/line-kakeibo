@@ -51,12 +51,14 @@
   --kb-accent-strong: #1a45d6;
   --kb-accent-light: #4b9ffa;
   --kb-accent-grad: linear-gradient(180deg, #3d8cf4 0%, #2468e8 55%, #2b76ec 100%);
+  /* 白い 13px 文字を載せる単色の青（ダークでも同じ値。白との対比 4.5:1 以上） */
+  --kb-accent-bubble: #2468e8;
   --kb-accent-grad-seg: linear-gradient(160deg, #3b7ff0 0%, #2a6cee 45%, #1f5be6 100%);
   --kb-bar-grad: linear-gradient(90deg, #4b9ffa 0%, #3079f0 60%, #1f5fec 100%);
   --kb-bar-track: #cce4fb;
 
   /* ガラス・カード */
-  --kb-glass-fill: rgba(255, 255, 255, 0.5);
+  --kb-glass-fill: rgba(255, 255, 255, 0.38);
   --kb-glass-fill-2: #eff5fb;
   --kb-glass-rim: rgba(255, 255, 255, 0.9);
   --kb-glass-hi: rgba(255, 255, 255, 1);
@@ -98,9 +100,9 @@
 
   /* ナビ */
   --kb-nav-ink: #4a5e84;
-  --kb-nav-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(225, 237, 250, 0.55));
+  --kb-nav-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(215, 230, 250, 0.55));
   --kb-nav-rim: rgba(255, 255, 255, 0.85);
-  --kb-nav-sel-bg: radial-gradient(120% 95% at 50% 100%, rgba(147, 197, 253, 0.75) 0%, rgba(205, 231, 253, 0.55) 45%, rgba(236, 246, 255, 0.55) 100%);
+  --kb-nav-sel-bg: radial-gradient(120% 95% at 50% 100%, rgba(147, 197, 253, 0.75) 0%, rgba(205, 231, 253, 0.6) 45%, rgba(205, 231, 253, 0.7) 100%);
   --kb-nav-sel-rim: rgba(255, 255, 255, 0.9);
 
   /* 影 */
@@ -209,9 +211,7 @@
 }
 
 @layer base {
-  html {
-    background-color: var(--kb-bg-mid);
-  }
+  /* body の背景はキャンバスへ伝わる（html に背景を置くと、body が .kb-page-bg を覆ってしまう） */
   body {
     background-color: var(--kb-bg-mid);
     color: var(--kb-ink);
@@ -297,7 +297,8 @@
       0 12px 24px -8px rgba(37, 99, 235, 0.45),
       0 2px 6px rgba(37, 99, 235, 0.18);
   }
-  .kb-btn-primary:disabled {
+  .kb-btn-primary:disabled,
+  .kb-btn-primary[aria-disabled='true'] {
     box-shadow: none;
     opacity: 0.45;
   }
@@ -306,7 +307,8 @@
     color: #fff;
     box-shadow: 0 10px 22px -10px rgba(220, 38, 38, 0.55);
   }
-  .kb-btn-danger:disabled {
+  .kb-btn-danger:disabled,
+  .kb-btn-danger[aria-disabled='true'] {
     box-shadow: none;
     opacity: 0.45;
   }

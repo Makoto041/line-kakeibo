@@ -40,7 +40,7 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
         {busy ? (
           <>
             <Skeleton className="h-20 w-20 rounded-full" />
-            <MoveRight size={32} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-ink-4" />
+            <MoveRight size={32} strokeWidth={2.25} aria-hidden="true" className="shrink-0 text-ink-4" />
             <Skeleton className="h-20 w-20 rounded-full" />
           </>
         ) : (
@@ -48,7 +48,7 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
             <Avatar initial={vm.left?.initial ?? ''} tone={vm.left?.tone ?? 'neutral'} dim={!vm.left} />
             <MoveRight
               size={32}
-              strokeWidth={1.75}
+              strokeWidth={2.25}
               aria-hidden="true"
               className={cx('shrink-0 text-ink', vm.idle && 'opacity-40')}
             />
@@ -66,9 +66,9 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
           <Amount value={vm.amount} base={68} className="text-ink" />
         )}
       </div>
-      <p className="mt-2 text-center text-kb-note text-ink-2">{T.futari.half}</p>
+      <p className="mt-3 text-center text-kb-note text-ink-2">{T.futari.half}</p>
 
-      <div className="mx-1 mt-8 border-t border-divider">
+      <div className="mx-1 mt-7 border-t border-divider">
         {!busy &&
           vm.rows.map((row) => (
             <div key={row.lineId} className="flex h-[68px] items-center gap-3 border-b border-divider px-0.5">
@@ -84,9 +84,9 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
           aria-haspopup="dialog"
           disabled={!vm.canOpenBreakdown}
           onClick={onOpenBreakdown}
-          className="flex h-16 w-full items-center pl-0.5 text-left transition-opacity active:opacity-70 disabled:opacity-40"
+          className="flex h-[72px] w-full items-center pl-0.5 pt-[6px] text-left transition-opacity active:opacity-70 disabled:opacity-40"
         >
-          <DocLines size={32} strokeWidth={1.9} className="-mr-1 shrink-0 text-ink" />
+          <DocLines size={35} strokeWidth={1.9} className="-mr-[7px] shrink-0 text-ink" />
           <span className="ml-6 min-w-0 flex-1 truncate text-kb-sum-label text-ink-soft">{T.futari.breakdown}</span>
           <ChevronRight size={24} strokeWidth={2} aria-hidden="true" className="-mr-1.5 shrink-0 text-ink-4" />
         </button>
@@ -97,7 +97,6 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
         aria-haspopup="dialog"
         disabled={!vm.canSettle || busy}
         onClick={onSettle}
-        className="mt-2"
       >
         {T.futari.settle}
       </PrimaryButton>

@@ -7,12 +7,14 @@ interface SwitchProps {
   checked: boolean;
   onChange: (next: boolean) => void;
   disabled?: boolean;
+  /** 書き込み中（フォーカスを外さないよう disabled ではなく aria-disabled で止める） */
+  busy?: boolean;
   label?: string;
   labelledBy?: string;
   className?: string;
 }
 
-export function Switch({ checked, onChange, disabled, label, labelledBy, className }: SwitchProps) {
+export function Switch({ checked, onChange, disabled, busy, label, labelledBy, className }: SwitchProps) {
   return (
     <button
       type="button"
@@ -21,9 +23,14 @@ export function Switch({ checked, onChange, disabled, label, labelledBy, classNa
       aria-label={label}
       aria-labelledby={labelledBy}
       disabled={disabled}
-      onClick={() => onChange(!checked)}
+      aria-disabled={busy || undefined}
+      aria-busy={busy || undefined}
+      onClick={() => {
+        if (busy) return;
+        onChange(!checked);
+      }}
       className={cx(
-        'relative inline-flex h-[31px] w-[51px] shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-40',
+        'relative inline-flex h-[31px] w-[51px] shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-40 aria-disabled:opacity-40',
         checked ? 'bg-accent' : 'bg-ink/30',
         className
       )}
@@ -49,6 +56,7 @@ export function SwitchRow({
   checked,
   onChange,
   disabled,
+  busy,
   className,
 }: {
   label: string;
@@ -56,25 +64,26 @@ export function SwitchRow({
   checked: boolean;
   onChange: (next: boolean) => void;
   disabled?: boolean;
+  busy?: boolean;
   className?: string;
 }) {
   return (
     <div
       onClick={(e) => {
-        if (disabled) return;
+        if (disabled || busy) return;
         if ((e.target as Element).closest('[role="switch"]')) return;
         onChange(!checked);
       }}
       className={cx(
         'flex min-h-[60px] select-none items-center gap-4 rounded-2xl kb-glass-2 px-4',
-        disabled ? 'cursor-default' : 'cursor-pointer',
+        disabled || busy ? 'cursor-default' : 'cursor-pointer',
         className
       )}
     >
       <span id={labelId} className="min-w-0 flex-1 truncate text-kb-row text-ink">
         {label}
       </span>
-      <Switch checked={checked} onChange={onChange} disabled={disabled} labelledBy={labelId} />
+      <Switch checked={checked} onChange={onChange} disabled={disabled} busy={busy} labelledBy={labelId} />
     </div>
   );
 }

@@ -86,8 +86,8 @@ export function ExpenseListRow({
         divided && 'border-t border-divider'
       )}
     >
-      <ExpenseIcon description={expense.description} category={expense.category} size={30} />
-      <span className="ml-7 min-w-0 flex-1 truncate text-kb-row text-ink">{expenseLabel(expense)}</span>
+      <ExpenseIcon description={expense.description} category={expense.category} size={32} />
+      <span className="ml-[26px] min-w-0 flex-1 truncate text-kb-row text-ink">{expenseLabel(expense)}</span>
       <Amount
         value={expense.amount}
         base={22}

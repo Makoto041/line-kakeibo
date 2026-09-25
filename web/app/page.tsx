@@ -4,9 +4,9 @@
 // 画面の文字は参照デザインの語だけにし、詳しい数字・グラフは予算シート、明細の中身は詳細シートに置く。
 // 集計は刷新前と同じ（useMonthlyStats・useBudgetConfig を同じ引数で使う）。
 // 一覧は明細タブと同じ引数の useExpenses（キャッシュも要確認の件数も明細と揃う）。
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import dynamic from 'next/dynamic';
-import { Eye, Settings, TriangleAlert, Users } from 'lucide-react';
+import { Eye, RotateCw, Settings, TriangleAlert, Users } from 'lucide-react';
 import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses, useHousehold, DEFAULT_MONTHLY_BUDGET } from '../lib/hooks';
 import { countPending, sortForList } from '../lib/expenseState';
 import { getSampleExpenses, getSampleStats } from '../lib/sampleData';
@@ -16,6 +16,7 @@ import { usePeriod } from '../components/period/PeriodProvider';
 import { ScreenHeader } from '../components/layout/ScreenHeader';
 import { HeaderPill } from '../components/ui/HeaderPill';
 import { IconButton } from '../components/ui/IconButton';
+import { useToast } from '../components/ui/Toast';
 import { CommonSheets, useCommonSheet } from '../components/sheets/CommonSheets';
 import { MonthStepper } from '../components/home/MonthStepper';
 import { BudgetHero } from '../components/home/BudgetHero';
@@ -47,6 +48,11 @@ export default function HomePage() {
     () => !db,
     () => false
   );
+  // 失敗は画面に文を出さず、短いトーストと再試行の丸で知らせる
+  const toast = useToast();
+  useEffect(() => {
+    if (firebaseError) toast.show('network');
+  }, [firebaseError, toast]);
 
   const { sheet: commonSheet, setSheet: setCommonSheet } = useCommonSheet();
   const { sheet: expenseSheet, setSheet: setExpenseSheet } = useExpenseSheet();
@@ -147,7 +153,7 @@ export default function HomePage() {
         {commonSheets}
         <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 px-6 text-center">
           <TriangleAlert size={32} strokeWidth={1.9} aria-hidden="true" className="text-danger" />
-          <p className="text-kb-row text-ink">{T.home.connectionError}</p>
+          <IconButton label={T.aria.retry} icon={RotateCw} onClick={() => window.location.reload()} />
         </div>
       </>
     );
