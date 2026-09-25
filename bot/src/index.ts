@@ -28,7 +28,6 @@ import {
   // 立替機能
   getPendingAdvances,
   getAdvanceSummaryByUser,
-  calculateSettlement,
   settleAdvances,
   AdvanceSummary,
   // 月次サマリー
@@ -54,6 +53,9 @@ import { createIssueFromFeedback } from "./issueCreator";
 import { importMoneyForward } from "./importMoneyForward";
 import rateLimit from "express-rate-limit";
 import { maskId, errorMessage } from "./logSafe";
+import { householdRouter, householdErrorHandler } from "./householdApi";
+import { computeLineGroupSettlement, isSettlementComputable } from "./householdSettlement";
+import { isAllowedWebOrigin } from "./webOrigins";
 
 dotenv.config();
 
@@ -647,9 +649,12 @@ async function handleTextMessage(event: any) {
           totalAdvances += summary.totalAdvanced;
         }
 
-        // 精算額を計算（2人の場合）
-        if (summaries.length === 2) {
-          const settlement = calculateSettlement(summaries);
+        // 精算額を計算（立替者が2人、または1人だけ立替で有効メンバーが2人の場合。householdSettlement.ts の共有関数）
+        const household = await computeLineGroupSettlement(lineGroupId, summaries, (userId) =>
+          client.getGroupMemberProfile(lineGroupId, userId).then((p) => p.displayName)
+        );
+        if (isSettlementComputable(household.basis)) {
+          const settlement = household.settlement;
           if (settlement) {
             replyText += `\n精算額:\n`;
             replyText += `${settlement.fromUserName} ${settlement.toUserName}\n`;
@@ -700,10 +705,13 @@ async function handleTextMessage(event: any) {
 
         const summaries = await getAdvanceSummaryByUser(lineGroupId, true);
 
-        // 精算額を計算
+        // 精算額を計算（立替者が2人、または1人だけ立替で有効メンバーが2人の場合。householdSettlement.ts の共有関数）
         let settlementText = "";
-        if (summaries.length === 2) {
-          const settlement = calculateSettlement(summaries);
+        const household = await computeLineGroupSettlement(lineGroupId, summaries, (userId) =>
+          client.getGroupMemberProfile(lineGroupId, userId).then((p) => p.displayName)
+        );
+        if (isSettlementComputable(household.basis)) {
+          const settlement = household.settlement;
           if (settlement) {
             settlementText = `\n\n精算内容:\n${settlement.fromUserName} ${settlement.toUserName}\n¥${settlement.amount.toLocaleString()}`;
           }
@@ -1856,22 +1864,8 @@ gmailRouter.post("/force-process/:messageId", adminApiLimiter as any, requireAdm
 // auth.currentUser.uid = appUid / claims.lineId = 検証済み LINE userId で本人特定できる。
 const authRouter = express.Router();
 
-// CORS: Web オリジンのみ許可。既定は本番 Vercel と localhost。
-// 追加/変更は環境変数 WEB_ORIGINS（カンマ区切り）で上書き可能。
-const WEB_ORIGIN_ALLOWLIST = (
-  process.env.WEB_ORIGINS || "https://line-kakeibo.vercel.app,http://localhost:3000"
-)
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-const isAllowedWebOrigin = (origin?: string): boolean => {
-  if (!origin) return false;
-  if (WEB_ORIGIN_ALLOWLIST.includes(origin)) return true;
-  // このプロジェクトの Vercel プレビュー(line-kakeibo*.vercel.app)も許可
-  return /^https:\/\/line-kakeibo[a-z0-9-]*\.vercel\.app$/.test(origin);
-};
-
+// CORS: Web オリジンのみ許可（webOrigins.ts。/household と共通）。既定は本番 Vercel と localhost、
+// このプロジェクトの Vercel プレビュー。追加/変更は環境変数 WEB_ORIGINS（カンマ区切り）で上書き可能。
 const authCors = (req: Request, res: Response, next: express.NextFunction) => {
   const origin = req.headers.origin as string | undefined;
   if (isAllowedWebOrigin(origin)) {
@@ -1992,6 +1986,7 @@ const gmailApp = express();
 gmailApp.use(express.json());
 gmailApp.use("/gmail", gmailRouter);
 gmailApp.use("/auth", authRouter);
+gmailApp.use("/household", householdRouter, householdErrorHandler);
 
 // Gmail API を Firebase Functions としてエクスポート（LINE webhook とは分離）
 // LINE通知を送信するためLINE認証情報、カテゴリ分類のためGEMINI_API_KEYも必要

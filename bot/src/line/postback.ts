@@ -15,6 +15,7 @@ type PostbackEvent = webhook.PostbackEvent;
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { PostbackActionData } from '../gmail/types';
 import { ExpenseStatusType } from '../firestore';
+import { applyExpenseChange, decideConfirm, SETTLED_REJECTION } from '../expenseActions';
 import {
   buildCategorySelectCarousel,
   buildExpenseCardFromRecord,
@@ -122,55 +123,6 @@ async function loadExpense(expenseId: string) {
 }
 
 /**
- * 最新のドキュメントを見て、更新内容か拒否理由を決める
- *
- * `update` は Firestore へ書き込む内容、`cardPatch` は返信カードを組み立てるための
- * 素の値（`FieldValue.delete()` のような番兵をカード側へ持ち込まないため分けている）。
- */
-type ExpenseDecision =
-  | { update: Record<string, any>; cardPatch: Record<string, any> }
-  | { reject: string };
-
-/**
- * 支出の 読み取り → 判定 → 更新 を1つのトランザクションで行う
- *
- * グループトークでは複数人が同時にボタンを押せる。読み取りと書き込みが別トランザクションだと、
- * 他の人の変更を古い値のまま上書きしてしまう（例: 誰かが個人費にした直後に別の人の OK が
- * 共同費へ巻き戻す、精算済み判定をすり抜けて変更が通る）。
- *
- * @returns 更新後のレコード / 拒否理由 / 支出が見つからなければ null
- */
-async function applyExpenseChange(
-  expenseId: string,
-  decide: (data: FirebaseFirestore.DocumentData) => ExpenseDecision
-): Promise<{ record: Record<string, any> } | { reject: string } | null> {
-  const db = getFirestore();
-  const ref = db.collection('expenses').doc(expenseId);
-
-  return db.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(ref);
-
-    if (!snapshot.exists) {
-      console.warn('Expense not found:', expenseId);
-      return null;
-    }
-
-    const data = snapshot.data();
-    if (!data) {
-      console.warn('Expense data is empty:', expenseId);
-      return null;
-    }
-
-    const decision = decide(data);
-    if ('reject' in decision) return decision;
-
-    transaction.update(ref, decision.update);
-
-    return { record: { ...data, ...decision.cardPatch } };
-  });
-}
-
-/**
  * 更新後の値でカードを組み立て直して返信する
  *
  * 押した本人のIDで一覧・修正リンクを作る。Gmail通知はグループ宛のpushで送信時点では
@@ -263,14 +215,6 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
     throw error;
   }
 }
-
-/**
- * 精算済みの支出は支出区分・立替を変更できない
- *
- * 古いカードには [変更] ボタンが残っているため、表示を消すだけでは足りずサーバー側で弾く。
- * 判定は必ずトランザクション内で行う（判定後に精算されるのを防ぐため）。
- */
-const SETTLED_REJECTION = '精算済みのため変更できません';
 
 /**
  * 支出区分（共同費 / 個人費）を設定
@@ -384,21 +328,8 @@ async function handleConfirm(
 ): Promise<void> {
   const { expenseId } = actionData;
 
-  const result = await applyExpenseChange(expenseId, (data) => {
-    const status = data.status as ExpenseStatusType | undefined;
-    const isPending = !status || status === 'pending';
-
-    // 未確認のときだけ共同費へ昇格させる。個人費や立替を設定済みの支出は触らない。
-    return isPending
-      ? {
-          update: { confirmed: true, status: 'shared', includeInTotal: true, updatedAt: new Date() },
-          cardPatch: { status: 'shared', includeInTotal: true },
-        }
-      : {
-          update: { confirmed: true, updatedAt: new Date() },
-          cardPatch: {},
-        };
-  });
+  // 判定は Web の確認（/household API）と共通（expenseActions.ts）
+  const result = await applyExpenseChange(expenseId, decideConfirm());
 
   if (!result) return;
   if ('reject' in result) {
