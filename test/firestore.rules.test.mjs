@@ -48,6 +48,9 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   // グループ支出（Gmail 自動取込）
   await setDoc(doc(db, 'expenses/expGmail'), { lineId: 'gmail-auto-system', ...group, amount: 400, date: '2026-08-01' });
   await setDoc(doc(db, 'expenses/expGmailDel'), { lineId: 'gmail-auto-system', ...group, amount: 450, date: '2026-08-01' });
+  // 固定費の自動計上（共通のカード・口座）
+  await setDoc(doc(db, 'expenses/expRecurringDel'), { lineId: 'recurring-system', ...group, amount: 9000, date: '2026-08-10' });
+  await setDoc(doc(db, 'expenses/expRecurringSolo'), { lineId: 'recurring-system', amount: 9000, date: '2026-08-10' });
   // グループに属さない Gmail 支出（緩和がグループ限定であることの確認用）
   await setDoc(doc(db, 'expenses/expGmailSolo'), { lineId: 'gmail-auto-system', amount: 500, date: '2026-08-01' });
   // groupId を持たず lineGroupId だけを持つ支出。
@@ -157,6 +160,12 @@ await test('他人の個人支出は削除できない', async () => {
 });
 await test('メンバーは Gmail 取込のグループ支出を削除できる', async () => {
   await assertSucceeds(deleteDoc(doc(userA, 'expenses/expGmailDel')));
+});
+await test('メンバーは固定費の自動計上（共通）を削除できる', async () => {
+  await assertSucceeds(deleteDoc(doc(userA, 'expenses/expRecurringDel')));
+});
+await test('グループに属さない固定費の計上は削除できない', async () => {
+  await assertFails(deleteDoc(doc(userA, 'expenses/expRecurringSolo')));
 });
 await test('人が登録したグループ支出は他メンバーでも削除できない', async () => {
   await assertFails(deleteDoc(doc(userA, 'expenses/expG')));

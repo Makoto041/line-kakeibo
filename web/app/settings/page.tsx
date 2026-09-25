@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Wallet, CalendarRange } from 'lucide-react';
+import { Wallet, CalendarRange, Repeat } from 'lucide-react';
+import RecurringExpensesPanel from '../../components/RecurringExpensesPanel';
 import { useLineAuth } from '../../lib/hooks';
 import { getDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, DEFAULT_SETTINGS, type DateRangeSettings } from '../../lib/dateSettings';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -77,7 +78,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(!(cachedDate && cachedBudget));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<'period' | 'budget'>('budget');
+  const [activeTab, setActiveTab] = useState<'period' | 'budget' | 'recurring'>('budget');
 
   useEffect(() => {
     const loadAllSettings = async () => {
@@ -239,7 +240,7 @@ export default function Settings() {
         <div className="glass mb-5 flex gap-1 rounded-2xl p-1 shadow-glass">
           <button
             onClick={() => setActiveTab('budget')}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors ${
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors ${
               activeTab === 'budget'
                 ? 'bg-accent text-accent-fg shadow-sm'
                 : 'text-muted hover:bg-fg/5 hover:text-fg'
@@ -250,7 +251,7 @@ export default function Settings() {
           </button>
           <button
             onClick={() => setActiveTab('period')}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors ${
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors ${
               activeTab === 'period'
                 ? 'bg-accent text-accent-fg shadow-sm'
                 : 'text-muted hover:bg-fg/5 hover:text-fg'
@@ -258,6 +259,17 @@ export default function Settings() {
           >
             <CalendarRange className="h-4 w-4" />
             期間設定
+          </button>
+          <button
+            onClick={() => setActiveTab('recurring')}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors ${
+              activeTab === 'recurring'
+                ? 'bg-accent text-accent-fg shadow-sm'
+                : 'text-muted hover:bg-fg/5 hover:text-fg'
+            }`}
+          >
+            <Repeat className="h-4 w-4" />
+            固定費
           </button>
         </div>
 
@@ -449,7 +461,11 @@ export default function Settings() {
           </motion.div>
         )}
 
+        {/* Recurring Expenses Tab（項目ごとに保存するので、下の保存ボタンは出さない） */}
+        {activeTab === 'recurring' && <RecurringExpensesPanel lineId={lineId} />}
+
         {/* Save Button */}
+        {activeTab !== 'recurring' && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -464,6 +480,7 @@ export default function Settings() {
             {saving ? '保存中...' : '設定を保存'}
           </button>
         </motion.div>
+        )}
       </main>
     </div>
   );
