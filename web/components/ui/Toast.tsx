@@ -48,7 +48,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         {toast && (
           <div
             key={toast.id}
-            className="rounded-full bg-fg/90 px-5 py-2.5 text-[15px] font-semibold text-bg shadow-lg"
+            className="rounded-full bg-fg/90 px-4 py-2 text-[14px] font-medium text-bg shadow-lg"
           >
             {T.toast[toast.key]}
           </div>

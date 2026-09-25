@@ -36,7 +36,7 @@ export function PeriodSheet({ open, onClose, onOpenSettings }: PeriodSheetProps)
           disabled={!canShift}
           onClick={() => shift(-1)}
         />
-        <p className="text-center text-[17px] font-semibold text-ink" aria-live="polite">
+        <p className="text-center text-[16px] font-semibold text-ink" aria-live="polite">
           {title}
         </p>
         <IconButton
@@ -48,12 +48,12 @@ export function PeriodSheet({ open, onClose, onOpenSettings }: PeriodSheetProps)
           onClick={() => shift(1)}
         />
       </div>
-      {showStartDay && <p className="mt-2 text-center text-[14px] text-ink-4">{T.sheet.startDay(startDay)}</p>}
+      {showStartDay && <p className="mt-1.5 text-center text-[13px] text-ink-4">{T.sheet.startDay(startDay)}</p>}
 
       <div className="mt-5">
         <PrimaryButton
           variant="soft"
-          height={52}
+          height={44}
           icon={CalendarDays}
           disabled={!canShift || inCurrent}
           onClick={goToday}

@@ -56,7 +56,7 @@ export function ExpenseEditSheet({ open, onClose, onBack, expense, ...rest }: Ex
   );
 }
 
-const FIELD = 'kb-field h-12 w-full rounded-xl px-3 text-[16px] disabled:opacity-60';
+const FIELD = 'kb-field h-11 w-full rounded-xl px-3 text-[16px] disabled:opacity-60';
 
 function EditBody({
   expense,
@@ -147,7 +147,7 @@ function EditBody({
 
       <div className="grid grid-cols-2 gap-3">
         <Field label={T.edit.amount} htmlFor={ids.amount}>
-          <span className={cx('kb-field flex h-12 items-center gap-1.5 rounded-xl px-3', (locked || settled) && 'opacity-60')}>
+          <span className={cx('kb-field flex h-11 items-center gap-1.5 rounded-xl px-3', (locked || settled) && 'opacity-60')}>
             <span className="text-[15px] text-ink-4">¥</span>
             <input
               id={ids.amount}
@@ -247,18 +247,18 @@ function EditBody({
 
       <div className="sticky bottom-0 z-10 -mx-1 mt-4 bg-gradient-to-t from-[var(--kb-card)] from-70% to-transparent px-1 pb-1 pt-3">
         {error && (
-          <p id={ids.error} role="alert" className="mb-2 px-1 text-[14px] font-medium text-danger-ink">
+          <p id={ids.error} role="alert" className="mb-2 px-1 text-[13px] font-medium text-danger-ink">
             {error.message}
           </p>
         )}
         <div className="flex gap-3">
-          <PrimaryButton type="submit" height={56} icon={CircleCheck} loading={saving} disabled={!canWrite} className="flex-1">
+          <PrimaryButton type="submit" height={48} icon={CircleCheck} loading={saving} disabled={!canWrite} className="flex-1">
             {T.edit.save}
           </PrimaryButton>
           <PrimaryButton
             type="button"
             variant="soft"
-            height={56}
+            height={48}
             icon={X}
             onClick={onCancel}
             disabled={saving}
@@ -285,7 +285,7 @@ function Field({
 }) {
   return (
     <div className={className}>
-      <label htmlFor={htmlFor} className="mb-1.5 block px-1 text-[14px] font-semibold text-ink-3">
+      <label htmlFor={htmlFor} className="mb-1 block px-1 text-[13px] font-semibold text-ink-3">
         {label}
       </label>
       {children}

@@ -10,7 +10,7 @@ import { T } from '@/lib/uiText';
 import { Sheet } from '@/components/ui/Sheet';
 
 const ACTION =
-  'kb-glass-2 inline-flex h-[52px] flex-1 items-center justify-center gap-2.5 rounded-full px-4 text-[17px] font-semibold text-ink transition-[transform,opacity] duration-150 active:scale-[0.98]';
+  'kb-glass-2 inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full px-4 text-[15px] font-semibold text-ink transition-[transform,opacity] duration-150 active:scale-[0.98]';
 
 interface ReceiptSheetProps {
   open: boolean;
@@ -44,19 +44,19 @@ export function ReceiptSheet({ open, onClose, onBack, expense, readOnly = false 
                 className="max-h-[56dvh] w-auto rounded-xl object-contain"
               />
             ) : (
-              <ImageOff size={36} strokeWidth={1.8} aria-hidden="true" className="text-ink-4" />
+              <ImageOff size={28} strokeWidth={1.8} aria-hidden="true" className="text-ink-4" />
             )}
           </div>
           <div className="mt-4 flex gap-3">
             {!readOnly && (
               <a href={`/attach/?expenseId=${encodeURIComponent(shown.id)}`} className={ACTION}>
-                <RefreshCw size={20} strokeWidth={2} aria-hidden="true" />
+                <RefreshCw size={18} strokeWidth={2} aria-hidden="true" />
                 {T.receipt.replace}
               </a>
             )}
             {safeUrl && (
               <a href={safeUrl} target="_blank" rel="noopener noreferrer" className={ACTION}>
-                <ExternalLink size={20} strokeWidth={2} aria-hidden="true" />
+                <ExternalLink size={18} strokeWidth={2} aria-hidden="true" />
                 {T.receipt.open}
               </a>
             )}

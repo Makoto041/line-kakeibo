@@ -75,7 +75,7 @@ export function SwitchRow({
         onChange(!checked);
       }}
       className={cx(
-        'flex min-h-[60px] select-none items-center gap-4 rounded-2xl kb-glass-2 px-4',
+        'flex min-h-12 select-none items-center gap-3 rounded-xl kb-glass-2 px-4',
         disabled || busy ? 'cursor-default' : 'cursor-pointer',
         className
       )}

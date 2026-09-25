@@ -146,10 +146,10 @@ export function BudgetSheet({
 
       {hasSpending && stats && (
         <>
-          <SheetSection title={T.budget.byCategory} className="!mt-7">
+          <SheetSection title={T.budget.byCategory} className="!mt-6">
             <CategoryPieChart data={stats.categoryTotals} />
           </SheetSection>
-          <SheetSection title={T.budget.daily} className="!mt-7">
+          <SheetSection title={T.budget.daily} className="!mt-6">
             <DailyLineChart
               data={stats.dailyTotals}
               startDate={range.startDate}
@@ -168,7 +168,7 @@ function Tile({ label, value }: { label: string; value: string }) {
   return (
     <div className="kb-glass-2 min-w-0 rounded-2xl px-3 py-3">
       <p className="truncate text-[12px] font-medium text-ink-3">{label}</p>
-      <p className="mt-1 truncate text-[17px] font-bold text-ink">{value}</p>
+      <p className="mt-0.5 truncate text-[16px] font-bold tabular-nums text-ink">{value}</p>
     </div>
   );
 }
@@ -193,14 +193,14 @@ function StatRow({
 }) {
   const Icon = valueIcon === 'up' ? TrendingUp : valueIcon === 'down' ? TrendingDown : null;
   return (
-    <div className="flex min-h-[56px] items-center gap-3 border-b border-divider px-1 last:border-b-0">
-      <dt className="min-w-0 flex-1 truncate text-[15px] text-ink-2">{label}</dt>
+    <div className="flex min-h-12 items-center gap-3 border-b border-divider px-1 last:border-b-0">
+      <dt className="min-w-0 flex-1 truncate text-[14px] text-ink-2">{label}</dt>
       <dd className="shrink-0 text-right">
-        <span className={cx('inline-flex items-center gap-1 text-[18px] font-bold', valueTone ? TONE[valueTone] : 'text-ink')}>
+        <span className={cx('inline-flex items-center gap-1 text-[16px] font-bold tabular-nums', valueTone ? TONE[valueTone] : 'text-ink')}>
           {Icon && <Icon size={16} strokeWidth={2.2} aria-hidden="true" />}
           {value}
         </span>
-        {note && <span className={cx('block text-[13px]', noteTone ? TONE[noteTone] : 'text-ink-4')}>{note}</span>}
+        {note && <span className={cx('block text-[12px]', noteTone ? TONE[noteTone] : 'text-ink-4')}>{note}</span>}
       </dd>
     </div>
   );
@@ -243,7 +243,7 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
               style={{ width: `${Math.min(totalPct, 100)}%`, background: barFill(totalPct) }}
             />
           </div>
-          <div className="mt-2 flex items-center justify-between gap-3 text-[14px]">
+          <div className="mt-2 flex items-center justify-between gap-3 text-[13px]">
             <span className="text-ink-3">
               {yen(totalActual)} / {yen(monthlyBudget)}
             </span>
@@ -267,9 +267,9 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
               return (
                 <li key={category} className="border-b border-divider px-1 py-3 last:border-b-0">
                   <div className="flex items-center gap-2.5">
-                    <Icon size={20} strokeWidth={1.9} aria-hidden="true" className="shrink-0 text-ink" />
-                    <span className="min-w-0 flex-1 truncate text-[15px] font-medium text-ink">{category}</span>
-                    <span className="shrink-0 text-[13px] text-ink-3">
+                    <Icon size={18} strokeWidth={1.9} aria-hidden="true" className="shrink-0 text-ink" />
+                    <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{category}</span>
+                    <span className="shrink-0 text-[12px] tabular-nums text-ink-3">
                       {hasBudget ? `${yen(actual)} / ${yen(budget)}` : yen(actual)}
                     </span>
                   </div>

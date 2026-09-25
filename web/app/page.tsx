@@ -156,7 +156,7 @@ export default function HomePage() {
         {header}
         {commonSheets}
         <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 px-6 text-center">
-          <TriangleAlert size={32} strokeWidth={1.9} aria-hidden="true" className="text-danger" />
+          <TriangleAlert size={28} strokeWidth={1.9} aria-hidden="true" className="text-danger" />
           <IconButton label={T.aria.retry} icon={RotateCw} onClick={() => window.location.reload()} />
         </div>
       </>

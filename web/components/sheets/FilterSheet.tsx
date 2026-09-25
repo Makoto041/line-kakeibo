@@ -49,8 +49,8 @@ export function FilterSheet({ open, onClose, value, onChange, expenses }: Filter
 
   return (
     <Sheet open={open} onClose={onClose} title={T.filter.title}>
-      <label htmlFor={queryId} className="kb-field mt-1 flex h-12 items-center gap-2.5 rounded-xl px-3">
-        <Search size={20} strokeWidth={2} aria-hidden="true" className="shrink-0 text-ink-4" />
+      <label htmlFor={queryId} className="kb-field mt-1 flex h-11 items-center gap-2 rounded-xl px-3">
+        <Search size={18} strokeWidth={2} aria-hidden="true" className="shrink-0 text-ink-4" />
         <input
           id={queryId}
           type="search"
@@ -65,7 +65,7 @@ export function FilterSheet({ open, onClose, value, onChange, expenses }: Filter
       <SheetSection title={T.filter.budget} className="!mt-5">
         <SegmentedControl<BudgetFilter>
           ariaLabel={T.filter.budget}
-          height={44}
+          height={32}
           value={value.budget}
           onChange={(v) => set('budget', v)}
           items={[
@@ -82,7 +82,7 @@ export function FilterSheet({ open, onClose, value, onChange, expenses }: Filter
           aria-label={T.filter.category}
           value={value.category}
           onChange={(e) => set('category', e.target.value)}
-          className="kb-field h-12 w-full rounded-xl px-3 text-[16px]"
+          className="kb-field h-11 w-full rounded-xl px-3 text-[16px]"
         >
           <option value="all">{T.filter.all}</option>
           {categoryOptions.map((c) => (
@@ -96,7 +96,7 @@ export function FilterSheet({ open, onClose, value, onChange, expenses }: Filter
       <SheetSection title={T.filter.sort} className="!mt-5">
         <SegmentedControl<SortKey>
           ariaLabel={T.filter.sort}
-          height={44}
+          height={32}
           value={value.sortBy}
           onChange={(v) => set('sortBy', v)}
           items={[
@@ -122,7 +122,7 @@ export function FilterSheet({ open, onClose, value, onChange, expenses }: Filter
       <div className="mt-5 pb-1">
         <PrimaryButton
           variant="soft"
-          height={52}
+          height={44}
           icon={Eraser}
           disabled={!isFilterActive(value)}
           onClick={() => onChange(DEFAULT_FILTER)}
@@ -136,10 +136,10 @@ export function FilterSheet({ open, onClose, value, onChange, expenses }: Filter
 
 function SummaryRow({ label, value, note, strong }: { label: string; value: string; note?: string; strong?: boolean }) {
   return (
-    <div className="flex min-h-[52px] items-center gap-3 border-b border-divider px-1 last:border-b-0">
-      <dt className="min-w-0 flex-1 truncate text-[15px] text-ink-2">{label}</dt>
-      {note && <dd className="shrink-0 text-[14px] text-ink-4">{note}</dd>}
-      <dd className={strong ? 'shrink-0 text-[20px] font-bold text-ink' : 'shrink-0 text-[16px] font-semibold text-ink'}>
+    <div className="flex min-h-11 items-center gap-3 border-b border-divider px-1 last:border-b-0">
+      <dt className="min-w-0 flex-1 truncate text-[14px] text-ink-2">{label}</dt>
+      {note && <dd className="shrink-0 text-[13px] text-ink-4">{note}</dd>}
+      <dd className={strong ? 'shrink-0 text-[17px] font-bold tabular-nums text-ink' : 'shrink-0 text-[15px] font-semibold tabular-nums text-ink'}>
         {value}
       </dd>
     </div>

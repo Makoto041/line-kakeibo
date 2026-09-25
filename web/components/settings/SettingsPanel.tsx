@@ -277,7 +277,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
     return (
       <SkeletonGroup className="space-y-4 py-2">
         <Skeleton className="h-11 rounded-full" />
-        <Skeleton className="h-14 rounded-2xl" />
+        <Skeleton className="h-12 rounded-xl" />
         <Skeleton className="h-8 w-2/3" />
         <Skeleton className="h-40 rounded-2xl" />
       </SkeletonGroup>
@@ -287,8 +287,8 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
   if (!lineId) {
     return (
       <div className="pb-2">
-        <div className="kb-chip mt-2 flex h-14 items-center gap-3 rounded-kb-banner px-4 text-[16px] font-medium">
-          <Lock size={20} strokeWidth={2} className="shrink-0" />
+        <div className="kb-chip mt-2 flex h-12 items-center gap-2.5 rounded-kb-banner px-4 text-[15px] font-medium">
+          <Lock size={18} strokeWidth={2} className="shrink-0" />
           {T.settings.signedOut}
         </div>
         <SheetSection title={T.settings.theme}>
@@ -306,7 +306,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
     <div>
       <SegmentedControl
         ariaLabel={T.settings.title}
-        height={44}
+        height={32}
         value={activeTab}
         onChange={setActiveTab}
         items={[
@@ -326,8 +326,8 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
           )}
 
           <SheetSection title={T.settings.monthlyBudget}>
-            <label className="kb-field flex h-14 items-center gap-2 rounded-2xl px-4">
-              <span className="text-[20px] font-bold text-ink-3">¥</span>
+            <label className="kb-field flex h-12 items-center gap-1.5 rounded-xl px-3.5">
+              <span className="text-[17px] font-semibold text-ink-3">¥</span>
               <input
                 type="number"
                 inputMode="numeric"
@@ -338,14 +338,14 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
                   const value = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
                   setBudgetConfig((prev) => ({ ...prev, monthlyBudget: value }));
                 }}
-                className={cx(FIELD_INPUT, 'text-[22px] font-bold')}
+                className={cx(FIELD_INPUT, 'text-[18px] font-bold tabular-nums')}
               />
             </label>
           </SheetSection>
 
           <SheetSection
             title={T.settings.alert}
-            aside={<span className="text-[14px] font-medium text-ink-3">{yen(alertAmount)}</span>}
+            aside={<span className="text-[13px] font-medium tabular-nums text-ink-3">{yen(alertAmount)}</span>}
           >
             <div className="flex items-center gap-4 px-1">
               <input
@@ -360,7 +360,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
                 }
                 className="h-11 flex-1 cursor-pointer accent-[var(--kb-accent)]"
               />
-              <span className="w-12 text-right text-[16px] font-semibold text-ink">
+              <span className="w-12 text-right text-[15px] font-semibold tabular-nums text-ink">
                 {budgetConfig.alertThreshold}%
               </span>
             </div>
@@ -371,7 +371,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
             aside={
               <span
                 className={cx(
-                  'text-[14px] font-medium',
+                  'text-[13px] font-medium',
                   categoryBudgetTotal > budgetConfig.monthlyBudget ? 'text-danger-ink' : 'text-ink-3'
                 )}
               >
@@ -385,12 +385,12 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
                 return (
                   <label
                     key={category.id}
-                    className="flex h-[56px] items-center gap-3 border-b border-divider px-1 last:border-b-0"
+                    className="flex h-12 items-center gap-3 border-b border-divider px-1 last:border-b-0"
                   >
-                    <Icon size={22} strokeWidth={1.9} className="shrink-0 text-ink" />
-                    <span className="w-24 shrink-0 truncate text-[15px] text-ink">{category.name}</span>
+                    <Icon size={18} strokeWidth={1.9} className="shrink-0 text-ink" />
+                    <span className="w-24 shrink-0 truncate text-[14px] text-ink">{category.name}</span>
                     <span className="kb-field flex h-10 min-w-0 flex-1 items-center gap-1.5 rounded-xl px-3">
-                      <span className="text-[14px] text-ink-4">¥</span>
+                      <span className="text-[13px] text-ink-4">¥</span>
                       <input
                         type="number"
                         inputMode="numeric"
@@ -407,7 +407,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
                             },
                           }));
                         }}
-                        className={cx(FIELD_INPUT, 'text-[15px]')}
+                        className={cx(FIELD_INPUT, 'text-[16px] tabular-nums')}
                       />
                     </span>
                   </label>
@@ -431,7 +431,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
               ).map(({ mode, label }) => (
                 <label
                   key={mode}
-                  className="flex h-14 cursor-pointer items-center gap-3 border-b border-divider px-1 last:border-b-0"
+                  className="flex h-12 cursor-pointer items-center gap-3 border-b border-divider px-1 last:border-b-0"
                 >
                   <input
                     type="radio"
@@ -455,7 +455,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
                 aria-label={T.settings.startDay}
                 value={tempStartDay}
                 onChange={(e) => setTempStartDay(parseInt(e.target.value))}
-                className="kb-field h-12 w-full rounded-xl px-3 text-[16px]"
+                className="kb-field h-11 w-full rounded-xl px-3 text-[16px]"
               >
                 {Array.from({ length: 28 }, (_, i) => i + 1).map((day) => (
                   <option key={day} value={day}>
@@ -475,7 +475,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
                   value={tempStartDate}
                   onChange={(e) => setTempStartDate(e.target.value)}
                   max={tempEndDate || dayjs().format('YYYY-MM-DD')}
-                  className="kb-field h-12 w-full rounded-xl px-3 text-[16px]"
+                  className="kb-field h-11 w-full rounded-xl px-3 text-[16px]"
                 />
               </SheetSection>
               <SheetSection title={T.settings.endDate} className="!mt-6">
@@ -486,7 +486,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
                   onChange={(e) => setTempEndDate(e.target.value)}
                   min={tempStartDate}
                   max={dayjs().format('YYYY-MM-DD')}
-                  className="kb-field h-12 w-full rounded-xl px-3 text-[16px]"
+                  className="kb-field h-11 w-full rounded-xl px-3 text-[16px]"
                 />
               </SheetSection>
             </div>
@@ -509,7 +509,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
           style={{ bottom: stickyBottom }}
         >
           <PrimaryButton
-            height={56}
+            height={48}
             loading={saving}
             icon={isSaved ? Check : undefined}
             disabled={isSaved}

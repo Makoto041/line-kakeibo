@@ -17,23 +17,24 @@ interface MonthStepperProps {
 
 export function MonthStepper({ label, canShift, onShift, onOpenPeriod }: MonthStepperProps) {
   return (
-    <div className="mt-[25px] grid grid-cols-[48px_156px_48px] items-center justify-center">
+    <div className="mt-2 grid grid-cols-[40px_128px_40px] items-center justify-center">
       <IconButton
         label={T.aria.prevMonth}
         icon={ChevronLeft}
-        iconSize={24}
+        size={36}
+        iconSize={18}
         strokeWidth={2.25}
         disabled={!canShift || label === null}
         onClick={() => onShift(-1)}
       />
       {label === null ? (
-        <Skeleton className="mx-auto h-7 w-16 rounded-lg" />
+        <Skeleton className="mx-auto h-5 w-12 rounded-md" />
       ) : (
         <button
           type="button"
           aria-haspopup="dialog"
           onClick={onOpenPeriod}
-          className="mx-auto h-12 max-w-full truncate rounded-full px-3 text-center text-kb-month text-ink transition-opacity active:opacity-70"
+          className="mx-auto h-10 max-w-full truncate rounded-full px-3 text-center text-kb-month text-ink transition-opacity active:opacity-70"
         >
           {label}
         </button>
@@ -41,7 +42,8 @@ export function MonthStepper({ label, canShift, onShift, onOpenPeriod }: MonthSt
       <IconButton
         label={T.aria.nextMonth}
         icon={ChevronRight}
-        iconSize={24}
+        size={36}
+        iconSize={18}
         strokeWidth={2.25}
         disabled={!canShift || label === null}
         onClick={() => onShift(1)}

@@ -13,13 +13,13 @@ export function MonthPill({ label, className, type = 'button', ...rest }: PillPr
       aria-haspopup="dialog"
       aria-label={`${T.sheet.period} ${label}`}
       className={cx(
-        'kb-glass inline-flex h-12 shrink-0 items-center gap-[14px] rounded-full pl-[26px] pr-[22px] text-kb-pill-month text-ink transition-transform duration-150 active:scale-[0.97] disabled:opacity-40',
+        'kb-glass inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full pl-4 pr-3 text-kb-pill-month text-ink transition-transform duration-150 active:scale-[0.97] disabled:opacity-40',
         className
       )}
       {...rest}
     >
       <span className="whitespace-nowrap">{label}</span>
-      <ChevronDown size={20} strokeWidth={2} />
+      <ChevronDown size={14} strokeWidth={2.25} />
     </button>
   );
 }

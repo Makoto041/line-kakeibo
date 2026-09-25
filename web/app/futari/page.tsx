@@ -123,7 +123,7 @@ export default function FutariPage() {
                 }}
               />
             ) : (
-              <Skeleton className="h-12 w-[110px] rounded-full" />
+              <Skeleton className="h-10 w-[76px] rounded-full" />
             )}
           </>
         }

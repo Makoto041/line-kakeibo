@@ -51,7 +51,7 @@
   --kb-accent-strong: #1a45d6;
   --kb-accent-light: #4b9ffa;
   --kb-accent-grad: linear-gradient(180deg, #3d8cf4 0%, #2468e8 55%, #2b76ec 100%);
-  /* 白い 13px 文字を載せる単色の青（ダークでも同じ値。白との対比 4.5:1 以上） */
+  /* 白い小さな文字を載せる単色の青（ダークでも同じ値。白との対比 4.5:1 以上） */
   --kb-accent-bubble: #2468e8;
   --kb-accent-grad-seg: linear-gradient(160deg, #3b7ff0 0%, #2a6cee 45%, #1f5be6 100%);
   --kb-bar-grad: linear-gradient(90deg, #4b9ffa 0%, #3079f0 60%, #1f5fec 100%);
@@ -116,11 +116,11 @@
   --kb-grabber: rgba(15, 27, 61, 0.18);
 
   /* 寸法 */
-  --kb-gutter: 24px;
+  --kb-gutter: 20px;
   --kb-inset: 16px;
-  --kb-header-top: 26px;
-  --kb-nav-h: 82px;
-  --kb-nav-bottom: 18px;
+  --kb-header-top: 12px;
+  --kb-nav-h: 60px;
+  --kb-nav-bottom: 12px;
   --kb-safe-top: env(safe-area-inset-top, 0px);
   --kb-safe-bottom: env(safe-area-inset-bottom, 0px);
   /* 本文の下余白（ナビの高さ + 下の余白 + 16px + 安全領域） */

@@ -68,18 +68,18 @@ export default function ExpensesPage() {
 
 function SegmentSkeleton() {
   return (
-    <SkeletonGroup className="mx-4 mt-[22px]">
-      <Skeleton className="h-[52px] rounded-full" />
+    <SkeletonGroup className="mx-4 mt-3">
+      <Skeleton className="h-9 rounded-full" />
     </SkeletonGroup>
   );
 }
 
 function ListSkeleton() {
   return (
-    <SkeletonGroup className="px-4 pt-[33px]">
-      <Skeleton className="mx-2 h-[18px] w-12 rounded-md" />
-      <Skeleton className="mt-3 h-[300px] rounded-kb-card" />
-      <Skeleton className="mt-4 h-[82px] rounded-kb-row" />
+    <SkeletonGroup className="px-4 pt-6">
+      <Skeleton className="mx-1 h-3.5 w-10 rounded-md" />
+      <Skeleton className="mt-2 h-[228px] rounded-kb-card" />
+      <Skeleton className="mt-2 h-14 rounded-kb-row" />
     </SkeletonGroup>
   );
 }
@@ -312,7 +312,7 @@ function ExpensesPageContent() {
             />
           ) : (
             // 期間の設定を読み終えるまでは形だけ（サーバー描画と最初の描画を揃える）
-            <Skeleton className="h-12 w-[110px] rounded-full" />
+            <Skeleton className="h-10 w-[76px] rounded-full" />
           )}
         </>
       }
@@ -321,7 +321,7 @@ function ExpensesPageContent() {
 
   const segments = (
     <SegmentedControl
-      className="mx-4 mt-[22px]"
+      className="mx-4 mt-3"
       ariaLabel={T.aria.filter}
       items={[
         { key: 'all', label: T.expenses.all },
@@ -387,16 +387,16 @@ function ExpensesPageContent() {
           </div>
         ) : visible.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-14 text-center">
-            <Inbox size={32} strokeWidth={1.8} aria-hidden="true" className="text-ink-4" />
+            <Inbox size={28} strokeWidth={1.8} aria-hidden="true" className="text-ink-4" />
             <p className="text-kb-row text-ink-3">{T.expenses.empty}</p>
           </div>
         ) : (
           groups.map((group) => (
-            <section key={group.date || 'all'} className="[&>*:nth-child(2)]:!mt-3">
+            <section key={group.date || 'all'} className="[&>*:nth-child(2)]:!mt-2">
               {group.date ? (
-                <h2 className="mx-6 mt-[36px] text-kb-group text-ink-soft">{relativeDateLabel(group.date, today)}</h2>
+                <h2 className="mx-5 mt-6 text-kb-group text-ink-3">{relativeDateLabel(group.date, today)}</h2>
               ) : (
-                <span aria-hidden="true" className="block h-[21px]" />
+                <span aria-hidden="true" className="block h-2" />
               )}
               {group.items.map((expense) => {
                 const pending = isPending(expense);

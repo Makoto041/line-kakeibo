@@ -3,9 +3,10 @@
 import { cx } from '@/lib/cx';
 import { amountTier, yen } from '@/lib/money';
 
-type Base = 62 | 68 | 44 | 24 | 22;
+// 40: 予算残り / 44: 精算額 / 30: カード・シートの金額 / 18: 合計行 / 16: 一覧の行
+type Base = 40 | 44 | 30 | 18 | 16;
 
-const LINE_HEIGHT: Record<Base, number> = { 62: 1.1, 68: 1.1, 44: 1.15, 24: 1.2, 22: 1.2 };
+const LINE_HEIGHT: Record<Base, number> = { 40: 1.1, 44: 1.1, 30: 1.15, 18: 1.25, 16: 1.25 };
 
 interface AmountProps {
   /** 金額。null は計算できない状態（「—」） */
@@ -22,7 +23,7 @@ export function Amount({ value, base, text, className, weight = 700 }: AmountPro
   const shown = text ?? (value == null ? '—' : yen(value));
   const tier = amountTier(shown, base);
   // 予算残りの基準 62 は、段階を下げないときだけ 64 で描く（見本の字幅に合わせる。段階の閾値はそのまま）
-  const px = base === 62 && tier === 62 ? 64 : tier;
+  const px = tier;
   return (
     <span
       className={cx('inline-block whitespace-nowrap', className)}
@@ -30,7 +31,7 @@ export function Amount({ value, base, text, className, weight = 700 }: AmountPro
         fontSize: `${px}px`,
         lineHeight: LINE_HEIGHT[base],
         fontWeight: weight,
-        letterSpacing: base >= 62 ? 0 : '-0.01em',
+        letterSpacing: base >= 40 ? '-0.015em' : '-0.01em',
         fontVariantNumeric: 'normal',
       }}
     >

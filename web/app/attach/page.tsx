@@ -243,19 +243,19 @@ function AttachPageContent() {
   return (
     <div className="mx-auto min-h-dvh w-full max-w-[440px] pb-10">
       <header
-        className="flex items-center gap-3 pl-6 pr-4"
+        className="flex h-[calc(44px+var(--kb-header-top)+var(--kb-safe-top))] items-center gap-2.5 pl-5 pr-4"
         style={{ paddingTop: 'calc(var(--kb-header-top) + var(--kb-safe-top))' }}
       >
-        <span className="kb-glass grid h-12 w-12 shrink-0 place-items-center rounded-full text-ink">
-          <Paperclip size={22} strokeWidth={2} aria-hidden="true" />
+        <span className="kb-glass grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink">
+          <Paperclip size={18} strokeWidth={2} aria-hidden="true" />
         </span>
         <h1 className="min-w-0 truncate text-kb-title text-ink">レシート添付</h1>
       </header>
 
-      <main className="mt-6 space-y-4 px-4">
+      <main className="mt-4 space-y-3 px-4">
         {error && (
           <div role="alert" className="kb-card flex items-start gap-3 rounded-kb-row px-4 py-3.5 text-danger-ink">
-            <CircleAlert size={20} strokeWidth={2} aria-hidden="true" className="mt-0.5 shrink-0" />
+            <CircleAlert size={18} strokeWidth={2} aria-hidden="true" className="mt-0.5 shrink-0" />
             <p className="text-kb-body">{error}</p>
           </div>
         )}
@@ -265,12 +265,12 @@ function AttachPageContent() {
             {/* 支出概要 */}
             <section aria-label="対象の支出" className="kb-card rounded-kb-card px-5 py-5">
               <div className="flex items-center gap-3">
-                <span className="kb-glass-2 grid h-12 w-12 shrink-0 place-items-center rounded-full">
-                  <ExpenseIcon description={expense.description} category={expense.category} size={24} />
+                <span className="kb-glass-2 grid h-10 w-10 shrink-0 place-items-center rounded-full">
+                  <ExpenseIcon description={expense.description} category={expense.category} size={20} />
                 </span>
                 <p className="min-w-0 break-words text-kb-row text-ink">{expense.description}</p>
               </div>
-              <Amount value={expense.amount} base={44} className="mt-3 block text-ink" />
+              <Amount value={expense.amount} base={30} className="mt-3 block text-ink" />
               <p className="mt-1 text-kb-caption text-ink-3">
                 {expense.date ? dayjs(expense.date).format('YYYY年M月D日') : '日付不明'}
                 {expense.category ? ` ・ ${expense.category}` : ''}
@@ -280,7 +280,7 @@ function AttachPageContent() {
             {/* アップロード完了メッセージ */}
             {uploadDone && (
               <div role="status" className="kb-strip-ok flex items-start gap-2.5 rounded-kb-row px-4 py-3.5">
-                <Check size={20} strokeWidth={2.4} aria-hidden="true" className="mt-0.5 shrink-0" />
+                <Check size={18} strokeWidth={2.4} aria-hidden="true" className="mt-0.5 shrink-0" />
                 <p className="text-kb-body font-medium">レシートを添付しました。このページは閉じて構いません。</p>
               </div>
             )}
@@ -306,7 +306,7 @@ function AttachPageContent() {
                     }}
                     className={cx(SECONDARY, 'mt-4 w-full')}
                   >
-                    <RefreshCw size={20} strokeWidth={2} aria-hidden="true" />
+                    <RefreshCw size={18} strokeWidth={2} aria-hidden="true" />
                     レシートを差し替える
                   </button>
                 )}
@@ -340,14 +340,14 @@ function AttachPageContent() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <button type="button" onClick={() => fileInputRef.current?.click()} className={PICKER}>
-                    <span className="kb-btn-primary grid h-12 w-12 place-items-center rounded-full">
-                      <ImageIcon size={22} strokeWidth={2} aria-hidden="true" />
+                    <span className="kb-btn-primary grid h-10 w-10 place-items-center rounded-full">
+                      <ImageIcon size={18} strokeWidth={2} aria-hidden="true" />
                     </span>
                     <span className="text-kb-chip text-ink">アルバムから選択</span>
                   </button>
                   <button type="button" onClick={() => cameraInputRef.current?.click()} className={PICKER}>
-                    <span className="kb-btn-primary grid h-12 w-12 place-items-center rounded-full">
-                      <Camera size={22} strokeWidth={2} aria-hidden="true" />
+                    <span className="kb-btn-primary grid h-10 w-10 place-items-center rounded-full">
+                      <Camera size={18} strokeWidth={2} aria-hidden="true" />
                     </span>
                     <span className="text-kb-chip text-ink">写真を撮る</span>
                   </button>
@@ -367,7 +367,7 @@ function AttachPageContent() {
 
                 <PrimaryButton
                   icon={Upload}
-                  height={56}
+                  height={48}
                   onClick={handleUpload}
                   disabled={!selectedFile || uploading}
                 >
@@ -419,6 +419,6 @@ function AttachPageContent() {
 }
 
 const SECONDARY =
-  'kb-glass-2 inline-flex h-[52px] items-center justify-center gap-2.5 rounded-full px-4 text-[17px] font-semibold text-ink transition-[transform,opacity] duration-150 active:scale-[0.98]';
+  'kb-glass-2 inline-flex h-11 items-center justify-center gap-2 rounded-full px-4 text-[15px] font-semibold text-ink transition-[transform,opacity] duration-150 active:scale-[0.98]';
 const PICKER =
-  'kb-glass-2 flex flex-col items-center gap-2.5 rounded-kb-row px-3 py-5 text-center transition-transform duration-150 active:scale-[0.98]';
+  'kb-glass-2 flex flex-col items-center gap-2 rounded-kb-row px-3 py-4 text-center transition-transform duration-150 active:scale-[0.98]';

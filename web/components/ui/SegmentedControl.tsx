@@ -17,8 +17,8 @@ interface SegmentedControlProps<K extends string> {
   /** グループのアクセシブルネーム（画面には出さない） */
   ariaLabel?: string;
   className?: string;
-  /** 高さ（既定 52。シートの中は 44） */
-  height?: 52 | 44;
+  /** 高さ（既定 36。シートの中は 32） */
+  height?: 36 | 32;
 }
 
 export function SegmentedControl<K extends string>({
@@ -27,13 +27,13 @@ export function SegmentedControl<K extends string>({
   onChange,
   ariaLabel,
   className,
-  height = 52,
+  height = 36,
 }: SegmentedControlProps<K>) {
   return (
     <div
       role="group"
       aria-label={ariaLabel}
-      className={cx('kb-seg grid rounded-full p-[2px]', height === 52 ? 'h-[52px]' : 'h-11', className)}
+      className={cx('kb-seg grid rounded-full p-[2px]', height === 36 ? 'h-9' : 'h-8', className)}
       style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}
     >
       {items.map((item) => {
@@ -50,7 +50,7 @@ export function SegmentedControl<K extends string>({
             )}
           >
             <span className="truncate">{item.label}</span>
-            {item.count ? <span className="ml-2">{item.count}</span> : null}
+            {item.count ? <span className="ml-1.5 tabular-nums">{item.count}</span> : null}
           </button>
         );
       })}

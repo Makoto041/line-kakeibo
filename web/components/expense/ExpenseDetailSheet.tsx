@@ -160,16 +160,16 @@ function DetailBody({
   return (
     <div className="pb-2">
       {/* 金額（主役） */}
-      <div className="flex items-center justify-center gap-4 pb-4 pt-1">
-        <ExpenseIcon description={expense.description} category={expense.category} size={34} />
-        <Amount value={expense.amount} base={44} className={cx('text-ink', !expense.includeInTotal && 'opacity-60')} />
+      <div className="flex items-center justify-center gap-3 pb-3 pt-1">
+        <ExpenseIcon description={expense.description} category={expense.category} size={24} />
+        <Amount value={expense.amount} base={30} className={cx('text-ink', !expense.includeInTotal && 'opacity-60')} />
       </div>
 
       <div>
         <InfoRow label={T.detail.date}>{fullDateLabel(expense.date)}</InfoRow>
         <InfoRow label={T.detail.category}>
           <span className="inline-flex items-center gap-2">
-            <CategoryIcon size={18} strokeWidth={2} aria-hidden="true" className="text-ink-3" />
+            <CategoryIcon size={16} strokeWidth={2} aria-hidden="true" className="text-ink-3" />
             {expense.category}
           </span>
         </InfoRow>
@@ -193,10 +193,10 @@ function DetailBody({
             {items.map((item, index) => (
               <li
                 key={index}
-                className="flex min-h-[48px] items-center gap-3 border-b border-divider px-1 last:border-b-0"
+                className="flex min-h-11 items-center gap-3 border-b border-divider px-1 last:border-b-0"
               >
-                <span className="min-w-0 flex-1 break-words text-[15px] text-ink-2">{item.name}</span>
-                <span className="shrink-0 text-[15px] font-semibold text-ink">{yen(item.price)}</span>
+                <span className="min-w-0 flex-1 break-words text-[14px] text-ink-2">{item.name}</span>
+                <span className="shrink-0 text-[14px] font-semibold tabular-nums text-ink">{yen(item.price)}</span>
               </li>
             ))}
           </ul>
@@ -216,14 +216,14 @@ function DetailBody({
 
       <div className="mt-4 space-y-3">
         {pending && (
-          <PrimaryButton height={56} icon={CircleCheck} loading={confirming} disabled={!confirmable} onClick={confirm}>
+          <PrimaryButton height={48} icon={CircleCheck} loading={confirming} disabled={!confirmable} onClick={confirm}>
             {T.detail.confirm}
           </PrimaryButton>
         )}
         <div className="flex gap-3">
           <PrimaryButton
             variant="soft"
-            height={56}
+            height={48}
             icon={Pencil}
             disabled={!writable}
             onClick={onEdit}
@@ -234,7 +234,7 @@ function DetailBody({
           {deletable && (
             <PrimaryButton
               variant={deleteArmed ? 'danger' : 'soft'}
-              height={56}
+              height={48}
               icon={Trash2}
               loading={deleting}
               onClick={remove}
@@ -258,13 +258,13 @@ function DetailBody({
 function ReceiptRow({ label, onClick, href }: { label: string; onClick?: () => void; href?: string }) {
   const inner = (
     <>
-      <Paperclip size={22} strokeWidth={1.9} aria-hidden="true" className="shrink-0 text-ink-3" />
-      <span className="min-w-0 flex-1 truncate text-left text-[16px] font-medium text-ink">{label}</span>
-      <ChevronRight size={22} strokeWidth={2} aria-hidden="true" className="shrink-0 text-ink-4" />
+      <Paperclip size={18} strokeWidth={1.9} aria-hidden="true" className="shrink-0 text-ink-3" />
+      <span className="min-w-0 flex-1 truncate text-left text-[15px] text-ink">{label}</span>
+      <ChevronRight size={16} strokeWidth={2.25} aria-hidden="true" className="shrink-0 text-ink-4" />
     </>
   );
   const cls =
-    'flex min-h-[60px] w-full items-center gap-4 border-b border-divider px-1 transition-opacity last:border-b-0 active:opacity-70';
+    'flex min-h-12 w-full items-center gap-3 border-b border-divider px-1 transition-opacity last:border-b-0 active:opacity-70';
   if (href) {
     // /attach は単独画面（ナビなし）。刷新前と同じく通常の遷移で開く
     return (

@@ -7,18 +7,18 @@ export function StatusStrip({ counted, className }: { counted: boolean; classNam
   return (
     <div
       className={cx(
-        'flex h-[42px] items-center gap-4 rounded-kb-strip pl-[18px] pr-4 text-kb-strip',
+        'flex h-9 items-center gap-2 rounded-kb-strip px-3 text-kb-strip',
         counted ? 'kb-strip-ok' : 'kb-strip-off',
         className
       )}
     >
       <span
         className={cx(
-          'grid h-[22px] w-[22px] shrink-0 place-items-center rounded-full text-white',
+          'grid h-4 w-4 shrink-0 place-items-center rounded-full text-white',
           counted ? 'bg-ok-fill' : 'bg-off-fill'
         )}
       >
-        {counted ? <Check size={14} strokeWidth={3} /> : <Minus size={14} strokeWidth={3} />}
+        {counted ? <Check size={10} strokeWidth={3.5} /> : <Minus size={10} strokeWidth={3.5} />}
       </span>
       <span className="truncate">{counted ? T.expenses.counted : T.expenses.uncounted}</span>
     </div>

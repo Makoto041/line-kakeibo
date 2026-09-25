@@ -29,18 +29,18 @@ export function RecentList({ items, loading, onRetry, onOpen }: RecentListProps)
 
   return (
     <section aria-labelledby="home-recent-heading">
-      <div aria-hidden="true" className="mx-6 mt-[23px] h-px bg-divider" />
-      <h2 id="home-recent-heading" className="mx-6 mt-4 text-kb-section text-ink-soft">
+      <div aria-hidden="true" className="mx-5 mt-5 h-px bg-divider" />
+      <h2 id="home-recent-heading" className="mx-5 mt-4 text-kb-section text-ink-soft">
         {T.home.recent}
       </h2>
       {loading ? (
-        <SkeletonGroup className="mt-[18px] px-6">
-          <Skeleton className="h-[14px] w-16 rounded-md" />
+        <SkeletonGroup className="mt-3 px-5">
+          <Skeleton className="h-3 w-14 rounded-md" />
           {[0, 1, 2].map((i) => (
-            <div key={i} className="flex h-16 items-center gap-7 pl-2 pr-1.5">
-              <Skeleton className="h-[30px] w-[30px] rounded-lg" />
-              <Skeleton className="h-[18px] flex-1 rounded-md" />
-              <Skeleton className="h-[22px] w-20 rounded-md" />
+            <div key={i} className="flex h-12 items-center gap-3.5 pl-1 pr-1">
+              <Skeleton className="h-[22px] w-[22px] rounded-md" />
+              <Skeleton className="h-3.5 flex-1 rounded-md" />
+              <Skeleton className="h-4 w-16 rounded-md" />
             </div>
           ))}
         </SkeletonGroup>
@@ -51,8 +51,8 @@ export function RecentList({ items, loading, onRetry, onOpen }: RecentListProps)
       ) : (
         groups.map((group) => (
           <div key={group.date}>
-            <p className="mx-6 mt-[18px] text-kb-date text-ink-4">{absoluteDateLabel(group.date, today)}</p>
-            <ul className="mx-6">
+            <p className="mx-5 mt-3 text-kb-date text-ink-4">{absoluteDateLabel(group.date, today)}</p>
+            <ul className="mx-5">
               {group.items.map((expense, i) => (
                 <li key={expense.id}>
                   <ExpenseListRow expense={expense} onOpen={onOpen} divided={i > 0} />
@@ -73,7 +73,7 @@ export function ExpenseListRow({
 }: {
   expense: Expense;
   onOpen: (id: string) => void;
-  /** 上に区切り線を引く（線を含めて 64px の間隔にする） */
+  /** 上に区切り線を引く（線を含めて 48px の間隔にする） */
   divided?: boolean;
 }) {
   return (
@@ -82,15 +82,15 @@ export function ExpenseListRow({
       aria-haspopup="dialog"
       onClick={() => onOpen(expense.id)}
       className={cx(
-        'box-border flex h-16 w-full items-center pl-2 pr-1.5 text-left transition-opacity active:opacity-70',
+        'box-border flex h-12 w-full items-center pl-1 pr-1 text-left transition-opacity active:opacity-70',
         divided && 'border-t border-divider'
       )}
     >
-      <ExpenseIcon description={expense.description} category={expense.category} size={32} />
-      <span className="ml-[26px] min-w-0 flex-1 truncate text-kb-row text-ink">{expenseLabel(expense)}</span>
+      <ExpenseIcon description={expense.description} category={expense.category} size={22} />
+      <span className="ml-3.5 min-w-0 flex-1 truncate text-kb-row text-ink">{expenseLabel(expense)}</span>
       <Amount
         value={expense.amount}
-        base={22}
+        base={16}
         weight={600}
         className={cx('ml-3 shrink-0', isCounted(expense) ? 'text-ink' : 'text-ink-4')}
       />

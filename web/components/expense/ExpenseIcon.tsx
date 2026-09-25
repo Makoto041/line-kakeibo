@@ -9,7 +9,7 @@ import { cx } from '@/lib/cx';
 export function ExpenseIcon({
   description,
   category,
-  size = 30,
+  size = 22,
   className,
 }: {
   description?: string | null;

@@ -252,12 +252,12 @@ function SheetLayer({
         {...panelMotion}
       >
         <div aria-hidden="true" className="mx-auto mt-2 h-[5px] w-9 shrink-0 rounded-[3px] bg-[var(--kb-grabber)]" />
-        <div className="flex shrink-0 items-center gap-3 px-4 pb-3 pt-3">
-          {onBack && <IconButton label={T.aria.back} icon={ChevronLeft} size={44} iconSize={22} onClick={onBack} />}
+        <div className="flex shrink-0 items-center gap-2 px-4 pb-2 pt-2">
+          {onBack && <IconButton label={T.aria.back} icon={ChevronLeft} size={32} iconSize={18} onClick={onBack} />}
           <h2 id={titleId} className="min-w-0 flex-1 truncate text-kb-sheet-title text-ink">
             {title}
           </h2>
-          <IconButton label={T.aria.close} icon={X} size={44} iconSize={20} disabled={closeDisabled} onClick={onClose} />
+          <IconButton label={T.aria.close} icon={X} size={32} iconSize={16} disabled={closeDisabled} onClick={onClose} />
         </div>
         <div
           className={cx(

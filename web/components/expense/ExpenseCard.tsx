@@ -54,9 +54,9 @@ export function ExpenseCard({
   return (
     <article
       id={`expense-${expense.id}`}
-      className="kb-card mx-4 mt-4 scroll-mt-24 rounded-kb-card px-4 pb-5 pt-4"
+      className="kb-card mx-4 mt-3 scroll-mt-20 rounded-kb-card px-4 pb-4 pt-3"
     >
-      <div className="flex h-[52px] items-center pl-2">
+      <div className="flex h-11 items-center">
         <button
           type="button"
           id={`expense-${expense.id}-toggle`}
@@ -64,36 +64,37 @@ export function ExpenseCard({
           onClick={onCollapse}
           className="flex min-w-0 flex-1 items-center self-stretch text-left"
         >
-          <ExpenseIcon description={expense.description} category={expense.category} size={34} />
-          <span className="ml-[23px] min-w-0 flex-1 truncate text-kb-row-lg text-ink">{expenseLabel(expense)}</span>
+          <ExpenseIcon description={expense.description} category={expense.category} size={22} />
+          <span className="ml-3 min-w-0 flex-1 truncate text-kb-row-lg text-ink">{expenseLabel(expense)}</span>
         </button>
         <IconButton
           label={T.aria.detail}
           icon={Ellipsis}
           variant="plain"
-          size={44}
-          iconSize={28}
+          size={36}
+          iconSize={20}
           strokeWidth={2}
           aria-haspopup="dialog"
           onClick={onDetail}
-          className="-mr-[7px] ml-2 !text-dots"
+          className="-mr-2 ml-2 !text-dots"
         />
       </div>
 
-      <div className="mt-[14px] text-center">
-        <Amount value={expense.amount} base={44} className="text-ink" />
+      <div className="mt-2 text-center">
+        <Amount value={expense.amount} base={30} className="text-ink" />
       </div>
 
-      <div className="mt-3 flex flex-wrap justify-center gap-3">
+      <div className="mt-2.5 flex flex-wrap justify-center gap-2">
         <Chip icon={category.icon} label={expense.category} />
         <Chip icon={SPLIT_ICON[split]} label={T.split[split]} />
       </div>
 
-      <StatusStrip counted={counted} className="mx-0.5 mt-[18px]" />
+      <StatusStrip counted={counted} className="mt-3.5" />
 
-      <div className="mt-4 flex items-center gap-3">
+      <div className="mt-3 flex items-center gap-2.5">
         {pending ? (
           <PrimaryButton
+            height={44}
             icon={CircleCheck}
             loading={confirming}
             disabled={!confirmable}
@@ -109,8 +110,8 @@ export function ExpenseCard({
           label={T.aria.edit}
           icon={Pencil}
           variant="soft"
-          size={64}
-          iconSize={24}
+          size={44}
+          iconSize={18}
           aria-haspopup="dialog"
           onClick={onEdit}
           className="!text-ink-edit"

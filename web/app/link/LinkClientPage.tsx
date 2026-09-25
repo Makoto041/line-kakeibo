@@ -9,7 +9,7 @@ import { PrimaryButton } from '../../components/ui/PrimaryButton';
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-dvh items-center justify-center px-4">
-      <div className="kb-card w-full max-w-[408px] rounded-kb-card px-6 py-8 text-center">{children}</div>
+      <div className="kb-card w-full max-w-[360px] rounded-kb-card px-5 py-6 text-center">{children}</div>
     </div>
   );
 }
@@ -59,8 +59,8 @@ export default function LinkClientPage() {
   if (!tokenValid) {
     return (
       <Shell>
-        <span className="kb-glass-2 mx-auto mb-4 grid h-16 w-16 place-items-center rounded-full text-danger">
-          <AlertTriangle size={30} strokeWidth={2} aria-hidden="true" />
+        <span className="kb-glass-2 mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full text-danger">
+          <AlertTriangle size={22} strokeWidth={2} aria-hidden="true" />
         </span>
         <h1 className="text-kb-sheet-title text-ink">無効なリンク</h1>
         <p className="mt-2 text-kb-body text-ink-3">{error}</p>
@@ -72,8 +72,8 @@ export default function LinkClientPage() {
   if (success) {
     return (
       <Shell>
-        <span className="kb-btn-primary mx-auto mb-4 grid h-16 w-16 place-items-center rounded-full">
-          <CheckCircle2 size={30} strokeWidth={2} aria-hidden="true" />
+        <span className="kb-btn-primary mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full">
+          <CheckCircle2 size={22} strokeWidth={2} aria-hidden="true" />
         </span>
         <h1 className="text-kb-sheet-title text-ink">連携完了</h1>
         <p className="mt-2 text-kb-body text-ink-3">
@@ -81,9 +81,9 @@ export default function LinkClientPage() {
         </p>
         <a
           href={`/expenses${lineId ? `?lineId=${encodeURIComponent(lineId)}` : ''}`}
-          className="kb-btn-primary mt-6 inline-flex h-14 w-full items-center justify-center gap-2.5 rounded-full px-5 text-[18px] font-bold transition-transform duration-150 active:scale-[0.98]"
+          className="kb-btn-primary mt-5 inline-flex h-12 w-full items-center justify-center gap-2 rounded-full px-5 text-[16px] font-semibold transition-transform duration-150 active:scale-[0.98]"
         >
-          <ReceiptText size={22} strokeWidth={2} aria-hidden="true" />
+          <ReceiptText size={18} strokeWidth={2} aria-hidden="true" />
           支出一覧を見る
         </a>
       </Shell>
@@ -92,8 +92,8 @@ export default function LinkClientPage() {
 
   return (
     <Shell>
-      <span className="kb-glass-2 mx-auto mb-4 grid h-16 w-16 place-items-center rounded-full text-accent">
-        <Link2 size={30} strokeWidth={2} aria-hidden="true" />
+      <span className="kb-glass-2 mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full text-accent">
+        <Link2 size={22} strokeWidth={2} aria-hidden="true" />
       </span>
       <h1 className="text-kb-sheet-title text-ink">アカウント連携</h1>
       <p className="mt-2 text-kb-body text-ink-3">
@@ -106,7 +106,7 @@ export default function LinkClientPage() {
         </p>
       )}
 
-      <PrimaryButton icon={Link2} height={56} onClick={handleLinkConfirm} loading={loading} className="mt-6">
+      <PrimaryButton icon={Link2} height={48} onClick={handleLinkConfirm} loading={loading} className="mt-6">
         連携を確認
       </PrimaryButton>
 

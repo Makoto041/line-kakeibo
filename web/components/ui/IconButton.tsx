@@ -7,9 +7,11 @@ import { cx } from '@/lib/cx';
 import { T } from '@/lib/uiText';
 import type { AnyIcon } from './icons';
 
-type Size = 40 | 44 | 48 | 64;
+type Size = 32 | 36 | 40 | 44 | 48 | 64;
 
 const SIZE_CLASS: Record<Size, string> = {
+  32: 'h-8 w-8',
+  36: 'h-9 w-9',
   40: 'h-10 w-10',
   44: 'h-11 w-11',
   48: 'h-12 w-12',
@@ -34,8 +36,8 @@ export interface IconButtonProps
 export function IconButton({
   label,
   icon: Icon,
-  size = 48,
-  iconSize = 22,
+  size = 40,
+  iconSize = 18,
   strokeWidth = 2,
   variant = 'glass',
   active = false,
@@ -61,7 +63,7 @@ export function IconButton({
     >
       <Icon size={iconSize} strokeWidth={strokeWidth} />
       {active && (
-        <span className="absolute right-[10px] top-[10px] h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
+        <span className="absolute right-[7px] top-[7px] h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
       )}
     </button>
   );

@@ -443,16 +443,16 @@ test('yen と amountTier', () => {
   assert.equal(yen(1234567), '¥1,234,567');
   assert.equal(yen(Number.NaN), '¥0');
   assert.equal(yen(3150).codePointAt(0), 0xa5); // 半角の円記号
-  assert.equal(amountTier('¥38,150', 62), 62);
-  assert.equal(amountTier('¥123,456', 62), 62); // 8 字
-  assert.equal(amountTier('¥1,234,567', 62), 52); // 10 字
-  assert.equal(amountTier('¥123,456,789', 62), 44); // 12 字
-  assert.equal(amountTier('¥123,456', 68), 68);
-  assert.equal(amountTier('¥1,234,567', 68), 56);
-  assert.equal(amountTier('¥12,345,678', 68), 46);
-  assert.equal(amountTier('¥3,150', 44), 44);
-  assert.equal(amountTier('¥12,345,678', 44), 36);
-  assert.equal(amountTier('¥12,345,678', 24), 24);
+  assert.equal(amountTier('¥38,150', 40), 40);
+  assert.equal(amountTier('¥123,456', 40), 40); // 8 字
+  assert.equal(amountTier('¥1,234,567', 40), 34); // 10 字
+  assert.equal(amountTier('¥123,456,789', 40), 28); // 12 字
+  assert.equal(amountTier('¥123,456', 44), 44);
+  assert.equal(amountTier('¥1,234,567', 44), 36);
+  assert.equal(amountTier('¥12,345,678', 44), 30);
+  assert.equal(amountTier('¥3,150', 30), 30);
+  assert.equal(amountTier('¥12,345,678', 30), 24);
+  assert.equal(amountTier('¥12,345,678', 18), 18);
 });
 
 test('uiText: トーストは 8 字以内、説明文にしない', () => {

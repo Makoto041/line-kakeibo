@@ -6,11 +6,11 @@ export function Chip({ icon: Icon, label, className }: { icon: AnyIcon; label: s
   return (
     <span
       className={cx(
-        'kb-chip inline-flex h-[42px] max-w-full items-center gap-3 rounded-full pl-[18px] pr-5 text-kb-chip',
+        'kb-chip inline-flex h-7 max-w-full items-center gap-1.5 rounded-full pl-2.5 pr-3 text-kb-chip',
         className
       )}
     >
-      <Icon size={18} strokeWidth={2} className="shrink-0" />
+      <Icon size={14} strokeWidth={2} className="shrink-0" />
       <span className="truncate">{label}</span>
     </span>
   );

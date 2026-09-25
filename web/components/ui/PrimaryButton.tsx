@@ -13,17 +13,17 @@ interface PrimaryButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   loading?: boolean;
   /** primary: 青 / danger: 赤（削除の確定など） / soft: カード上の淡いボタン */
   variant?: 'primary' | 'danger' | 'soft';
-  /** 高さ（既定 64） */
-  height?: 52 | 56 | 64;
+  /** 高さ（既定 50） */
+  height?: 44 | 48 | 50;
 }
 
-const HEIGHT_CLASS = { 52: 'h-[52px] text-[17px] font-semibold', 56: 'h-14 text-[18px] font-bold', 64: 'h-16 text-kb-btn' };
+const HEIGHT_CLASS = { 44: 'h-11 text-[15px] font-semibold', 48: 'h-12 text-[16px] font-semibold', 50: 'h-[50px] text-kb-btn' };
 
 export function PrimaryButton({
   icon = CircleCheck,
   loading = false,
   variant = 'primary',
-  height = 64,
+  height = 50,
   disabled,
   className,
   children,
@@ -47,7 +47,7 @@ export function PrimaryButton({
         onClick?.(e);
       }}
       className={cx(
-        'inline-flex w-full items-center justify-center gap-3 rounded-full px-5 transition-[transform,opacity] duration-150 active:scale-[0.98] disabled:pointer-events-none aria-disabled:pointer-events-none',
+        'inline-flex w-full items-center justify-center gap-2 rounded-full px-5 transition-[transform,opacity] duration-150 active:scale-[0.98] disabled:pointer-events-none aria-disabled:pointer-events-none',
         HEIGHT_CLASS[height],
         variant === 'primary' && 'kb-btn-primary',
         variant === 'danger' && 'kb-btn-danger',
@@ -57,9 +57,9 @@ export function PrimaryButton({
       {...rest}
     >
       {loading ? (
-        <LoaderCircle size={height === 64 ? 28 : 22} strokeWidth={2} className="animate-spin" />
+        <LoaderCircle size={height === 44 ? 18 : 20} strokeWidth={2} className="animate-spin" />
       ) : (
-        Icon && <Icon size={height === 64 ? 28 : 22} strokeWidth={2} />
+        Icon && <Icon size={height === 44 ? 18 : 20} strokeWidth={2} />
       )}
       <span className="truncate">{children}</span>
     </button>

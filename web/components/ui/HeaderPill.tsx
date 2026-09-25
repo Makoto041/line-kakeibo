@@ -17,14 +17,14 @@ export function HeaderPill({ label, icon: Icon, className, type = 'button', ...r
       type={type}
       aria-haspopup="dialog"
       className={cx(
-        'kb-glass inline-flex h-12 shrink-0 items-center gap-2 rounded-full pl-[14px] pr-[14px] text-kb-pill text-ink transition-transform duration-150 active:scale-[0.97] disabled:opacity-40',
+        'kb-glass inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3 text-kb-pill text-ink transition-transform duration-150 active:scale-[0.97] disabled:opacity-40',
         className
       )}
       {...rest}
     >
-      <Icon size={22} strokeWidth={2} />
+      <Icon size={18} strokeWidth={2} />
       <span className="whitespace-nowrap">{label}</span>
-      <ChevronDown size={18} strokeWidth={2} />
+      <ChevronDown size={14} strokeWidth={2.25} />
     </button>
   );
 }

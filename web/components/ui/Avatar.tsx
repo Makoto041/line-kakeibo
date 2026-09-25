@@ -4,20 +4,20 @@ import { cx } from '@/lib/cx';
 type Tone = 'a' | 'b' | 'neutral';
 
 const SIZE_CLASS = {
-  80: 'h-20 w-20 text-kb-avatar',
-  40: 'h-10 w-10 text-[17px] font-semibold',
+  56: 'h-14 w-14 text-kb-avatar',
+  32: 'h-8 w-8 text-[13px] font-semibold',
 };
 
 export function Avatar({
   initial,
   tone = 'a',
-  size = 80,
+  size = 56,
   dim = false,
   className,
 }: {
   initial: string;
   tone?: Tone;
-  size?: 80 | 40;
+  size?: 56 | 32;
   /** 精算なしのとき受け取る側を薄くする */
   dim?: boolean;
   className?: string;

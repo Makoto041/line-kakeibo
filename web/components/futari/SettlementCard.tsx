@@ -30,24 +30,24 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
     <section
       aria-labelledby="futari-heading"
       aria-busy={busy || undefined}
-      className="kb-card-2 mx-4 mt-7 rounded-kb-xl px-[14px] pb-4 pt-5"
+      className="kb-card-2 mx-4 mt-4 rounded-kb-xl px-4 pb-4 pt-4"
     >
       <h2 id="futari-heading" tabIndex={-1} className="text-center outline-none text-kb-card-label text-ink-2">
         {T.futari.heading}
       </h2>
 
-      <div className="mt-5 flex items-center justify-center gap-[18px]">
+      <div className="mt-4 flex items-center justify-center gap-3">
         {busy ? (
           <>
-            <Skeleton className="h-20 w-20 rounded-full" />
-            <MoveRight size={32} strokeWidth={2.25} aria-hidden="true" className="shrink-0 text-ink-4" />
-            <Skeleton className="h-20 w-20 rounded-full" />
+            <Skeleton className="h-14 w-14 rounded-full" />
+            <MoveRight size={22} strokeWidth={2.25} aria-hidden="true" className="shrink-0 text-ink-4" />
+            <Skeleton className="h-14 w-14 rounded-full" />
           </>
         ) : (
           <>
             <Avatar initial={vm.left?.initial ?? ''} tone={vm.left?.tone ?? 'neutral'} dim={!vm.left} />
             <MoveRight
-              size={32}
+              size={22}
               strokeWidth={2.25}
               aria-hidden="true"
               className={cx('shrink-0 text-ink', vm.idle && 'opacity-40')}
@@ -57,26 +57,26 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
         )}
       </div>
 
-      <div className="mt-4 flex min-h-[75px] items-center justify-center">
+      <div className="mt-3 flex min-h-[50px] items-center justify-center">
         {failed ? (
           <IconButton label={T.aria.retry} icon={RotateCw} onClick={onRetry} />
         ) : busy ? (
-          <Skeleton className="h-[62px] w-56 rounded-2xl" />
+          <Skeleton className="h-11 w-40 rounded-xl" />
         ) : (
-          <Amount value={vm.amount} base={68} className="text-ink" />
+          <Amount value={vm.amount} base={44} className="text-ink" />
         )}
       </div>
-      <p className="mt-3 text-center text-kb-note text-ink-2">{T.futari.half}</p>
+      <p className="mt-1 text-center text-kb-note text-ink-3">{T.futari.half}</p>
 
-      <div className="mx-1 mt-7 border-t border-divider">
+      <div className="mt-4 border-t border-divider">
         {!busy &&
           vm.rows.map((row) => (
-            <div key={row.lineId} className="flex h-[68px] items-center gap-3 border-b border-divider px-0.5">
+            <div key={row.lineId} className="flex h-12 items-center gap-3 border-b border-divider px-0.5">
               <span className="min-w-0 flex-1 truncate text-kb-sum-label text-ink-soft">
                 {row.initial}
                 {T.futari.advanceOf}
               </span>
-              <Amount value={row.total} base={24} className="shrink-0 text-ink" />
+              <Amount value={row.total} base={18} className="shrink-0 text-ink" />
             </div>
           ))}
         <button
@@ -84,11 +84,11 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
           aria-haspopup="dialog"
           disabled={!vm.canOpenBreakdown}
           onClick={onOpenBreakdown}
-          className="flex h-[72px] w-full items-center pl-0.5 pt-[6px] text-left transition-opacity active:opacity-70 disabled:opacity-40"
+          className="mb-3 flex h-12 w-full items-center pl-0.5 text-left transition-opacity active:opacity-70 disabled:opacity-40"
         >
-          <DocLines size={35} strokeWidth={1.9} className="-mr-[7px] shrink-0 text-ink" />
-          <span className="ml-6 min-w-0 flex-1 truncate text-kb-sum-label text-ink-soft">{T.futari.breakdown}</span>
-          <ChevronRight size={24} strokeWidth={2} aria-hidden="true" className="-mr-1.5 shrink-0 text-ink-4" />
+          <DocLines size={20} strokeWidth={1.9} className="shrink-0 text-ink" />
+          <span className="ml-3 min-w-0 flex-1 truncate text-kb-sum-label text-ink-soft">{T.futari.breakdown}</span>
+          <ChevronRight size={16} strokeWidth={2.25} aria-hidden="true" className="shrink-0 text-ink-4" />
         </button>
       </div>
 

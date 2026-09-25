@@ -8,7 +8,7 @@ import { ChevronRight } from 'lucide-react';
 import { cx } from '@/lib/cx';
 import type { AnyIcon } from './icons';
 
-const ROW = 'flex min-h-[60px] w-full items-center gap-4 border-b border-divider px-1 last:border-b-0';
+const ROW = 'flex min-h-12 w-full items-center gap-3 border-b border-divider px-1 last:border-b-0';
 
 interface NavRowBase {
   icon?: AnyIcon;
@@ -29,10 +29,10 @@ export function NavRow({
 }: NavRowBase & { href?: string; onClick?: () => void; disabled?: boolean }) {
   const inner = (
     <>
-      {Icon && <Icon size={24} strokeWidth={1.9} className="shrink-0 text-ink" />}
+      {Icon && <Icon size={20} strokeWidth={1.9} className="shrink-0 text-ink" />}
       <span className="min-w-0 flex-1 truncate text-left text-kb-row text-ink-soft">{label}</span>
       {value && <span className="shrink-0 text-kb-caption text-ink-4">{value}</span>}
-      <ChevronRight size={22} strokeWidth={2} className="shrink-0 text-ink-4" />
+      <ChevronRight size={16} strokeWidth={2.25} className="shrink-0 text-ink-4" />
     </>
   );
   if (href) {
@@ -67,14 +67,14 @@ export function InfoRow({
 }) {
   return (
     <div className={cx(ROW, className)}>
-      {Icon && <Icon size={22} strokeWidth={1.9} className="shrink-0 text-ink-3" />}
+      {Icon && <Icon size={18} strokeWidth={1.9} className="shrink-0 text-ink-3" />}
       <span className="shrink-0 text-kb-caption text-ink-3">{label}</span>
-      <span className="min-w-0 flex-1 text-right text-[16px] font-medium break-words text-ink">{children}</span>
+      <span className="min-w-0 flex-1 text-right text-[15px] break-words text-ink">{children}</span>
     </div>
   );
 }
 
-/** シートの中の小見出し（14/600） */
+/** シートの中の小見出し（13/600） */
 export function SheetSection({
   title,
   aside,
@@ -87,9 +87,9 @@ export function SheetSection({
   className?: string;
 }) {
   return (
-    <section className={cx('mt-6 first:mt-2', className)}>
+    <section className={cx('mt-5 first:mt-1', className)}>
       <div className="mb-2 flex items-center justify-between gap-3 px-1">
-        <h3 className="text-[14px] font-semibold text-ink-3">{title}</h3>
+        <h3 className="text-[13px] font-semibold text-ink-3">{title}</h3>
         {aside}
       </div>
       {children}

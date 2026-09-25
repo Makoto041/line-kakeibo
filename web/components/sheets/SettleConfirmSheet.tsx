@@ -24,26 +24,26 @@ export function SettleConfirmSheet({ open, onClose, vm, settling, onConfirm }: S
   return (
     <Sheet open={open} onClose={onClose} closeDisabled={settling} title={T.futari.settle}>
       <div className="pb-2">
-        <div className="flex items-start justify-center gap-[18px] pt-2">
+        <div className="flex items-start justify-center gap-3 pt-1">
           <Person person={vm.left} />
           <MoveRight
-            size={28}
-            strokeWidth={1.75}
+            size={22}
+            strokeWidth={2}
             aria-hidden="true"
-            className={cx('mt-[26px] shrink-0 text-ink', vm.idle && 'opacity-40')}
+            className={cx('mt-[17px] shrink-0 text-ink', vm.idle && 'opacity-40')}
           />
           <Person person={vm.right} dim={vm.idle} />
         </div>
-        <div className="mt-4 text-center">
-          <Amount value={vm.amount} base={44} className="text-ink" />
+        <div className="mt-3 text-center">
+          <Amount value={vm.amount} base={30} className="text-ink" />
         </div>
         <p className="mt-1 text-center text-kb-sub text-ink-3">{T.futari.count(vm.count)}</p>
 
-        <div className="mt-6 space-y-3">
+        <div className="mt-5 space-y-2">
           <PrimaryButton icon={CircleCheck} loading={settling} disabled={!vm.canSettle} onClick={onConfirm}>
             {T.futari.settle}
           </PrimaryButton>
-          <PrimaryButton variant="soft" height={56} icon={null} disabled={settling} onClick={onClose}>
+          <PrimaryButton variant="soft" height={48} icon={null} disabled={settling} onClick={onClose}>
             {T.futari.cancel}
           </PrimaryButton>
         </div>
@@ -54,7 +54,7 @@ export function SettleConfirmSheet({ open, onClose, vm, settling, onConfirm }: S
 
 function Person({ person, dim = false }: { person: SettlementPerson | null; dim?: boolean }) {
   return (
-    <div className="flex w-24 flex-col items-center gap-2">
+    <div className="flex w-20 flex-col items-center gap-1.5">
       <Avatar initial={person?.initial ?? ''} tone={person?.tone ?? 'neutral'} dim={dim || !person} />
       {person?.name && <span className="max-w-full truncate text-kb-caption text-ink-2">{person.name}</span>}
     </div>

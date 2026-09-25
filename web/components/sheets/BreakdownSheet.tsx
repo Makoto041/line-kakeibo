@@ -40,26 +40,26 @@ export function BreakdownSheet({ open, onClose, data, fallbackNames }: Breakdown
           const index = memberIndex.get(group.lineId);
           const tone = index === 0 ? 'a' : index === 1 ? 'b' : 'neutral';
           return (
-            <section key={group.lineId || `unknown-${gi}`} className="mt-5 first:mt-1">
-              <div className="flex min-h-[56px] items-center gap-3 px-1">
-                <Avatar initial={initialOf.get(group.lineId) ?? '?'} tone={tone} size={40} />
+            <section key={group.lineId || `unknown-${gi}`} className="mt-4 first:mt-0">
+              <div className="flex min-h-12 items-center gap-3 px-1">
+                <Avatar initial={initialOf.get(group.lineId) ?? '?'} tone={tone} size={32} />
                 <span className="min-w-0 flex-1 truncate text-kb-row text-ink">{group.name || initialOf.get(group.lineId)}</span>
-                <Amount value={group.total} base={24} className="shrink-0 text-ink" />
+                <Amount value={group.total} base={18} className="shrink-0 text-ink" />
               </div>
-              <ul className="mt-1">
+              <ul>
                 {group.items.map((item) => (
                   <li
                     key={item.id}
-                    className="flex min-h-[56px] items-center gap-3 border-t border-divider px-1"
+                    className="flex min-h-[52px] items-center gap-3 border-t border-divider px-1"
                   >
-                    <ExpenseIcon description={item.description} category={item.category} size={24} />
+                    <ExpenseIcon description={item.description} category={item.category} size={20} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[16px] font-medium text-ink">
+                      <span className="block truncate text-[15px] text-ink">
                         {item.description || item.category}
                       </span>
                       <span className="block text-kb-caption text-ink-4">{absoluteDateLabel(item.date, today)}</span>
                     </span>
-                    <Amount value={item.amount} base={22} weight={600} className="shrink-0 text-ink" />
+                    <Amount value={item.amount} base={16} weight={600} className="shrink-0 text-ink" />
                   </li>
                 ))}
               </ul>

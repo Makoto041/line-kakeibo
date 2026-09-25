@@ -28,8 +28,8 @@ export function HouseholdSheet({ open, onClose, household, loading, error, onRet
     <Sheet open={open} onClose={onClose} title={household?.name || T.sheet.household}>
       {loading && !household ? (
         <SkeletonGroup className="space-y-3 py-2">
-          <Skeleton className="h-14 rounded-2xl" />
-          <Skeleton className="h-14 rounded-2xl" />
+          <Skeleton className="h-12 rounded-xl" />
+          <Skeleton className="h-12 rounded-xl" />
         </SkeletonGroup>
       ) : error && !household ? (
         <div className="flex justify-center py-6">
@@ -41,9 +41,9 @@ export function HouseholdSheet({ open, onClose, household, loading, error, onRet
             {members.map((m, i) => (
               <li
                 key={m.lineId}
-                className="flex min-h-[64px] items-center gap-4 border-b border-divider px-1 last:border-b-0"
+                className="flex min-h-[52px] items-center gap-3 border-b border-divider px-1 last:border-b-0"
               >
-                <Avatar size={40} initial={initials[i]} tone={i % 2 === 0 ? 'a' : 'b'} />
+                <Avatar size={32} initial={initials[i]} tone={i % 2 === 0 ? 'a' : 'b'} />
                 <span className="min-w-0 flex-1 truncate text-kb-row text-ink">{m.displayName || initials[i]}</span>
               </li>
             ))}
