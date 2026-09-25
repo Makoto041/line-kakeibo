@@ -40,6 +40,17 @@ import {
   type UndeterminableReason,
 } from './householdSettlement';
 import { errorMessage, maskId } from './logSafe';
+import {
+  MAX_RECURRING_PER_GROUP,
+  RECURRING_COLLECTION,
+  isConsistentPayment,
+  loadGroupContext,
+  parseRecurringInput,
+  toRecurringItem,
+  toRecurringView,
+  type RecurringInput,
+} from './recurringExpenses';
+import { todayJST } from './time';
 import { isAllowedWebOrigin } from './webOrigins';
 
 /** 1 回に精算できる件数の上限（Firestore の batch の上限） */
@@ -187,7 +198,7 @@ export function applyHouseholdCors(req: Request, res: Response): void {
   res.setHeader('Vary', 'Origin');
   if (typeof origin === 'string' && isAllowedWebOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Access-Control-Max-Age', '3600');
   }
@@ -667,6 +678,157 @@ householdRouter.post(
       basis: current.basis,
       settlement: current.settlement,
     });
+  })
+);
+
+// ============================================
+// 固定費（家賃・光熱費など）
+// ============================================
+
+/** 固定費の読み書きの前提: 有効メンバーで、世帯が存在する。だめなら応答を返して null */
+async function requireGroupMember(res: Response, groupId: unknown, lineId: string) {
+  if (!isValidDocId(groupId)) {
+    sendError(res, 400, 'invalid_request');
+    return null;
+  }
+  const db = getFirestore();
+  if (!(await isActiveMember(db, groupId, lineId))) {
+    sendError(res, 403, 'forbidden');
+    return null;
+  }
+  const group = await loadGroupContext(db, groupId);
+  if (!group) {
+    sendError(res, 404, 'not_found');
+    return null;
+  }
+  return { db, groupId, group };
+}
+
+/** GET /household/recurring?groupId=<id> — 固定費の一覧と、立替者に選べるメンバー */
+householdRouter.get(
+  '/recurring',
+  userLimiter,
+  route('recurring-list', async (req, res) => {
+    const ctx = await requireGroupMember(res, req.query.groupId, res.locals.lineId as string);
+    if (!ctx) return;
+    const snapshot = await ctx.db.collection(RECURRING_COLLECTION).where('groupId', '==', ctx.groupId).get();
+    const items = snapshot.docs
+      .map((doc) => toRecurringItem(doc.id, doc.data()))
+      .filter((item): item is NonNullable<typeof item> => item !== null)
+      .sort((a, b) => a.dayOfMonth - b.dayOfMonth || a.name.localeCompare(b.name, 'ja'))
+      .map(toRecurringView);
+    const members = [...ctx.group.names.entries()].map(([lineId, displayName]) => ({ lineId, displayName }));
+    res.status(200).json({ items, members });
+  })
+);
+
+/** POST /household/recurring  { groupId, name, amount, category, dayOfMonth, payment, payerLineId, active? } */
+householdRouter.post(
+  '/recurring',
+  userLimiter,
+  route('recurring-create', async (req, res) => {
+    const lineId = res.locals.lineId as string;
+    const body = isPlainObject(req.body) ? req.body : null;
+    const ctx = await requireGroupMember(res, body?.groupId, lineId);
+    if (!ctx || !body) return;
+    const { groupId: _groupId, ...fields } = body;
+    const input = parseRecurringInput(fields, false);
+    if (!input || (input.payerLineId !== null && !ctx.group.names.has(input.payerLineId))) {
+      sendError(res, 400, 'invalid_request');
+      return;
+    }
+
+    const collection = ctx.db.collection(RECURRING_COLLECTION);
+    const existing = await collection.where('groupId', '==', ctx.groupId).count().get();
+    if (existing.data().count >= MAX_RECURRING_PER_GROUP) {
+      sendError(res, 409, 'too_many');
+      return;
+    }
+    const ref = collection.doc();
+    const now = new Date();
+    const data = {
+      ...input,
+      groupId: ctx.groupId,
+      startDate: todayJST(),
+      lastPostedMonth: null,
+      createdBy: lineId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await ref.set(data);
+    console.log('household recurring: created', { item: maskId(ref.id), user: maskId(lineId) });
+    res.status(201).json({ item: toRecurringView(toRecurringItem(ref.id, data)!) });
+  })
+);
+
+/** 固定費の文書を読み、世帯のメンバーか確かめる。だめなら応答を返して null */
+async function loadOwnRecurring(req: Request, res: Response) {
+  const lineId = res.locals.lineId as string;
+  const id = req.params.id;
+  if (!isValidDocId(id)) {
+    sendError(res, 400, 'invalid_request');
+    return null;
+  }
+  const db = getFirestore();
+  const ref = db.collection(RECURRING_COLLECTION).doc(id);
+  const snapshot = await ref.get();
+  const item = snapshot.exists ? toRecurringItem(id, snapshot.data()) : null;
+  if (!item) {
+    sendError(res, 404, 'not_found');
+    return null;
+  }
+  const ctx = await requireGroupMember(res, item.groupId, lineId);
+  if (!ctx) return null;
+  return { ...ctx, ref, item, lineId };
+}
+
+/** PATCH /household/recurring/:id  { name?, amount?, category?, dayOfMonth?, payment?, payerLineId?, active? } */
+householdRouter.patch(
+  '/recurring/:id',
+  userLimiter,
+  route('recurring-update', async (req, res) => {
+    const ctx = await loadOwnRecurring(req, res);
+    if (!ctx) return;
+    const patch = parseRecurringInput(req.body, true);
+    if (!patch || Object.keys(patch).length === 0) {
+      sendError(res, 400, 'invalid_request');
+      return;
+    }
+    const merged: RecurringInput = {
+      name: ctx.item.name,
+      amount: ctx.item.amount,
+      category: ctx.item.category,
+      dayOfMonth: ctx.item.dayOfMonth,
+      payment: ctx.item.payment,
+      payerLineId: ctx.item.payerLineId,
+      active: ctx.item.active,
+      ...patch,
+    };
+    // shared に切り替えたら立替者を外す
+    if (merged.payment === 'shared') merged.payerLineId = null;
+    if (
+      !isConsistentPayment(merged) ||
+      (merged.payerLineId !== null && merged.payerLineId !== ctx.item.payerLineId && !ctx.group.names.has(merged.payerLineId))
+    ) {
+      sendError(res, 400, 'invalid_request');
+      return;
+    }
+    await ctx.ref.update({ ...merged, updatedAt: new Date() });
+    console.log('household recurring: updated', { item: maskId(ctx.item.id), user: maskId(ctx.lineId) });
+    res.status(200).json({ item: toRecurringView({ ...ctx.item, ...merged }) });
+  })
+);
+
+/** DELETE /household/recurring/:id — 項目を消す（計上済みの明細はそのまま残す） */
+householdRouter.delete(
+  '/recurring/:id',
+  userLimiter,
+  route('recurring-delete', async (req, res) => {
+    const ctx = await loadOwnRecurring(req, res);
+    if (!ctx) return;
+    await ctx.ref.delete();
+    console.log('household recurring: deleted', { item: maskId(ctx.item.id), user: maskId(ctx.lineId) });
+    res.status(200).json({ ok: true });
   })
 );
 
