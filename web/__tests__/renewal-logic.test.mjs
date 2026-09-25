@@ -478,6 +478,13 @@ test('deriveApiBase: 明示 → 認証エンドポイントから導出（|| で
   assert.equal(deriveApiBase('not a url', auth), null);
   assert.equal(deriveApiBase('javascript:alert(1)', auth), null);
   assert.equal(deriveApiBase('https://example.com/api?x=1', auth), null);
+  // http は手元だけ（ID トークンを平文で送らない）
+  assert.equal(deriveApiBase('http://localhost:5199/api', auth), 'http://localhost:5199/api');
+  assert.equal(deriveApiBase('http://api.example.com/api', auth), null);
+  assert.equal(deriveApiBase(undefined, 'http://api.example.com/api/auth/line'), null);
+  // off / none で止める
+  assert.equal(deriveApiBase('off', auth), null);
+  assert.equal(deriveApiBase(' NONE ', auth), null);
 });
 
 test('isValidDocId', () => {
@@ -489,6 +496,8 @@ test('isValidDocId', () => {
   assert.equal(isValidDocId('.'), false);
   assert.equal(isValidDocId('..'), false);
   assert.equal(isValidDocId('__x__'), false);
+  assert.equal(isValidDocId('__a\nb__'), false);
+  assert.equal(isValidDocId('___'), true);
   assert.equal(isValidDocId(['a']), false);
 });
 

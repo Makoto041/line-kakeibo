@@ -2,7 +2,7 @@
 
 // 3 タブで共通のシート（期間・設定・世帯・ゲスト）。ページは「今開いているシート」を 1 つの state で持ち、
 // シートどうしは入れ子にせず差し替える（期間 → 期間の設定 → 戻る）。
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import type { HouseholdInfo } from '@/lib/hooks';
 import type { SettingsTab } from '@/components/settings/SettingsPanel';
 import { PeriodSheet } from './PeriodSheet';
@@ -18,8 +18,7 @@ export type CommonSheet =
 
 export function useCommonSheet() {
   const [sheet, setSheet] = useState<CommonSheet | null>(null);
-  const close = useCallback(() => setSheet(null), []);
-  return { sheet, setSheet, close };
+  return { sheet, setSheet };
 }
 
 interface CommonSheetsProps {

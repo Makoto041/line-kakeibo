@@ -50,6 +50,11 @@ const defaultBudgetConfig: BudgetConfig = {
 
 // カテゴリ別予算の項目は正準カテゴリ（bot/分類器・支出データと統一）。
 // 予算は category.name をキーに保存するため、名称を揃えることで実支出と突き合う。
+// シートは閉じるたびに中身を捨てるので、開くたびの読み直しをセッションで 1 回に抑える
+// （移行を済ませた利用者・このセッションで読み終えた利用者。再試行のときは読み直す）
+const migratedFor = new Set<string>();
+const loadedThisSession = new Set<string>();
+
 const defaultCategories = CANONICAL_CATEGORIES.map((name) => ({ id: name, name }));
 
 function normalizeBudgetConfig(data: unknown): BudgetConfig {
@@ -136,12 +141,20 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
 
       // キャッシュがあれば即表示し、裏で再取得（読み込み表示を出さない）
       const hadCache = !!(getCached(`dateSettings:${lineId}`) && getCached(`settingsBudget:${lineId}`));
+      if (hadCache && reloadNonce === 0 && loadedThisSession.has(lineId)) {
+        setLoading(false);
+        setLoadedFor(lineId);
+        return;
+      }
       try {
         if (!hadCache) setLoading(true);
         setBudgetLoadError(false);
 
         // 期間設定の読み込み
-        await migrateLocalToFirestore(lineId);
+        if (!migratedFor.has(lineId)) {
+          await migrateLocalToFirestore(lineId);
+          migratedFor.add(lineId);
+        }
         const loadedDateSettings = await getDateRangeSettings(lineId);
         if (cancelled) return;
         setCached(`dateSettings:${lineId}`, loadedDateSettings);
@@ -162,6 +175,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
           }
           setBudgetHasLoaded(true);
         }
+        loadedThisSession.add(lineId);
       } catch (error) {
         console.error('Failed to load settings:', error);
         if (cancelled) return;

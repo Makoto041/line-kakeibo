@@ -1,9 +1,9 @@
-"use client";
+'use client';
 
-import { useState, useEffect, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
-import { Link2, AlertTriangle, CheckCircle2, ReceiptText } from "lucide-react";
-import { PrimaryButton } from "../../components/ui/PrimaryButton";
+import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Link2, AlertTriangle, CheckCircle2, ReceiptText } from 'lucide-react';
+import { PrimaryButton } from '../../components/ui/PrimaryButton';
 
 // 単独の確認画面の枠（中央のカード 1 枚）
 function Shell({ children }: { children: React.ReactNode }) {
@@ -21,15 +21,15 @@ export default function LinkClientPage() {
   const [success, setSuccess] = useState(false);
   const [tokenValid, setTokenValid] = useState<boolean | null>(null);
 
-  const token = searchParams.get("token");
-  const lineId = searchParams.get("lineId");
+  const token = searchParams.get('token');
+  const lineId = searchParams.get('lineId');
 
   const verifyToken = useCallback(async () => {
     // LINE ID only auth: just confirm token & lineId are present.
     if (token && lineId) {
       setTokenValid(true);
     } else {
-      setError("リンクが無効です。");
+      setError('リンクが無効です。');
       setTokenValid(false);
     }
   }, [token, lineId]);
@@ -80,7 +80,7 @@ export default function LinkClientPage() {
           LINEアカウントの連携が完了しました。LINEボットからの支出データがWebアプリに表示されます。
         </p>
         <a
-          href={`/expenses${lineId ? `?lineId=${encodeURIComponent(lineId)}` : ""}`}
+          href={`/expenses${lineId ? `?lineId=${encodeURIComponent(lineId)}` : ''}`}
           className="kb-btn-primary mt-6 inline-flex h-14 w-full items-center justify-center gap-2.5 rounded-full px-5 text-[18px] font-bold transition-transform duration-150 active:scale-[0.98]"
         >
           <ReceiptText size={22} strokeWidth={2} aria-hidden="true" />

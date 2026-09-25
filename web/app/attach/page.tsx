@@ -1,22 +1,22 @@
-"use client";
+'use client';
 
-import React, { useState, useEffect, useRef, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
-import { Paperclip, Check, RefreshCw, Camera, Upload, Image as ImageIcon, CircleAlert } from "lucide-react";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
-import { isSafeImageUrl } from "../../lib/imageUrl";
-import { compressImage } from "../../lib/imageCompress";
-import dayjs from "dayjs";
-import { isLineAuthSettled, onLineAuthSettled } from "../../lib/lineAuth";
-import { cx } from "../../lib/cx";
-import { Amount } from "../../components/ui/Amount";
-import { PrimaryButton } from "../../components/ui/PrimaryButton";
-import { ExpenseIcon } from "../../components/expense/ExpenseIcon";
+import React, { useState, useEffect, useRef, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Paperclip, Check, RefreshCw, Camera, Upload, Image as ImageIcon, CircleAlert } from 'lucide-react';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { db, storage, ensureFirebaseInitialized } from '../../lib/firebase';
+import { isSafeImageUrl } from '../../lib/imageUrl';
+import { compressImage } from '../../lib/imageCompress';
+import dayjs from 'dayjs';
+import { isLineAuthSettled, onLineAuthSettled } from '../../lib/lineAuth';
+import { cx } from '../../lib/cx';
+import { Amount } from '../../components/ui/Amount';
+import { PrimaryButton } from '../../components/ui/PrimaryButton';
+import { ExpenseIcon } from '../../components/expense/ExpenseIcon';
 
 // storage.rules と揃える（SVG・GIF は不可、上限 5MB）
-const ALLOWED_RECEIPT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
+const ALLOWED_RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
 
 // Suspense boundary for useSearchParams（ビルドエラー防止）
@@ -46,7 +46,7 @@ interface ExpenseSummary {
 
 function AttachPageContent() {
   const searchParams = useSearchParams();
-  const expenseId = searchParams.get("expenseId");
+  const expenseId = searchParams.get('expenseId');
   // 認証の確定（匿名セッションの復元 → LINE の順に変わる）を待ってから支出を読む。
   // 確定前に読むと、LINE から初めて開いたときに権限エラーになる
   const [authSettled, setAuthSettled] = useState(() => isLineAuthSettled());
@@ -76,7 +76,7 @@ function AttachPageContent() {
   useEffect(() => {
     const fetchExpense = async () => {
       if (!expenseId) {
-        setError("支出IDが指定されていません。LINEの通知メッセージのボタンからアクセスしてください。");
+        setError('支出IDが指定されていません。LINEの通知メッセージのボタンからアクセスしてください。');
         setLoading(false);
         return;
       }
@@ -84,29 +84,29 @@ function AttachPageContent() {
       try {
         ensureFirebaseInitialized();
         if (!db) {
-          setError("データベースに接続できませんでした。時間をおいて再度お試しください。");
+          setError('データベースに接続できませんでした。時間をおいて再度お試しください。');
           setLoading(false);
           return;
         }
 
-        const snap = await getDoc(doc(db, "expenses", expenseId));
+        const snap = await getDoc(doc(db, 'expenses', expenseId));
         if (!snap.exists()) {
-          setError("指定された支出が見つかりませんでした。");
+          setError('指定された支出が見つかりませんでした。');
           setLoading(false);
           return;
         }
 
         const data = snap.data();
         setExpense({
-          description: data.description || "（名称なし）",
+          description: data.description || '（名称なし）',
           amount: data.amount || 0,
-          date: data.date || "",
+          date: data.date || '',
           category: data.category,
           receiptUrl: data.receiptUrl,
         });
       } catch (err) {
-        console.error("Failed to fetch expense:", err);
-        setError("支出データの取得に失敗しました。");
+        console.error('Failed to fetch expense:', err);
+        setError('支出データの取得に失敗しました。');
       } finally {
         setLoading(false);
       }
@@ -122,7 +122,7 @@ function AttachPageContent() {
     if (!file) return;
 
     if (!ALLOWED_RECEIPT_TYPES.includes(file.type)) {
-      setError("JPEG / PNG / WebP / HEIC 形式の画像を選択してください。");
+      setError('JPEG / PNG / WebP / HEIC 形式の画像を選択してください。');
       return;
     }
 
@@ -131,7 +131,7 @@ function AttachPageContent() {
 
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result === "string") {
+      if (typeof reader.result === 'string') {
         setPreviewDataUrl(reader.result);
       }
     };
@@ -151,7 +151,7 @@ function AttachPageContent() {
     try {
       ensureFirebaseInitialized();
       if (!storage || !db) {
-        throw new Error("Firebaseの初期化に失敗しました。");
+        throw new Error('Firebaseの初期化に失敗しました。');
       }
 
       // アップロード前にリサイズ＋JPEG再エンコードで圧縮（容量・帯域の長期削減）
@@ -166,12 +166,12 @@ function AttachPageContent() {
 
       // Storage ルールと同じ上限（圧縮後のサイズで判定する）
       if (uploadFile.size > MAX_RECEIPT_BYTES) {
-        throw new Error("画像が大きすぎます（5MB まで）。");
+        throw new Error('画像が大きすぎます（5MB まで）。');
       }
 
       // パス: receipts/{expenseId}/{timestamp}_{filename}
       const timestamp = Date.now();
-      const safeName = uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const safeName = uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const storageRef = ref(storage, `receipts/${expenseId}/${timestamp}_${safeName}`);
       const targetExpenseId = expenseId;
 
@@ -180,7 +180,7 @@ function AttachPageContent() {
       });
 
       task.on(
-        "state_changed",
+        'state_changed',
         (snapshot) => {
           const pct = snapshot.totalBytes
             ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
@@ -188,11 +188,11 @@ function AttachPageContent() {
           if (mountedRef.current) setUploadProgress(pct);
         },
         (err) => {
-          console.error("Upload failed:", err);
+          console.error('Upload failed:', err);
           if (mountedRef.current) {
             setError(
-              "アップロードに失敗しました。" +
-                (err instanceof Error ? ` (${err.message})` : "")
+              'アップロードに失敗しました。' +
+                (err instanceof Error ? ` (${err.message})` : '')
             );
             setUploading(false);
           }
@@ -201,7 +201,7 @@ function AttachPageContent() {
           // 完了: ダウンロードURL取得 → Firestore保存（バックグラウンドでも実行される）
           try {
             const downloadUrl = await getDownloadURL(task.snapshot.ref);
-            await updateDoc(doc(db!, "expenses", targetExpenseId), {
+            await updateDoc(doc(db!, 'expenses', targetExpenseId), {
               receiptUrl: downloadUrl,
               updatedAt: new Date(),
             });
@@ -214,19 +214,19 @@ function AttachPageContent() {
               setUploading(false);
             }
           } catch (err) {
-            console.error("Failed to finalize upload:", err);
+            console.error('Failed to finalize upload:', err);
             if (mountedRef.current) {
-              setError("アップロードの保存に失敗しました。");
+              setError('アップロードの保存に失敗しました。');
               setUploading(false);
             }
           }
         }
       );
     } catch (err) {
-      console.error("Upload failed:", err);
+      console.error('Upload failed:', err);
       setError(
-        "アップロードに失敗しました。" +
-          (err instanceof Error ? ` (${err.message})` : "")
+        'アップロードに失敗しました。' +
+          (err instanceof Error ? ` (${err.message})` : '')
       );
       setUploading(false);
     }
@@ -243,7 +243,7 @@ function AttachPageContent() {
     <div className="mx-auto min-h-dvh w-full max-w-[440px] pb-10">
       <header
         className="flex items-center gap-3 pl-6 pr-4"
-        style={{ paddingTop: "calc(var(--kb-header-top) + var(--kb-safe-top))" }}
+        style={{ paddingTop: 'calc(var(--kb-header-top) + var(--kb-safe-top))' }}
       >
         <span className="kb-glass grid h-12 w-12 shrink-0 place-items-center rounded-full text-ink">
           <Paperclip size={22} strokeWidth={2} aria-hidden="true" />
@@ -271,8 +271,8 @@ function AttachPageContent() {
               </div>
               <Amount value={expense.amount} base={44} className="mt-3 block text-ink" />
               <p className="mt-1 text-kb-caption text-ink-3">
-                {expense.date ? dayjs(expense.date).format("YYYY年M月D日") : "日付不明"}
-                {expense.category ? ` ・ ${expense.category}` : ""}
+                {expense.date ? dayjs(expense.date).format('YYYY年M月D日') : '日付不明'}
+                {expense.category ? ` ・ ${expense.category}` : ''}
               </p>
             </section>
 
@@ -303,7 +303,7 @@ function AttachPageContent() {
                       setReplacing(true);
                       setUploadDone(false);
                     }}
-                    className={cx(SECONDARY, "mt-4 w-full")}
+                    className={cx(SECONDARY, 'mt-4 w-full')}
                   >
                     <RefreshCw size={20} strokeWidth={2} aria-hidden="true" />
                     レシートを差し替える
@@ -316,7 +316,7 @@ function AttachPageContent() {
             {showUploadForm && (
               <section className="kb-card space-y-4 rounded-kb-card p-4">
                 <h2 className="px-1 text-kb-caption font-medium text-ink-3">
-                  {hasReceipt ? "新しいレシートを選択" : "レシート画像を選択"}
+                  {hasReceipt ? '新しいレシートを選択' : 'レシート画像を選択'}
                 </h2>
 
                 {/* アルバム選択用（capture なし → 写真ライブラリ/ファイルから選べる） */}
@@ -370,7 +370,7 @@ function AttachPageContent() {
                   onClick={handleUpload}
                   disabled={!selectedFile || uploading}
                 >
-                  {uploading ? `アップロード中... ${uploadProgress}%` : "アップロードする"}
+                  {uploading ? `アップロード中... ${uploadProgress}%` : 'アップロードする'}
                 </PrimaryButton>
 
                 {uploading && (
@@ -382,11 +382,11 @@ function AttachPageContent() {
                       aria-valuenow={uploadProgress}
                       aria-label="アップロード"
                       className="relative h-2 overflow-hidden rounded-full"
-                      style={{ background: "var(--kb-bar-track)" }}
+                      style={{ background: 'var(--kb-bar-track)' }}
                     >
                       <div
                         className="h-full rounded-full transition-[width] duration-200"
-                        style={{ width: `${uploadProgress}%`, background: "var(--kb-bar-grad)" }}
+                        style={{ width: `${uploadProgress}%`, background: 'var(--kb-bar-grad)' }}
                       />
                     </div>
                     <p className="text-center text-kb-caption text-ink-3">
@@ -403,7 +403,7 @@ function AttachPageContent() {
                       setSelectedFile(null);
                       setPreviewDataUrl(null);
                     }}
-                    className={cx(SECONDARY, "w-full")}
+                    className={cx(SECONDARY, 'w-full')}
                   >
                     キャンセル
                   </button>
@@ -418,6 +418,6 @@ function AttachPageContent() {
 }
 
 const SECONDARY =
-  "kb-glass-2 inline-flex h-[52px] items-center justify-center gap-2.5 rounded-full px-4 text-[17px] font-semibold text-ink transition-[transform,opacity] duration-150 active:scale-[0.98]";
+  'kb-glass-2 inline-flex h-[52px] items-center justify-center gap-2.5 rounded-full px-4 text-[17px] font-semibold text-ink transition-[transform,opacity] duration-150 active:scale-[0.98]';
 const PICKER =
-  "kb-glass-2 flex flex-col items-center gap-2.5 rounded-kb-row px-3 py-5 text-center transition-transform duration-150 active:scale-[0.98]";
+  'kb-glass-2 flex flex-col items-center gap-2.5 rounded-kb-row px-3 py-5 text-center transition-transform duration-150 active:scale-[0.98]';

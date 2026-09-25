@@ -192,8 +192,13 @@ export interface SettlementViewModel {
 }
 
 /** 表示名（応答の名前が空なら、世帯のメンバー名で補う） */
+/** 自分自身のキーだけを読む（lineId が constructor などでも Object.prototype の値を拾わない） */
+function ownValue<V>(record: Readonly<Record<string, V>> | undefined, key: string): V | undefined {
+  return record && Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+}
+
 function displayNameOf(m: SettlementMember, fallbackNames?: Readonly<Record<string, string>>): string {
-  return m.displayName.trim() || fallbackNames?.[m.lineId]?.trim() || '';
+  return m.displayName.trim() || ownValue(fallbackNames, m.lineId)?.trim() || '';
 }
 
 export function buildSettlementViewModel(
@@ -235,7 +240,7 @@ export function buildSettlementViewModel(
 
   const rows = undeterminable
     ? []
-    : resp.members.map((m, i) => ({ lineId: m.lineId, initial: initials[i], total: resp.totals[m.lineId] ?? 0 }));
+    : resp.members.map((m, i) => ({ lineId: m.lineId, initial: initials[i], total: ownValue(resp.totals, m.lineId) ?? 0 }));
 
   const count = resp.expenseIds.length;
   return {

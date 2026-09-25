@@ -4,11 +4,13 @@
 // 行は高さ 64、行の間に細い線（design.md §3.5〜3.6）。行を押すと詳細シート。
 // 0 件のときは見出しの下に何も出さない（説明文は出さない）。
 import dayjs from 'dayjs';
+import { RotateCw } from 'lucide-react';
 import type { Expense } from '@/lib/hooks';
 import { absoluteDateLabel, groupByDate, isCounted } from '@/lib/expenseState';
 import { cx } from '@/lib/cx';
 import { T } from '@/lib/uiText';
 import { Amount } from '@/components/ui/Amount';
+import { IconButton } from '@/components/ui/IconButton';
 import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton';
 import { ExpenseIcon, expenseLabel } from '@/components/expense/ExpenseIcon';
 
@@ -16,10 +18,12 @@ interface RecentListProps {
   /** 表示する明細（並べ替え・件数の絞り込みは呼び出し側で済ませる） */
   items: readonly Expense[];
   loading: boolean;
+  /** 読めなかったときの再試行（渡すと一覧の代わりに再試行の丸を出す） */
+  onRetry?: () => void;
   onOpen: (id: string) => void;
 }
 
-export function RecentList({ items, loading, onOpen }: RecentListProps) {
+export function RecentList({ items, loading, onRetry, onOpen }: RecentListProps) {
   const today = dayjs().format('YYYY-MM-DD');
   const groups = groupByDate(items);
 
@@ -40,6 +44,10 @@ export function RecentList({ items, loading, onOpen }: RecentListProps) {
             </div>
           ))}
         </SkeletonGroup>
+      ) : onRetry ? (
+        <div className="flex justify-center py-10">
+          <IconButton label={T.aria.retry} icon={RotateCw} onClick={onRetry} />
+        </div>
       ) : (
         groups.map((group) => (
           <div key={group.date}>

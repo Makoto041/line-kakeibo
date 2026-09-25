@@ -27,11 +27,7 @@ const MAX_SETTLE_IDS = 500;
 // NEXT_PUBLIC_* はビルド時に埋め込まれるため、参照は字句どおりに書く
 const API_BASE = deriveApiBase(process.env.NEXT_PUBLIC_API_BASE, process.env.NEXT_PUBLIC_AUTH_ENDPOINT);
 
-/** API のベース URL（未設定なら null。確認・精算のボタンを無効にする） */
-export function getHouseholdApiBase(): string | null {
-  return API_BASE;
-}
-
+/** API のベース URL があるか（無ければ確認・精算のボタンを無効にする） */
 export function isHouseholdApiConfigured(): boolean {
   return API_BASE !== null;
 }
@@ -69,6 +65,9 @@ async function send(path: string, init: { method: 'GET' | 'POST'; body?: unknown
   const user = auth?.currentUser;
   if (!user || user.isAnonymous) throw new HouseholdApiError('unavailable');
 
+  // 再試行を含めた呼び出し全体の期限（1 回ごとに 25 秒を使わない）
+  const deadline = Date.now() + REQUEST_TIMEOUT_MS;
+
   const attempt = async (forceRefresh: boolean): Promise<RawResponse> => {
     let token: string;
     try {
@@ -76,8 +75,10 @@ async function send(path: string, init: { method: 'GET' | 'POST'; body?: unknown
     } catch {
       throw new HouseholdApiError('unauthenticated');
     }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new HouseholdApiError('network');
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), remaining);
     try {
       const res = await fetch(`${base}${path}`, {
         method: init.method,

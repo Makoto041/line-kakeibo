@@ -7,12 +7,14 @@
 // - 期間の設定を読み終えてから支出を読み、その日付を共通の期間に入れる
 // - 期間が決まるまで一覧の取得を止める（shouldFetch。二重取得を防ぐ）
 // - 開くのは 1 回だけ（閉じたあとは開き直さない）。URL の lineId は読まない
+// - 読むのに失敗した（通信の一時的な失敗など）ときは、一覧を読み終えた時点で一覧から探して開く
 import { useEffect, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import { doc, getDoc } from 'firebase/firestore';
 import { db, ensureFirebaseInitialized } from '@/lib/firebase';
 import type { Expense, FirestoreExpenseData } from '@/lib/hooks';
 import { normalizeCategoryName } from '@/lib/categoryNormalization';
+import { isValidDocId } from '@/lib/householdContract';
 
 interface EditDeepLinkOptions {
   lineId: string | null;
@@ -34,6 +36,8 @@ export function useEditDeepLink(editId: string | null, options: EditDeepLinkOpti
 
   // 読み終えた ID（読み終えたら同じ ID では二度と開かない）
   const [resolvedId, setResolvedId] = useState<string | null>(null);
+  // 読むのに失敗した ID（一覧から探す）
+  const [fallbackId, setFallbackId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!editId || resolvedId === editId || !settled || !settingsLoaded || !lineId) return;
@@ -42,9 +46,11 @@ export function useEditDeepLink(editId: string | null, options: EditDeepLinkOpti
 
     (async () => {
       let target: Expense | null = null;
+      let failed = false;
       try {
         ensureFirebaseInitialized();
-        if (db) {
+        // ID として使えない値は読まない（対象なしとして扱う）
+        if (db && isValidDocId(editId)) {
           const snap = await getDoc(doc(db, 'expenses', editId));
           if (snap.exists()) {
             const data = snap.data() as FirestoreExpenseData;
@@ -53,11 +59,13 @@ export function useEditDeepLink(editId: string | null, options: EditDeepLinkOpti
         }
       } catch (err) {
         console.error('Failed to fetch edit expense:', err);
+        failed = true;
       }
       if (cancelled) return;
       // 期間の移動・取得の再開・シートを開く、を同じ描画にまとめる
       if (target?.date) setCurrentDate(dayjs(target.date));
       setResolvedId(editId);
+      if (failed) setFallbackId(editId);
       if (target) onOpenRef.current(target);
     })();
 
@@ -73,5 +81,7 @@ export function useEditDeepLink(editId: string | null, options: EditDeepLinkOpti
     shouldFetch: !editId || resolved || guestSettled,
     /** 対象を読んでいる途中 */
     resolving: !!editId && !resolved && !guestSettled,
+    /** 直接読めなかった対象の ID（一覧を読み終えたら一覧から探して開く） */
+    fallbackId: editId && fallbackId === editId ? editId : null,
   };
 }

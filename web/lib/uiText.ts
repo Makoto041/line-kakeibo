@@ -62,7 +62,6 @@ export const T = {
   // シート（タップ後に開く詳細）の見出しと短い語。説明文は置かない
   sheet: {
     period: '期間',
-    settings: '設定',
     guest: 'ゲスト',
     household: 'ふたり',
     thisPeriod: '今月',

@@ -62,7 +62,7 @@
   --kb-glass-hi: rgba(255, 255, 255, 1);
   --kb-card: rgba(255, 255, 255, 0.84);
   --kb-card-2: rgba(255, 255, 255, 0.68);
-  --kb-sheet: rgba(255, 255, 255, 0.92);
+  --kb-sheet: #f9fafb;
   --kb-card-rim: rgba(255, 255, 255, 0.95);
   --kb-divider: rgba(20, 50, 110, 0.08);
   --kb-solid: #f7fafe; /* 透明度を下げる設定のときの面 */
@@ -161,7 +161,7 @@
   --kb-glass-rim: rgba(255, 255, 255, 0.1);
   --kb-glass-hi: rgba(255, 255, 255, 0.08);
   --kb-card: rgba(22, 31, 56, 0.88);
-  --kb-sheet: rgba(22, 31, 56, 0.88);
+  --kb-sheet: #131c34;
   --kb-card-2: rgba(22, 31, 56, 0.78);
   --kb-card-rim: rgba(255, 255, 255, 0.1);
   --kb-divider: rgba(255, 255, 255, 0.08);
@@ -386,14 +386,19 @@
     outline: none;
   }
 
-  /* シート */
+  /* シート。スライドしながら動くので backdrop-filter は使わず、不透明な面にする（毎フレームの
+     再描画を避ける。色はこれまでのぼかした見え方に合わせた）。中のガラス部品もシートの上では平らにする */
   .kb-sheet {
     background: var(--kb-sheet);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
-    backdrop-filter: blur(24px) saturate(180%);
     border: 1px solid var(--kb-card-rim);
     border-bottom: 0;
     box-shadow: var(--kb-shadow-sheet);
+    will-change: transform;
+  }
+  .kb-sheet .kb-glass,
+  .kb-sheet .kb-seg {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
   .kb-backdrop {
     background: var(--kb-backdrop);

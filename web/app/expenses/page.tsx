@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 // 明細: 見出し（検索の丸・月ピル）/ すべて・要確認 n・立替 / 日付見出し（今日・昨日・M月D日）/
 // 展開カード（1 件だけ）とたたんだ行カード。
@@ -8,12 +8,12 @@
 // - LINE の「修正」リンク（?edit=<id>&lineId=<uid>）は認証の確定を待ってから、その支出の期間へ移り、
 //   行を展開して編集シートを 1 回だけ開く。URL の lineId は読まない
 // - 確認はサーバー（/household）経由。成功したら一覧に反映し、要確認なら次の要確認が展開される
-import React, { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import dayjs from "dayjs";
-import { Inbox, RotateCw, Search } from "lucide-react";
-import { useLineAuth, useExpenses, useHousehold } from "../../lib/hooks";
-import type { Expense } from "../../lib/hooks";
+import React, { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import dayjs from 'dayjs';
+import { Inbox, RotateCw, Search } from 'lucide-react';
+import { useLineAuth, useExpenses, useHousehold } from '../../lib/hooks';
+import type { Expense } from '../../lib/hooks';
 import {
   DEFAULT_FILTER,
   canServerConfirm,
@@ -28,25 +28,25 @@ import {
   sortForList,
   type ExpenseFilter,
   type Segment,
-} from "../../lib/expenseState";
-import { getSampleExpenses } from "../../lib/sampleData";
-import { isHouseholdApiConfigured } from "../../lib/householdApi";
-import { T } from "../../lib/uiText";
-import { ScreenHeader } from "../../components/layout/ScreenHeader";
-import { usePeriod } from "../../components/period/PeriodProvider";
-import { IconButton } from "../../components/ui/IconButton";
-import { MonthPill } from "../../components/ui/MonthPill";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
-import { Skeleton, SkeletonGroup } from "../../components/ui/Skeleton";
-import { CommonSheets, useCommonSheet } from "../../components/sheets/CommonSheets";
-import { FilterSheet } from "../../components/sheets/FilterSheet";
-import { ExpenseSheets, useConfirmExpense, useExpenseSheet } from "../../components/expense/ExpenseSheets";
-import { ExpenseCard } from "../../components/expense/ExpenseCard";
-import { ExpenseRowCard } from "../../components/expense/ExpenseRowCard";
-import { useEditDeepLink } from "../../components/expense/useEditDeepLink";
+} from '../../lib/expenseState';
+import { getSampleExpenses } from '../../lib/sampleData';
+import { isHouseholdApiConfigured } from '../../lib/householdApi';
+import { T } from '../../lib/uiText';
+import { ScreenHeader } from '../../components/layout/ScreenHeader';
+import { usePeriod } from '../../components/period/PeriodProvider';
+import { IconButton } from '../../components/ui/IconButton';
+import { MonthPill } from '../../components/ui/MonthPill';
+import { SegmentedControl } from '../../components/ui/SegmentedControl';
+import { Skeleton, SkeletonGroup } from '../../components/ui/Skeleton';
+import { CommonSheets, useCommonSheet } from '../../components/sheets/CommonSheets';
+import { FilterSheet } from '../../components/sheets/FilterSheet';
+import { ExpenseSheets, useConfirmExpense, useExpenseSheet } from '../../components/expense/ExpenseSheets';
+import { ExpenseCard } from '../../components/expense/ExpenseCard';
+import { ExpenseRowCard } from '../../components/expense/ExpenseRowCard';
+import { useEditDeepLink } from '../../components/expense/useEditDeepLink';
 
 /** 展開: null は自動（要確認のときだけ先頭を展開）、COLLAPSED は利用者がたたんだ状態 */
-const COLLAPSED = "";
+const COLLAPSED = '';
 
 // Suspense boundary for useSearchParams
 export default function ExpensesPage() {
@@ -92,8 +92,8 @@ function ExpensesPageContent() {
   // edit はドキュメント ID であり、本人特定には使わない（URL の lineId は読まない）
   const router = useRouter();
   const searchParams = useSearchParams();
-  const editExpenseId = searchParams.get("edit");
-  const segment = parseSegment(searchParams.get("filter"));
+  const editExpenseId = searchParams.get('edit');
+  const segment = parseSegment(searchParams.get('filter'));
 
   const householdState = useHousehold(lineId);
   const { sheet: commonSheet, setSheet: setCommonSheet } = useCommonSheet();
@@ -112,7 +112,7 @@ function ExpensesPageContent() {
   const changeSegment = (next: Segment) => {
     if (next === segment) return;
     setExpandedId(null);
-    router.replace(next === "all" ? "/expenses/" : `/expenses/?filter=${next}`, { scroll: false });
+    router.replace(next === 'all' ? '/expenses/' : `/expenses/?filter=${next}`, { scroll: false });
   };
 
   // LINE の「修正」リンク: 読めた支出を先に持っておき（一覧に現れる前でも編集できる）、行を展開してスクロールする
@@ -124,12 +124,12 @@ function ExpensesPageContent() {
       setExpandedId(target.id);
       setCommonSheet(null);
       setFilterOpen(false);
-      setExpenseSheet({ kind: "edit", id: target.id });
+      setExpenseSheet({ kind: 'edit', id: target.id });
       pendingScrollRef.current = target.id;
     },
     [setCommonSheet, setExpenseSheet]
   );
-  const { shouldFetch } = useEditDeepLink(editExpenseId, {
+  const { shouldFetch, fallbackId } = useEditDeepLink(editExpenseId, {
     lineId,
     settled,
     settingsLoaded,
@@ -149,6 +149,16 @@ function ExpensesPageContent() {
     refetch: refetchExpenses,
   } = useExpenses(fetchUserId, 0, 500, range.startDate);
 
+  // 「修正」リンクの対象を直接読めなかったときは、一覧を読み終えてから一覧で探して開く
+  // （見つからなくても一度探したら終わり）
+  const fallbackDoneRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!fallbackId || fallbackDoneRef.current === fallbackId || !fetchUserId || loading) return;
+    fallbackDoneRef.current = fallbackId;
+    const target = expenses.find((e) => e.id === fallbackId);
+    if (target) openFromDeepLink(target);
+  }, [fallbackId, fetchUserId, loading, expenses, openFromDeepLink]);
+
   const sampleExpenses = useMemo(() => getSampleExpenses(), []);
   const list = isGuest ? sampleExpenses : expenses;
 
@@ -158,7 +168,7 @@ function ExpensesPageContent() {
     if (!id || !list.some((e) => e.id === id)) return;
     pendingScrollRef.current = null;
     const timer = setTimeout(() => {
-      document.getElementById(`expense-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById(`expense-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 100);
     return () => clearTimeout(timer);
   }, [list]);
@@ -170,7 +180,7 @@ function ExpensesPageContent() {
   );
   const groups = useMemo(
     // 金額順のときは日付でまとめない（並びを崩さない）
-    () => (filter.sortBy === "date" ? groupByDate(visible) : [{ date: "", items: visible }]),
+    () => (filter.sortBy === 'date' ? groupByDate(visible) : [{ date: '', items: visible }]),
     [visible, filter.sortBy]
   );
 
@@ -180,7 +190,7 @@ function ExpensesPageContent() {
       ? null
       : expandedId && visible.some((e) => e.id === expandedId)
         ? expandedId
-        : segment === "pending"
+        : segment === 'pending'
           ? (visible[0]?.id ?? null)
           : null;
 
@@ -189,14 +199,14 @@ function ExpensesPageContent() {
   // 展開・たたみ・確認で押したボタンが消えるので、描画のあとで対応するボタンへフォーカスを移す
   // （キーボードやスイッチ操作で一覧の位置を見失わないように）
   const pendingFocusRef = useRef<{
-    kind: "toggle" | "row" | "afterConfirm" | "afterDelete";
+    kind: 'toggle' | 'row' | 'afterConfirm' | 'afterDelete';
     id: string;
   } | null>(null);
   const confirm = async (expense: Expense) => {
     if (isGuest || confirmingId) return;
     setConfirmingId(expense.id);
     await confirmExpense(expense.id);
-    pendingFocusRef.current = { kind: "afterConfirm", id: expense.id };
+    pendingFocusRef.current = { kind: 'afterConfirm', id: expense.id };
     setConfirmingId(null);
   };
 
@@ -205,22 +215,24 @@ function ExpensesPageContent() {
     const index = visible.findIndex((e) => e.id === id);
     const neighbor = index >= 0 ? (visible[index + 1] ?? visible[index - 1]) : undefined;
     await deleteExpense(id);
-    pendingFocusRef.current = { kind: "afterDelete", id: neighbor?.id ?? "" };
+    pendingFocusRef.current = { kind: 'afterDelete', id: neighbor?.id ?? '' };
   };
 
   const expandRow = (id: string) => {
-    pendingFocusRef.current = { kind: "toggle", id };
+    pendingFocusRef.current = { kind: 'toggle', id };
     setExpandedId(id);
   };
   const collapseRow = (id: string) => {
-    pendingFocusRef.current = { kind: "row", id };
+    pendingFocusRef.current = { kind: 'row', id };
     setExpandedId(COLLAPSED);
   };
+  // 依存配列は付けない: 対象の行が DOM に現れる描画・シートが閉じ切った後の描画のどれで
+  // 動かせるかが決まっていないため、毎回の描画の後に確かめる（予約が無ければすぐ戻る）
   useEffect(() => {
     const target = pendingFocusRef.current;
     if (!target) return;
     const byId = (domId: string) => document.getElementById(domId) as HTMLElement | null;
-    if (target.kind === "afterDelete") {
+    if (target.kind === 'afterDelete') {
       const active = document.activeElement;
       // シートが閉じ切るまで待つ（フォーカスがシートの中にある間は動かさない）
       if (active && active.closest('[role="dialog"]')) return;
@@ -231,9 +243,9 @@ function ExpensesPageContent() {
       return;
     }
     pendingFocusRef.current = null;
-    if (target.kind === "toggle") {
+    if (target.kind === 'toggle') {
       byId(`expense-${target.id}-toggle`)?.focus();
-    } else if (target.kind === "row") {
+    } else if (target.kind === 'row') {
       byId(`expense-${target.id}`)?.focus();
     } else {
       // 確認ボタンが消えてフォーカスが外れたときだけ動かす
@@ -267,7 +279,7 @@ function ExpensesPageContent() {
               label={label}
               onClick={() => {
                 closeAll();
-                setCommonSheet({ kind: "period" });
+                setCommonSheet({ kind: 'period' });
               }}
             />
           ) : (
@@ -284,9 +296,9 @@ function ExpensesPageContent() {
       className="mx-4 mt-[22px]"
       ariaLabel={T.aria.filter}
       items={[
-        { key: "all", label: T.expenses.all },
-        { key: "pending", label: T.expenses.pending, count: ready ? pendingCount : 0 },
-        { key: "advance", label: T.expenses.advance },
+        { key: 'all', label: T.expenses.all },
+        { key: 'pending', label: T.expenses.pending, count: ready ? pendingCount : 0 },
+        { key: 'advance', label: T.expenses.advance },
       ]}
       value={segment}
       onChange={changeSegment}
@@ -332,7 +344,7 @@ function ExpensesPageContent() {
     );
   }
 
-  const today = dayjs().format("YYYY-MM-DD");
+  const today = dayjs().format('YYYY-MM-DD');
 
   return (
     <>
@@ -352,7 +364,7 @@ function ExpensesPageContent() {
           </div>
         ) : (
           groups.map((group) => (
-            <section key={group.date || "all"} className="[&>*:nth-child(2)]:!mt-3">
+            <section key={group.date || 'all'} className="[&>*:nth-child(2)]:!mt-3">
               {group.date ? (
                 <h2 className="mx-6 mt-[36px] text-kb-group text-ink-soft">{relativeDateLabel(group.date, today)}</h2>
               ) : (
@@ -375,11 +387,11 @@ function ExpensesPageContent() {
                     onConfirm={() => confirm(expense)}
                     onDetail={() => {
                       closeAll();
-                      setExpenseSheet({ kind: "detail", id: expense.id });
+                      setExpenseSheet({ kind: 'detail', id: expense.id });
                     }}
                     onEdit={() => {
                       closeAll();
-                      setExpenseSheet({ kind: "edit", id: expense.id });
+                      setExpenseSheet({ kind: 'edit', id: expense.id });
                     }}
                     onCollapse={() => collapseRow(expense.id)}
                   />

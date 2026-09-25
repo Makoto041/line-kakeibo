@@ -86,7 +86,9 @@ export type HouseholdErrorCode =
 function normalizeBase(value: string): string | null {
   try {
     const url = new URL(value);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    // ID トークンを平文で送らないよう、http は手元（localhost）だけ許す
+    const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) return null;
     if (url.search || url.hash) return null;
     return value.replace(/\/+$/, '');
   } catch {
@@ -97,9 +99,11 @@ function normalizeBase(value: string): string | null {
 /**
  * API のベース URL。明示の値（空文字は未設定扱い）→ 認証エンドポイントの /auth/line を除いたもの。
  * どちらからも得られなければ null（確認・精算の操作は無効にする）。
+ * 明示の値が off / none のときは機能を止める（bot を戻したときに web を出し直さずに済むように）。
  */
 export function deriveApiBase(explicit: string | undefined, authEndpoint: string | undefined): string | null {
   const direct = (explicit ?? '').trim();
+  if (/^(off|none)$/i.test(direct)) return null;
   if (direct) return normalizeBase(direct);
   const auth = (authEndpoint ?? '').trim();
   if (!auth) return null;
@@ -117,7 +121,7 @@ export function isValidDocId(id: unknown): id is string {
     !id.includes('/') &&
     id !== '.' &&
     id !== '..' &&
-    !/^__.*__$/.test(id)
+    !(id.length >= 4 && id.startsWith('__') && id.endsWith('__'))
   );
 }
 

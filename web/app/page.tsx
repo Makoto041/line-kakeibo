@@ -5,8 +5,9 @@
 // 集計は刷新前と同じ（useMonthlyStats・useBudgetConfig を同じ引数で使う）。
 // 一覧は明細タブと同じ引数の useExpenses（キャッシュも要確認の件数も明細と揃う）。
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
+import dynamic from 'next/dynamic';
 import { Eye, Settings, TriangleAlert, Users } from 'lucide-react';
-import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses, useHousehold } from '../lib/hooks';
+import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses, useHousehold, DEFAULT_MONTHLY_BUDGET } from '../lib/hooks';
 import { countPending, sortForList } from '../lib/expenseState';
 import { getSampleExpenses, getSampleStats } from '../lib/sampleData';
 import { db } from '../lib/firebase';
@@ -16,12 +17,16 @@ import { ScreenHeader } from '../components/layout/ScreenHeader';
 import { HeaderPill } from '../components/ui/HeaderPill';
 import { IconButton } from '../components/ui/IconButton';
 import { CommonSheets, useCommonSheet } from '../components/sheets/CommonSheets';
-import { BudgetSheet } from '../components/sheets/BudgetSheet';
 import { MonthStepper } from '../components/home/MonthStepper';
 import { BudgetHero } from '../components/home/BudgetHero';
 import { ReviewBanner } from '../components/home/ReviewBanner';
 import { RecentList } from '../components/home/RecentList';
 import { ExpenseSheets, useExpenseSheet } from '../components/expense/ExpenseSheets';
+
+// 予算シートはグラフ（recharts）を含むので、開いたときに読み込む（ホームの初回読み込みを軽くする）
+const BudgetSheet = dynamic(() => import('../components/sheets/BudgetSheet').then((m) => m.BudgetSheet), {
+  ssr: false,
+});
 
 /** 最近の明細に出す件数（参照デザインと同じ） */
 const RECENT_COUNT = 3;
@@ -66,6 +71,7 @@ export default function HomePage() {
   const {
     stats,
     loading: statsLoading,
+    error: statsError,
     refetch: refetchStats,
   } = useMonthlyStats(
     userId,
@@ -78,6 +84,7 @@ export default function HomePage() {
   const {
     expenses,
     loading: expensesLoading,
+    error: expensesError,
     updateExpense,
     deleteExpense,
     patchLocal,
@@ -91,8 +98,18 @@ export default function HomePage() {
   const recent = useMemo(() => sortForList(list).slice(0, RECENT_COUNT), [list]);
   const pendingCount = useMemo(() => countPending(list), [list]);
 
-  const heroLoading = !ready || (!isGuest && (statsLoading || !shownStats || budgetLoading || !budgetConfig));
+  // 集計を読めなかった（キャッシュも無い）ときは、形だけのままにせず再試行を出す
+  const statsFailed = !isGuest && !!statsError && !stats;
+  const heroLoading =
+    !ready || (!isGuest && !statsFailed && (statsLoading || !shownStats || budgetLoading || !budgetConfig));
   const listLoading = !ready || (!isGuest && expensesLoading);
+  const listFailed = !isGuest && !listLoading && !!expensesError && expenses.length === 0;
+  // ゲストは最初の描画から既定の予算を出す（useBudgetConfig の既定値は effect で入るため）
+  const heroBudget = isGuest
+    ? (budgetConfig?.monthlyBudget ?? DEFAULT_MONTHLY_BUDGET)
+    : budgetError || statsFailed
+      ? null
+      : (budgetConfig?.monthlyBudget ?? null);
 
   const header = (
     <ScreenHeader
@@ -151,13 +168,16 @@ export default function HomePage() {
       <BudgetHero
         loading={heroLoading}
         spent={shownStats?.totalAmount ?? 0}
-        budget={!isGuest && budgetError ? null : (budgetConfig?.monthlyBudget ?? null)}
+        budget={heroBudget}
         onOpen={() => {
           setCommonSheet(null);
           setExpenseSheet(null);
           setBudgetOpen(true);
         }}
-        onRetry={refetchBudget}
+        onRetry={() => {
+          if (budgetError) refetchBudget();
+          if (statsFailed) refetchStats();
+        }}
       />
 
       {!listLoading && pendingCount > 0 && <ReviewBanner count={pendingCount} />}
@@ -165,6 +185,7 @@ export default function HomePage() {
       <RecentList
         items={recent}
         loading={listLoading}
+        onRetry={listFailed ? refetchExpenses : undefined}
         onOpen={(id) => {
           setCommonSheet(null);
           setBudgetOpen(false);

@@ -27,10 +27,7 @@ export type ExpenseSheet =
 
 export function useExpenseSheet() {
   const [sheet, setSheet] = useState<ExpenseSheet | null>(null);
-  const openDetail = useCallback((id: string) => setSheet({ kind: 'detail', id }), []);
-  const openEdit = useCallback((id: string) => setSheet({ kind: 'edit', id }), []);
-  const close = useCallback(() => setSheet(null), []);
-  return { sheet, setSheet, openDetail, openEdit, close };
+  return { sheet, setSheet };
 }
 
 /** Firestore の書き込み失敗を短い語にする（hooks の handleFirestoreError の文言から判断） */
