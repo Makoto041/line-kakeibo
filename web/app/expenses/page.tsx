@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import dayjs from 'dayjs';
-import { Inbox, RotateCw, Search } from 'lucide-react';
+import { Eye, Inbox, RotateCw, Search } from 'lucide-react';
 import { useLineAuth, useExpenses, useHousehold } from '../../lib/hooks';
 import type { Expense } from '../../lib/hooks';
 import {
@@ -264,6 +264,18 @@ function ExpensesPageContent() {
       title={T.expenses.title}
       right={
         <>
+          {isGuest && (
+            // ゲスト案内はシートにだけ置く（画面には文字を足さない）
+            <IconButton
+              label={T.sheet.guest}
+              icon={Eye}
+              aria-haspopup="dialog"
+              onClick={() => {
+                closeAll();
+                setCommonSheet({ kind: 'guest' });
+              }}
+            />
+          )}
           <IconButton
             label={T.aria.search}
             icon={Search}

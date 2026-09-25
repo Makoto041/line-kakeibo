@@ -5,6 +5,7 @@
 // 精算の範囲は未精算の立替の全件で、月ピルは 3 タブ共通の期間の表示・切り替えだけ（範囲は変えない）。
 // API が使えないとき・世帯が無いときは ¥0 とボタン無効、ゲストはサンプルの支出から同じ式で出す。
 import { useMemo, useState } from 'react';
+import { Eye } from 'lucide-react';
 import { useHousehold, useLineAuth, useSettlement, patchCachedExpenses } from '@/lib/hooks';
 import { householdErrorCode, householdErrorToast, isHouseholdApiConfigured, settle } from '@/lib/householdApi';
 import { buildSettlementViewModel, clearedSettlement } from '@/lib/settlementView';
@@ -13,6 +14,7 @@ import { T } from '@/lib/uiText';
 import { usePeriod } from '@/components/period/PeriodProvider';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { MonthPill } from '@/components/ui/MonthPill';
+import { IconButton } from '@/components/ui/IconButton';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
 import { CommonSheets, useCommonSheet } from '@/components/sheets/CommonSheets';
@@ -90,17 +92,31 @@ export default function FutariPage() {
       <ScreenHeader
         title={T.futari.title}
         right={
-          ready ? (
-            <MonthPill
-              label={label}
-              onClick={() => {
-                setSheet(null);
-                setCommonSheet({ kind: 'period' });
-              }}
-            />
-          ) : (
-            <Skeleton className="h-12 w-[110px] rounded-full" />
-          )
+          <>
+            {isGuest && (
+              // ゲスト案内はシートにだけ置く（画面には文字を足さない）
+              <IconButton
+                label={T.sheet.guest}
+                icon={Eye}
+                aria-haspopup="dialog"
+                onClick={() => {
+                  setSheet(null);
+                  setCommonSheet({ kind: 'guest' });
+                }}
+              />
+            )}
+            {ready ? (
+              <MonthPill
+                label={label}
+                onClick={() => {
+                  setSheet(null);
+                  setCommonSheet({ kind: 'period' });
+                }}
+              />
+            ) : (
+              <Skeleton className="h-12 w-[110px] rounded-full" />
+            )}
+          </>
         }
       />
       <CommonSheets sheet={commonSheet} setSheet={setCommonSheet} household={householdState} />
