@@ -11,6 +11,7 @@ import { compressImage } from '../../lib/imageCompress';
 import dayjs from 'dayjs';
 import { isLineAuthSettled, onLineAuthSettled } from '../../lib/lineAuth';
 import { cx } from '../../lib/cx';
+import { isValidDocId } from '../../lib/householdContract';
 import { Amount } from '../../components/ui/Amount';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { ExpenseIcon } from '../../components/expense/ExpenseIcon';
@@ -75,7 +76,7 @@ function AttachPageContent() {
   // 支出データの取得
   useEffect(() => {
     const fetchExpense = async () => {
-      if (!expenseId) {
+      if (!expenseId || !isValidDocId(expenseId)) {
         setError('支出IDが指定されていません。LINEの通知メッセージのボタンからアクセスしてください。');
         setLoading(false);
         return;

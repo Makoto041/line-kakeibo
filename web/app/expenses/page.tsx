@@ -35,6 +35,7 @@ import { T } from '../../lib/uiText';
 import { ScreenHeader } from '../../components/layout/ScreenHeader';
 import { usePeriod } from '../../components/period/PeriodProvider';
 import { IconButton } from '../../components/ui/IconButton';
+import { useToast } from '../../components/ui/Toast';
 import { MonthPill } from '../../components/ui/MonthPill';
 import { SegmentedControl } from '../../components/ui/SegmentedControl';
 import { Skeleton, SkeletonGroup } from '../../components/ui/Skeleton';
@@ -148,6 +149,21 @@ function ExpensesPageContent() {
     patchLocal,
     refetch: refetchExpenses,
   } = useExpenses(fetchUserId, 0, 500, range.startDate);
+
+  // 一覧のキャッシュを表示している間の取得失敗も、短いトーストで知らせる
+  const toast = useToast();
+  useEffect(() => {
+    if (error) toast.show('network');
+  }, [error, toast]);
+
+  // 「修正」リンクで一覧の外から開いた支出は、保存した内容を手元の控えにも反映する
+  const updateAndKeepTarget = useCallback(
+    async (id: string, update: Partial<Expense>) => {
+      await updateExpense(id, update);
+      setDeepLinkTarget((prev) => (prev && prev.id === id ? { ...prev, ...update } : prev));
+    },
+    [updateExpense]
+  );
 
   // 「修正」リンクの対象を直接読めなかったときは、一覧を読み終えてから一覧で探して開く
   // （見つからなくても一度探したら終わり）
@@ -336,7 +352,7 @@ function ExpensesPageContent() {
         isGuest={isGuest || !lineId}
         household={householdState.household}
         activeGroupIds={householdState.activeGroupIds}
-        updateExpense={updateExpense}
+        updateExpense={updateAndKeepTarget}
         deleteExpense={deleteAndKeepPlace}
         patchLocal={patchLocal}
         refetch={refetchExpenses}

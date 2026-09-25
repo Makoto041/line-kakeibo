@@ -106,6 +106,10 @@ export default function HomePage() {
 
   // 集計を読めなかった（キャッシュも無い）ときは、形だけのままにせず再試行を出す
   const statsFailed = !isGuest && !!statsError && !stats;
+  // キャッシュを表示し続けている間の取得失敗も、短いトーストで知らせる
+  useEffect(() => {
+    if (!isGuest && (expensesError || statsError)) toast.show('network');
+  }, [isGuest, expensesError, statsError, toast]);
   const heroLoading =
     !ready || (!isGuest && !statsFailed && (statsLoading || !shownStats || budgetLoading || !budgetConfig));
   const listLoading = !ready || (!isGuest && expensesLoading);
