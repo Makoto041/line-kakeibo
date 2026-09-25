@@ -1,236 +1,572 @@
 'use client';
 
-// ホーム: 家計簿（見出し・ふたり/ゲスト・設定）/ ‹ 9月 › / 予算残り / 要確認 / 最近の明細。
-// 画面の文字は参照デザインの語だけにし、詳しい数字・グラフは予算シート、明細の中身は詳細シートに置く。
-// 集計は刷新前と同じ（useMonthlyStats・useBudgetConfig を同じ引数で使う）。
-// 一覧は明細タブと同じ引数の useExpenses（キャッシュも要確認の件数も明細と揃う）。
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import dynamic from 'next/dynamic';
-import { Eye, RotateCw, Settings, TriangleAlert, Users } from 'lucide-react';
-import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses, useHousehold, DEFAULT_MONTHLY_BUDGET } from '../lib/hooks';
-import { countPending, sortForList } from '../lib/expenseState';
-import { getSampleExpenses, getSampleStats } from '../lib/sampleData';
+import { useState, useEffect, useMemo } from 'react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Wallet,
+  Receipt,
+  TrendingUp,
+  TrendingDown,
+  PieChart as PieChartIcon,
+  LineChart as LineChartIcon,
+  Sparkles,
+  Inbox,
+  AlertTriangle,
+  Clock,
+} from 'lucide-react';
+import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses, ExpenseStats, BudgetConfig } from '../lib/hooks';
+import { countPending } from '../lib/expenseState';
+import Link from 'next/link';
+import { CategoryPieChart, DailyLineChart } from '../components/Charts';
+import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
+import { getCategoryVisual } from '../lib/categoryVisuals';
+import PreviewModeBanner from '../components/PreviewModeBanner';
+import GuestGuide from '../components/GuestGuide';
+import { getSampleStats } from '../lib/sampleData';
+import { getCached, setCached, hasCached } from '../lib/swrCache';
+import dayjs from 'dayjs';
 import { db } from '../lib/firebase';
-import { T } from '../lib/uiText';
-import { usePeriod } from '../components/period/PeriodProvider';
-import { ScreenHeader } from '../components/layout/ScreenHeader';
-import { HeaderPill } from '../components/ui/HeaderPill';
-import { IconButton } from '../components/ui/IconButton';
-import { useToast } from '../components/ui/Toast';
-import { CommonSheets, useCommonSheet } from '../components/sheets/CommonSheets';
-import { MonthStepper } from '../components/home/MonthStepper';
-import { BudgetHero } from '../components/home/BudgetHero';
-import { ReviewBanner } from '../components/home/ReviewBanner';
-import { RecentList } from '../components/home/RecentList';
-import { ExpenseSheets, useExpenseSheet } from '../components/expense/ExpenseSheets';
 
-// 予算シートはグラフ（recharts）を含むので、開いたときに読み込む（ホームの初回読み込みを軽くする）
-const BudgetSheet = dynamic(() => import('../components/sheets/BudgetSheet').then((m) => m.BudgetSheet), {
-  ssr: false,
-});
+const yen = (v: number) => `¥${Number(v).toLocaleString()}`;
 
-/** 最近の明細に出す件数（参照デザインと同じ） */
-const RECENT_COUNT = 3;
+// 予算カテゴリ名（正準）→ 支出データのカテゴリ名（旧表記ゆれも吸収）
+const budgetToExpenseCategory: Record<string, string[]> = {
+  食費: ['食費'],
+  交通費: ['交通費'],
+  日用品: ['日用品', '日用品費'],
+  娯楽: ['娯楽', '娯楽費'],
+  衣服: ['衣服', '衣服費', '被服費'],
+  '医療・健康': ['医療・健康', '医療費', '医療', '健康'],
+  教育: ['教育', '教育費'],
+  光熱費: ['光熱費', '水道光熱費'],
+  住居費: ['住居費', '居住費', '家賃'],
+  保険: ['保険', '保険料'],
+  税金: ['税金'],
+  美容: ['美容', '美容費', '美容・理容'],
+  通信費: ['通信費'],
+  サブスク: ['サブスク', 'サブスクリプション'],
+  プレゼント: ['プレゼント', 'ギフト'],
+  旅行: ['旅行'],
+  ペット: ['ペット'],
+  貯金: ['貯金'],
+  その他: ['その他'],
+};
 
-const noopSubscribe = () => () => {};
+function getActualSpending(budgetCategory: string, categoryTotals: Record<string, number>): number {
+  let mapped = budgetToExpenseCategory[budgetCategory];
+  if (!mapped) {
+    // 旧予算キー（例: 娯楽費・医療費）を逆引きして正準キーに解決する。
+    // 正準キーへ統一する以前に保存された予算でも実支出と突き合うようにする。
+    const canonical = Object.keys(budgetToExpenseCategory).find((key) =>
+      budgetToExpenseCategory[key].includes(budgetCategory)
+    );
+    mapped = canonical ? budgetToExpenseCategory[canonical] : [budgetCategory];
+  }
+  return mapped.reduce((sum, cat) => sum + (categoryTotals[cat] || 0), 0);
+}
 
-export default function HomePage() {
-  const { lineId, settled } = useLineAuth();
-  const { currentDate, dateSettings, settingsLoaded, range, label, canShift, shift } = usePeriod();
-  // 認証と期間の設定が確定するまでは、ゲスト表示もサンプルも出さずに形だけ出す
-  const ready = settled && settingsLoaded;
-  const isGuest = ready && !lineId;
-  const userId = ready ? lineId : null;
+type Pace = 'good' | 'warning' | 'danger';
 
-  // 初期化に失敗した（Firestore が無い）ときの表示。サーバー描画では出さない
-  const firebaseError = useSyncExternalStore(
-    noopSubscribe,
-    () => !db,
-    () => false
+function calculatePace(actual: number, budget: number): { pace: Pace; label: string } {
+  const today = dayjs();
+  const prorated = (budget / today.daysInMonth()) * today.date();
+  if (budget === 0) return { pace: 'good', label: '未設定' };
+  const ratio = actual / prorated;
+  if (ratio <= 1) return { pace: 'good', label: '順調' };
+  if (ratio <= 1.2) return { pace: 'warning', label: 'やや超過' };
+  return { pace: 'danger', label: '超過' };
+}
+
+function progressColor(pct: number): string {
+  if (pct <= 80) return 'bg-emerald-500';
+  if (pct <= 100) return 'bg-amber-500';
+  return 'bg-rose-500';
+}
+
+function paceBadge(pace: Pace): string {
+  if (pace === 'good') return 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400';
+  if (pace === 'warning') return 'bg-amber-500/12 text-amber-600 dark:text-amber-400';
+  return 'bg-rose-500/12 text-rose-600 dark:text-rose-400';
+}
+
+/* -------------------------------- Card ---------------------------------- */
+function GlassCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return <div className={`glass rounded-2xl shadow-glass ${className}`}>{children}</div>;
+}
+
+/* ---------------------------- Summary card ------------------------------ */
+function SummaryCard({
+  label,
+  value,
+  Icon,
+  tone,
+}: {
+  label: string;
+  value: string;
+  Icon: typeof Wallet;
+  tone: string;
+}) {
+  return (
+    <GlassCard className="p-4">
+      <span className={`inline-grid h-9 w-9 place-items-center rounded-xl ${tone}`}>
+        <Icon className="h-[18px] w-[18px]" strokeWidth={2.1} />
+      </span>
+      <p className="mt-3 text-[11px] font-medium text-muted">{label}</p>
+      <p className="mt-0.5 text-xl font-bold tracking-tight text-fg tabular-nums">{value}</p>
+    </GlassCard>
   );
-  // 失敗は画面に文を出さず、短いトーストと再試行の丸で知らせる
-  const toast = useToast();
+}
+
+/* --------------------------- Budget progress ---------------------------- */
+function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; budgetConfig: BudgetConfig | null }) {
+  if (!budgetConfig) return null;
+  const categoryTotals = stats?.categoryTotals || {};
+  const { categoryBudgets, monthlyBudget } = budgetConfig;
+
+  // 予算>0 のカテゴリに加え、実支出があるカテゴリも表示する
+  // （予算0でも記録があれば出す）。
+  const rowsMap = new Map<string, { category: string; budget: number; actual: number }>();
+
+  // 1) 正準カテゴリ: 予算あり or 実支出あり
+  Object.keys(budgetToExpenseCategory).forEach((category) => {
+    const budget = categoryBudgets[category] || 0;
+    const actual = getActualSpending(category, categoryTotals);
+    if (budget > 0 || actual > 0) rowsMap.set(category, { category, budget, actual });
+  });
+
+  // 2) エイリアスに無いカスタム/旧表記の支出カテゴリも拾う
+  const aliasClaimed = new Set<string>();
+  Object.values(budgetToExpenseCategory).forEach((arr) => arr.forEach((a) => aliasClaimed.add(a)));
+  Object.entries(categoryTotals).forEach(([category, amt]) => {
+    if (amt > 0 && !aliasClaimed.has(category) && !rowsMap.has(category)) {
+      rowsMap.set(category, { category, budget: categoryBudgets[category] || 0, actual: amt });
+    }
+  });
+
+  // 3) 予算>0 だが上で拾えていない旧キーも残す（後方互換）
+  Object.keys(categoryBudgets).forEach((category) => {
+    if (categoryBudgets[category] > 0 && !rowsMap.has(category)) {
+      rowsMap.set(category, {
+        category,
+        budget: categoryBudgets[category],
+        actual: getActualSpending(category, categoryTotals),
+      });
+    }
+  });
+
+  const cats = Array.from(rowsMap.values()).sort((a, b) => {
+    // 予算ありを使用率の高い順に上へ、予算なし(0)は実支出の多い順で下へ
+    const ra = a.budget > 0 ? a.actual / a.budget : -1;
+    const rb = b.budget > 0 ? b.actual / b.budget : -1;
+    if (rb !== ra) return rb - ra;
+    return b.actual - a.actual;
+  });
+
+  const totalActual = stats?.totalAmount || 0;
+  const totalPct = monthlyBudget > 0 ? (totalActual / monthlyBudget) * 100 : 0;
+  const totalRemaining = monthlyBudget - totalActual;
+  const totalPace = calculatePace(totalActual, monthlyBudget);
+  const idealProgress = (dayjs().date() / dayjs().daysInMonth()) * 100;
+
+  return (
+    <GlassCard className="p-5">
+      <h2 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-fg">
+        <Wallet className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
+        予算管理
+      </h2>
+
+      {/* Monthly total */}
+      <div className="rounded-xl border border-line/70 bg-fg/[0.02] p-4">
+        <div className="mb-2.5 flex items-center justify-between">
+          <span className="text-sm font-medium text-fg">月間予算</span>
+          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${paceBadge(totalPace.pace)}`}>
+            {totalPace.label}
+          </span>
+        </div>
+        <div className="relative h-2.5 overflow-hidden rounded-full bg-fg/10">
+          <div
+            className="absolute inset-y-0 z-10 w-px bg-accent/70"
+            style={{ left: `${Math.min(idealProgress, 100)}%` }}
+            aria-hidden
+          />
+          <div
+            className={`h-full rounded-full ${progressColor(totalPct)} transition-[width] duration-500`}
+            style={{ width: `${Math.min(totalPct, 100)}%` }}
+          />
+        </div>
+        <div className="mt-2 flex items-center justify-between text-sm">
+          <span className="tabular-nums text-muted">
+            {yen(totalActual)} / {yen(monthlyBudget)}
+          </span>
+          <span className={`font-semibold tabular-nums ${totalRemaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+            {totalRemaining >= 0 ? `残り ${yen(totalRemaining)}` : `超過 ${yen(Math.abs(totalRemaining))}`}
+          </span>
+        </div>
+      </div>
+
+      {/* Category budgets */}
+      {cats.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted">記録がまだありません</p>
+      ) : (
+        <ul className="mt-4 space-y-3.5">
+          {cats.map(({ category, budget, actual }) => {
+            const hasBudget = budget > 0;
+            const pct = hasBudget ? (actual / budget) * 100 : 0;
+            const remaining = budget - actual;
+            const v = getCategoryVisual(category);
+            const Icon = v.icon;
+            return (
+              <li key={category}>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className={`inline-grid h-6 w-6 place-items-center rounded-lg ${v.bg} ${v.fg}`}>
+                    <Icon className="h-3.5 w-3.5" strokeWidth={2.2} />
+                  </span>
+                  <span className="text-sm font-medium text-fg">{category}</span>
+                  <span className="ml-auto tabular-nums text-xs text-muted">
+                    {hasBudget ? `${yen(actual)} / ${yen(budget)}` : yen(actual)}
+                  </span>
+                </div>
+                {hasBudget ? (
+                  <>
+                    <div className="relative h-1.5 overflow-hidden rounded-full bg-fg/10">
+                      <div
+                        className={`h-full rounded-full ${progressColor(pct)} transition-[width] duration-500`}
+                        style={{ width: `${Math.min(pct, 100)}%` }}
+                      />
+                    </div>
+                    <div className="mt-1 text-right text-xs">
+                      <span className={remaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
+                        {remaining >= 0 ? `残 ${yen(remaining)}` : `超 ${yen(Math.abs(remaining))}`}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-1 text-right text-[11px] text-muted">予算未設定</div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </GlassCard>
+  );
+}
+
+/* ------------------------------- Page ----------------------------------- */
+export default function Dashboard() {
+  const { lineId, loading: authLoading } = useLineAuth();
+  const dsCacheKey = lineId ? `dateSettings:${lineId}` : '';
+  const [currentDate, setCurrentDate] = useState(dayjs());
+  const [dateSettings, setDateSettings] = useState<DateRangeSettings>(
+    () => (dsCacheKey && getCached<DateRangeSettings>(dsCacheKey)) || { mode: 'monthly' }
+  );
+  // 設定がキャッシュ済みなら全画面スピナーを出さない（再訪時の点滅防止）
+  const [settingsLoading, setSettingsLoading] = useState(() => !(dsCacheKey && hasCached(dsCacheKey)));
+  const [firebaseError, setFirebaseError] = useState(false);
+
+  const { config: budgetConfig, loading: budgetLoading, error: budgetError, refetch: refetchBudget } =
+    useBudgetConfig(lineId);
+
+  const sampleStats = useMemo(() => getSampleStats(), []);
+
   useEffect(() => {
-    if (firebaseError) toast.show('network');
-  }, [firebaseError, toast]);
+    if (typeof window !== 'undefined' && !db) setFirebaseError(true);
+  }, []);
 
-  const { sheet: commonSheet, setSheet: setCommonSheet } = useCommonSheet();
-  const { sheet: expenseSheet, setSheet: setExpenseSheet } = useExpenseSheet();
-  const [budgetOpen, setBudgetOpen] = useState(false);
-  // シートは同時に 1 つだけ
-  const openCommon = useCallback(
-    (next: Parameters<typeof setCommonSheet>[0]) => {
-      setExpenseSheet(null);
-      setBudgetOpen(false);
-      setCommonSheet(next);
-    },
-    [setCommonSheet, setExpenseSheet]
-  );
+  useEffect(() => {
+    const load = async () => {
+      if (!lineId) {
+        setSettingsLoading(false);
+        return;
+      }
+      const key = `dateSettings:${lineId}`;
+      const cached = getCached<DateRangeSettings>(key);
+      // キャッシュがあれば即表示して裏で再取得（スピナーを出さない）
+      if (cached) {
+        setDateSettings(cached);
+        setSettingsLoading(false);
+      } else {
+        setSettingsLoading(true);
+      }
+      try {
+        const fresh = await getDateRangeSettings(lineId);
+        setCached(key, fresh);
+        setDateSettings(fresh);
+      } catch (e) {
+        console.error('Failed to load date settings:', e);
+        if (!cached) setDateSettings({ mode: 'monthly' });
+      } finally {
+        setSettingsLoading(false);
+      }
+    };
+    load();
+  }, [lineId]);
 
-  const householdState = useHousehold(lineId);
-  const {
-    config: budgetConfig,
-    loading: budgetLoading,
-    error: budgetError,
-    refetch: refetchBudget,
-  } = useBudgetConfig(userId);
-  const {
-    stats,
-    loading: statsLoading,
-    error: statsError,
-    refetch: refetchStats,
-  } = useMonthlyStats(
-    userId,
+  const effectiveRange = getEffectiveDateRange(currentDate, dateSettings);
+  const { stats, loading: statsLoading } = useMonthlyStats(
+    lineId,
     currentDate.year(),
     currentDate.month() + 1,
     dateSettings.customStartDay || 1,
-    range.startDate,
-    range.endDate
-  );
-  const {
-    expenses,
-    loading: expensesLoading,
-    error: expensesError,
-    updateExpense,
-    deleteExpense,
-    patchLocal,
-    refetch: refetchExpenses,
-  } = useExpenses(userId, 0, 500, range.startDate);
-
-  const sampleExpenses = useMemo(() => getSampleExpenses(), []);
-  const sampleStats = useMemo(() => getSampleStats(), []);
-  const list = isGuest ? sampleExpenses : expenses;
-  const shownStats = isGuest ? sampleStats : stats;
-  const recent = useMemo(() => sortForList(list).slice(0, RECENT_COUNT), [list]);
-  const pendingCount = useMemo(() => countPending(list), [list]);
-
-  // 集計を読めなかった（キャッシュも無い）ときは、形だけのままにせず再試行を出す
-  const statsFailed = !isGuest && !!statsError && !stats;
-  // キャッシュを表示し続けている間の取得失敗も、短いトーストで知らせる
-  useEffect(() => {
-    if (!isGuest && (expensesError || statsError)) toast.show('network');
-  }, [isGuest, expensesError, statsError, toast]);
-  const heroLoading =
-    !ready || (!isGuest && !statsFailed && (statsLoading || !shownStats || budgetLoading || !budgetConfig));
-  const listLoading = !ready || (!isGuest && expensesLoading);
-  const listFailed = !isGuest && !listLoading && !!expensesError && expenses.length === 0;
-  // ゲストは最初の描画から既定の予算を出す（useBudgetConfig の既定値は effect で入るため）
-  const heroBudget = isGuest
-    ? (budgetConfig?.monthlyBudget ?? DEFAULT_MONTHLY_BUDGET)
-    : budgetError || statsFailed
-      ? null
-      : (budgetConfig?.monthlyBudget ?? null);
-
-  const header = (
-    <ScreenHeader
-      title={T.home.title}
-      right={
-        <>
-          {isGuest && <HeaderPill icon={Eye} label={T.home.guest} onClick={() => openCommon({ kind: 'guest' })} />}
-          {ready && lineId && householdState.household && (
-            <HeaderPill icon={Users} label={T.home.household} onClick={() => openCommon({ kind: 'household' })} />
-          )}
-          <IconButton
-            label={T.aria.settings}
-            icon={Settings}
-            aria-haspopup="dialog"
-            onClick={() => openCommon({ kind: 'settings', tab: 'budget' })}
-          />
-        </>
-      }
-    />
+    effectiveRange.startDate,
+    effectiveRange.endDate,
   );
 
-  const commonSheets = (
-    <CommonSheets
-      sheet={commonSheet}
-      setSheet={setCommonSheet}
-      household={householdState}
-      onSettingsSaved={refetchBudget}
-    />
+  // Previous period — used for the month-over-month insight.
+  const prevDate = currentDate.subtract(1, 'month');
+  const prevRange = getEffectiveDateRange(prevDate, dateSettings);
+  const { stats: prevStats } = useMonthlyStats(
+    lineId,
+    prevDate.year(),
+    prevDate.month() + 1,
+    dateSettings.customStartDay || 1,
+    prevRange.startDate,
+    prevRange.endDate,
   );
+
+  // 要確認の件数（支出一覧と同じ取得条件なので、一覧を開いたときはキャッシュが使われる）
+  // 期間の設定を読み終えてから取得する（既定の期間で一度取ってから取り直さないように）
+  const { expenses: periodExpenses } = useExpenses(settingsLoading ? null : lineId, 0, 500, effectiveRange.startDate);
+  const pendingCount = countPending(periodExpenses);
+
+  const navigateMonth = (dir: 'prev' | 'next') => {
+    if (dateSettings.mode === 'custom') return;
+    setCurrentDate((prev) => (dir === 'prev' ? prev.subtract(1, 'month') : prev.add(1, 'month')));
+  };
 
   if (firebaseError) {
     return (
-      <>
-        {header}
-        {commonSheets}
-        <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 px-6 text-center">
-          <TriangleAlert size={32} strokeWidth={1.9} aria-hidden="true" className="text-danger" />
-          <IconButton label={T.aria.retry} icon={RotateCw} onClick={() => window.location.reload()} />
-        </div>
-      </>
+      <div className="mx-auto flex min-h-[60vh] max-w-md items-center px-4">
+        <GlassCard className="w-full p-8 text-center">
+          <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-rose-500/12 text-rose-500">
+            <AlertTriangle className="h-7 w-7" />
+          </span>
+          <h2 className="text-lg font-semibold text-fg">接続エラー</h2>
+          <p className="mt-2 text-sm text-muted">アプリの初期化に失敗しました。時間をおいて再度お試しください。</p>
+        </GlassCard>
+      </div>
     );
   }
 
+  if (authLoading || settingsLoading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="text-center">
+          <div className="mx-auto h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+          <p className="mt-3 text-sm text-muted">読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isGuest = !lineId;
+  const displayStats = isGuest ? sampleStats : stats;
+
+  const totalExpense = displayStats?.totalAmount || 0;
+  const expenseCount = displayStats?.expenseCount || 0;
+  const days = dayjs(effectiveRange.endDate).diff(dayjs(effectiveRange.startDate), 'day') + 1;
+  const dailyAverage = totalExpense > 0 ? Math.round(totalExpense / days) : 0;
+
+  // --- 判断インサイト（予算・前月比・残ペース） ---
+  const monthlyBudget = budgetConfig?.monthlyBudget || 0;
+  const budgetPct = monthlyBudget > 0 ? Math.round((totalExpense / monthlyBudget) * 100) : null;
+  const budgetRemaining = monthlyBudget > 0 ? monthlyBudget - totalExpense : null;
+
+  // この期間の残り日数（今日が期間内なら今日〜終了日、過ぎていれば0扱い）
+  const today = dayjs();
+  const endD = dayjs(effectiveRange.endDate);
+  const daysLeft = endD.isBefore(today, 'day')
+    ? 0
+    : endD.diff(today.isBefore(dayjs(effectiveRange.startDate)) ? dayjs(effectiveRange.startDate) : today, 'day') + 1;
+  const perDayAvailable =
+    monthlyBudget > 0 && budgetRemaining !== null && budgetRemaining > 0 && daysLeft > 0
+      ? Math.floor(budgetRemaining / daysLeft)
+      : null;
+
+  const prevTotal = isGuest ? 0 : prevStats?.totalAmount || 0;
+  // 固定のカスタム期間では getEffectiveDateRange が prevDate を無視し、前期間が
+  // 現在と同一になる（＝自分自身と比較して常に0%）。その場合は前月比を出さない。
+  const momPct =
+    dateSettings.mode !== 'custom' && prevTotal > 0
+      ? Math.round(((totalExpense - prevTotal) / prevTotal) * 100)
+      : null;
+
   return (
-    <>
-      {header}
-      {commonSheets}
+    <div className="mx-auto w-full max-w-5xl px-4 py-5 md:px-8 md:py-7">
+      {isGuest && (
+        <div className="mb-4">
+          <PreviewModeBanner />
+        </div>
+      )}
 
-      <MonthStepper
-        label={ready ? label : null}
-        canShift={canShift}
-        onShift={shift}
-        onOpenPeriod={() => openCommon({ kind: 'period' })}
-      />
+      {/* Period navigation */}
+      <GlassCard className="animate-fade-up p-2.5">
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => navigateMonth('prev')}
+            disabled={dateSettings.mode === 'custom'}
+            aria-label="前の期間"
+            className="grid h-10 w-10 place-items-center rounded-xl text-muted transition-colors hover:bg-fg/5 hover:text-fg disabled:opacity-30"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          <div className="text-center">
+            <h1 className="text-base font-semibold tracking-tight text-fg">
+              {getDisplayTitle(currentDate, dateSettings)}
+            </h1>
+            {dateSettings.mode === 'monthly' && dateSettings.customStartDay && dateSettings.customStartDay !== 1 && (
+              <p className="text-[11px] text-muted">{dateSettings.customStartDay}日起算</p>
+            )}
+          </div>
+          <button
+            onClick={() => navigateMonth('next')}
+            disabled={dateSettings.mode === 'custom'}
+            aria-label="次の期間"
+            className="grid h-10 w-10 place-items-center rounded-xl text-muted transition-colors hover:bg-fg/5 hover:text-fg disabled:opacity-30"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </div>
+      </GlassCard>
 
-      <BudgetHero
-        loading={heroLoading}
-        spent={shownStats?.totalAmount ?? 0}
-        budget={heroBudget}
-        onOpen={() => {
-          setCommonSheet(null);
-          setExpenseSheet(null);
-          setBudgetOpen(true);
-        }}
-        onRetry={() => {
-          if (budgetError) refetchBudget();
-          if (statsFailed) refetchStats();
-        }}
-      />
+      {!isGuest && pendingCount > 0 && (
+        <Link
+          href="/expenses?filter=pending"
+          className="mt-4 flex items-center gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-amber-800 transition-colors hover:bg-amber-500/15 dark:text-amber-200"
+        >
+          <Clock className="h-5 w-5 shrink-0" />
+          <span className="flex-1 text-sm font-semibold">要確認の支出が {pendingCount}件 あります</span>
+          <span className="text-xs font-medium">確認する</span>
+          <ChevronRight className="h-4 w-4 shrink-0" />
+        </Link>
+      )}
 
-      {!listLoading && pendingCount > 0 && <ReviewBanner count={pendingCount} />}
+      {statsLoading ? (
+        <div className="py-16 text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+          <p className="mt-3 text-sm text-muted">データを読み込み中...</p>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-4">
+          {isGuest && (
+            <div className="flex justify-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent">
+                <Sparkles className="h-3.5 w-3.5" />
+                サンプルデータを表示しています
+              </span>
+            </div>
+          )}
 
-      <RecentList
-        items={recent}
-        loading={listLoading}
-        onRetry={listFailed ? refetchExpenses : undefined}
-        onOpen={(id) => {
-          setCommonSheet(null);
-          setBudgetOpen(false);
-          setExpenseSheet({ kind: 'detail', id });
-        }}
-      />
+          {/* Summary */}
+          <div className="grid grid-cols-3 gap-3">
+            <SummaryCard label="今月の支出" value={yen(totalExpense)} Icon={Wallet} tone="bg-accent/12 text-accent" />
+            <SummaryCard label="支出回数" value={`${expenseCount}回`} Icon={Receipt} tone="bg-sky-500/12 text-sky-600 dark:text-sky-400" />
+            <SummaryCard label="1日平均" value={yen(dailyAverage)} Icon={TrendingUp} tone="bg-violet-500/12 text-violet-600 dark:text-violet-400" />
+          </div>
 
-      <BudgetSheet
-        open={budgetOpen}
-        onClose={() => setBudgetOpen(false)}
-        lineId={isGuest ? null : userId}
-        stats={shownStats}
-        budgetConfig={budgetConfig}
-        budgetLoading={!isGuest && budgetLoading}
-        budgetError={!isGuest && !!budgetError}
-        onRetryBudget={refetchBudget}
-        currentDate={currentDate}
-        dateSettings={dateSettings}
-        range={range}
-      />
+          {/* 判断インサイト */}
+          {(budgetPct !== null || momPct !== null) && (
+            <GlassCard className="p-4">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+                {budgetPct !== null && (
+                  <div>
+                    <p className="text-[11px] font-medium text-muted">予算進捗</p>
+                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{budgetPct}%</p>
+                    <p className={`text-xs tabular-nums ${budgetRemaining! >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                      {budgetRemaining! >= 0 ? `残り ${yen(budgetRemaining!)}` : `超過 ${yen(-budgetRemaining!)}`}
+                    </p>
+                  </div>
+                )}
+                {perDayAvailable !== null && (
+                  <div>
+                    <p className="text-[11px] font-medium text-muted">あと使える / 日</p>
+                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{yen(perDayAvailable)}</p>
+                    <p className="text-xs text-muted">残り{daysLeft}日</p>
+                  </div>
+                )}
+                {momPct !== null && (
+                  <div>
+                    <p className="text-[11px] font-medium text-muted">前月比</p>
+                    <p className={`mt-0.5 inline-flex items-center gap-1 text-lg font-bold tabular-nums ${momPct > 0 ? 'text-rose-600 dark:text-rose-400' : momPct < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-fg'}`}>
+                      {momPct > 0 ? <TrendingUp className="h-4 w-4" /> : momPct < 0 ? <TrendingDown className="h-4 w-4" /> : null}
+                      {momPct > 0 ? '+' : ''}{momPct}%
+                    </p>
+                    <p className="text-xs tabular-nums text-muted">前月 {yen(prevTotal)}</p>
+                  </div>
+                )}
+              </div>
+            </GlassCard>
+          )}
 
-      <ExpenseSheets
-        sheet={expenseSheet}
-        setSheet={setExpenseSheet}
-        expenses={list}
-        me={lineId}
-        isGuest={isGuest || !ready}
-        household={householdState.household}
-        activeGroupIds={householdState.activeGroupIds}
-        updateExpense={updateExpense}
-        deleteExpense={deleteExpense}
-        patchLocal={patchLocal}
-        refetch={refetchExpenses}
-        onChanged={refetchStats}
-      />
-    </>
+          {/* Main (charts) + insight rail (budget). On desktop this becomes a
+              2/3 + 1/3 layout; on mobile budget stays above the charts.
+              DOM order is budget-first (mobile); explicit column placement
+              moves budget to the right rail on large screens. */}
+          <div className="grid gap-4 lg:grid-cols-3 lg:items-start">
+            {/* Insight rail: budget (sticky on desktop) */}
+            <div className="lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:sticky lg:top-20">
+              {budgetLoading ? (
+                <GlassCard className="p-5">
+                  <div className="animate-pulse space-y-3">
+                    <div className="h-4 w-1/4 rounded bg-fg/10" />
+                    <div className="h-2.5 w-full rounded bg-fg/10" />
+                    <div className="h-2.5 w-2/3 rounded bg-fg/10" />
+                  </div>
+                </GlassCard>
+              ) : budgetError ? (
+                <GlassCard className="p-5 text-center">
+                  <p className="text-sm text-rose-500">予算設定の読み込みに失敗しました</p>
+                  <button onClick={refetchBudget} className="mt-2 text-xs font-medium text-accent hover:underline">
+                    再試行
+                  </button>
+                </GlassCard>
+              ) : (
+                <BudgetProgress stats={displayStats} budgetConfig={budgetConfig} />
+              )}
+            </div>
+
+            {/* Main column: charts */}
+            <div className="space-y-4 lg:col-span-2 lg:col-start-1 lg:row-start-1">
+              {displayStats && displayStats.totalAmount > 0 ? (
+                <>
+                  <GlassCard className="p-5">
+                    <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-fg">
+                      <PieChartIcon className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
+                      カテゴリ別支出
+                    </h2>
+                    <CategoryPieChart data={displayStats.categoryTotals} />
+                  </GlassCard>
+                  <GlassCard className="p-5">
+                    <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-fg">
+                      <LineChartIcon className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
+                      日別の推移
+                    </h2>
+                    <DailyLineChart
+                      data={displayStats.dailyTotals}
+                      startDate={effectiveRange.startDate}
+                      endDate={effectiveRange.endDate}
+                      mode={dateSettings.mode}
+                    />
+                  </GlassCard>
+                </>
+              ) : (
+                <GlassCard className="p-8 text-center">
+                  <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-fg/5 text-muted">
+                    <Inbox className="h-7 w-7" strokeWidth={1.8} />
+                  </span>
+                  <h3 className="text-base font-semibold text-fg">支出データがありません</h3>
+                  <p className="mt-1.5 text-sm text-muted">
+                    LINEでレシートやメモを送ると、ここに自動で記録されます。
+                  </p>
+                </GlassCard>
+              )}
+            </div>
+          </div>
+
+          {isGuest && <GuestGuide />}
+        </div>
+      )}
+    </div>
   );
 }

@@ -79,10 +79,11 @@ service cloud.firestore {
     function isMemberOfDocGroup() {
       return isMemberOf(docGroupId());
     }
-    // Gmail 自動取込がシステムユーザーとして登録した支出か。
-    // bot/src/gmail/handler.ts の GMAIL_SYSTEM_LINE_ID と一致させること。
-    function isGmailSystemDoc() {
-      return resource.data.get('lineId', null) == 'gmail-auto-system';
+    // システムユーザーとして登録した支出か（Gmail 自動取込・固定費の自動計上）。
+    // bot/src/gmail/handler.ts の GMAIL_SYSTEM_LINE_ID、bot/src/recurringExpenses.ts の
+    // RECURRING_SYSTEM_LINE_ID と一致させること。
+    function isSystemDoc() {
+      return resource.data.get('lineId', null) in ['gmail-auto-system', 'recurring-system'];
     }
     // ---- 支出の検証ヘルパー ----------------------------------------------
     // 金額の上限（円）。bot の登録経路はいずれも 0 以上の整数・実額で書き込む。
@@ -221,12 +222,12 @@ service cloud.firestore {
 
       // delete:
       //   - 個人支出（groupId も lineGroupId もなし）は所有者が削除可。
-      //   - グループ支出は、有効なメンバーのうち、登録した本人か、Gmail 自動取込分
-      //     （誤取込メールを消すため）の場合だけ削除可。
+      //   - グループ支出は、有効なメンバーのうち、登録した本人か、システムが登録した分
+      //     （Gmail 自動取込・固定費の自動計上。誤取込や不要な計上を消すため）の場合だけ削除可。
       //   - 精算済みの支出はクライアントから削除できない。
       allow delete: if !isSettledDoc()
                     && ((isPersonalDoc() && ownsDoc())
-                        || (isMemberOfDocGroup() && (ownsDoc() || isGmailSystemDoc())));
+                        || (isMemberOfDocGroup() && (ownsDoc() || isSystemDoc())));
     }
 
     // ---- groups -------------------------------------------------------------

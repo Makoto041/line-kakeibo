@@ -248,7 +248,7 @@ async function main() {
       check('許可オリジンに ACAO', acao(r) === ORIGIN);
       check('Vary: Origin', r.headers.get('vary') === 'Origin');
       check('Authorization を許可', (r.headers.get('access-control-allow-headers') || '').includes('Authorization'));
-      check('GET, POST, OPTIONS を許可', r.headers.get('access-control-allow-methods') === 'GET, POST, OPTIONS');
+      check('GET, POST, PATCH, DELETE, OPTIONS を許可', r.headers.get('access-control-allow-methods') === 'GET, POST, PATCH, DELETE, OPTIONS');
       check('Allow-Credentials は付けない', r.headers.get('access-control-allow-credentials') === null);
       check('X-Content-Type-Options: nosniff', r.headers.get('x-content-type-options') === 'nosniff');
       const evil = await call('OPTIONS', '/household/settlement?groupId=g1', { origin: EVIL_ORIGIN });

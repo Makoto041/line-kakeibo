@@ -45,7 +45,7 @@ export interface GroupMember {
 export type ExpenseStatusType = 'pending' | 'shared' | 'personal' | 'advance_pending' | 'advance_settled';
 
 // 入力元
-export type InputSourceType = 'line_text' | 'line_ocr' | 'gmail_auto';
+export type InputSourceType = 'line_text' | 'line_ocr' | 'gmail_auto' | 'recurring';
 
 // Enhanced Expense interface with group support
 export interface Expense {

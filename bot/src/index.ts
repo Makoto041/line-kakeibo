@@ -56,6 +56,7 @@ import { maskId, errorMessage } from "./logSafe";
 import { householdRouter, householdErrorHandler } from "./householdApi";
 import { computeLineGroupSettlement, isSettlementComputable } from "./householdSettlement";
 import { isAllowedWebOrigin } from "./webOrigins";
+import { postDueRecurringExpenses } from "./recurringExpenses";
 
 dotenv.config();
 
@@ -1501,6 +1502,31 @@ export const renewGmailWatch = onSchedule(
     console.log("Renewing Gmail Watch...");
     await renewWatch();
     console.log("Gmail Watch renewed successfully");
+  }
+);
+
+/**
+ * 固定費（家賃・光熱費など）の自動計上
+ *
+ * 毎朝 6:10（JST）に、引き落とし日を迎えた固定費を明細に入れる（recurringExpenses.ts）。
+ * 同じ月に 2 回は入らない。LINE への通知は送らない（無料枠の push 数を使わない）。
+ */
+export const postRecurringExpenses = onSchedule(
+  {
+    schedule: "10 6 * * *",
+    timeZone: "Asia/Tokyo",
+    region: "asia-northeast1",
+    timeoutSeconds: 120,
+    memory: "256MiB",
+    maxInstances: 1,
+    retryCount: 1,
+  },
+  async () => {
+    const summary = await postDueRecurringExpenses(getFirestore());
+    console.log("Recurring expenses", summary);
+    if (summary.failed > 0) {
+      throw new Error(`recurring: ${summary.failed} item(s) failed`);
+    }
   }
 );
 

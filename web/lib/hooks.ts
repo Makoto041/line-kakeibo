@@ -55,7 +55,7 @@ export interface GroupMember {
 export type ExpenseStatus = 'pending' | 'shared' | 'personal' | 'advance_pending' | 'advance_settled';
 
 // Input source type (matches bot/src/firestore.ts InputSourceType)
-export type InputSource = 'line_text' | 'line_ocr' | 'gmail_auto';
+export type InputSource = 'line_text' | 'line_ocr' | 'gmail_auto' | 'recurring';
 
 // Firestore Timestamp-like type for client-side use
 export type FirestoreTimestamp = Date | { seconds: number; nanoseconds: number };
@@ -825,6 +825,83 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
 }
 
 // グループメンバーを取得するフック
+export function useUserGroups(userId: string | null) {
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!userId || userId === 'guest') {
+      setLoading(false);
+      return;
+    }
+
+    const fetchGroups = async () => {
+      // Firebase初期化を待機
+      const isConnected = await waitForFirebase();
+      if (!isConnected) {
+        const status = getFirebaseStatus();
+        setError(`Firebase接続エラー: ${status.error?.message || '初期化に失敗しました'}`);
+        setLoading(false);
+        return;
+      }
+      try {
+        setLoading(true);
+        setError(null);
+        
+        if (!db) {
+          throw new Error('Firestoreデータベースが利用できません');
+        }
+        
+        // Get user's group memberships
+        const membershipQuery = query(
+          collection(db, 'groupMembers'),
+          where('lineId', '==', userId),
+          where('isActive', '==', true)
+        );
+        
+        const membershipSnapshot = await getDocs(membershipQuery);
+        
+        if (membershipSnapshot.empty) {
+          setGroups([]);
+          setError(null);
+          return;
+        }
+        
+        // Get group details for each membership
+        const groupPromises = membershipSnapshot.docs.map(async (memberDoc) => {
+          const memberData = memberDoc.data();
+          const groupDoc = await getDoc(doc(db!, 'groups', memberData.groupId));
+          
+          if (groupDoc.exists()) {
+            return {
+              id: groupDoc.id,
+              ...groupDoc.data()
+            } as Group;
+          }
+          return null;
+        });
+        
+        const groupResults = await Promise.all(groupPromises);
+        const validGroups = groupResults.filter(group => group !== null) as Group[];
+        
+        setGroups(validGroups);
+        setError(null);
+      } catch (err) {
+        const errorMessage = handleFirestoreError(err);
+        console.error('Error fetching user groups:', err);
+        setError(errorMessage);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchGroups();
+  }, [userId]);
+
+  return { groups, loading, error };
+}
+
 export function useGroupMembers(groupId: string | null) {
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [loading, setLoading] = useState(true);

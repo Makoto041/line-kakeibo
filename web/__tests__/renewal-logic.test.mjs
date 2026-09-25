@@ -382,12 +382,15 @@ test('canClientWrite / canServerConfirm', () => {
   assert.equal(canClientWrite(expense({ groupId: 'g1', lineId: PARTNER }), ME, groups), true);
   assert.equal(canClientWrite(expense({ groupId: 'g1', lineId: GMAIL }), ME, groups), true);
   // 脱退済み（有効メンバーでない）グループは自分の支出でも不可
+  // 脱退したグループ・旧形式は所有者でも不可（ルールの canWriteExistingExpense）
   assert.equal(canClientWrite(expense({ groupId: 'g9' }), ME, groups), false);
-  // lineGroupId だけの旧形式は不可
   assert.equal(canClientWrite(expense({ lineGroupId: 'C1' }), ME, groups), false);
+  // 他人の支出は、脱退したグループ・旧形式では不可
+  assert.equal(canClientWrite(expense({ groupId: 'g9', lineId: PARTNER }), ME, groups), false);
+  assert.equal(canClientWrite(expense({ lineGroupId: 'C1', lineId: PARTNER }), ME, groups), false);
   // 所属が未確定（null）は許可扱い（最終判断はルール）
   assert.equal(canClientWrite(expense({ groupId: 'g9', lineId: PARTNER }), ME, null), true);
-  assert.equal(canClientWrite(expense({ lineGroupId: 'C1' }), ME, null), false);
+  assert.equal(canClientWrite(expense({ lineGroupId: 'C1', lineId: PARTNER }), ME, null), false);
   // 未ログイン
   assert.equal(canClientWrite(expense(), null, groups), false);
   // 精算済みでも編集（許可されたキー）はできる
@@ -395,6 +398,8 @@ test('canClientWrite / canServerConfirm', () => {
 
   assert.equal(canServerConfirm(expense({ groupId: 'g1', lineId: GMAIL }), ME, groups), true);
   assert.equal(canServerConfirm(expense({ lineGroupId: 'C1' }), ME, groups), false);
+  assert.equal(canServerConfirm(expense({ groupId: 'g9' }), ME, groups), false);
+  assert.equal(canServerConfirm(expense({ groupId: 'g1', lineId: PARTNER }), ME, groups), true);
   assert.equal(isPersonalExpense({}), true);
   assert.equal(isPersonalExpense({ lineGroupId: 'C1' }), false);
 });
@@ -406,10 +411,14 @@ test('canClientDelete', () => {
   // グループ支出: 本人の登録分と Gmail 取込分だけ
   assert.equal(canClientDelete(expense({ groupId: 'g1' }), ME, groups), true);
   assert.equal(canClientDelete(expense({ groupId: 'g1', lineId: GMAIL }), ME, groups), true);
+  assert.equal(canClientDelete(expense({ groupId: 'g1', lineId: 'recurring-system' }), ME, groups), true);
+  assert.equal(canClientDelete(expense({ lineId: 'recurring-system' }), ME, groups), false);
   assert.equal(canClientDelete(expense({ groupId: 'g1', lineId: PARTNER }), ME, groups), false);
   // 脱退済み・旧形式
   assert.equal(canClientDelete(expense({ groupId: 'g9' }), ME, groups), false);
   assert.equal(canClientDelete(expense({ lineGroupId: 'C1' }), ME, groups), false);
+  assert.equal(canClientDelete(expense({ groupId: 'g9', lineId: GMAIL }), ME, groups), false);
+  assert.equal(canClientDelete(expense({ lineGroupId: 'C1', lineId: PARTNER }), ME, groups), false);
   // 精算済みは誰でも不可
   assert.equal(canClientDelete(expense({ status: 'advance_settled' }), ME, groups), false);
   assert.equal(canClientDelete(expense({ status: 'advance_settled', groupId: 'g1', lineId: GMAIL }), ME, groups), false);

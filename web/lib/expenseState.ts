@@ -7,6 +7,8 @@ type ExpenseFields = Partial<Omit<Expense, 'id'>>;
 
 /** Gmail 自動取込の支出の lineId（bot/src/gmail/handler.ts と同じ） */
 export const GMAIL_SYSTEM_LINE_ID = 'gmail-auto-system';
+/** 固定費の自動計上（共通のカード・口座）の lineId（bot/src/recurringExpenses.ts と同じ） */
+export const RECURRING_SYSTEM_LINE_ID = 'recurring-system';
 
 // ---- 状態 ------------------------------------------------------------------
 
@@ -187,24 +189,26 @@ export function canClientWrite(
   activeGroupIds: readonly string[] | null
 ): boolean {
   if (!me) return false;
+  // ルール（canWriteExistingExpense）と同じ: 個人支出は所有者、グループ支出は有効メンバー。
+  // lineGroupId だけを持つ旧形式は書けない（先に groupId の backfill が必要）
   if (isPersonalExpense(e)) return e.lineId === me;
-  // lineGroupId だけを持つ旧形式は PR #172 のルールで書けない
   if (!e.groupId) return false;
   return isActiveMemberOf(e.groupId, activeGroupIds);
 }
 
-/** クライアントから削除できるか（精算済みは不可。グループ支出は本人か Gmail 取込分だけ） */
+/** クライアントから削除できるか（精算済みは不可。グループ支出は本人か、システムが登録した分（Gmail 取込・固定費）だけ） */
 export function canClientDelete(
   e: OwnershipFields,
   me: string | null,
   activeGroupIds: readonly string[] | null
 ): boolean {
   if (!me || isSettled(e)) return false;
+  // ルールと同じ: 個人支出は所有者、グループ支出は有効メンバーのうち本人かシステムが登録した分
   if (isPersonalExpense(e)) return e.lineId === me;
   if (!e.groupId) return false;
   return (
     isActiveMemberOf(e.groupId, activeGroupIds) &&
-    (e.lineId === me || e.lineId === GMAIL_SYSTEM_LINE_ID)
+    (e.lineId === me || e.lineId === GMAIL_SYSTEM_LINE_ID || e.lineId === RECURRING_SYSTEM_LINE_ID)
   );
 }
 
@@ -214,7 +218,11 @@ export function canServerConfirm(
   me: string | null,
   activeGroupIds: readonly string[] | null
 ): boolean {
-  return canClientWrite(e, me, activeGroupIds);
+  // サーバー（authorizeExpenseWrite）はルールより厳しい: グループ支出は有効メンバーのみ、旧形式は不可
+  if (!me) return false;
+  if (isPersonalExpense(e)) return e.lineId === me;
+  if (!e.groupId) return false;
+  return isActiveMemberOf(e.groupId, activeGroupIds);
 }
 
 // ---- 検索・絞り込み・集計（検索シート） -------------------------------------------
