@@ -25,12 +25,6 @@
   --accent-fg: 255 255 255;
   --ring: 37 99 235;
 
-  /* 旧ガラス（刷新前の画面が使う） */
-  --glass-bg: 255 255 255;
-  --glass-alpha: 0.62;
-  --glass-border: 255 255 255;
-  --glass-border-alpha: 0.55;
-
   --kb-font: "Hiragino Sans", "Hiragino Kaku Gothic ProN", var(--font-noto-jp), "Noto Sans JP",
     "Noto Sans CJK JP", system-ui, sans-serif;
 
@@ -138,11 +132,6 @@
   --accent: 59 130 246;     /* = --kb-accent */
   --accent-fg: 255 255 255;
   --ring: 96 165 250;
-
-  --glass-bg: 22 31 56;
-  --glass-alpha: 0.6;
-  --glass-border: 148 163 184;
-  --glass-border-alpha: 0.16;
 
   --kb-bg-top: #0c1326;
   --kb-bg-mid: #0b1122;
@@ -399,29 +388,6 @@
 }
 
 /* ============================================================
-   刷新前の画面が使うガラス（該当画面の置き換え後に削除する）
-   ============================================================ */
-@layer components {
-  .glass {
-    background-color: rgb(var(--glass-bg) / var(--glass-alpha));
-    -webkit-backdrop-filter: blur(16px) saturate(180%);
-    backdrop-filter: blur(16px) saturate(180%);
-    border: 1px solid rgb(var(--glass-border) / var(--glass-border-alpha));
-  }
-  .glass-strong {
-    background-color: rgb(var(--glass-bg) / calc(var(--glass-alpha) + 0.22));
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
-    backdrop-filter: blur(22px) saturate(180%);
-    border: 1px solid rgb(var(--glass-border) / var(--glass-border-alpha));
-  }
-  .glass-bar {
-    background-color: rgb(var(--glass-bg) / calc(var(--glass-alpha) + 0.18));
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    backdrop-filter: blur(20px) saturate(180%);
-  }
-}
-
-/* ============================================================
    Accessibility: reduced motion / reduced transparency
    ============================================================ */
 @media (prefers-reduced-motion: reduce) {
@@ -444,13 +410,6 @@
   .kb-card,
   .kb-card-2 {
     background: var(--kb-solid);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-  .glass,
-  .glass-strong,
-  .glass-bar {
-    background-color: rgb(var(--card));
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }

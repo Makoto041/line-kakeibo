@@ -2,13 +2,22 @@
 
 import React, { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { Paperclip, Check, RefreshCw, Camera, Upload, Image as ImageIcon } from "lucide-react";
+import { Paperclip, Check, RefreshCw, Camera, Upload, Image as ImageIcon, CircleAlert } from "lucide-react";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
 import { isSafeImageUrl } from "../../lib/imageUrl";
 import { compressImage } from "../../lib/imageCompress";
 import dayjs from "dayjs";
+import { isLineAuthSettled, onLineAuthSettled } from "../../lib/lineAuth";
+import { cx } from "../../lib/cx";
+import { Amount } from "../../components/ui/Amount";
+import { PrimaryButton } from "../../components/ui/PrimaryButton";
+import { ExpenseIcon } from "../../components/expense/ExpenseIcon";
+
+// storage.rules と揃える（SVG・GIF は不可、上限 5MB）
+const ALLOWED_RECEIPT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
+const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
 
 // Suspense boundary for useSearchParams（ビルドエラー防止）
 export default function AttachPage() {
@@ -21,7 +30,7 @@ export default function AttachPage() {
 
 function AttachPageLoading() {
   return (
-    <div className="flex min-h-dvh items-center justify-center">
+    <div className="flex min-h-dvh items-center justify-center" aria-busy="true">
       <div className="h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" />
     </div>
   );
@@ -38,6 +47,10 @@ interface ExpenseSummary {
 function AttachPageContent() {
   const searchParams = useSearchParams();
   const expenseId = searchParams.get("expenseId");
+  // 認証の確定（匿名セッションの復元 → LINE の順に変わる）を待ってから支出を読む。
+  // 確定前に読むと、LINE から初めて開いたときに権限エラーになる
+  const [authSettled, setAuthSettled] = useState(() => isLineAuthSettled());
+  useEffect(() => onLineAuthSettled(() => setAuthSettled(true)), []);
 
   const [expense, setExpense] = useState<ExpenseSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,16 +112,17 @@ function AttachPageContent() {
       }
     };
 
+    if (expenseId && !authSettled) return;
     fetchExpense();
-  }, [expenseId]);
+  }, [expenseId, authSettled]);
 
   // ファイル選択時の処理
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      setError("画像ファイルを選択してください。");
+    if (!ALLOWED_RECEIPT_TYPES.includes(file.type)) {
+      setError("JPEG / PNG / WebP / HEIC 形式の画像を選択してください。");
       return;
     }
 
@@ -148,6 +162,11 @@ function AttachPageContent() {
           `レシート圧縮: ${(originalSize / 1024).toFixed(0)}KB → ${(outputSize / 1024).toFixed(0)}KB ` +
             `(${Math.round((1 - outputSize / originalSize) * 100)}%削減)`
         );
+      }
+
+      // Storage ルールと同じ上限（圧縮後のサイズで判定する）
+      if (uploadFile.size > MAX_RECEIPT_BYTES) {
+        throw new Error("画像が大きすぎます（5MB まで）。");
       }
 
       // パス: receipts/{expenseId}/{timestamp}_{filename}
@@ -221,62 +240,60 @@ function AttachPageContent() {
   const showUploadForm = !hasReceipt || replacing;
 
   return (
-    <div className="min-h-dvh">
-      <header className="glass-bar sticky top-0 z-10 border-b border-line/60">
-        <div className="mx-auto flex max-w-lg items-center gap-2 px-4 py-4">
-          <span className="grid h-8 w-8 place-items-center rounded-xl bg-accent text-accent-fg">
-            <Paperclip className="h-[18px] w-[18px]" strokeWidth={2.2} />
-          </span>
-          <h1 className="text-lg font-semibold tracking-tight text-fg">レシート添付</h1>
-        </div>
+    <div className="mx-auto min-h-dvh w-full max-w-[440px] pb-10">
+      <header
+        className="flex items-center gap-3 pl-6 pr-4"
+        style={{ paddingTop: "calc(var(--kb-header-top) + var(--kb-safe-top))" }}
+      >
+        <span className="kb-glass grid h-12 w-12 shrink-0 place-items-center rounded-full text-ink">
+          <Paperclip size={22} strokeWidth={2} aria-hidden="true" />
+        </span>
+        <h1 className="min-w-0 truncate text-kb-title text-ink">レシート添付</h1>
       </header>
 
-      <main className="mx-auto max-w-lg space-y-4 px-4 py-6">
+      <main className="mt-6 space-y-4 px-4">
         {error && (
-          <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.06] p-4">
-            <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
+          <div role="alert" className="kb-card flex items-start gap-3 rounded-kb-row px-4 py-3.5 text-danger">
+            <CircleAlert size={20} strokeWidth={2} aria-hidden="true" className="mt-0.5 shrink-0" />
+            <p className="text-kb-body">{error}</p>
           </div>
         )}
 
         {expense && (
           <>
             {/* 支出概要 */}
-            <div className="glass rounded-2xl p-5 shadow-glass">
-              <h2 className="mb-3 text-sm font-medium text-muted">対象の支出</h2>
-              <p className="break-words text-lg font-semibold text-fg">
-                {expense.description}
-              </p>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-fg">
-                ¥{expense.amount.toLocaleString()}
-              </p>
-              <p className="mt-1 text-sm text-muted">
-                {expense.date
-                  ? dayjs(expense.date).format("YYYY年M月D日")
-                  : "日付不明"}
+            <section aria-label="対象の支出" className="kb-card rounded-kb-card px-5 py-5">
+              <div className="flex items-center gap-3">
+                <span className="kb-glass-2 grid h-12 w-12 shrink-0 place-items-center rounded-full">
+                  <ExpenseIcon description={expense.description} category={expense.category} size={24} />
+                </span>
+                <p className="min-w-0 break-words text-kb-row text-ink">{expense.description}</p>
+              </div>
+              <Amount value={expense.amount} base={44} className="mt-3 block text-ink" />
+              <p className="mt-1 text-kb-caption text-ink-3">
+                {expense.date ? dayjs(expense.date).format("YYYY年M月D日") : "日付不明"}
                 {expense.category ? ` ・ ${expense.category}` : ""}
               </p>
-            </div>
+            </section>
 
             {/* アップロード完了メッセージ */}
             {uploadDone && (
-              <div className="flex items-start gap-2 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.08] p-4 text-emerald-700 dark:text-emerald-300">
-                <Check className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2.4} />
-                <p className="text-sm font-medium">レシートを添付しました。このページは閉じて構いません。</p>
+              <div role="status" className="kb-strip-ok flex items-start gap-2.5 rounded-kb-row px-4 py-3.5">
+                <Check size={20} strokeWidth={2.4} aria-hidden="true" className="mt-0.5 shrink-0" />
+                <p className="text-kb-body font-medium">レシートを添付しました。このページは閉じて構いません。</p>
               </div>
             )}
 
             {/* 既存レシートのプレビュー */}
             {hasReceipt && (
-              <div className="glass rounded-2xl p-5 shadow-glass">
-                <h2 className="mb-3 text-sm font-medium text-muted">
-                  添付済みのレシート
-                </h2>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+              <section className="kb-card rounded-kb-card p-4">
+                <h2 className="mb-3 px-1 text-kb-caption font-medium text-ink-3">添付済みのレシート</h2>
                 {expense.receiptUrl && isSafeImageUrl(expense.receiptUrl) && (
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={expense.receiptUrl}
                     alt="添付済みレシート"
-                    className="w-full rounded-lg border border-line"
+                    className="w-full rounded-2xl bg-skeleton"
                   />
                 )}
                 {!replacing && (
@@ -286,19 +303,19 @@ function AttachPageContent() {
                       setReplacing(true);
                       setUploadDone(false);
                     }}
-                    className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg border border-line bg-card px-4 py-3 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
+                    className={cx(SECONDARY, "mt-4 w-full")}
                   >
-                    <RefreshCw className="h-4 w-4" />
+                    <RefreshCw size={20} strokeWidth={2} aria-hidden="true" />
                     レシートを差し替える
                   </button>
                 )}
-              </div>
+              </section>
             )}
 
             {/* アップロードフォーム */}
             {showUploadForm && (
-              <div className="glass space-y-4 rounded-2xl p-5 shadow-glass">
-                <h2 className="text-sm font-medium text-muted">
+              <section className="kb-card space-y-4 rounded-kb-card p-4">
+                <h2 className="px-1 text-kb-caption font-medium text-ink-3">
                   {hasReceipt ? "新しいレシートを選択" : "レシート画像を選択"}
                 </h2>
 
@@ -321,61 +338,58 @@ function AttachPageContent() {
                 />
 
                 <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line p-5 text-center transition-colors hover:border-accent hover:bg-accent/[0.04]"
-                  >
-                    <span className="grid h-11 w-11 place-items-center rounded-2xl bg-accent/12 text-accent">
-                      <ImageIcon className="h-5 w-5" strokeWidth={1.9} />
+                  <button type="button" onClick={() => fileInputRef.current?.click()} className={PICKER}>
+                    <span className="kb-btn-primary grid h-12 w-12 place-items-center rounded-full">
+                      <ImageIcon size={22} strokeWidth={2} aria-hidden="true" />
                     </span>
-                    <span className="text-sm font-medium text-fg">アルバムから選択</span>
+                    <span className="text-kb-chip text-ink">アルバムから選択</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => cameraInputRef.current?.click()}
-                    className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line p-5 text-center transition-colors hover:border-accent hover:bg-accent/[0.04]"
-                  >
-                    <span className="grid h-11 w-11 place-items-center rounded-2xl bg-accent/12 text-accent">
-                      <Camera className="h-5 w-5" strokeWidth={1.9} />
+                  <button type="button" onClick={() => cameraInputRef.current?.click()} className={PICKER}>
+                    <span className="kb-btn-primary grid h-12 w-12 place-items-center rounded-full">
+                      <Camera size={22} strokeWidth={2} aria-hidden="true" />
                     </span>
-                    <span className="text-sm font-medium text-fg">写真を撮る</span>
+                    <span className="text-kb-chip text-ink">写真を撮る</span>
                   </button>
                 </div>
 
                 {previewDataUrl && (
                   <div>
-                    <h3 className="mb-2 text-sm font-medium text-muted">
-                      プレビュー
-                    </h3>
+                    <h3 className="mb-2 px-1 text-kb-caption font-medium text-ink-3">プレビュー</h3>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={previewDataUrl}
                       alt="選択した画像のプレビュー"
-                      className="w-full rounded-lg border border-line"
+                      className="w-full rounded-2xl bg-skeleton"
                     />
                   </div>
                 )}
 
-                <button
-                  type="button"
+                <PrimaryButton
+                  icon={Upload}
+                  height={56}
                   onClick={handleUpload}
                   disabled={!selectedFile || uploading}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-3 text-sm font-medium text-accent-fg transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <Upload className="h-4 w-4" />
                   {uploading ? `アップロード中... ${uploadProgress}%` : "アップロードする"}
-                </button>
+                </PrimaryButton>
 
                 {uploading && (
                   <div className="space-y-1.5">
-                    <div className="relative h-1.5 overflow-hidden rounded-full bg-fg/10">
+                    <div
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={uploadProgress}
+                      aria-label="アップロード"
+                      className="relative h-2 overflow-hidden rounded-full"
+                      style={{ background: "var(--kb-bar-track)" }}
+                    >
                       <div
-                        className="h-full rounded-full bg-accent transition-[width] duration-200"
-                        style={{ width: `${uploadProgress}%` }}
+                        className="h-full rounded-full transition-[width] duration-200"
+                        style={{ width: `${uploadProgress}%`, background: "var(--kb-bar-grad)" }}
                       />
                     </div>
-                    <p className="text-center text-xs text-muted">
+                    <p className="text-center text-kb-caption text-ink-3">
                       バックグラウンドで送信中です。このページを離れても続行されます。
                     </p>
                   </div>
@@ -389,12 +403,12 @@ function AttachPageContent() {
                       setSelectedFile(null);
                       setPreviewDataUrl(null);
                     }}
-                    className="w-full rounded-lg border border-line bg-card px-4 py-3 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
+                    className={cx(SECONDARY, "w-full")}
                   >
                     キャンセル
                   </button>
                 )}
-              </div>
+              </section>
             )}
           </>
         )}
@@ -402,3 +416,8 @@ function AttachPageContent() {
     </div>
   );
 }
+
+const SECONDARY =
+  "kb-glass-2 inline-flex h-[52px] items-center justify-center gap-2.5 rounded-full px-4 text-[17px] font-semibold text-ink transition-[transform,opacity] duration-150 active:scale-[0.98]";
+const PICKER =
+  "kb-glass-2 flex flex-col items-center gap-2.5 rounded-kb-row px-3 py-5 text-center transition-transform duration-150 active:scale-[0.98]";
