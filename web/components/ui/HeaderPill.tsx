@@ -17,7 +17,7 @@ export function HeaderPill({ label, icon: Icon, className, type = 'button', ...r
       type={type}
       aria-haspopup="dialog"
       className={cx(
-        'kb-glass inline-flex h-12 shrink-0 items-center gap-[10px] rounded-full pl-[18px] pr-4 text-kb-pill text-ink transition-transform duration-150 active:scale-[0.97] disabled:opacity-40',
+        'kb-glass inline-flex h-12 shrink-0 items-center gap-2 rounded-full pl-[18px] pr-[14px] text-kb-pill text-ink transition-transform duration-150 active:scale-[0.97] disabled:opacity-40',
         className
       )}
       {...rest}

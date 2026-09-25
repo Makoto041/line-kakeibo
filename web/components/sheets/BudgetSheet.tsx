@@ -52,7 +52,7 @@ const PACE_BADGE: Record<Pace, string> = {
   good: 'bg-ok-bg text-ok-ink',
   unset: 'bg-ok-bg text-ok-ink',
   warning: 'bg-warn-bg text-warn-ink',
-  danger: 'bg-danger/12 text-danger',
+  danger: 'bg-danger/12 text-danger-ink',
 };
 
 export function BudgetSheet({
@@ -174,7 +174,7 @@ function Tile({ label, value }: { label: string; value: string }) {
 }
 
 type Tone = 'ok' | 'danger';
-const TONE: Record<Tone, string> = { ok: 'text-ok-ink', danger: 'text-danger' };
+const TONE: Record<Tone, string> = { ok: 'text-ok-ink', danger: 'text-danger-ink' };
 
 function StatRow({
   label,
@@ -247,7 +247,7 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
             <span className="text-ink-3">
               {yen(totalActual)} / {yen(monthlyBudget)}
             </span>
-            <span className={cx('font-semibold', totalRemaining >= 0 ? 'text-ok-ink' : 'text-danger')}>
+            <span className={cx('font-semibold', totalRemaining >= 0 ? 'text-ok-ink' : 'text-danger-ink')}>
               {totalRemaining >= 0
                 ? `${T.budget.remaining} ${yen(totalRemaining)}`
                 : `${T.budget.over} ${yen(Math.abs(totalRemaining))}`}
@@ -281,7 +281,7 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
                           style={{ width: `${Math.min(pct, 100)}%`, background: barFill(pct) }}
                         />
                       </div>
-                      <p className={cx('mt-1 text-right text-[12px]', remaining >= 0 ? 'text-ok-ink' : 'text-danger')}>
+                      <p className={cx('mt-1 text-right text-[12px]', remaining >= 0 ? 'text-ok-ink' : 'text-danger-ink')}>
                         {remaining >= 0
                           ? `${T.budget.catRemaining} ${yen(remaining)}`
                           : `${T.budget.catOver} ${yen(Math.abs(remaining))}`}

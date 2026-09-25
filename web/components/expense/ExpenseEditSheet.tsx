@@ -28,7 +28,7 @@ import { cx } from '@/lib/cx';
 import { T } from '@/lib/uiText';
 import { Sheet } from '@/components/ui/Sheet';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
-import { Switch } from '@/components/ui/Switch';
+import { SwitchRow } from '@/components/ui/Switch';
 
 interface ExpenseEditSheetProps {
   open: boolean;
@@ -236,21 +236,18 @@ function EditBody({
         </select>
       </Field>
 
-      <div className="mt-5 flex min-h-[60px] items-center gap-4 rounded-2xl kb-glass-2 px-4">
-        <span id={ids.include} className="min-w-0 flex-1 truncate text-kb-row text-ink">
-          {T.edit.include}
-        </span>
-        <Switch
-          checked={form.includeInTotal}
-          onChange={(next) => update('includeInTotal', next)}
-          disabled={locked}
-          labelledBy={ids.include}
-        />
-      </div>
+      <SwitchRow
+        className="mt-5"
+        label={T.edit.include}
+        labelId={ids.include}
+        checked={form.includeInTotal}
+        onChange={(next) => update('includeInTotal', next)}
+        disabled={locked}
+      />
 
       <div className="sticky bottom-0 z-10 -mx-1 mt-4 bg-gradient-to-t from-[var(--kb-card)] from-70% to-transparent px-1 pb-1 pt-3">
         {error && (
-          <p id={ids.error} role="alert" className="mb-2 px-1 text-[14px] font-medium text-danger">
+          <p id={ids.error} role="alert" className="mb-2 px-1 text-[14px] font-medium text-danger-ink">
             {error.message}
           </p>
         )}

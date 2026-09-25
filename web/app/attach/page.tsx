@@ -253,7 +253,7 @@ function AttachPageContent() {
 
       <main className="mt-6 space-y-4 px-4">
         {error && (
-          <div role="alert" className="kb-card flex items-start gap-3 rounded-kb-row px-4 py-3.5 text-danger">
+          <div role="alert" className="kb-card flex items-start gap-3 rounded-kb-row px-4 py-3.5 text-danger-ink">
             <CircleAlert size={20} strokeWidth={2} aria-hidden="true" className="mt-0.5 shrink-0" />
             <p className="text-kb-body">{error}</p>
           </div>

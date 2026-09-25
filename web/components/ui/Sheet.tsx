@@ -50,6 +50,7 @@ function unlockScroll() {
 }
 
 const noopSubscribe = () => () => {};
+const noopClose = () => {};
 /** サーバー描画・ハイドレーション中は false（portal 先の document.body がまだ無い） */
 function useIsClient(): boolean {
   return useSyncExternalStore(
@@ -71,17 +72,30 @@ export interface SheetProps {
   footer?: ReactNode;
   /** 開いたときにフォーカスを置く要素（無ければシート自体） */
   initialFocusRef?: RefObject<HTMLElement | null>;
+  /** 閉じられない間（送信中など）。閉じるボタンを無効にし、Esc と背面のタップも無視する */
+  closeDisabled?: boolean;
   className?: string;
 }
 
-export function Sheet({ open, onClose, title, onBack, children, footer, initialFocusRef, className }: SheetProps) {
+export function Sheet({
+  open,
+  onClose,
+  title,
+  onBack,
+  children,
+  footer,
+  initialFocusRef,
+  closeDisabled = false,
+  className,
+}: SheetProps) {
   const isClient = useIsClient();
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
+  const handleClose = closeDisabled ? noopClose : onClose;
+  const onCloseRef = useRef(handleClose);
 
   useEffect(() => {
-    onCloseRef.current = onClose;
+    onCloseRef.current = handleClose;
   });
 
   useEffect(() => {
@@ -145,7 +159,8 @@ export function Sheet({ open, onClose, title, onBack, children, footer, initialF
           panelRef={panelRef}
           titleId={titleId}
           title={title}
-          onClose={onClose}
+          onClose={handleClose}
+          closeDisabled={closeDisabled}
           onBack={onBack}
           footer={footer}
           className={className}
@@ -163,13 +178,24 @@ interface SheetLayerProps {
   titleId: string;
   title: string;
   onClose: () => void;
+  closeDisabled: boolean;
   onBack?: () => void;
   footer?: ReactNode;
   className?: string;
   children: ReactNode;
 }
 
-function SheetLayer({ panelRef, titleId, title, onClose, onBack, footer, className, children }: SheetLayerProps) {
+function SheetLayer({
+  panelRef,
+  titleId,
+  title,
+  onClose,
+  closeDisabled,
+  onBack,
+  footer,
+  className,
+  children,
+}: SheetLayerProps) {
   const reduceMotion = useReducedMotion();
   // 閉じる動きの間は背面の操作を妨げない
   const isPresent = useIsPresent();
@@ -184,11 +210,23 @@ function SheetLayer({ panelRef, titleId, title, onClose, onBack, footer, classNa
       };
   const fade = reduceMotion ? 0 : 0.2;
 
+  // iOS Safari は overflow: hidden だけでは背面のページが引っぱりで動くので、幕の上の指の動きを止める
+  // （React の onTouchMove は passive で preventDefault が効かないため、直接登録する）
+  const backdropRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = backdropRef.current;
+    if (!el) return;
+    const stop = (e: TouchEvent) => e.preventDefault();
+    el.addEventListener('touchmove', stop, { passive: false });
+    return () => el.removeEventListener('touchmove', stop);
+  }, []);
+
   return (
     <div className="fixed inset-0 z-[60]" style={{ pointerEvents: isPresent ? 'auto' : 'none' }}>
       <motion.div
+        ref={backdropRef}
         aria-hidden="true"
-        className="kb-backdrop absolute inset-0"
+        className="kb-backdrop absolute inset-0 touch-none"
         initial={reduceMotion ? false : { opacity: 0 }}
         animate={{ opacity: 1, transition: { duration: fade } }}
         exit={{ opacity: 0, transition: { duration: fade } }}
@@ -205,11 +243,11 @@ function SheetLayer({ panelRef, titleId, title, onClose, onBack, footer, classNa
       >
         <div aria-hidden="true" className="mx-auto mt-2 h-[5px] w-9 shrink-0 rounded-[3px] bg-[var(--kb-grabber)]" />
         <div className="flex shrink-0 items-center gap-3 px-4 pb-3 pt-3">
-          {onBack && <IconButton label={T.aria.back} icon={ChevronLeft} size={40} iconSize={22} onClick={onBack} />}
+          {onBack && <IconButton label={T.aria.back} icon={ChevronLeft} size={44} iconSize={22} onClick={onBack} />}
           <h2 id={titleId} className="min-w-0 flex-1 truncate text-kb-sheet-title text-ink">
             {title}
           </h2>
-          <IconButton label={T.aria.close} icon={X} size={40} iconSize={20} onClick={onClose} />
+          <IconButton label={T.aria.close} icon={X} size={44} iconSize={20} disabled={closeDisabled} onClick={onClose} />
         </div>
         <div
           className={cx(

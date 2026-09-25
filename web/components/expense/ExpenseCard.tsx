@@ -59,6 +59,7 @@ export function ExpenseCard({
       <div className="flex h-[52px] items-center pl-2 pr-0.5">
         <button
           type="button"
+          id={`expense-${expense.id}-toggle`}
           aria-expanded={true}
           onClick={onCollapse}
           className="flex min-w-0 flex-1 items-center self-stretch text-left"

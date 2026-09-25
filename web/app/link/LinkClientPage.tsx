@@ -101,7 +101,7 @@ export default function LinkClientPage() {
       </p>
 
       {error && (
-        <p role="alert" className="mt-4 text-kb-body text-danger">
+        <p role="alert" className="mt-4 text-kb-body text-danger-ink">
           {error}
         </p>
       )}

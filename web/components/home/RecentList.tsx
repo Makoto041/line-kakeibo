@@ -5,7 +5,7 @@
 // 0 件のときは見出しの下に何も出さない（説明文は出さない）。
 import dayjs from 'dayjs';
 import type { Expense } from '@/lib/hooks';
-import { absoluteDateLabel, groupByDate } from '@/lib/expenseState';
+import { absoluteDateLabel, groupByDate, isCounted } from '@/lib/expenseState';
 import { cx } from '@/lib/cx';
 import { T } from '@/lib/uiText';
 import { Amount } from '@/components/ui/Amount';
@@ -46,8 +46,8 @@ export function RecentList({ items, loading, onOpen }: RecentListProps) {
             <p className="mx-6 mt-[18px] text-kb-date text-ink-4">{absoluteDateLabel(group.date, today)}</p>
             <ul className="mx-6">
               {group.items.map((expense, i) => (
-                <li key={expense.id} className={cx(i > 0 && 'border-t border-divider')}>
-                  <ExpenseListRow expense={expense} onOpen={onOpen} />
+                <li key={expense.id}>
+                  <ExpenseListRow expense={expense} onOpen={onOpen} divided={i > 0} />
                 </li>
               ))}
             </ul>
@@ -58,13 +58,25 @@ export function RecentList({ items, loading, onOpen }: RecentListProps) {
   );
 }
 
-export function ExpenseListRow({ expense, onOpen }: { expense: Expense; onOpen: (id: string) => void }) {
+export function ExpenseListRow({
+  expense,
+  onOpen,
+  divided = false,
+}: {
+  expense: Expense;
+  onOpen: (id: string) => void;
+  /** 上に区切り線を引く（線を含めて 64px の間隔にする） */
+  divided?: boolean;
+}) {
   return (
     <button
       type="button"
       aria-haspopup="dialog"
       onClick={() => onOpen(expense.id)}
-      className="flex h-16 w-full items-center pl-2 pr-1.5 text-left transition-opacity active:opacity-70"
+      className={cx(
+        'box-border flex h-16 w-full items-center pl-2 pr-1.5 text-left transition-opacity active:opacity-70',
+        divided && 'border-t border-divider'
+      )}
     >
       <ExpenseIcon description={expense.description} category={expense.category} size={30} />
       <span className="ml-7 min-w-0 flex-1 truncate text-kb-row text-ink">{expenseLabel(expense)}</span>
@@ -72,7 +84,7 @@ export function ExpenseListRow({ expense, onOpen }: { expense: Expense; onOpen: 
         value={expense.amount}
         base={22}
         weight={600}
-        className={cx('ml-3 shrink-0', expense.includeInTotal ? 'text-ink' : 'text-ink-4')}
+        className={cx('ml-3 shrink-0', isCounted(expense) ? 'text-ink' : 'text-ink-4')}
       />
     </button>
   );

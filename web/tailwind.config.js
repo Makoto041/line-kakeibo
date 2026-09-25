@@ -58,6 +58,7 @@ module.exports = {
           fill: 'var(--kb-off-fill)',
         },
         danger: 'var(--kb-danger)',
+        'danger-ink': 'var(--kb-danger-ink)',
         chip: {
           bg: 'var(--kb-chip-bg)',
           rim: 'var(--kb-chip-rim)',

@@ -358,7 +358,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
               <span
                 className={cx(
                   'text-[14px] font-medium',
-                  categoryBudgetTotal > budgetConfig.monthlyBudget ? 'text-danger' : 'text-ink-3'
+                  categoryBudgetTotal > budgetConfig.monthlyBudget ? 'text-danger-ink' : 'text-ink-3'
                 )}
               >
                 {T.settings.total} {yen(categoryBudgetTotal)}

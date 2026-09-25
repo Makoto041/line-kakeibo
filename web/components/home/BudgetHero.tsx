@@ -70,7 +70,7 @@ export function BudgetHero({ loading, spent, budget, onOpen, onRetry }: BudgetHe
         </span>
         <span className="mt-1 block text-kb-sub text-ink-3">
           {yen(n.spent)}
-          <span className="mx-[0.35em]">/</span>
+          <span className="mx-[0.6em]">/</span>
           {failed ? '—' : yen(n.budget)}
         </span>
       </button>
@@ -78,10 +78,10 @@ export function BudgetHero({ loading, spent, budget, onOpen, onRetry }: BudgetHe
         <IconButton
           label={T.aria.retry}
           icon={RotateCw}
-          size={40}
+          size={44}
           iconSize={20}
           onClick={onRetry}
-          className="absolute right-4 top-[97px]"
+          className="absolute right-4 top-[95px]"
         />
       )}
     </div>

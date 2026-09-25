@@ -4,6 +4,7 @@
 import { ChevronRight, Clock } from 'lucide-react';
 import type { Expense } from '@/lib/hooks';
 import { cx } from '@/lib/cx';
+import { isCounted } from '@/lib/expenseState';
 import { Amount } from '@/components/ui/Amount';
 import { ExpenseIcon, expenseLabel } from './ExpenseIcon';
 
@@ -29,7 +30,7 @@ export function ExpenseRowCard({
       <Amount
         value={expense.amount}
         base={24}
-        className="ml-3 shrink-0 text-ink"
+        className={cx('ml-3 shrink-0', isCounted(expense) ? 'text-ink' : 'text-ink-4')}
       />
       {pending && (
         <span

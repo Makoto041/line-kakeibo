@@ -22,7 +22,7 @@ interface SettleConfirmSheetProps {
 
 export function SettleConfirmSheet({ open, onClose, vm, settling, onConfirm }: SettleConfirmSheetProps) {
   return (
-    <Sheet open={open} onClose={settling ? () => {} : onClose} title={T.futari.settle}>
+    <Sheet open={open} onClose={onClose} closeDisabled={settling} title={T.futari.settle}>
       <div className="pb-2">
         <div className="flex items-start justify-center gap-[18px] pt-2">
           <Person person={vm.left} />

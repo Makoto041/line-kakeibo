@@ -28,7 +28,7 @@ export function Amount({ value, base, text, className, weight = 700 }: AmountPro
         fontSize: `${px}px`,
         lineHeight: LINE_HEIGHT[base],
         fontWeight: weight,
-        letterSpacing: '-0.01em',
+        letterSpacing: base >= 62 ? 0 : '-0.01em',
         fontVariantNumeric: 'normal',
       }}
     >

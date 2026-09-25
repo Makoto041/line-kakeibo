@@ -27,7 +27,7 @@ import { Sheet } from '@/components/ui/Sheet';
 import { Amount } from '@/components/ui/Amount';
 import { InfoRow, SheetSection } from '@/components/ui/Rows';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
-import { Switch } from '@/components/ui/Switch';
+import { SwitchRow } from '@/components/ui/Switch';
 import { ExpenseIcon, expenseLabel } from './ExpenseIcon';
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
@@ -204,17 +204,14 @@ function DetailBody({
       )}
 
       {/* 予算に含める */}
-      <div className="mt-4 flex min-h-[60px] items-center gap-4 rounded-2xl kb-glass-2 px-4">
-        <span id={includeLabelId} className="min-w-0 flex-1 truncate text-kb-row text-ink">
-          {T.detail.include}
-        </span>
-        <Switch
-          checked={includeValue}
-          onChange={toggleInclude}
-          disabled={!writable || pendingInclude !== null}
-          labelledBy={includeLabelId}
-        />
-      </div>
+      <SwitchRow
+        className="mt-4"
+        label={T.detail.include}
+        labelId={includeLabelId}
+        checked={includeValue}
+        onChange={toggleInclude}
+        disabled={!writable || pendingInclude !== null}
+      />
 
       <div className="mt-4 space-y-3">
         {pending && (

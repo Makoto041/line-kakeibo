@@ -41,7 +41,7 @@
   --kb-ink-soft: #26386a;
   --kb-ink-2: #3f5280;
   --kb-ink-3: #56668c;
-  --kb-ink-4: #6b7b9e;
+  --kb-ink-4: #617296;
   --kb-ink-5: #98a2b5;
   --kb-dots: #7d8ca8;
   --kb-edit-ink: #2b3a6b;
@@ -51,17 +51,18 @@
   --kb-accent-strong: #1a45d6;
   --kb-accent-light: #4b9ffa;
   --kb-accent-grad: linear-gradient(180deg, #3d8cf4 0%, #2468e8 55%, #2b76ec 100%);
-  --kb-accent-grad-seg: linear-gradient(160deg, #56a6fa 0%, #3a86f4 45%, #2263ec 100%);
+  --kb-accent-grad-seg: linear-gradient(160deg, #3b7ff0 0%, #2a6cee 45%, #1f5be6 100%);
   --kb-bar-grad: linear-gradient(90deg, #4b9ffa 0%, #3079f0 60%, #1f5fec 100%);
   --kb-bar-track: #cce4fb;
 
   /* ガラス・カード */
   --kb-glass-fill: rgba(255, 255, 255, 0.5);
-  --kb-glass-fill-2: rgba(255, 255, 255, 0.62);
+  --kb-glass-fill-2: #eff5fb;
   --kb-glass-rim: rgba(255, 255, 255, 0.9);
   --kb-glass-hi: rgba(255, 255, 255, 1);
-  --kb-card: rgba(255, 255, 255, 0.92);
-  --kb-card-2: rgba(255, 255, 255, 0.8);
+  --kb-card: rgba(255, 255, 255, 0.84);
+  --kb-card-2: rgba(255, 255, 255, 0.68);
+  --kb-sheet: rgba(255, 255, 255, 0.92);
   --kb-card-rim: rgba(255, 255, 255, 0.95);
   --kb-divider: rgba(20, 50, 110, 0.08);
   --kb-solid: #f7fafe; /* 透明度を下げる設定のときの面 */
@@ -75,12 +76,13 @@
   --kb-warn-icon: #c06a14;
   --kb-warn-halo: rgba(251, 191, 36, 0.14);
   --kb-ok-bg: #e8f0ee;
-  --kb-ok-ink: #4a7a6c;
+  --kb-ok-ink: #40705f;
   --kb-ok-fill: #5e9383;
   --kb-off-bg: #edf1f6;
   --kb-off-ink: #56668c;
   --kb-off-fill: #98a2b5;
   --kb-danger: #e5484d;
+  --kb-danger-ink: #c8323a;
   --kb-danger-grad: linear-gradient(90deg, #f87171, #dc2626);
 
   /* チップ */
@@ -159,6 +161,7 @@
   --kb-glass-rim: rgba(255, 255, 255, 0.1);
   --kb-glass-hi: rgba(255, 255, 255, 0.08);
   --kb-card: rgba(22, 31, 56, 0.88);
+  --kb-sheet: rgba(22, 31, 56, 0.88);
   --kb-card-2: rgba(22, 31, 56, 0.78);
   --kb-card-rim: rgba(255, 255, 255, 0.1);
   --kb-divider: rgba(255, 255, 255, 0.08);
@@ -178,6 +181,7 @@
   --kb-off-ink: #a9b6d3;
   --kb-off-fill: #5e6a86;
   --kb-danger: #ff6b6e;
+  --kb-danger-ink: #ff6b6e;
 
   --kb-chip-bg: rgba(255, 255, 255, 0.06);
   --kb-chip-rim: rgba(255, 255, 255, 0.1);
@@ -368,14 +372,15 @@
     border: 1px solid var(--kb-chip-rim);
     color: var(--kb-ink);
   }
-  .kb-field:focus {
+  .kb-field:focus,
+  .kb-field:focus-within {
     border-color: var(--kb-accent);
     outline: none;
   }
 
   /* シート */
   .kb-sheet {
-    background: var(--kb-card);
+    background: var(--kb-sheet);
     -webkit-backdrop-filter: blur(24px) saturate(180%);
     backdrop-filter: blur(24px) saturate(180%);
     border: 1px solid var(--kb-card-rim);

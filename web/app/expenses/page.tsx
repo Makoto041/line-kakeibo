@@ -186,12 +186,45 @@ function ExpensesPageContent() {
 
   const apiAvailable = isHouseholdApiConfigured();
   const confirmExpense = useConfirmExpense({ patchLocal });
+  // 展開・たたみ・確認で押したボタンが消えるので、描画のあとで対応するボタンへフォーカスを移す
+  // （キーボードやスイッチ操作で一覧の位置を見失わないように）
+  const pendingFocusRef = useRef<{ kind: "toggle" | "row" | "afterConfirm"; id: string } | null>(null);
   const confirm = async (expense: Expense) => {
     if (isGuest || confirmingId) return;
     setConfirmingId(expense.id);
     await confirmExpense(expense.id);
+    pendingFocusRef.current = { kind: "afterConfirm", id: expense.id };
     setConfirmingId(null);
   };
+
+  const expandRow = (id: string) => {
+    pendingFocusRef.current = { kind: "toggle", id };
+    setExpandedId(id);
+  };
+  const collapseRow = (id: string) => {
+    pendingFocusRef.current = { kind: "row", id };
+    setExpandedId(COLLAPSED);
+  };
+  useEffect(() => {
+    const target = pendingFocusRef.current;
+    if (!target) return;
+    pendingFocusRef.current = null;
+    const byId = (domId: string) => document.getElementById(domId) as HTMLElement | null;
+    if (target.kind === "toggle") {
+      byId(`expense-${target.id}-toggle`)?.focus();
+    } else if (target.kind === "row") {
+      byId(`expense-${target.id}`)?.focus();
+    } else {
+      // 確認ボタンが消えてフォーカスが外れたときだけ動かす
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      const next =
+        byId(`expense-${target.id}-toggle`) ??
+        (shownExpandedId ? byId(`expense-${shownExpandedId}-toggle`) : null) ??
+        byId(`expense-${target.id}`);
+      next?.focus();
+    }
+  });
 
   const header = (
     <ScreenHeader
@@ -326,14 +359,14 @@ function ExpensesPageContent() {
                       closeAll();
                       setExpenseSheet({ kind: "edit", id: expense.id });
                     }}
-                    onCollapse={() => setExpandedId(COLLAPSED)}
+                    onCollapse={() => collapseRow(expense.id)}
                   />
                 ) : (
                   <ExpenseRowCard
                     key={expense.id}
                     expense={expense}
                     pending={pending}
-                    onExpand={() => setExpandedId(expense.id)}
+                    onExpand={() => expandRow(expense.id)}
                   />
                 );
               })}

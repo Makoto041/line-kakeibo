@@ -33,7 +33,7 @@ export function MonthStepper({ label, canShift, onShift, onOpenPeriod }: MonthSt
           type="button"
           aria-haspopup="dialog"
           onClick={onOpenPeriod}
-          className="mx-auto max-w-full truncate rounded-full px-3 py-1 text-center text-kb-month text-ink transition-opacity active:opacity-70"
+          className="mx-auto h-12 max-w-full truncate rounded-full px-3 text-center text-kb-month text-ink transition-opacity active:opacity-70"
         >
           {label}
         </button>
