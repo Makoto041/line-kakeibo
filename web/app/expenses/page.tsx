@@ -22,8 +22,26 @@ import {
   Link2 as LinkIcon,
   RefreshCw,
   ExternalLink,
+  Search,
+  CircleCheck,
+  Clock,
+  Loader2,
 } from "lucide-react";
-import { useLineAuth, useExpenses, useGroupMembers } from "../../lib/hooks";
+import { useLineAuth, useExpenses, useGroupMembers, useHousehold, invalidateStatsCache } from "../../lib/hooks";
+import {
+  isPending,
+  splitChip,
+  countPending,
+  parseSegment,
+  matchesSegment,
+  matchesQuery,
+  canClientWrite,
+  canClientDelete,
+  canServerConfirm,
+  type Segment,
+} from "../../lib/expenseState";
+import { validateEditForm, buildEditUpdate, hasEditChanges } from "../../lib/expenseEdit";
+import { confirmExpense, isHouseholdApiConfigured, householdErrorCode } from "../../lib/householdApi";
 import type { Expense } from "../../lib/hooks";
 import PreviewModeBanner from "../../components/PreviewModeBanner";
 import GuestGuide from "../../components/GuestGuide";
@@ -73,6 +91,12 @@ function ExpensesPageContent() {
   // 本人特定は検証済みクレームの lineId のみで行う（URL の lineId は信用しない）。
   const searchParams = useSearchParams();
   const editExpenseId = searchParams.get('edit');
+  // ?filter=pending / advance（ホームの「要確認」から開いたとき）
+  const [segment, setSegment] = useState<Segment>(() => parseSegment(searchParams.get('filter')));
+  const [query, setQuery] = useState("");
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // データ取得は検証済み lineId クレームでのみ行う
   const effectiveUserId = lineId;
@@ -145,8 +169,11 @@ function ExpensesPageContent() {
 
   // Don't start fetching expenses until we've resolved the edit expense's month (if applicable)
   const shouldFetch = editExpenseId ? editMonthResolved : true;
-  const { expenses, loading, error, updateExpense, deleteExpense } =
+  const { expenses, loading, error, updateExpense, deleteExpense, patchLocal } =
     useExpenses(shouldFetch ? effectiveUserId : null, 0, 500, dateRange.startDate);
+  // 書き込み可否（所属の読み込み中は null = 許可扱い。最終判断はルール・サーバー）
+  const { activeGroupIds } = useHousehold(effectiveUserId);
+  const apiAvailable = isHouseholdApiConfigured();
   const [filter, setFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"date" | "amount">("date");
   const [editingExpense, setEditingExpense] = useState<string | null>(null);
@@ -396,7 +423,11 @@ function ExpensesPageContent() {
     );
   }
 
+  const pendingCount = countPending(expenses);
+
   const filteredExpenses = expenses.filter((expense) => {
+    if (!matchesSegment(expense, segment)) return false;
+    if (!matchesQuery(expense, query)) return false;
     if (filter === "all") return true;
     if (filter === "included") return expense.includeInTotal;
     if (filter === "excluded") return !expense.includeInTotal;
@@ -462,6 +493,7 @@ function ExpensesPageContent() {
   );
 
   const handleEditStart = (expense: Expense) => {
+    setEditError(null);
     setEditingExpense(expense.id);
     const formData = {
       amount: expense.amount,
@@ -477,6 +509,7 @@ function ExpensesPageContent() {
   };
 
   const handleEditCancel = () => {
+    setEditError(null);
     setEditingExpense(null);
     setEditForm({
       amount: 0,
@@ -493,17 +526,53 @@ function ExpensesPageContent() {
   closeDrawerRef.current = handleEditCancel;
 
   const handleEditSave = async (id: string) => {
+    const original = expenses.find((e) => e.id === id);
+    if (!original) return;
+    // 入力チェック（変更した項目だけ）と、変更した項目だけを送る差分。精算済みは金額・日付・支払者を変えない
+    const invalid = validateEditForm(editForm, original);
+    if (invalid) {
+      setEditError(invalid.message);
+      return;
+    }
+    const update = buildEditUpdate(editForm, original);
+    if (!hasEditChanges(update)) {
+      setEditingExpense(null);
+      return;
+    }
+    if (savingEdit) return;
+    setSavingEdit(true);
     try {
-      const updateData = {
-        ...editForm,
-        updatedAt: new Date(),
-      };
-
-      await updateExpense(id, updateData);
+      await updateExpense(id, { ...update, updatedAt: new Date() });
+      invalidateStatsCache();
+      setEditError(null);
       setEditingExpense(null);
     } catch (error) {
       console.error("保存エラー:", error);
-      alert(`保存に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
+      setEditError("保存に失敗しました。権限がないか、通信に失敗しました");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // 要確認の支出を確認する（LINE の OK ボタンと同じ処理をサーバーで行う）
+  const handleConfirm = async (expense: Expense) => {
+    setConfirmingId(expense.id);
+    try {
+      const { advanceBy, ...patch } = await confirmExpense(expense.id);
+      patchLocal(expense.id, { ...patch, ...(advanceBy ? { advanceBy } : {}) });
+      // ホームの集計（予算に計上される額）が古いまま出ないように
+      invalidateStatsCache();
+    } catch (error) {
+      const code = householdErrorCode(error);
+      alert(
+        code === "forbidden"
+          ? "この支出を確認する権限がありません"
+          : code === "not_found"
+          ? "支出が見つかりません（削除された可能性があります）"
+          : "確認に失敗しました。時間をおいてやり直してください"
+      );
+    } finally {
+      setConfirmingId(null);
     }
   };
 
@@ -541,6 +610,7 @@ function ExpensesPageContent() {
     if (confirm("この支出を削除しますか？")) {
       try {
         await deleteExpense(id);
+        invalidateStatsCache();
       } catch (error) {
         console.error("Error deleting expense:", error);
         alert("エラーが発生しました");
@@ -561,6 +631,48 @@ function ExpensesPageContent() {
             between months even when the current period has no expenses.
             Filter/sort and totals only appear once there is data. */}
         <div className="glass mb-4 rounded-2xl p-4 shadow-glass">
+          {/* 状態で絞り込み（すべて / 要確認 / 立替）と検索 */}
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div role="group" aria-label="状態で絞り込み" className="flex gap-1 rounded-xl bg-fg/[0.04] p-1">
+              {([
+                { key: "all", label: "すべて" },
+                { key: "pending", label: "要確認" },
+                { key: "advance", label: "立替" },
+              ] as const).map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={segment === key}
+                  onClick={() => setSegment(key)}
+                  className={`inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors sm:flex-none ${
+                    segment === key ? "bg-accent text-accent-fg shadow-sm" : "text-muted hover:bg-fg/5 hover:text-fg"
+                  }`}
+                >
+                  {label}
+                  {key === "pending" && pendingCount > 0 && (
+                    <span
+                      className={`rounded-full px-1.5 text-xs tabular-nums ${
+                        segment === key ? "bg-white/25" : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                      }`}
+                    >
+                      {pendingCount}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+            <label className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="内容・カテゴリで検索"
+                aria-label="検索"
+                className="w-full rounded-lg border border-line bg-card py-2 pl-9 pr-3 text-base text-fg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring sm:text-sm"
+              />
+            </label>
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
             {/* Period navigation (always) */}
             <div className="flex items-center gap-1.5">
@@ -803,6 +915,29 @@ function ExpensesPageContent() {
                             </span>
                           );
                         })()}
+                        {isPending(expense) && (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                            <Clock className="h-3 w-3" />
+                            要確認
+                          </span>
+                        )}
+                        {(() => {
+                          const chip = splitChip(expense);
+                          const label = { shared: "共同費", personal: "個人", advance: "立替", settled: "精算済み" }[chip];
+                          const tone = {
+                            shared: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
+                            personal: "bg-fg/5 text-muted",
+                            advance: "bg-violet-500/12 text-violet-600 dark:text-violet-400",
+                            settled: "bg-fg/5 text-muted",
+                          }[chip];
+                          // 要確認のうちは区分がまだ決まっていないので出さない
+                          return isPending(expense) ? null : (
+                            <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${tone}`}>{label}</span>
+                          );
+                        })()}
+                        {expense.inputSource === 'recurring' && (
+                          <span className="rounded-md bg-fg/5 px-2 py-0.5 text-xs font-medium text-muted">固定費</span>
+                        )}
                         {expense.lineGroupId && (
                           <span className="inline-flex items-center gap-1 rounded-md bg-sky-500/12 px-2 py-0.5 text-xs font-medium text-sky-600 dark:text-sky-400">
                             <Smartphone className="h-3 w-3" />
@@ -854,7 +989,30 @@ function ExpensesPageContent() {
                         className="flex flex-wrap gap-2 border-t border-line pt-3"
                         style={{ position: "relative", zIndex: 10 }}
                       >
+                        {/* 要確認の支出を確認（LINE の OK と同じ。サーバー経由） */}
+                        {isPending(expense) && !isGuest && apiAvailable && canServerConfirm(expense, lineId, activeGroupIds) && (
+                          <button
+                            type="button"
+                            disabled={confirmingId === expense.id}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleConfirm(expense);
+                            }}
+                            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:opacity-90 disabled:opacity-60"
+                            style={{ pointerEvents: "auto" }}
+                          >
+                            {confirmingId === expense.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <CircleCheck className="h-4 w-4" />
+                            )}
+                            確認
+                          </button>
+                        )}
+
                         {/* 合計に含める/除外する切り替えボタン */}
+                        {canClientWrite(expense, lineId, activeGroupIds) && (<>
                         <button
                           type="button"
                           onClick={(e) => {
@@ -886,6 +1044,7 @@ function ExpensesPageContent() {
                           <Pencil className="h-4 w-4" />
                           編集
                         </button>
+                        </>)}
 
                         {/* レシート: 編集の隣に並べて発見しやすく。新規タブではなくアプリ内でプレビュー */}
                         {expense.receiptUrl ? (
@@ -916,6 +1075,7 @@ function ExpensesPageContent() {
                           </a>
                         )}
 
+                        {canClientDelete(expense, lineId, activeGroupIds) && (
                         <button
                           type="button"
                           onClick={(e) => {
@@ -929,6 +1089,7 @@ function ExpensesPageContent() {
                           <Trash2 className="h-4 w-4" />
                           削除
                         </button>
+                        )}
                       </div>
                     </div>
                 </div>
@@ -984,6 +1145,7 @@ function ExpensesPageContent() {
                       name="amount"
                       value={editForm.amount}
                       onChange={handleEditInputChange}
+                      disabled={editingExpenseData?.status === 'advance_settled'}
                       className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                       placeholder="1000"
                     />
@@ -996,6 +1158,7 @@ function ExpensesPageContent() {
                       name="date"
                       value={editForm.date}
                       onChange={handleEditInputChange}
+                      disabled={editingExpenseData?.status === 'advance_settled'}
                       className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </div>
@@ -1023,6 +1186,7 @@ function ExpensesPageContent() {
                       name="payerId"
                       value={editForm.payerId}
                       onChange={handleEditInputChange}
+                      disabled={editingExpenseData?.status === 'advance_settled'}
                       className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       {(() => {
@@ -1077,11 +1241,23 @@ function ExpensesPageContent() {
                   <span className="ml-3 text-sm font-medium text-fg">合計に含める</span>
                 </label>
 
+                {editingExpenseData?.status === 'advance_settled' && (
+                  <p className="rounded-lg bg-fg/[0.04] p-3 text-xs text-muted">
+                    精算済みの支出は、金額・日付・支払い者を変更できません
+                  </p>
+                )}
+                {editError && (
+                  <p role="alert" className="rounded-lg border border-rose-500/20 bg-rose-500/[0.08] p-3 text-sm text-rose-700 dark:text-rose-300">
+                    {editError}
+                  </p>
+                )}
+
                 <div className="flex gap-3 pt-2">
                   <button
                     type="button"
                     onClick={() => editingExpense && handleEditSave(editingExpense)}
-                    className="flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-3 text-sm font-medium text-accent-fg transition-colors hover:opacity-90"
+                    disabled={savingEdit}
+                    className="flex flex-1 disabled:opacity-60 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-3 text-sm font-medium text-accent-fg transition-colors hover:opacity-90"
                   >
                     <Save className="h-4 w-4" />
                     保存

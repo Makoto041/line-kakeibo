@@ -15,7 +15,7 @@ export function BottomTabBar({ pathname, hrefFor }: BottomTabBarProps) {
       aria-label="メインナビゲーション"
       className="md:hidden fixed inset-x-0 bottom-0 z-40 glass-bar border-t border-line/60 pb-safe"
     >
-      <ul className="grid grid-cols-3">
+      <ul className="grid grid-cols-4">
         {NAV_ITEMS.map(({ path, label, Icon }) => {
           const active = isActivePath(pathname, path);
           return (

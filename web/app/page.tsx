@@ -13,8 +13,11 @@ import {
   Sparkles,
   Inbox,
   AlertTriangle,
+  Clock,
 } from 'lucide-react';
-import { useLineAuth, useMonthlyStats, useBudgetConfig, ExpenseStats, BudgetConfig } from '../lib/hooks';
+import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses, ExpenseStats, BudgetConfig } from '../lib/hooks';
+import { countPending } from '../lib/expenseState';
+import Link from 'next/link';
 import { CategoryPieChart, DailyLineChart } from '../components/Charts';
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
 import { getCategoryVisual } from '../lib/categoryVisuals';
@@ -322,6 +325,11 @@ export default function Dashboard() {
     prevRange.endDate,
   );
 
+  // 要確認の件数（支出一覧と同じ取得条件なので、一覧を開いたときはキャッシュが使われる）
+  // 期間の設定を読み終えてから取得する（既定の期間で一度取ってから取り直さないように）
+  const { expenses: periodExpenses } = useExpenses(settingsLoading ? null : lineId, 0, 500, effectiveRange.startDate);
+  const pendingCount = countPending(periodExpenses);
+
   const navigateMonth = (dir: 'prev' | 'next') => {
     if (dateSettings.mode === 'custom') return;
     setCurrentDate((prev) => (dir === 'prev' ? prev.subtract(1, 'month') : prev.add(1, 'month')));
@@ -421,6 +429,18 @@ export default function Dashboard() {
           </button>
         </div>
       </GlassCard>
+
+      {!isGuest && pendingCount > 0 && (
+        <Link
+          href="/expenses?filter=pending"
+          className="mt-4 flex items-center gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-amber-800 transition-colors hover:bg-amber-500/15 dark:text-amber-200"
+        >
+          <Clock className="h-5 w-5 shrink-0" />
+          <span className="flex-1 text-sm font-semibold">要確認の支出が {pendingCount}件 あります</span>
+          <span className="text-xs font-medium">確認する</span>
+          <ChevronRight className="h-4 w-4 shrink-0" />
+        </Link>
+      )}
 
       {statsLoading ? (
         <div className="py-16 text-center">

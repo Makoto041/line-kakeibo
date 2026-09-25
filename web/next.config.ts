@@ -21,6 +21,10 @@ const authEndpointOrigin = originOf(
   process.env.NEXT_PUBLIC_AUTH_ENDPOINT,
   "https://us-central1-line-kakeibo-0410.cloudfunctions.net/api/auth/line"
 );
+// bot の /household/*（確認・精算。web/lib/householdApi.ts）。未設定なら認証エンドポイントと同じ origin
+const householdApiOrigin = process.env.NEXT_PUBLIC_API_BASE?.trim()
+  ? originOf(process.env.NEXT_PUBLIC_API_BASE, authEndpointOrigin)
+  : authEndpointOrigin;
 // Firebase Auth がモバイルブラウザで先読みする認証用 iframe（web/lib/firebase.ts の authDomain）
 const firebaseAuthOrigin = originOf(
   process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
@@ -39,7 +43,7 @@ const firebaseAuthOrigin = originOf(
  * - LIFF SDK（npm 同梱）: api.line.me / access.line.me、liffsdk.line-scdn.net（翻訳データ）、
  *   static.line-scdn.net（拡張スクリプト・UI）、uts-front.line-apps.com（SDK の計測）、
  *   liff-subwindow.line.me（サブウィンドウ用 iframe）
- * - bot の `api` 関数（LIFF ログイン → カスタムトークン発行）
+ * - bot の `api` 関数（LIFF ログイン → カスタムトークン発行、確認・精算の /household/*）
  * - フォントは next/font がビルド時に自己ホストするため Google Fonts への通信は無い
  * - Next.js はインラインスクリプトを使うため script-src に 'unsafe-inline' が必要（nonce 化は別途）
  *
@@ -74,6 +78,7 @@ const cspDirectives: Record<string, string[]> = {
     "https://securetoken.googleapis.com",
     "https://firebasestorage.googleapis.com",
     authEndpointOrigin,
+    householdApiOrigin,
     "https://api.line.me",
     "https://access.line.me",
     "https://liffsdk.line-scdn.net",
