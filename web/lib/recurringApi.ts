@@ -3,6 +3,7 @@
 // 固定費（家賃・光熱費など）の API クライアント。bot の /household/recurring を Firebase の ID トークン付きで呼ぶ。
 // 固定費の文書はクライアントから直接読み書きできない（Firestore ルールの既定の拒否）ため、必ずここを通す。
 import { auth, ensureFirebaseInitialized } from './firebase';
+import { deriveApiBase } from './householdContract';
 
 export type RecurringPayment = 'shared' | 'advance';
 
@@ -26,16 +27,8 @@ export interface RecurringMember {
 
 export type RecurringInput = Omit<RecurringItem, 'id' | 'lastPostedMonth'>;
 
-const DEFAULT_AUTH_ENDPOINT = 'https://us-central1-line-kakeibo-0410.cloudfunctions.net/api/auth/line';
-
-/** API のベース URL（/auth/line と同じ関数に載っている） */
-function apiBase(): string {
-  // NEXT_PUBLIC_* はビルド時に埋め込まれるため、参照は字句どおりに書く
-  const explicit = (process.env.NEXT_PUBLIC_API_BASE ?? '').trim();
-  if (explicit) return explicit.replace(/\/+$/, '');
-  const authEndpoint = (process.env.NEXT_PUBLIC_AUTH_ENDPOINT ?? '').trim() || DEFAULT_AUTH_ENDPOINT;
-  return authEndpoint.replace(/\/auth\/line\/?$/, '');
-}
+// NEXT_PUBLIC_* はビルド時に埋め込まれるため、参照は字句どおりに書く（確認・精算の API と同じ導き方）
+const API_BASE = deriveApiBase(process.env.NEXT_PUBLIC_API_BASE, process.env.NEXT_PUBLIC_AUTH_ENDPOINT);
 
 export class RecurringApiError extends Error {
   readonly status: number;
@@ -57,11 +50,13 @@ export function recurringErrorMessage(error: unknown): string {
     if (error.status === 409 && error.code === 'too_many') return '固定費は30件まで登録できます';
     if (error.status === 400) return '入力内容を確認してください';
     if (error.status === 429) return '操作が多すぎます。少し待ってからやり直してください';
+    if (error.code === 'unavailable') return '固定費の機能は現在使えません（サーバーの設定が必要です）';
   }
   return '通信に失敗しました。時間をおいてやり直してください';
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (!API_BASE) throw new RecurringApiError(503, 'unavailable');
   ensureFirebaseInitialized();
   const user = auth?.currentUser;
   if (!user || user.isAnonymous) throw new RecurringApiError(401, 'unauthenticated');
@@ -71,7 +66,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 25_000);
     try {
-      return await fetch(`${apiBase()}/household${path}`, {
+      return await fetch(`${API_BASE}/household${path}`, {
         method,
         headers: {
           Authorization: `Bearer ${token}`,

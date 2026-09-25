@@ -27,7 +27,7 @@ import {
   Clock,
   Loader2,
 } from "lucide-react";
-import { useLineAuth, useExpenses, useGroupMembers, useHousehold } from "../../lib/hooks";
+import { useLineAuth, useExpenses, useGroupMembers, useHousehold, invalidateStatsCache } from "../../lib/hooks";
 import {
   isPending,
   splitChip,
@@ -96,6 +96,7 @@ function ExpensesPageContent() {
   const [query, setQuery] = useState("");
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // データ取得は検証済み lineId クレームでのみ行う
   const effectiveUserId = lineId;
@@ -538,13 +539,18 @@ function ExpensesPageContent() {
       setEditingExpense(null);
       return;
     }
+    if (savingEdit) return;
+    setSavingEdit(true);
     try {
       await updateExpense(id, { ...update, updatedAt: new Date() });
+      invalidateStatsCache();
       setEditError(null);
       setEditingExpense(null);
     } catch (error) {
       console.error("保存エラー:", error);
       setEditError("保存に失敗しました。権限がないか、通信に失敗しました");
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -554,6 +560,8 @@ function ExpensesPageContent() {
     try {
       const { advanceBy, ...patch } = await confirmExpense(expense.id);
       patchLocal(expense.id, { ...patch, ...(advanceBy ? { advanceBy } : {}) });
+      // ホームの集計（予算に計上される額）が古いまま出ないように
+      invalidateStatsCache();
     } catch (error) {
       const code = householdErrorCode(error);
       alert(
@@ -602,6 +610,7 @@ function ExpensesPageContent() {
     if (confirm("この支出を削除しますか？")) {
       try {
         await deleteExpense(id);
+        invalidateStatsCache();
       } catch (error) {
         console.error("Error deleting expense:", error);
         alert("エラーが発生しました");
@@ -1247,7 +1256,8 @@ function ExpensesPageContent() {
                   <button
                     type="button"
                     onClick={() => editingExpense && handleEditSave(editingExpense)}
-                    className="flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-3 text-sm font-medium text-accent-fg transition-colors hover:opacity-90"
+                    disabled={savingEdit}
+                    className="flex flex-1 disabled:opacity-60 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-3 text-sm font-medium text-accent-fg transition-colors hover:opacity-90"
                   >
                     <Save className="h-4 w-4" />
                     保存

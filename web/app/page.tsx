@@ -326,7 +326,8 @@ export default function Dashboard() {
   );
 
   // 要確認の件数（支出一覧と同じ取得条件なので、一覧を開いたときはキャッシュが使われる）
-  const { expenses: periodExpenses } = useExpenses(lineId, 0, 500, effectiveRange.startDate);
+  // 期間の設定を読み終えてから取得する（既定の期間で一度取ってから取り直さないように）
+  const { expenses: periodExpenses } = useExpenses(settingsLoading ? null : lineId, 0, 500, effectiveRange.startDate);
   const pendingCount = countPending(periodExpenses);
 
   const navigateMonth = (dir: 'prev' | 'next') => {

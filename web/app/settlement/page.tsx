@@ -6,7 +6,7 @@ import React, { useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 import { ArrowRight, CircleCheck, HandCoins, Loader2, RefreshCw, Users } from 'lucide-react';
 import PreviewModeBanner from '../../components/PreviewModeBanner';
-import { useHousehold, useLineAuth, useSettlement, patchCachedExpenses } from '../../lib/hooks';
+import { useHousehold, useLineAuth, useSettlement, patchCachedExpenses, invalidateStatsCache } from '../../lib/hooks';
 import { householdErrorCode, isHouseholdApiConfigured, settle } from '../../lib/householdApi';
 import { buildSettlementViewModel, clearedSettlement, groupSettlementItems } from '../../lib/settlementView';
 import { getCategoryVisual } from '../../lib/categoryVisuals';
@@ -70,6 +70,7 @@ export default function SettlementPage() {
       if (outcome.ok) {
         // ほかの画面（支出の一覧）が古い状態を出さないよう、読み込み済みの一覧も精算済みにする
         patchCachedExpenses(data.expenseIds, { status: 'advance_settled' });
+        invalidateStatsCache();
         settlementState.setData(clearedSettlement(data));
         settlementState.refetch();
         setConfirmOpen(false);
@@ -145,6 +146,13 @@ export default function SettlementPage() {
             <RefreshCw className="h-4 w-4" />
             再読み込み
           </button>
+        </div>
+      ) : !settlementState.available ? (
+        <div className="glass rounded-2xl p-6 text-center shadow-glass">
+          <span className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-fg/5 text-muted">
+            <HandCoins className="h-6 w-6" />
+          </span>
+          <p className="text-sm text-muted">精算の機能は現在使えません。LINEの「精算」から記録してください</p>
         </div>
       ) : !household ? (
         <div className="glass rounded-2xl p-6 text-center shadow-glass">

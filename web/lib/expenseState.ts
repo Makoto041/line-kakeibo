@@ -189,9 +189,9 @@ export function canClientWrite(
   activeGroupIds: readonly string[] | null
 ): boolean {
   if (!me) return false;
-  if (isPersonalExpense(e)) return e.lineId === me;
-  // lineGroupId だけを持つ旧形式は PR #172 のルールで書けない
-  if (!e.groupId) return false;
+  // 所有者はいつでも書ける（ルールの ownsDoc。lineGroupId だけの旧形式・脱退後の自分の支出も含む）
+  if (e.lineId === me) return true;
+  if (isPersonalExpense(e) || !e.groupId) return false;
   return isActiveMemberOf(e.groupId, activeGroupIds);
 }
 
@@ -202,11 +202,12 @@ export function canClientDelete(
   activeGroupIds: readonly string[] | null
 ): boolean {
   if (!me || isSettled(e)) return false;
-  if (isPersonalExpense(e)) return e.lineId === me;
-  if (!e.groupId) return false;
+  // 所有者はいつでも削除できる（ルールの ownsDoc）
+  if (e.lineId === me) return true;
+  if (isPersonalExpense(e) || !e.groupId) return false;
   return (
     isActiveMemberOf(e.groupId, activeGroupIds) &&
-    (e.lineId === me || e.lineId === GMAIL_SYSTEM_LINE_ID || e.lineId === RECURRING_SYSTEM_LINE_ID)
+    (e.lineId === GMAIL_SYSTEM_LINE_ID || e.lineId === RECURRING_SYSTEM_LINE_ID)
   );
 }
 
@@ -216,7 +217,11 @@ export function canServerConfirm(
   me: string | null,
   activeGroupIds: readonly string[] | null
 ): boolean {
-  return canClientWrite(e, me, activeGroupIds);
+  // サーバー（authorizeExpenseWrite）はルールより厳しい: グループ支出は有効メンバーのみ、旧形式は不可
+  if (!me) return false;
+  if (isPersonalExpense(e)) return e.lineId === me;
+  if (!e.groupId) return false;
+  return isActiveMemberOf(e.groupId, activeGroupIds);
 }
 
 // ---- 検索・絞り込み・集計（検索シート） -------------------------------------------
