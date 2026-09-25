@@ -344,7 +344,7 @@ export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet
                 onChange={(e) =>
                   setBudgetConfig((prev) => ({ ...prev, alertThreshold: parseInt(e.target.value) }))
                 }
-                className="h-2 flex-1 cursor-pointer accent-[var(--kb-accent)]"
+                className="h-11 flex-1 cursor-pointer accent-[var(--kb-accent)]"
               />
               <span className="w-12 text-right text-[16px] font-semibold text-ink">
                 {budgetConfig.alertThreshold}%

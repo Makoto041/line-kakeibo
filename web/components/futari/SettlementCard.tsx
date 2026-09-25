@@ -68,7 +68,7 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
       </div>
       <p className="mt-2 text-center text-kb-note text-ink-2">{T.futari.half}</p>
 
-      <div className="mx-1 mt-7 border-t border-divider">
+      <div className="mx-1 mt-8 border-t border-divider">
         {!busy &&
           vm.rows.map((row) => (
             <div key={row.lineId} className="flex h-[68px] items-center gap-3 border-b border-divider px-0.5">
@@ -97,7 +97,7 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
         aria-haspopup="dialog"
         disabled={!vm.canSettle || busy}
         onClick={onSettle}
-        className="mt-1"
+        className="mt-2"
       >
         {T.futari.settle}
       </PrimaryButton>

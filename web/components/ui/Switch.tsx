@@ -24,7 +24,7 @@ export function Switch({ checked, onChange, disabled, label, labelledBy, classNa
       onClick={() => onChange(!checked)}
       className={cx(
         'relative inline-flex h-[31px] w-[51px] shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-40',
-        checked ? 'bg-accent' : 'bg-ink/15',
+        checked ? 'bg-accent' : 'bg-ink/30',
         className
       )}
     >

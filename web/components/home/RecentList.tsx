@@ -86,6 +86,7 @@ export function ExpenseListRow({
         weight={600}
         className={cx('ml-3 shrink-0', isCounted(expense) ? 'text-ink' : 'text-ink-4')}
       />
+      {!isCounted(expense) && <span className="sr-only">{T.expenses.uncounted}</span>}
     </button>
   );
 }

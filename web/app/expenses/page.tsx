@@ -188,13 +188,24 @@ function ExpensesPageContent() {
   const confirmExpense = useConfirmExpense({ patchLocal });
   // 展開・たたみ・確認で押したボタンが消えるので、描画のあとで対応するボタンへフォーカスを移す
   // （キーボードやスイッチ操作で一覧の位置を見失わないように）
-  const pendingFocusRef = useRef<{ kind: "toggle" | "row" | "afterConfirm"; id: string } | null>(null);
+  const pendingFocusRef = useRef<{
+    kind: "toggle" | "row" | "afterConfirm" | "afterDelete";
+    id: string;
+  } | null>(null);
   const confirm = async (expense: Expense) => {
     if (isGuest || confirmingId) return;
     setConfirmingId(expense.id);
     await confirmExpense(expense.id);
     pendingFocusRef.current = { kind: "afterConfirm", id: expense.id };
     setConfirmingId(null);
+  };
+
+  // 詳細シートから削除すると開いたボタンごと消えるので、隣の行へフォーカスを移す
+  const deleteAndKeepPlace = async (id: string) => {
+    const index = visible.findIndex((e) => e.id === id);
+    const neighbor = index >= 0 ? (visible[index + 1] ?? visible[index - 1]) : undefined;
+    await deleteExpense(id);
+    pendingFocusRef.current = { kind: "afterDelete", id: neighbor?.id ?? "" };
   };
 
   const expandRow = (id: string) => {
@@ -208,8 +219,18 @@ function ExpensesPageContent() {
   useEffect(() => {
     const target = pendingFocusRef.current;
     if (!target) return;
-    pendingFocusRef.current = null;
     const byId = (domId: string) => document.getElementById(domId) as HTMLElement | null;
+    if (target.kind === "afterDelete") {
+      const active = document.activeElement;
+      // シートが閉じ切るまで待つ（フォーカスがシートの中にある間は動かさない）
+      if (active && active.closest('[role="dialog"]')) return;
+      pendingFocusRef.current = null;
+      if (active && active !== document.body) return;
+      const next = target.id ? (byId(`expense-${target.id}-toggle`) ?? byId(`expense-${target.id}`)) : null;
+      (next ?? document.querySelector<HTMLElement>('.kb-seg [aria-pressed="true"]'))?.focus();
+      return;
+    }
+    pendingFocusRef.current = null;
     if (target.kind === "toggle") {
       byId(`expense-${target.id}-toggle`)?.focus();
     } else if (target.kind === "row") {
@@ -291,7 +312,7 @@ function ExpensesPageContent() {
         household={householdState.household}
         activeGroupIds={householdState.activeGroupIds}
         updateExpense={updateExpense}
-        deleteExpense={deleteExpense}
+        deleteExpense={deleteAndKeepPlace}
         patchLocal={patchLocal}
         refetch={refetchExpenses}
       />
@@ -318,7 +339,7 @@ function ExpensesPageContent() {
       {sheets}
       {segments}
 
-      <main className="pb-2">
+      <div className="pb-2">
         {error && list.length === 0 ? (
           <div className="flex justify-center py-12">
             <IconButton label={T.aria.retry} icon={RotateCw} onClick={refetchExpenses} />
@@ -332,7 +353,7 @@ function ExpensesPageContent() {
           groups.map((group) => (
             <section key={group.date || "all"} className="[&>*:nth-child(2)]:!mt-3">
               {group.date ? (
-                <h2 className="mx-6 mt-[33px] text-kb-group text-ink-soft">{relativeDateLabel(group.date, today)}</h2>
+                <h2 className="mx-6 mt-[36px] text-kb-group text-ink-soft">{relativeDateLabel(group.date, today)}</h2>
               ) : (
                 <span aria-hidden="true" className="block h-[21px]" />
               )}
@@ -373,7 +394,7 @@ function ExpensesPageContent() {
             </section>
           ))
         )}
-      </main>
+      </div>
     </>
   );
 }

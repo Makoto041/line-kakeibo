@@ -375,6 +375,14 @@
   .kb-field:focus,
   .kb-field:focus-within {
     border-color: var(--kb-accent);
+  }
+  /* キーボード操作時は枠ごとリングを出す（中の入力欄は枠がリングを持つので線を消す） */
+  .kb-field:focus-visible,
+  .kb-field:has(:focus-visible) {
+    outline: 2px solid var(--kb-accent);
+    outline-offset: 2px;
+  }
+  .kb-field :focus-visible {
     outline: none;
   }
 
