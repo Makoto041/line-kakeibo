@@ -84,11 +84,11 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
           aria-haspopup="dialog"
           disabled={!vm.canOpenBreakdown}
           onClick={onOpenBreakdown}
-          className="flex h-16 w-full items-center px-1.5 text-left transition-opacity active:opacity-70 disabled:opacity-40"
+          className="flex h-16 w-full items-center pl-0.5 text-left transition-opacity active:opacity-70 disabled:opacity-40"
         >
-          <DocLines size={36} strokeWidth={1.6} className="-mx-0.5 shrink-0 text-ink" />
-          <span className="ml-[22px] min-w-0 flex-1 truncate text-kb-sum-label text-ink-soft">{T.futari.breakdown}</span>
-          <ChevronRight size={24} strokeWidth={2} aria-hidden="true" className="shrink-0 text-ink-4" />
+          <DocLines size={32} strokeWidth={1.9} className="-mr-1 shrink-0 text-ink" />
+          <span className="ml-6 min-w-0 flex-1 truncate text-kb-sum-label text-ink-soft">{T.futari.breakdown}</span>
+          <ChevronRight size={24} strokeWidth={2} aria-hidden="true" className="-mr-1.5 shrink-0 text-ink-4" />
         </button>
       </div>
 

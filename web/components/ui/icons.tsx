@@ -80,3 +80,15 @@ export function UsersFilled(props: IconProps) {
     </Svg>
   );
 }
+
+/** UsersFilled と同じ並びの線画（2 人とも丸い頭。ナビ「ふたり」の未選択） */
+export function UsersOutline(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="9" cy="7.5" r="3.6" />
+      <path d="M2.8 20.2V19a5 5 0 0 1 5-5h2.4a5 5 0 0 1 5 5v1.2" />
+      <circle cx="16.6" cy="8" r="3" />
+      <path d="M18 14.1a4.4 4.4 0 0 1 3.9 4.4v1.7" />
+    </Svg>
+  );
+}

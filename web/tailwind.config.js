@@ -80,7 +80,7 @@ module.exports = {
         'kb-amt-lg': kbText('24px', '1.2', '700', '-0.01em'),
         'kb-amt': kbText('22px', '1.2', '600', '-0.01em'),
         'kb-pct': kbText('16px', '1.25', '500'),
-        'kb-sub': kbText('16px', '1.4', '400'),
+        'kb-sub': kbText('17px', '1.4', '400'),
         'kb-banner': kbText('18px', '1.3', '600'),
         'kb-section': kbText('19px', '1.35', '500'),
         'kb-group': kbText('17px', '1.3', '500'),

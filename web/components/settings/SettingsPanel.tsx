@@ -88,7 +88,7 @@ interface SettingsPanelProps {
   variant?: 'sheet' | 'page';
 }
 
-const FIELD_INPUT = 'min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-ink-5';
+const FIELD_INPUT = 'min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-ink-4';
 
 export function SettingsPanel({ initialTab = 'budget', onSaved, variant = 'sheet' }: SettingsPanelProps) {
   const { lineId, settled } = useLineAuth();

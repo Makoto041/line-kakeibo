@@ -31,13 +31,19 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
+const THEME_BOOT = `try{var s=localStorage.getItem("theme-preference");var d=s==="dark"||((s===null||s==="system")&&matchMedia("(prefers-color-scheme: dark)").matches);var r=document.documentElement;if(d)r.classList.add("dark");r.style.colorScheme=d?"dark":"light"}catch(e){}`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ja" className={notoSansJp.variable}>
+    <html lang="ja" className={notoSansJp.variable} suppressHydrationWarning>
+      <head>
+        {/* 保存済みのテーマを描画前に当て、ダーク設定での白い一瞬を防ぐ（ThemeProvider と同じキー） */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
+      </head>
       <body className="antialiased">
         <Providers>
           <AppShell>{children}</AppShell>

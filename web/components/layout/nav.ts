@@ -1,5 +1,5 @@
-import { House, Users } from "lucide-react";
-import { DocLines, DocLinesFilled, HouseFilled, UsersFilled, type AnyIcon } from "@/components/ui/icons";
+import { House } from "lucide-react";
+import { DocLines, DocLinesFilled, HouseFilled, UsersFilled, UsersOutline, type AnyIcon } from "@/components/ui/icons";
 import { T } from "@/lib/uiText";
 
 export interface NavItem {
@@ -15,7 +15,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { path: "/", label: T.nav.home, Icon: House, ActiveIcon: HouseFilled },
   { path: "/expenses", label: T.nav.expenses, Icon: DocLines, ActiveIcon: DocLinesFilled },
-  { path: "/futari", label: T.nav.futari, Icon: Users, ActiveIcon: UsersFilled },
+  { path: "/futari", label: T.nav.futari, Icon: UsersOutline, ActiveIcon: UsersFilled },
 ];
 
 export function isActivePath(pathname: string, itemPath: string): boolean {

@@ -23,8 +23,12 @@ export function ExpenseIcon({
       return <ShoppingCart {...props} />;
     case 'coffee':
       return <Coffee {...props} />;
-    case 'train':
-      return <TrainBoxy {...props} />;
+    case 'train': {
+      // 電車は見本どおりカート・カップより一回り大きく描き、外側の幅は変えない
+      const big = Math.round(size * 1.12);
+      const m = (size - big) / 2;
+      return <TrainBoxy {...props} size={big} style={{ margin: `${m}px` }} />;
+    }
     default: {
       const visual = getCategoryVisual(category);
       return <visual.icon {...props} />;

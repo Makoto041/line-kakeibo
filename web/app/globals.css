@@ -98,9 +98,9 @@
 
   /* ナビ */
   --kb-nav-ink: #4a5e84;
-  --kb-nav-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(232, 242, 252, 0.5));
+  --kb-nav-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(225, 237, 250, 0.55));
   --kb-nav-rim: rgba(255, 255, 255, 0.85);
-  --kb-nav-sel-bg: radial-gradient(120% 95% at 50% 100%, rgba(147, 197, 253, 0.6) 0%, rgba(205, 231, 253, 0.55) 45%, rgba(236, 246, 255, 0.55) 100%);
+  --kb-nav-sel-bg: radial-gradient(120% 95% at 50% 100%, rgba(147, 197, 253, 0.75) 0%, rgba(205, 231, 253, 0.55) 45%, rgba(236, 246, 255, 0.55) 100%);
   --kb-nav-sel-rim: rgba(255, 255, 255, 0.9);
 
   /* 影 */
@@ -146,7 +146,7 @@
   --kb-ink-soft: #d3dbef;
   --kb-ink-2: #a9b6d3;
   --kb-ink-3: #8c99b8;
-  --kb-ink-4: #75829f;
+  --kb-ink-4: #8390ad;
   --kb-ink-5: #5e6a86;
   --kb-dots: #8391ae;
   --kb-edit-ink: #c9d3ea;

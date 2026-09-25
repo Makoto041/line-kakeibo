@@ -48,7 +48,7 @@ export function BudgetHero({ loading, spent, budget, onOpen, onRetry }: BudgetHe
         className="block w-full text-left transition-opacity active:opacity-80"
       >
         <span className="block text-kb-label text-ink-2">{n.over ? T.home.over : T.home.remaining}</span>
-        <span className="mt-[2px] flex">
+        <span className="mt-[2px] flex pl-1.5">
           <Amount
             value={failed ? null : Math.abs(n.remaining)}
             base={62}

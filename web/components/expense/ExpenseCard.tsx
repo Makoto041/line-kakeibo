@@ -56,7 +56,7 @@ export function ExpenseCard({
       id={`expense-${expense.id}`}
       className="kb-card mx-4 mt-4 scroll-mt-24 rounded-kb-card px-4 pb-5 pt-4"
     >
-      <div className="flex h-[52px] items-center pl-2 pr-0.5">
+      <div className="flex h-[52px] items-center pl-2">
         <button
           type="button"
           id={`expense-${expense.id}-toggle`}
@@ -76,7 +76,7 @@ export function ExpenseCard({
           strokeWidth={2}
           aria-haspopup="dialog"
           onClick={onDetail}
-          className="ml-2 !text-dots"
+          className="-mr-[7px] ml-2 !text-dots"
         />
       </div>
 

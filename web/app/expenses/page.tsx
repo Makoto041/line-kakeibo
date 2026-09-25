@@ -282,6 +282,7 @@ function ExpensesPageContent() {
   const segments = (
     <SegmentedControl
       className="mx-4 mt-[22px]"
+      ariaLabel={T.aria.filter}
       items={[
         { key: "all", label: T.expenses.all },
         { key: "pending", label: T.expenses.pending, count: ready ? pendingCount : 0 },
