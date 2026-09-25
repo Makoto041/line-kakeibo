@@ -12,6 +12,7 @@ import { NAV_ITEMS, isActivePath } from './nav';
 export function BottomTabBar({ pathname }: { pathname: string }) {
   return (
     <nav
+      data-kb-behind-sheet=""
       aria-label={T.nav.label}
       className="kb-nav fixed left-1/2 z-40 h-[82px] -translate-x-1/2 rounded-full p-1"
       style={{

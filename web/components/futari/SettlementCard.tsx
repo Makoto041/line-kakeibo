@@ -32,7 +32,7 @@ export function SettlementCard({ vm, loading, failed, onRetry, onOpenBreakdown, 
       aria-busy={busy || undefined}
       className="kb-card-2 mx-4 mt-7 rounded-kb-xl px-[14px] pb-4 pt-5"
     >
-      <h2 id="futari-heading" className="text-center text-kb-card-label text-ink-2">
+      <h2 id="futari-heading" tabIndex={-1} className="text-center outline-none text-kb-card-label text-ink-2">
         {T.futari.heading}
       </h2>
 

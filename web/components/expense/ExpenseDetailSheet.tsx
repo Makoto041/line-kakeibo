@@ -243,6 +243,12 @@ function DetailBody({
               {deleteArmed ? T.detail.deleteConfirm : T.detail.delete}
             </PrimaryButton>
           )}
+          {/* 1 回目のタップで「削除する」に変わったことを読み上げる（画面には出さない） */}
+          {deletable && (
+            <span role="status" className="sr-only">
+              {deleteArmed && !deleting ? T.detail.deleteConfirm : ''}
+            </span>
+          )}
         </div>
       </div>
     </div>

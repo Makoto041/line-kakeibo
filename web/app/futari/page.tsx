@@ -4,7 +4,7 @@
 // 表示する値はすべてサーバー（/household/settlement）の応答から作る（LINE の「立替一覧」「精算」と同じ集合）。
 // 精算の範囲は未精算の立替の全件で、月ピルは 3 タブ共通の期間の表示・切り替えだけ（範囲は変えない）。
 // API が使えないとき・世帯が無いときは ¥0 とボタン無効、ゲストはサンプルの支出から同じ式で出す。
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Eye } from 'lucide-react';
 import { useHousehold, useLineAuth, useSettlement, patchCachedExpenses } from '@/lib/hooks';
 import { householdErrorCode, householdErrorToast, isHouseholdApiConfigured, settle } from '@/lib/householdApi';
@@ -58,6 +58,13 @@ export default function FutariPage() {
   const { sheet: commonSheet, setSheet: setCommonSheet } = useCommonSheet();
   const [sheet, setSheet] = useState<FutariSheet>(null);
   const [settling, setSettling] = useState(false);
+  // 精算の後は開いたボタンが無効になり、シートがフォーカスを戻せない。見出しへ移す
+  const focusHeadingAfterClose = useRef(false);
+  useEffect(() => {
+    if (sheet !== null || !focusHeadingAfterClose.current) return;
+    focusHeadingAfterClose.current = false;
+    document.getElementById('futari-heading')?.focus({ preventScroll: true });
+  }, [sheet]);
 
   const recordSettlement = async () => {
     if (!groupId || !data || settling || !vm.canSettle) return;
@@ -69,6 +76,7 @@ export default function FutariPage() {
         patchCachedExpenses(data.expenseIds, { status: 'advance_settled' });
         settlementState.setData(clearedSettlement(data));
         settlementState.refetch();
+        focusHeadingAfterClose.current = true;
         setSheet(null);
       } else {
         // 表示していた内容が古かった: 最新の金額・件数に差し替え、もう一度押してもらう
@@ -80,6 +88,7 @@ export default function FutariPage() {
       const code = householdErrorCode(error);
       if (code === 'nothing_to_settle' || code === 'nothing_settled' || code === 'undeterminable') {
         settlementState.refetch();
+        focusHeadingAfterClose.current = true;
         setSheet(null);
       }
     } finally {

@@ -41,7 +41,7 @@
   --kb-ink-soft: #26386a;
   --kb-ink-2: #3f5280;
   --kb-ink-3: #56668c;
-  --kb-ink-4: #617296;
+  --kb-ink-4: #5a6a8e; /* 背景の上の小さい文字で 4.5:1 以上 */
   --kb-ink-5: #98a2b5;
   --kb-dots: #7d8ca8;
   --kb-edit-ink: #2b3a6b;
@@ -295,7 +295,7 @@
       inset 0 1px 0 rgba(255, 255, 255, 0.35),
       inset 0 -3px 8px rgba(120, 180, 255, 0.3),
       0 12px 24px -8px rgba(37, 99, 235, 0.45),
-      0 2px 6px rgba(37, 99, 235, 0.18);
+      0 2px 6px rgba(37, 99, 235, 0.1);
   }
   .kb-btn-primary:disabled,
   .kb-btn-primary[aria-disabled='true'] {

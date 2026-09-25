@@ -25,7 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <>
         <div className="kb-page-bg" aria-hidden="true" />
-        {children}
+        <div data-kb-behind-sheet="">{children}</div>
       </>
     );
   }
@@ -35,7 +35,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="kb-page-bg" aria-hidden="true" />
       {/* スマホ幅の 1 カラムを中央に置く（PC でも同じ）。下は浮いているナビの分だけ空ける。
           ルート切替は軽いフェードでつなぐ（transform を使わないので、中の fixed 要素の位置は変わらない）。 */}
-      <main className="mx-auto w-full max-w-[440px]" style={{ paddingBottom: 'var(--kb-content-bottom)' }}>
+      <main data-kb-behind-sheet="" className="mx-auto w-full max-w-[440px]" style={{ paddingBottom: 'var(--kb-content-bottom)' }}>
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={pathname}

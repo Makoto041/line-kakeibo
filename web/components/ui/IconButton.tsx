@@ -4,6 +4,7 @@
 // 画面に文字を出さないので、aria-label（label）は必須。
 import type { ButtonHTMLAttributes, Ref } from 'react';
 import { cx } from '@/lib/cx';
+import { T } from '@/lib/uiText';
 import type { AnyIcon } from './icons';
 
 type Size = 40 | 44 | 48 | 64;
@@ -25,7 +26,7 @@ export interface IconButtonProps
   strokeWidth?: number;
   /** glass: ヘッダー等の小さいガラス / soft: カードの上の丸 / plain: 面なし */
   variant?: 'glass' | 'soft' | 'plain';
-  /** 絞り込み中などの印（アイコンを青にして小さな点を付ける。文字は出さない） */
+  /** 絞り込み中の印（アイコンを青にして小さな点を付ける。文字は出さず、名前に「絞り込み中」を足す） */
   active?: boolean;
   ref?: Ref<HTMLButtonElement>;
 }
@@ -47,7 +48,7 @@ export function IconButton({
     <button
       ref={ref}
       type={type}
-      aria-label={label}
+      aria-label={active ? `${label} ${T.aria.filtering}` : label}
       className={cx(
         'relative inline-grid shrink-0 place-items-center rounded-full transition-[transform,opacity] duration-150 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40',
         SIZE_CLASS[size],

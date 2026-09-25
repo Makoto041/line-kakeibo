@@ -3,7 +3,7 @@
 // 下から出るシート（詳細・設定などをまとめる場所）。
 // - role="dialog" / aria-modal / aria-labelledby（見出し）
 // - 背面の幕のタップと Esc で閉じる。Tab はシートの中で循環し、閉じたら開いたボタンへフォーカスを戻す
-// - 開いている間は背面のスクロールを止める。中身だけがスクロールする（overscroll-behavior: contain）
+// - 開いている間は背面のスクロールを止め、背面（data-kb-behind-sheet）を inert にする。中身だけがスクロールする（overscroll-behavior: contain）
 // - 動き: 下から 280ms で出て 200ms で下がる。動きを減らす設定では動かさない
 // - ページは「今開いているシート」を 1 つの state で持つ（シートの中で別のシートを重ねない）
 import { useEffect, useId, useRef, useSyncExternalStore, type ReactNode, type Ref, type RefObject } from 'react';
@@ -36,6 +36,10 @@ function lockScroll() {
   };
   html.style.overflow = 'hidden';
   body.style.overflow = 'hidden';
+  // 背面（本文・ナビ）を支援技術からも操作からも外す（aria-modal を見ない読み上げでも背面に入らない）
+  document.querySelectorAll<HTMLElement>('[data-kb-behind-sheet]').forEach((el) => {
+    el.inert = true;
+  });
   // PC のスクロールバーが消えて横にずれるのを防ぐ
   if (scrollbar > 0) body.style.paddingRight = `${scrollbar}px`;
 }
@@ -46,6 +50,9 @@ function unlockScroll() {
   document.documentElement.style.overflow = savedStyles.htmlOverflow;
   document.body.style.overflow = savedStyles.bodyOverflow;
   document.body.style.paddingRight = savedStyles.bodyPaddingRight;
+  document.querySelectorAll<HTMLElement>('[data-kb-behind-sheet]').forEach((el) => {
+    el.inert = false;
+  });
   savedStyles = null;
 }
 

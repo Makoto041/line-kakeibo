@@ -31,7 +31,7 @@ export function Switch({ checked, onChange, disabled, busy, label, labelledBy, c
       }}
       className={cx(
         'relative inline-flex h-[31px] w-[51px] shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-40 aria-disabled:opacity-40',
-        checked ? 'bg-accent' : 'bg-ink/30',
+        checked ? 'bg-accent' : 'bg-ink-4',
         className
       )}
     >

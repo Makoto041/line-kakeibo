@@ -64,11 +64,11 @@ export function BudgetHero({ loading, spent, budget, onOpen, onRetry }: BudgetHe
               />
             )}
           </span>
-          <span className={cx('min-w-[2.2em] text-right text-kb-pct', n.over ? 'text-danger' : 'text-ink-2', failed && 'invisible')}>
+          <span className={cx('text-right text-kb-pct tabular-nums', n.over ? 'text-danger' : 'text-ink-2', failed && 'invisible')}>
             {failed ? '0%' : `${n.pct}%`}
           </span>
         </span>
-        <span className="mt-2 block text-kb-sub text-ink-3">
+        <span className="mt-[5px] block text-kb-sub text-ink-3">
           {yen(n.spent)}
           <span className="mx-[0.6em]">/</span>
           {failed ? '—' : yen(n.budget)}

@@ -57,6 +57,7 @@ export const T = {
     back: '戻る',
     retry: '再試行',
     filter: '絞り込み',
+    filtering: '絞り込み中',
   },
   // シート（タップ後に開く詳細）の見出しと短い語。説明文は置かない
   sheet: {
