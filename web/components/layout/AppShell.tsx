@@ -3,9 +3,14 @@
 import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { Sidebar } from './Sidebar';
 import { BottomTabBar } from './BottomTabBar';
+import { TopBar } from './TopBar';
 import { initLineAuth } from '@/lib/lineAuth';
-import { isBareRoute } from '@/lib/routes';
+
+// Routes that should render without the app navigation chrome
+// (single-purpose / standalone screens opened from outside the app).
+const BARE_ROUTES = ['/attach', '/link'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
@@ -17,39 +22,45 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     initLineAuth();
   }, []);
 
-  // Routes that should render without the app navigation chrome
-  // (single-purpose / standalone screens opened from outside the app).
-  const bare = isBareRoute(pathname);
+  const hrefFor = (path: string) => path;
+
+  const bare = BARE_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
 
   if (bare) {
     return (
       <>
-        <div className="kb-page-bg" aria-hidden="true" />
-        <div data-kb-behind-sheet="">{children}</div>
+        <div className="app-bg-blob" aria-hidden />
+        {children}
       </>
     );
   }
 
   return (
     <div className="min-h-dvh">
-      <div className="kb-page-bg" aria-hidden="true" />
-      {/* スマホ幅の 1 カラムを中央に置く（PC でも同じ）。下は浮いているナビの分だけ空ける。
-          ルート切替は軽いフェードでつなぐ（transform を使わないので、中の fixed 要素の位置は変わらない）。 */}
-      <main data-kb-behind-sheet="" className="mx-auto w-full max-w-[440px]" style={{ paddingBottom: 'var(--kb-content-bottom)' }}>
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={pathname}
-            initial={reduceMotion ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={reduceMotion ? undefined : { opacity: 0 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
-          >
-            {children}
-          </motion.div>
-        </AnimatePresence>
-      </main>
+      <div className="app-bg-blob" aria-hidden />
+      <Sidebar pathname={pathname} hrefFor={hrefFor} />
 
-      <BottomTabBar pathname={pathname} />
+      <div className="md:pl-60">
+        <TopBar hrefFor={hrefFor} />
+        {/* Pages own their inner container/padding; shell adds offset for the
+            fixed bottom tab on mobile so content never hides behind it.
+            SPA らしい遷移のため、ルート切替を軽いフェード＋スライドで繋ぐ。 */}
+        <main className="pb-24 md:pb-0">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={pathname}
+              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reduceMotion ? undefined : { opacity: 0, y: -6 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              {children}
+            </motion.div>
+          </AnimatePresence>
+        </main>
+      </div>
+
+      <BottomTabBar pathname={pathname} hrefFor={hrefFor} />
     </div>
   );
 }
