@@ -1,4 +1,4 @@
-import { Home, Receipt, Settings, type LucideIcon } from "lucide-react";
+import { Home, Receipt, HandCoins, Settings, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   path: string;
@@ -9,6 +9,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { path: "/", label: "ホーム", Icon: Home },
   { path: "/expenses", label: "支出", Icon: Receipt },
+  { path: "/settlement", label: "精算", Icon: HandCoins },
   { path: "/settings", label: "設定", Icon: Settings },
 ];
 
