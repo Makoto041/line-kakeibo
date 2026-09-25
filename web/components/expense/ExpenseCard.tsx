@@ -71,12 +71,12 @@ export function ExpenseCard({
           label={T.aria.detail}
           icon={Ellipsis}
           variant="plain"
-          size={36}
+          size={44}
           iconSize={20}
           strokeWidth={2}
           aria-haspopup="dialog"
           onClick={onDetail}
-          className="-mr-2 ml-2 !text-dots"
+          className="-mr-3 ml-2 !text-dots"
         />
       </div>
 

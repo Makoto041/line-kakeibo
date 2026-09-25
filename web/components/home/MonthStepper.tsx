@@ -17,7 +17,7 @@ interface MonthStepperProps {
 
 export function MonthStepper({ label, canShift, onShift, onOpenPeriod }: MonthStepperProps) {
   return (
-    <div className="mt-2 grid grid-cols-[40px_128px_40px] items-center justify-center">
+    <div className="mt-2 grid grid-cols-[36px_128px_36px] items-center justify-center">
       <IconButton
         label={T.aria.prevMonth}
         icon={ChevronLeft}

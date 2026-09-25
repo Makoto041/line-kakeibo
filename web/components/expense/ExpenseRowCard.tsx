@@ -28,11 +28,7 @@ export function ExpenseRowCard({
     >
       <ExpenseIcon description={expense.description} category={expense.category} size={22} />
       <span
-        className={cx(
-          'min-w-0 flex-1 truncate text-kb-row text-ink',
-          // 390 未満で時計が付く行は間を詰め、4 字の名前が省略されないようにする
-          'ml-3',
-        )}
+        className="ml-3 min-w-0 flex-1 truncate text-kb-row text-ink"
       >{expenseLabel(expense)}</span>
       <Amount
         value={expense.amount}

@@ -72,7 +72,7 @@ module.exports = {
         // iOS の文字スケール（本文 15〜17・補足 13・キャプション 11〜12）に合わせる。金額だけを大きくする
         'kb-title': kbText('22px', '1.25', '700'),
         'kb-month': kbText('17px', '1.3', '600'),
-        'kb-pill': kbText('13px', '1.2', '500'),
+        'kb-pill': kbText('14px', '1.2', '500'),
         'kb-pill-month': kbText('14px', '1.2', '500'),
         'kb-label': kbText('13px', '1.4', '500'),
         'kb-hero': kbText('40px', '1.1', '700', '-0.01em'),
@@ -80,7 +80,7 @@ module.exports = {
         'kb-card-amt': kbText('30px', '1.15', '700', '-0.01em'),
         'kb-amt-lg': kbText('18px', '1.25', '700', '-0.01em'),
         'kb-amt': kbText('16px', '1.25', '600', '-0.01em'),
-        'kb-pct': kbText('12px', '1.25', '500'),
+        'kb-pct': kbText('13px', '1.25', '500'),
         'kb-sub': kbText('13px', '1.4', '400'),
         'kb-banner': kbText('15px', '1.3', '600'),
         'kb-section': kbText('15px', '1.35', '600'),

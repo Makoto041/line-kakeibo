@@ -18,6 +18,13 @@ const SIZE_CLASS: Record<Size, string> = {
   64: 'h-16 w-16',
 };
 
+// 44px 未満の見た目でも、押せる範囲は 44px 以上にする（周りに透明の当たり判定を足す）
+const HIT_CLASS: Partial<Record<Size, string>> = {
+  32: 'before:absolute before:-inset-1.5 before:rounded-full',
+  36: 'before:absolute before:-inset-1 before:rounded-full',
+  40: 'before:absolute before:-inset-0.5 before:rounded-full',
+};
+
 export interface IconButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'children'> {
   /** アクセシブルネーム（画面には出さない） */
@@ -54,6 +61,7 @@ export function IconButton({
       className={cx(
         'relative inline-grid shrink-0 place-items-center rounded-full transition-[transform,opacity] duration-150 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40',
         SIZE_CLASS[size],
+        HIT_CLASS[size],
         variant === 'glass' && 'kb-glass',
         variant === 'soft' && 'kb-glass-2',
         active ? 'text-accent' : 'text-ink',

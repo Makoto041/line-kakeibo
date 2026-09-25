@@ -21,9 +21,7 @@ interface AmountProps {
 
 export function Amount({ value, base, text, className, weight = 700 }: AmountProps) {
   const shown = text ?? (value == null ? '—' : yen(value));
-  const tier = amountTier(shown, base);
-  // 予算残りの基準 62 は、段階を下げないときだけ 64 で描く（見本の字幅に合わせる。段階の閾値はそのまま）
-  const px = tier;
+  const px = amountTier(shown, base);
   return (
     <span
       className={cx('inline-block whitespace-nowrap', className)}
