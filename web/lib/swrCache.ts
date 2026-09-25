@@ -29,15 +29,3 @@ export function clearCached(prefix?: string): void {
     if (key.startsWith(prefix)) store.delete(key);
   }
 }
-
-/**
- * prefix で始まるキーの値をまとめて書き換える（別の画面が持つキャッシュの同期用）。
- * fn が同じ参照を返したキーは変更しない。
- */
-export function updateCachedByPrefix<T>(prefix: string, fn: (value: T, key: string) => T): void {
-  for (const [key, value] of store) {
-    if (!key.startsWith(prefix)) continue;
-    const next = fn(value as T, key);
-    if (next !== value) store.set(key, next);
-  }
-}
