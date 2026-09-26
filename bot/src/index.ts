@@ -17,11 +17,11 @@ import {
   saveExpense,
   getExpenses,
   createGroup,
-  joinGroup,
   getUserGroups,
   getGroupMembers,
   getGroupExpenses,
-  findOrCreateLineGroup,
+  findLineGroupId,
+  deactivateLineGroupMembers,
   getGroupByLineGroupId,
   saveUserSettings,
   getUserSettings,
@@ -43,6 +43,7 @@ import {
 } from "./line/flexMessage";
 import { getCategoryEmoji } from "./gmail/types";
 import { parseTextExpense } from "./textParser";
+import { resolveExpenseGroupScope } from "./expenseGroupScope";
 import { nowJST } from "./time";
 import { resolveAppUidForExpense, getOrCreateAppUidForLineId } from "./linkUserResolver";
 import { getAuth } from "firebase-admin/auth";
@@ -200,6 +201,10 @@ app.post("/webhook", async (req: Request, res: Response) => {
           await handleJoin(event);
         } else if (event.type === "memberJoined") {
           await handleMemberJoined(event);
+        } else if (event.type === "memberLeft") {
+          await handleMemberLeft(event);
+        } else if (event.type === "leave") {
+          handleLeave(event);
         } else {
           console.log("Unhandled event type:", event.type);
         }
@@ -528,7 +533,7 @@ async function handleTextMessage(event: any) {
         const groups = await getUserGroups(event.source.userId);
         const group = groups.find((g) => g.id === groupId);
 
-        const replyText = `グループ「${groupName}」を作成しました！\n\n招待コード: ${group?.inviteCode}\n\nこのコードを共有して、パートナーを招待してください。\n\n使い方:\n「参加 ${group?.inviteCode} 表示名」で参加できます。`;
+        const replyText = `グループ「${group?.name ?? groupName}」を作成しました！\n\nメンバーの追加は管理者にご依頼ください。`;
 
         await client.replyMessage({ replyToken: event.replyToken, messages: [{
           type: "text",
@@ -550,48 +555,14 @@ async function handleTextMessage(event: any) {
       )} ===`
     );
     if (text.startsWith("参加 ")) {
-      console.log(`=== COMMAND MATCHED: Processing 参加 command ===`);
-      const parts = text.replace("参加 ", "").trim().split(" ");
-      if (parts.length < 2) {
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: "招待コードと表示名を指定してください。\n例: 「参加 ABC123 太郎」",
-        }] });
-        return;
-      }
-
-      const inviteCode = parts[0];
-      const displayName = parts.slice(1).join(" ");
-
-      try {
-        const groupId = await joinGroup(
-          inviteCode,
-          event.source.userId,
-          displayName
-        );
-
-        if (!groupId) {
-          await client.replyMessage({ replyToken: event.replyToken, messages: [{
-            type: "text",
-            text: "無効な招待コードです。正しいコードを確認してください。",
-          }] });
-          return;
-        }
-
-        const members = await getGroupMembers(groupId);
-        const memberNames = members.map((m) => m.displayName).join("、");
-
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: `グループに参加しました！\n\nメンバー: ${memberNames}\n\nこれからの支出は共有され、誰が何を支払ったかが記録されます。`,
-        }] });
-      } catch (error) {
-        console.error("Error joining group:", error);
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: "グループへの参加に失敗しました。もう一度お試しください。",
-        }] });
-      }
+      // 招待コードでの参加は無効化した。世帯はオーナーとパートナーの2名で固定し、
+      // メンバーの追加は管理者が scripts/manage-group-members.mjs で行う。
+      // （コードが漏れると第三者が気付かれずに参加できてしまうため。SEC-15 / CRIT-05）
+      console.log(`=== COMMAND MATCHED: 参加 command (disabled) ===`);
+      await client.replyMessage({ replyToken: event.replyToken, messages: [{
+        type: "text",
+        text: "招待コードでの参加は受け付けていません。\nメンバーの追加は管理者にご依頼ください。",
+      }] });
       return;
     }
 
@@ -608,7 +579,7 @@ async function handleTextMessage(event: any) {
         if (groups.length === 0) {
           await client.replyMessage({ replyToken: event.replyToken, messages: [{
             type: "text",
-            text: "まだグループに参加していません。\n\n新しいグループを作成するか、招待コードで参加してください。\n\n• グループ作成 [名前]\n• 参加 [コード] [表示名]",
+            text: "まだグループに参加していません。\n\nメンバーの追加は管理者にご依頼ください。",
           }] });
           return;
         }
@@ -619,7 +590,7 @@ async function handleTextMessage(event: any) {
           const memberNames = members.map((m) => m.displayName).join("、");
           replyText += `${group.name}\n`;
           replyText += `メンバー: ${memberNames}\n`;
-          replyText += `招待コード: ${group.inviteCode}\n\n`;
+          replyText += `\n`;
         }
 
         await client.replyMessage({ replyToken: event.replyToken, messages: [{
@@ -830,6 +801,20 @@ async function handleTextMessage(event: any) {
   }
 }
 
+// 支出を紐づけるグループを選ぶ。
+//   - LINE グループでの発言: 発言元の LINE グループに紐づくグループだけを返す（無ければ null）。
+//     一致しないグループを返すとキャッシュに残り、その後に世帯へ追加されても TTL の間
+//     findLineGroupId が呼ばれず個人支出として保存されてしまうため。
+//   - 個人チャット: LINE グループに紐づくグループ（世帯）を優先し、無ければ先頭。
+//     自分で「グループ作成」した LINE 非連携のグループに世帯の支出が入らないようにする。
+function pickActiveGroup(groups: any[] | undefined, lineGroupId: string | null) {
+  if (!groups || groups.length === 0) return null;
+  if (lineGroupId) {
+    return groups.find((g) => g?.lineGroupId === lineGroupId) || null;
+  }
+  return groups.find((g) => g?.lineGroupId) || groups[0] || null;
+}
+
 // ユーザー情報キャッシュ（メモリ内、15分TTL）
 const userProfileCache = new Map<string, { profile: any; groups: any[]; timestamp: number }>();
 const CACHE_TTL = 15 * 60 * 1000; // 15分
@@ -840,6 +825,23 @@ async function processExpenseInBackground(
   replyToken?: string
 ) {
   try {
+    // LINE は利用規約に同意していないユーザーのグループ内イベントで userId を省く。
+    // lineId を持たない支出は所有者が定まらないため保存しない。
+    if (!event?.source?.userId) {
+      console.warn("Skipping expense: event.source.userId is missing (user has not consented to the LINE OA terms)");
+      if (replyToken) {
+        await client
+          .replyMessage({
+            replyToken,
+            messages: [{
+              type: "text",
+              text: "支出を記録できませんでした。この Bot を友だち追加すると、支出を記録できるようになります。",
+            }],
+          })
+          .catch((replyError) => console.warn("Failed to reply to a message without userId:", replyError));
+      }
+      return;
+    }
     console.log("Starting optimized background expense processing...");
 
     // 並列実行のためのプロミス配列
@@ -865,7 +867,7 @@ async function processExpenseInBackground(
         // キャッシュヒット - 高速化
         console.log("Using cached user profile (fast path)");
         userDisplayName = cached.profile.displayName;
-        activeGroup = cached.groups[0] || null;
+        activeGroup = pickActiveGroup(cached.groups, lineGroupId);
       }
 
       if (!hasCachedProfile) {
@@ -930,7 +932,7 @@ async function processExpenseInBackground(
       
       if (cached && (now - cached.timestamp < CACHE_TTL)) {
         console.log("Using cached individual user data (fast path)");
-        activeGroup = cached.groups[0] || null;
+        activeGroup = pickActiveGroup(cached.groups, lineGroupId);
         userDisplayName = cached.profile?.displayName;
       } else {
         // 個人チャットの場合もプロファイルを取得（リトライ機能付き）
@@ -1005,7 +1007,7 @@ async function processExpenseInBackground(
               break;
             case 'groups':
               if (!value.error && value.data.length > 0) {
-                activeGroup = value.data[0];
+                activeGroup = pickActiveGroup(value.data, lineGroupId);
                 // グループ情報からの名前は使用しない（LINEプロファイルを優先）
               }
               break;
@@ -1031,10 +1033,14 @@ async function processExpenseInBackground(
     // グループコンテキストでプロファイル取得後にグループ操作を実行
     if (lineGroupId && userDisplayName && !activeGroup) {
       try {
-        const groupId = await findOrCreateLineGroup(lineGroupId, event.source.userId, userDisplayName);
-        const groups = await getUserGroups(event.source.userId);
-        activeGroup = groups.find((g) => g.id === groupId) || null;
-        console.log("Successfully set up LINE group after profile fetch");
+        // メンバーの自動追加は行わない（世帯は2名固定。追加は管理スクリプトのみ）。
+        // 有効なメンバーでなければ activeGroup は null のままになり、支出は groupId を持たない。
+        const groupId = await findLineGroupId(lineGroupId, event.source.userId, userDisplayName);
+        if (groupId) {
+          const groups = await getUserGroups(event.source.userId);
+          activeGroup = groups.find((g) => g.id === groupId) || null;
+        }
+        console.log("Resolved LINE group after profile fetch");
       } catch (groupError) {
         console.error("Failed to setup group after profile fetch:", groupError);
       }
@@ -1116,12 +1122,21 @@ async function processExpenseInBackground(
       }
     }
 
+    // グループ所属の決定。発言元の LINE グループに紐づくグループの有効なメンバーで
+    // なければ lineGroupId も付けず個人支出にする（LINE 集計・精算への混入防止）。
+    const groupScope = resolveExpenseGroupScope(activeGroup, lineGroupId);
+    if (lineGroupId && !groupScope.lineGroupId) {
+      console.warn(
+        `Poster ${maskId(event.source.userId)} is not an active member of the group linked to LINE group ${maskId(lineGroupId)}; saving as personal expense`
+      );
+    }
+
     // Create expense object with payment method
     const expense = {
       lineId: event.source.userId,
       appUid: appUid,
-      groupId: activeGroup?.id,
-      lineGroupId,
+      groupId: groupScope.groupId,
+      lineGroupId: groupScope.lineGroupId,
       userDisplayName,
       amount: parsed.amount,
       description: parsed.description,
@@ -1275,6 +1290,49 @@ async function handleMemberJoined(event: any) {
     console.error("Member joined event handling error:", error);
     // Don't throw error to prevent bot from appearing broken
   }
+}
+
+/**
+ * LINE グループからメンバーが退出（または削除）されたときの処理。
+ *
+ * 退出したユーザーの groupMembers を isActive:false にして、Web（Firestore / Storage
+ * ルールの isActive 判定）へのアクセス権を失わせる。memberLeft には replyToken が
+ * 無いので返信はしない（push も消費しない）。
+ */
+async function handleMemberLeft(event: any) {
+  try {
+    const lineGroupId = event.source?.groupId;
+    if (!lineGroupId) {
+      console.warn("No group ID found in member left event");
+      return;
+    }
+    const userIds: string[] = (event.left?.members ?? [])
+      .filter((m: any) => m?.type === "user" && typeof m.userId === "string")
+      .map((m: any) => m.userId);
+    if (userIds.length === 0) return;
+
+    const count = await deactivateLineGroupMembers(lineGroupId, userIds);
+    for (const userId of userIds) {
+      userProfileCache.delete(`${userId}_${lineGroupId}`);
+      userProfileCache.delete(userId);
+    }
+    console.log(
+      `Member left group ${maskId(lineGroupId)}: ${userIds.length} user(s), ${count} membership(s) deactivated`
+    );
+  } catch (error) {
+    // 失敗しても webhook 全体は成功扱いにする（LINE の再送で二重処理しても冪等）。
+    console.error("Member left event handling error:", error);
+  }
+}
+
+/**
+ * bot がグループから退出させられたときの処理。
+ *
+ * メンバーシップは変更しない。bot が誤って外された場合に世帯全員の Web アクセスまで
+ * 失うのを避けるため（個々の退出は memberLeft で扱う）。記録だけ残す。
+ */
+function handleLeave(event: any) {
+  console.warn(`Bot left group: ${maskId(event.source?.groupId)} (memberships unchanged)`);
 }
 
 app.get("/health", async (_req: Request, res: Response) => {

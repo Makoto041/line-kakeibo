@@ -1,5 +1,6 @@
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import dayjs from 'dayjs';
+import { randomInt } from 'node:crypto';
 import { maskId } from './logSafe';
 
 let db: ReturnType<typeof getFirestore> | null = null;
@@ -605,6 +606,12 @@ export async function createGroup(name: string, createdBy: string, lineGroupId?:
   }
 }
 
+/**
+ * @deprecated 呼び出し元なし。LINE の「参加」コマンドは無効化済みで、世帯は2名固定。
+ * メンバーの追加・再有効化は scripts/manage-group-members.mjs で
+ * 行うこと（メンバー管理の API は無い）。招待コードでメンバーを作れる経路なので、LINE のコマンド等へ再び配線しないこと。
+ * syncUserLinks の削除と同じ後続 PR で削除する予定。
+ */
 export async function joinGroup(inviteCode: string, lineId: string, displayName: string): Promise<string | null> {
   try {
     // Find group by invite code
@@ -620,6 +627,14 @@ export async function joinGroup(inviteCode: string, lineId: string, displayName:
     
     const groupDoc = groupSnapshot.docs[0];
     const groupId = groupDoc.id;
+
+    // 世帯の人数上限。既に有効なメンバーであれば（表示名の更新として）通す。
+    const activeMembers = await getGroupMembers(groupId);
+    const alreadyActive = activeMembers.some((m) => m.lineId === lineId);
+    if (!alreadyActive && activeMembers.length >= HOUSEHOLD_MAX_MEMBERS) {
+      console.warn(`Join refused: group ${groupId} already has ${activeMembers.length} active members`);
+      return null;
+    }
     
     // Check if user is already a member
     const memberSnapshot = await getDb()
@@ -781,52 +796,109 @@ export async function getLineGroupExpenses(lineGroupId: string, limitCount: numb
 }
 
 // LINE Group integration functions
-export async function findOrCreateLineGroup(lineGroupId: string, lineUserId: string, userDisplayName: string): Promise<string> {
+
+/**
+ * 世帯の人数上限。家計簿はオーナーとパートナーの2人で固定する運用とし、
+ * LINE グループでの発言や招待コードでメンバーが増えないようにする。
+ * 新しいメンバーの追加は管理スクリプト（scripts/manage-group-members.mjs）で行う。
+ */
+export const HOUSEHOLD_MAX_MEMBERS = 2;
+
+/**
+ * LINE グループに紐づくアプリ内グループの ID を返す（無ければ null）。
+ *
+ * 以前は findOrCreateLineGroup として、発言者を groupMembers に isActive:true で
+ * 自動追加し、紐づくグループが無ければ新規作成していた。メンバーシップは Web の
+ * 閲覧・編集権限（firestore.rules / storage.rules の isActive 判定）そのものなので、
+ * 世帯の LINE グループに一時的に入った人が支出らしい発言をするだけで世帯の全データに
+ * アクセスできてしまっていた（CRIT-05）。ここではメンバーの追加・再有効化・グループ作成を
+ * 一切行わず、既に有効なメンバーであれば表示名だけを最新化する。
+ */
+export async function findLineGroupId(
+  lineGroupId: string,
+  lineUserId: string,
+  userDisplayName: string
+): Promise<string | null> {
   try {
-    // Check if a group already exists for this LINE group
     const existingGroupSnapshot = await getDb()
       .collection('groups')
       .where('lineGroupId', '==', lineGroupId)
       .limit(1)
       .get();
-    
-    if (!existingGroupSnapshot.empty) {
-      const existingGroup = existingGroupSnapshot.docs[0];
-      const groupId = existingGroup.id;
-      
-      // Check if user is already a member
-      const memberSnapshot = await getDb()
-        .collection('groupMembers')
-        .where('groupId', '==', groupId)
-        .where('lineId', '==', lineUserId)
-        .limit(1)
-        .get();
-      
-      if (memberSnapshot.empty) {
-        // Add user as member
-        await addGroupMember(groupId, lineUserId, userDisplayName);
-        console.log(`Added user ${maskId(lineUserId)} to existing LINE group ${groupId}`);
-      } else {
-        // Update user display name if changed
-        await getDb().collection('groupMembers').doc(memberSnapshot.docs[0].id).update({
-          displayName: userDisplayName,
-          isActive: true
-        });
-      }
-      
-      return groupId;
+
+    if (existingGroupSnapshot.empty) {
+      console.log(`No app group linked to LINE group ${maskId(lineGroupId)} (auto-creation disabled)`);
+      return null;
     }
-    
-    // Create new group for this LINE group
-    const groupName = `LINEグループ ${lineGroupId.substring(0, 8)}`;
-    const groupId = await createGroup(groupName, lineUserId, lineGroupId);
-    
-    console.log(`Created new group ${groupId} for LINE group ${maskId(lineGroupId)}`);
+
+    const groupId = existingGroupSnapshot.docs[0].id;
+
+    // 有効なメンバーの表示名だけを更新する（非メンバー・脱退済みは触らない）
+    const memberRef = getDb().collection('groupMembers').doc(groupMemberDocId(groupId, lineUserId));
+    const memberDoc = await memberRef.get();
+    const member = memberDoc.exists ? (memberDoc.data() as GroupMember) : null;
+    if (member?.isActive === true && userDisplayName && member.displayName !== userDisplayName) {
+      await memberRef.update({ displayName: userDisplayName });
+    } else if (!member?.isActive) {
+      console.log(`User ${maskId(lineUserId)} is not an active member of group ${groupId}; not adding automatically`);
+    }
+
     return groupId;
   } catch (error) {
-    console.error('Error finding or creating LINE group:', error);
+    console.error('Error finding LINE group:', error);
     throw error;
   }
+}
+
+/**
+ * LINE グループから退出したユーザーのメンバーシップを無効化する（isActive:false）。
+ *
+ * firestore.rules / storage.rules はメンバー判定に isActive == true を要求するため、
+ * これで Web からの閲覧・編集・レシート操作ができなくなる。ドキュメントは削除せず
+ * 履歴（leftAt）として残す。再度メンバーにする場合は管理スクリプトで行う。
+ *
+ * @returns 無効化したメンバーシップの件数
+ */
+export async function deactivateLineGroupMembers(
+  lineGroupId: string,
+  lineUserIds: string[],
+  reason: string = 'line_member_left'
+): Promise<number> {
+  if (!lineGroupId || lineUserIds.length === 0) return 0;
+
+  const groupsSnapshot = await getDb()
+    .collection('groups')
+    .where('lineGroupId', '==', lineGroupId)
+    .get();
+
+  if (groupsSnapshot.empty) {
+    // 世帯グループが LINE グループに紐づいていないと、退出者の Web アクセスを外せない。
+    console.warn(
+      `No app group is linked to LINE group ${maskId(lineGroupId)}; cannot deactivate ${lineUserIds.length} leaving member(s). ` +
+        'Check `node scripts/manage-group-members.mjs list` (LINE 欄) and deactivate them manually.'
+    );
+    return 0;
+  }
+
+  let deactivated = 0;
+  const now = Timestamp.now();
+  for (const groupDoc of groupsSnapshot.docs) {
+    for (const lineUserId of lineUserIds) {
+      // 決定的IDの文書に加え、移行漏れの自動ID文書も念のため対象にする
+      const snapshot = await getDb()
+        .collection('groupMembers')
+        .where('groupId', '==', groupDoc.id)
+        .where('lineId', '==', lineUserId)
+        .get();
+      for (const memberDoc of snapshot.docs) {
+        if (memberDoc.get('isActive') === false) continue;
+        await memberDoc.ref.update({ isActive: false, leftAt: now, deactivatedReason: reason });
+        deactivated++;
+        console.log(`Deactivated member ${maskId(lineUserId)} in group ${groupDoc.id} (${reason})`);
+      }
+    }
+  }
+  return deactivated;
 }
 
 export async function getGroupByLineGroupId(lineGroupId: string): Promise<Group | null> {
@@ -920,12 +992,15 @@ export async function deleteUserSettings(lineId: string): Promise<void> {
   }
 }
 
-// Utility function to generate unique invite codes
+// 招待コードの生成（暗号学的乱数）。
+// 紛らわしい文字（0/O, 1/I/L）を除いた 31 文字種 × 8 桁（約 8.5e11 通り）。
+// 注: 招待コードでの参加（LINE の「参加」コマンド）は世帯2名固定の運用により無効化済み。
+//     コードは groups ドキュメントの互換のために生成だけを続けている。
 function generateInviteCode(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
   let result = '';
-  for (let i = 0; i < 6; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  for (let i = 0; i < 8; i++) {
+    result += chars.charAt(randomInt(chars.length));
   }
   return result;
 }

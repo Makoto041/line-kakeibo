@@ -189,9 +189,10 @@ export function canClientWrite(
   activeGroupIds: readonly string[] | null
 ): boolean {
   if (!me) return false;
-  // 所有者はいつでも書ける（ルールの ownsDoc。lineGroupId だけの旧形式・脱退後の自分の支出も含む）
-  if (e.lineId === me) return true;
-  if (isPersonalExpense(e) || !e.groupId) return false;
+  // ルール（canWriteExistingExpense）と同じ: 個人支出は所有者、グループ支出は有効メンバー。
+  // lineGroupId だけを持つ旧形式は書けない（先に groupId の backfill が必要）
+  if (isPersonalExpense(e)) return e.lineId === me;
+  if (!e.groupId) return false;
   return isActiveMemberOf(e.groupId, activeGroupIds);
 }
 
@@ -202,12 +203,12 @@ export function canClientDelete(
   activeGroupIds: readonly string[] | null
 ): boolean {
   if (!me || isSettled(e)) return false;
-  // 所有者はいつでも削除できる（ルールの ownsDoc）
-  if (e.lineId === me) return true;
-  if (isPersonalExpense(e) || !e.groupId) return false;
+  // ルールと同じ: 個人支出は所有者、グループ支出は有効メンバーのうち本人かシステムが登録した分
+  if (isPersonalExpense(e)) return e.lineId === me;
+  if (!e.groupId) return false;
   return (
     isActiveMemberOf(e.groupId, activeGroupIds) &&
-    (e.lineId === GMAIL_SYSTEM_LINE_ID || e.lineId === RECURRING_SYSTEM_LINE_ID)
+    (e.lineId === me || e.lineId === GMAIL_SYSTEM_LINE_ID || e.lineId === RECURRING_SYSTEM_LINE_ID)
   );
 }
 

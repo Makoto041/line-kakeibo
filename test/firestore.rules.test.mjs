@@ -1,9 +1,10 @@
-// Firestore セキュリティルールのユニットテスト（参考・任意実行）。
+// Firestore セキュリティルールのユニットテスト（CI の pr-checks でも実行する）。
 // テスト用ツール（firebase-tools / @firebase/rules-unit-testing）は依存肥大化・
 // 監査影響を避けるため package.json には含めていない。実行する場合はアドホックに:
-//   npm i --no-save @firebase/rules-unit-testing firebase-tools
-//   npx firebase emulators:exec --only firestore --project demo-kakeibo "node test/firestore.rules.test.mjs"
-// （Java 21 以上 + Firestore エミュレータが必要。リポジトリ直下の firestore.rules を読み込んで検証する）
+//   npm i --no-save @firebase/rules-unit-testing@5 firebase@12 firebase-tools@15
+//   npx firebase emulators:exec --only firestore,storage --project demo-kakeibo \
+//     "node test/firestore.rules.test.mjs && node test/storage.rules.test.mjs"
+// （Java 21 以上 + エミュレータが必要。リポジトリ直下の firestore.rules を読み込んで検証する）
 //
 // シードは本番のデータ形状に合わせている:
 //   - グループ支出は groupId（groups のドキュメントID）と lineGroupId を両方持つ
@@ -16,7 +17,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'node:fs';
 import {
-  doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs,
+  doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField, collection, query, where, getDocs,
 } from 'firebase/firestore';
 
 // emulators:exec はリポジトリ直下（firebase.json のある場所）で実行される。
@@ -63,13 +64,43 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   // 決定的ID: `${groupId}_${lineId}`
   await setDoc(doc(db, 'groupMembers/G1_A'), { groupId: 'G1', lineId: 'A', displayName: 'A', isActive: true });
   await setDoc(doc(db, 'groupMembers/G1_B'), { groupId: 'G1', lineId: 'B', displayName: 'B', isActive: true });
-  // 脱退済み（将来 isActive:false を使うようになったときのため）
+  // 脱退済み（LINE グループからの退出で bot が isActive:false にする）
   await setDoc(doc(db, 'groupMembers/G1_D'), { groupId: 'G1', lineId: 'D', displayName: 'D', isActive: false });
 
+  // 精算済み（立替を精算した）グループ支出
+  await setDoc(doc(db, 'expenses/expSettled'), {
+    lineId: 'B', ...group, amount: 1000, date: '2026-08-01', description: '立替',
+    category: '食費', status: 'advance_settled', advanceBy: 'B', includeInTotal: true,
+  });
+  // web の編集対象を持つ、本番形状に近いグループ支出
+  await setDoc(doc(db, 'expenses/expFull'), {
+    lineId: 'B', ...group, amount: 700, date: '2026-08-03', description: 'スーパー',
+    category: '食費', includeInTotal: false, status: 'pending', inputSource: 'line_text',
+    createdAt: new Date('2026-08-03T00:00:00Z'),
+  });
+  // 既存データに上限を超える description が残っているケース
+  await setDoc(doc(db, 'expenses/expLongDesc'), {
+    lineId: 'gmail-auto-system', ...group, amount: 800, date: '2026-08-01',
+    description: 'x'.repeat(2000), includeInTotal: true, inputSource: 'gmail_auto',
+  });
+  // 脱退済みメンバー D が登録したグループ支出
+  await setDoc(doc(db, 'expenses/expByD'), { lineId: 'D', ...group, amount: 900, date: '2026-08-01' });
+
+  await setDoc(doc(db, 'groups/G2'), { createdBy: 'C', inviteCode: 'INV999', lineGroupId: 'L2' });
+  // 別の世帯（G2）の有効なメンバー E。G1 のデータには触れないこと（世帯をまたぐ権限の確認）
+  await setDoc(doc(db, 'groupMembers/G2_E'), { groupId: 'G2', lineId: 'E', displayName: 'E', isActive: true });
+  await setDoc(doc(db, 'expenses/expG2'), { lineId: 'E', groupId: 'G2', lineGroupId: 'L2', amount: 100, date: '2026-08-01' });
+  // 脱退済みメンバー D が登録した、groupId を持たず lineGroupId だけを持つ旧形式の支出
+  await setDoc(doc(db, 'expenses/expLegacyD'), { lineId: 'D', lineGroupId: 'L1', amount: 650, date: '2026-08-01' });
   await setDoc(doc(db, 'budgetSettings/A'), { monthlyBudget: 1000 });
   await setDoc(doc(db, 'budgetSettings/B'), { monthlyBudget: 2000 });
   await setDoc(doc(db, 'linkTokens/t1'), { lineId: 'A' });
   await setDoc(doc(db, 'userLinks/appuid-A'), { lineId: 'A' });
+  // lineId を持たない / null の支出（LINE が userId を省いたイベント等で生まれうる形）。
+  // 匿名セッションでは myLineId() が null になるため、null == null で所有者扱い
+  // されないことを確認する。
+  await setDoc(doc(db, 'expenses/noLine'), { amount: 10, date: '2026-08-01' });
+  await setDoc(doc(db, 'expenses/nullLine'), { lineId: null, amount: 20, date: '2026-08-01' });
 });
 
 const unauth = env.unauthenticatedContext().firestore();
@@ -78,6 +109,7 @@ const userA = env.authenticatedContext('appuid-A', { lineId: 'A' }).firestore();
 const userB = env.authenticatedContext('appuid-B', { lineId: 'B' }).firestore(); // G1 のメンバー
 const userC = env.authenticatedContext('appuid-C', { lineId: 'C' }).firestore(); // LINE ユーザーだがメンバーではない
 const userD = env.authenticatedContext('appuid-D', { lineId: 'D' }).firestore(); // isActive:false のメンバー
+const userE = env.authenticatedContext('appuid-E', { lineId: 'E' }).firestore(); // 別の世帯（G2）の有効メンバー
 // 匿名フォールバック: サインイン済みだが lineId クレームなし。
 const anon = env.authenticatedContext('anon-uid', {}).firestore();
 
@@ -98,11 +130,60 @@ await test('他人の個人支出は読めない', async () => {
 });
 
 // --- 作成 -----------------------------------------------------------------
-await test('自分の lineId なら作成できる', async () => {
+await test('自分の lineId なら個人支出を作成できる', async () => {
   await assertSucceeds(setDoc(doc(userA, 'expenses/newA'), { lineId: 'A', amount: 5, date: '2026-08-02' }));
 });
-await test('他人の lineId では作成できない', async () => {
+await test('★ 他人の lineId では作成できない（lineId 偽装）', async () => {
   await assertFails(setDoc(doc(userA, 'expenses/newX'), { lineId: 'B', amount: 5, date: '2026-08-02' }));
+});
+await test('匿名は作成できない', async () => {
+  await assertFails(setDoc(doc(anon, 'expenses/newAnon'), { lineId: null, amount: 5, date: '2026-08-02' }));
+});
+await test('有効なメンバーは自分のグループに作成できる（lineGroupId 一致）', async () => {
+  await assertSucceeds(setDoc(doc(userA, 'expenses/newAG'), {
+    lineId: 'A', groupId: 'G1', lineGroupId: 'L1', amount: 1200, date: '2026-08-02',
+    description: 'ランチ', category: '食費', includeInTotal: true, status: 'pending',
+    createdAt: new Date(), updatedAt: new Date(),
+  }));
+});
+await test('★ 非メンバーは他グループ（groupId 指定）に作成できない', async () => {
+  await assertFails(setDoc(doc(userC, 'expenses/newCG'), { lineId: 'C', groupId: 'G1', amount: 5, date: '2026-08-02' }));
+});
+await test('★ 脱退済みメンバーはグループに作成できない', async () => {
+  await assertFails(setDoc(doc(userD, 'expenses/newDG'), { lineId: 'D', groupId: 'G1', amount: 5, date: '2026-08-02' }));
+});
+await test('★ groupId なしで lineGroupId だけを持つ支出は作成できない（LINE 集計への注入防止）', async () => {
+  await assertFails(setDoc(doc(userC, 'expenses/newCL'), {
+    lineId: 'C', lineGroupId: 'L1', status: 'pending', amount: 50000, date: '2026-08-02',
+  }));
+});
+await test('★ グループと一致しない lineGroupId では作成できない', async () => {
+  await assertFails(setDoc(doc(userA, 'expenses/newAL2'), { lineId: 'A', groupId: 'G1', lineGroupId: 'L2', amount: 5, date: '2026-08-02' }));
+});
+await test('★ inputSource（gmail_auto の偽装）は作成時に書けない', async () => {
+  await assertFails(setDoc(doc(userA, 'expenses/newAGm'), {
+    lineId: 'A', amount: 5, date: '2026-08-02', description: '', inputSource: 'gmail_auto',
+  }));
+});
+await test('★ 立替・精算系フィールド（status advance_settled / advanceBy）は作成時に書けない', async () => {
+  await assertFails(setDoc(doc(userA, 'expenses/newAS'), { lineId: 'A', amount: 5, date: '2026-08-02', status: 'advance_settled' }));
+  await assertFails(setDoc(doc(userA, 'expenses/newAAdv'), { lineId: 'A', amount: 5, date: '2026-08-02', advanceBy: 'A' }));
+});
+await test('★ appUid は作成時に書けない（userLinks 同期の悪用防止）', async () => {
+  await assertFails(setDoc(doc(userA, 'expenses/newAUid'), { lineId: 'A', amount: 5, date: '2026-08-02', appUid: 'victim' }));
+});
+await test('★ 型・範囲の検証: 金額が文字列・負数・上限超過なら作成できない', async () => {
+  await assertFails(setDoc(doc(userA, 'expenses/newAStr'), { lineId: 'A', amount: 'abc', date: '2026-08-02' }));
+  await assertFails(setDoc(doc(userA, 'expenses/newANeg'), { lineId: 'A', amount: -1, date: '2026-08-02' }));
+  await assertFails(setDoc(doc(userA, 'expenses/newABig'), { lineId: 'A', amount: 10000001, date: '2026-08-02' }));
+});
+await test('★ 型・範囲の検証: 日付の形式と文字列長', async () => {
+  await assertFails(setDoc(doc(userA, 'expenses/newADate'), { lineId: 'A', amount: 5, date: '2026/08/02' }));
+  await assertFails(setDoc(doc(userA, 'expenses/newADesc'), { lineId: 'A', amount: 5, date: '2026-08-02', description: 'x'.repeat(501) }));
+  await assertFails(setDoc(doc(userA, 'expenses/newACat'), { lineId: 'A', amount: 5, date: '2026-08-02', category: 'x'.repeat(51) }));
+});
+await test('必須フィールド（amount / date）が無ければ作成できない', async () => {
+  await assertFails(setDoc(doc(userA, 'expenses/newAMissing'), { lineId: 'A', amount: 5 }));
 });
 
 // --- グループ支出の read: メンバー限定 -------------------------------------
@@ -151,6 +232,87 @@ await test('匿名はグループ支出を更新できない', async () => {
   await assertFails(updateDoc(doc(anon, 'expenses/expG'), { amount: 777 }));
 });
 
+await test('web の編集ドロワーの保存（全フィールド送信）はメンバーに許可される', async () => {
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expFull'), {
+    amount: 750, description: 'スーパー（修正）', date: '2026-08-04', category: '日用品',
+    includeInTotal: true, payerId: 'A', payerDisplayName: 'Aさん', updatedAt: new Date(),
+  }));
+});
+await test('web の「合計に含める」トグルは許可される', async () => {
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expGmail'), { includeInTotal: true, updatedAt: new Date() }));
+});
+await test('web のレシート添付（Firebase Storage の URL）は許可される', async () => {
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expFull'), {
+    receiptUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/receipts%2FexpFull%2Fa.jpg?alt=media&token=t',
+    updatedAt: new Date(),
+  }));
+});
+await test('★ 外部 URL をレシートとして埋め込めない', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { receiptUrl: 'https://evil.example.com/x.png' }));
+});
+await test('既存データの上限超え description に触れない編集は通る', async () => {
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expLongDesc'), { includeInTotal: false, updatedAt: new Date() }));
+});
+await test('★ 不変フィールド: groupId / lineGroupId / createdAt / inputSource は変更できない', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { groupId: 'G2' }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { lineGroupId: 'L2' }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { createdAt: new Date() }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { inputSource: 'gmail_auto' }));
+});
+await test('★ 不変フィールド: status / advanceBy / appUid は変更できない（bot 専用）', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { status: 'advance_pending' }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { advanceBy: 'A' }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expA'), { appUid: 'x' }));
+});
+await test('★ groupId の削除（web から見えなくする）はできない', async () => {
+  await assertFails(updateDoc(doc(userB, 'expenses/expFull'), { groupId: deleteField() }));
+});
+await test('★ 型の検証: 金額を文字列・負数にできない、日付の形式を崩せない', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { amount: 'abc' }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { amount: -100 }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { date: '8/4' }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { description: 'x'.repeat(501) }));
+});
+await test('★ 検証対象のフィールドを削除する更新・updatedAt を文字列にする更新は拒否される', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { amount: deleteField() }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { date: deleteField() }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { updatedAt: 'now' }));
+});
+await test('★ 脱退済みメンバーは自分が登録したグループ支出でも更新できない', async () => {
+  await assertFails(updateDoc(doc(userD, 'expenses/expByD'), { amount: 1 }));
+});
+
+// --- 精算済みロック ---------------------------------------------------------
+await test('★ 精算済み: 金額は変更できない', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expSettled'), { amount: 1 }));
+  await assertFails(updateDoc(doc(userB, 'expenses/expSettled'), { amount: 1 }));
+});
+await test('★ 精算済み: 日付は変更できない', async () => {
+  await assertFails(updateDoc(doc(userB, 'expenses/expSettled'), { date: '2026-08-02' }));
+});
+await test('★ 精算済み: status を戻せない', async () => {
+  await assertFails(updateDoc(doc(userB, 'expenses/expSettled'), { status: 'advance_pending' }));
+});
+// web の編集ドロワーは精算済みの支出では amount / date / payerId / payerDisplayName を送らない
+// （web/app/expenses/page.tsx の handleEditSave）。
+await test('精算済み: メモ・カテゴリの修正（web の送信形）は許可される', async () => {
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expSettled'), {
+    description: '立替（修正）', category: '日用品', includeInTotal: true, updatedAt: new Date(),
+  }));
+});
+await test('精算済み: 金額・日付を同値で送っても（変更なし）許可される', async () => {
+  await assertSucceeds(updateDoc(doc(userB, 'expenses/expSettled'), {
+    amount: 1000, date: '2026-08-01', description: '立替（再修正）', updatedAt: new Date(),
+  }));
+});
+await test('★ 精算済み: 支払者（payerId / payerDisplayName）は変更できない', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expSettled'), { payerId: 'A' }));
+  await assertFails(updateDoc(doc(userB, 'expenses/expSettled'), { payerDisplayName: 'Aさん' }));
+});
+await test('★ 精算済み: 登録した本人でも削除できない', async () => {
+  await assertFails(deleteDoc(doc(userB, 'expenses/expSettled')));
+});
+
 // --- 削除 -----------------------------------------------------------------
 await test('本人は自分の支出を削除できる', async () => {
   await assertSucceeds(deleteDoc(doc(userA, 'expenses/expADel')));
@@ -175,6 +337,50 @@ await test('グループ外の Gmail 支出は削除できない', async () => {
 });
 await test('★ 非メンバーは Gmail 取込のグループ支出を削除できない', async () => {
   await assertFails(deleteDoc(doc(userC, 'expenses/expGmail')));
+});
+
+await test('登録した本人（有効メンバー）は自分のグループ支出を削除できる', async () => {
+  await assertSucceeds(deleteDoc(doc(userA, 'expenses/newAG')));
+});
+await test('★ 脱退済みメンバーは自分が登録したグループ支出でも削除できない', async () => {
+  await assertFails(deleteDoc(doc(userD, 'expenses/expByD')));
+});
+await test('脱退済みメンバーも自分が登録した支出の read は残る（個人支出クエリの証明のため）', async () => {
+  await assertSucceeds(getDoc(doc(userD, 'expenses/expByD')));
+});
+await test('★ 脱退済みメンバーは groups / 他メンバーを読めない', async () => {
+  await assertFails(getDoc(doc(userD, 'groups/G1')));
+  await assertFails(getDoc(doc(userD, 'groupMembers/G1_A')));
+});
+
+// --- lineGroupId だけを持つ旧形式の支出 -------------------------------------
+await test('★ lineGroupId だけを持つ支出は、登録した本人（脱退済み）でも更新・削除できない', async () => {
+  await assertFails(updateDoc(doc(userD, 'expenses/expLegacyD'), { amount: 1 }));
+  await assertFails(deleteDoc(doc(userD, 'expenses/expLegacyD')));
+});
+await test('★ lineGroupId だけを持つ支出は、登録した本人（有効メンバー）でも更新できない', async () => {
+  await assertFails(updateDoc(doc(userB, 'expenses/expLegacy'), { amount: 1 }));
+});
+
+// --- 別の世帯のメンバー -----------------------------------------------------
+await test('別の世帯のメンバーは自分の世帯の支出を読める', async () => {
+  await assertSucceeds(getDoc(doc(userE, 'expenses/expG2')));
+  await assertSucceeds(getDocs(query(collection(userE, 'expenses'), where('groupId', '==', 'G2'))));
+});
+await test('★ 別の世帯のメンバーは G1 の支出を読めない・更新できない・削除できない', async () => {
+  await assertFails(getDoc(doc(userE, 'expenses/expG')));
+  await assertFails(updateDoc(doc(userE, 'expenses/expG'), { amount: 1 }));
+  await assertFails(deleteDoc(doc(userE, 'expenses/expGmail')));
+});
+await test('★ 別の世帯のメンバーは G1 の支出を一覧できない', async () => {
+  await assertFails(getDocs(query(collection(userE, 'expenses'), where('groupId', '==', 'G1'))));
+});
+await test('★ 別の世帯のメンバーは G1 に支出を作成できない', async () => {
+  await assertFails(setDoc(doc(userE, 'expenses/newEG1'), { lineId: 'E', groupId: 'G1', lineGroupId: 'L1', amount: 5, date: '2026-08-02' }));
+});
+await test('★ 別の世帯のメンバーは G1 の groups / メンバーを読めない', async () => {
+  await assertFails(getDoc(doc(userE, 'groups/G1')));
+  await assertFails(getDocs(query(collection(userE, 'groupMembers'), where('groupId', '==', 'G1'))));
 });
 
 // --- web が実際に投げるクエリ形 --------------------------------------------
@@ -247,6 +453,13 @@ await test('設定: 他人のドキュメントには書けない', async () => 
   await assertFails(setDoc(doc(userA, 'budgetSettings/B'), { monthlyBudget: 9 }));
 });
 
+await test('設定: userSettings の自分のドキュメントに期間設定を保存できる', async () => {
+  await assertSucceeds(setDoc(doc(userA, 'userSettings/A'), { dateSettings: { mode: 'monthly' } }, { merge: true }));
+});
+await test('★ 設定: 匿名は userSettings に書けない', async () => {
+  await assertFails(setDoc(doc(anon, 'userSettings/anon-uid'), { x: 1 }));
+});
+
 // --- Admin SDK 専用コレクション --------------------------------------------
 await test('linkTokens はクライアントから読めない', async () => {
   await assertFails(getDoc(doc(userA, 'linkTokens/t1')));
@@ -263,6 +476,27 @@ await test('userLinks: 他人の appUid のドキュメントは読めない', a
 await test('★ userLinks: クライアントからは書けない（appUid 解決の汚染防止）', async () => {
   await assertFails(setDoc(doc(userA, 'userLinks/appuid-A'), { lineIds: ['A', 'B'] }));
 });
+// --- lineId を持たない支出（匿名の null == null 対策） -----------------------
+for (const id of ['noLine', 'nullLine']) {
+  await test(`★ 匿名は lineId なしの支出（${id}）を読めない・更新できない・削除できない`, async () => {
+    await assertFails(getDoc(doc(anon, `expenses/${id}`)));
+    await assertFails(updateDoc(doc(anon, `expenses/${id}`), { amount: 1 }));
+    await assertFails(deleteDoc(doc(anon, `expenses/${id}`)));
+  });
+  await test(`★ LINE ユーザーも lineId なしの支出（${id}）は読めない・更新できない`, async () => {
+    await assertFails(getDoc(doc(userC, `expenses/${id}`)));
+    await assertFails(getDoc(doc(userA, `expenses/${id}`)));
+    await assertFails(updateDoc(doc(userC, `expenses/${id}`), { amount: 1 }));
+    await assertFails(deleteDoc(doc(userC, `expenses/${id}`)));
+  });
+}
+await test('★ 匿名は where(lineId == null) で支出を一覧できない', async () => {
+  await assertFails(getDocs(query(collection(anon, 'expenses'), where('lineId', '==', null))));
+});
+await test('★ 匿名は lineId なしの支出を作成できない', async () => {
+  await assertFails(setDoc(doc(anon, 'expenses/newAnonNoLine'), { amount: 5, date: '2026-08-02' }));
+});
+
 await test('default-deny: 未定義コレクションは読めない', async () => {
   await assertFails(getDoc(doc(userA, 'userCustomCategories/x')));
 });
