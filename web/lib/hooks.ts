@@ -1111,6 +1111,8 @@ export interface HouseholdInfo {
     lineGroupId: string | null;
     /** 有効メンバー（参加順） */
     members: HouseholdMember[];
+    /** 期間の折半精算で集金するメンバー（groups.splitSettings）。未指定・メンバー外なら null */
+    splitCollectFrom: string | null;
   } | null;
 }
 
@@ -1176,6 +1178,9 @@ async function loadHousehold(lineId: string): Promise<HouseholdInfo> {
       else if (!existing.displayName && row.displayName) members.set(row.lineId, { ...existing, displayName: row.displayName });
     });
 
+  const splitSettings = groupData.splitSettings as { collectFromLineId?: unknown } | undefined;
+  const collectFrom = splitSettings?.collectFromLineId;
+
   return {
     activeGroupIds,
     household: {
@@ -1183,6 +1188,8 @@ async function loadHousehold(lineId: string): Promise<HouseholdInfo> {
       name: typeof groupData.name === 'string' ? groupData.name : '',
       lineGroupId: typeof groupData.lineGroupId === 'string' && groupData.lineGroupId ? groupData.lineGroupId : null,
       members: Array.from(members.values()).map((m) => ({ lineId: m.lineId, displayName: m.displayName })),
+      // 指定後に脱退した人は、指定なしとして扱う
+      splitCollectFrom: typeof collectFrom === 'string' && members.has(collectFrom) ? collectFrom : null,
     },
   };
 }

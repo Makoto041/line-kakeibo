@@ -26,6 +26,7 @@ const {
   authorizeExpenseWrite,
   householdErrorHandler,
   clientIpKey,
+  parseCollectFromLineId,
   MAX_SETTLE_IDS,
 } = require('../dist/householdApi');
 const { isAllowedWebOrigin } = require('../dist/webOrigins');
@@ -440,6 +441,14 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
     check('その他の例外は 500 internal', res.statusCode === 500 && deepEqual(res.body, { error: 'internal' }));
     check('許可外のオリジンには ACAO を付けない', res.headers['access-control-allow-origin'] === undefined);
   }
+
+  // 折半精算で集金するメンバーの指定
+  check('集金するメンバー: lineId はそのまま', parseCollectFromLineId('Uaaa') === 'Uaaa');
+  check('集金するメンバー: null は解除', parseCollectFromLineId(null) === null);
+  check(
+    '集金するメンバー: 空・数値・undefined・パス区切りは不正',
+    [undefined, '', 42, 'a/b', '__x__'].every((v) => parseCollectFromLineId(v) === undefined)
+  );
 
   // postback が共有関数を読み込めること（require 時に落ちない）
   check('line/postback.js が読み込める', typeof require('../dist/line/postback').handlePostback === 'function');

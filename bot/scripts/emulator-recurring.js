@@ -1,5 +1,5 @@
 /**
- * 固定費（/household/recurring と毎日の計上）の統合テスト（Firestore・Auth エミュレータ + 実際の Express ルーター）
+ * 固定費（/household/recurring と毎日の計上）と折半精算の設定（/household/split-settings）の統合テスト（Firestore・Auth エミュレータ + 実際の Express ルーター）
  *
  * emulator-household-api.js と同じ形で実行する（npm -w bot run test:emulator から続けて動く）。
  * 本番のプロジェクトには接続しない（demo-* 以外は即終了）。
@@ -222,6 +222,24 @@ async function main() {
     check('削除', del.status === 200);
     check('削除後も計上済みの明細は残る', (await db.doc(`expenses/recurring_${utilId}_202609`).get()).exists);
     check('他の世帯の人は削除できない', (await call('DELETE', `/household/recurring/${rentId}`, { token: zed })).status === 403);
+
+    console.log('split-settings API: 集金するメンバーの指定');
+    const split = (token, body) => call('POST', '/household/split-settings', { token, body });
+    check('トークンなしは 401', (await split(undefined, { groupId: 'h1', collectFromLineId: 'Uben' })).status === 401);
+    check('他の世帯のメンバーは 403', (await split(zed, { groupId: 'h1', collectFromLineId: 'Uben' })).status === 403);
+    check('脱退済みのメンバーは指定できない', (await split(aki, { groupId: 'h1', collectFromLineId: 'Uold' })).status === 400);
+    check('世帯外の人は指定できない', (await split(aki, { groupId: 'h1', collectFromLineId: 'Uzed' })).status === 400);
+    check('lineId でも null でもない値は 400', (await split(aki, { groupId: 'h1', collectFromLineId: 42 })).status === 400);
+    const setBen = await split(aki, { groupId: 'h1', collectFromLineId: 'Uben' });
+    const savedBen = (await db.doc('groups/h1').get()).get('splitSettings');
+    check(
+      'Ben を指定して groups に保存',
+      setBen.status === 200 && setBen.body.collectFromLineId === 'Uben' && savedBen.collectFromLineId === 'Uben' && savedBen.updatedBy === 'Uaki',
+      setBen.body
+    );
+    check('ほかの項目は残る', (await db.doc('groups/h1').get()).get('inviteCode') === '101010');
+    const cleared = await split(aki, { groupId: 'h1', collectFromLineId: null });
+    check('null で指定を解除', cleared.status === 200 && (await db.doc('groups/h1').get()).get('splitSettings').collectFromLineId === null);
   } finally {
     server.close();
   }

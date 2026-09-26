@@ -250,9 +250,11 @@ export default function RecurringExpensesPanel({ lineId }: { lineId: string }) {
           <h3 className="text-sm font-semibold text-fg">固定費</h3>
           <span className="text-xs text-muted">毎月の合計: ¥{total.toLocaleString()}</span>
         </div>
-        <p className="mb-4 text-xs text-muted">
-          引き落とし日の朝に、設定した金額で明細へ自動で入ります。光熱費など金額が変わるものは、請求が確定したら明細の金額を直してください。29〜30日の指定は、その日が無い月は末日に入ります。カードの利用通知メールで自動登録される支出は、二重になるので登録しないでください。
-        </p>
+        <ul className="mb-4 space-y-0.5 text-xs text-muted">
+          <li>・引き落とし日に明細へ自動で追加</li>
+          <li>・光熱費など金額が変わるものは、確定後に明細で修正</li>
+          <li>・カード通知で自動登録されるものは登録不要（二重になるため）</li>
+        </ul>
 
         {items.length === 0 && editing !== 'new' && (
           <p className="rounded-xl border border-dashed border-line p-4 text-center text-sm text-muted">
@@ -441,6 +443,9 @@ function DraftForm({
             ))}
             <option value={31}>毎月末日</option>
           </select>
+          {draft.dayOfMonth >= 29 && draft.dayOfMonth <= 30 && (
+            <p className="mt-1 text-xs text-muted">その日が無い月は末日に入ります</p>
+          )}
         </div>
       </div>
       <div>

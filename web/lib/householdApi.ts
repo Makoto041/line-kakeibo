@@ -185,3 +185,15 @@ export async function settle(
   if (!result) throw new HouseholdApiError('failed', res.status);
   return { ok: true, ...result };
 }
+
+/** 期間の折半精算で集金するメンバーを世帯に保存する（null で指定を解除） */
+export async function saveSplitCollectFrom(groupId: string, collectFromLineId: string | null): Promise<string | null> {
+  if (!isValidDocId(groupId) || (collectFromLineId !== null && !isValidDocId(collectFromLineId))) {
+    throw new HouseholdApiError('invalid_request');
+  }
+  const res = await send('/household/split-settings', { method: 'POST', body: { groupId, collectFromLineId } });
+  if (res.status !== 200) fail(res);
+  const saved = (res.body as { collectFromLineId?: unknown } | null)?.collectFromLineId;
+  if (saved !== collectFromLineId) throw new HouseholdApiError('failed', res.status);
+  return collectFromLineId;
+}
