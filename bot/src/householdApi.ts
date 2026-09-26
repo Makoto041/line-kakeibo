@@ -8,6 +8,7 @@
  * - POST /household/expenses/:expenseId/actions   { action: 'confirm' }
  * - GET  /household/settlement?groupId=<id>
  * - POST /household/settlement/settle             { groupId, expectedExpenseIds, expectedSettlement? }
+ * - POST /household/split-settings                { groupId, collectFromLineId }（期間の折半精算で集金するメンバー）
  *
  * 防御線は Firebase ID トークンの検証（カスタムトークン由来で lineId クレームを持つものだけ）と
  * groupMembers の有効メンバー確認。CORS は `/auth/line` と同じ許可リストだが防御線ではない
@@ -857,6 +858,44 @@ householdRouter.delete(
     await ctx.ref.delete();
     console.log('household recurring: deleted', { item: maskId(ctx.item.id), user: maskId(ctx.lineId) });
     res.status(200).json({ ok: true });
+  })
+);
+
+// ============================================
+// 期間の折半精算の設定
+// ============================================
+
+/** 集金するメンバーの指定の入力。lineId か null（指定の解除）。それ以外は undefined */
+export function parseCollectFromLineId(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return isValidDocId(value) ? value : undefined;
+}
+
+/**
+ * POST /household/split-settings  { groupId, collectFromLineId: string | null }
+ *
+ * 期間の折半精算で「集金するメンバー」を世帯ごとに指定する（groups/{groupId}.splitSettings）。
+ * groups はクライアントから書けないので、ここで Admin SDK を使って書く。指定できるのは世帯の有効メンバーだけ。
+ */
+householdRouter.post(
+  '/split-settings',
+  userLimiter,
+  route('split-settings', async (req, res) => {
+    const lineId = res.locals.lineId as string;
+    const body = isPlainObject(req.body) ? req.body : null;
+    const ctx = await requireGroupMember(res, body?.groupId, lineId);
+    if (!ctx || !body) return;
+    const collectFromLineId = parseCollectFromLineId(body.collectFromLineId);
+    if (collectFromLineId === undefined || (collectFromLineId !== null && !ctx.group.names.has(collectFromLineId))) {
+      sendError(res, 400, 'invalid_request');
+      return;
+    }
+    await ctx.db
+      .collection('groups')
+      .doc(ctx.groupId)
+      .update({ splitSettings: { collectFromLineId, updatedBy: lineId, updatedAt: new Date() } });
+    console.log('household split-settings: updated', { group: maskId(ctx.groupId), user: maskId(lineId) });
+    res.status(200).json({ collectFromLineId });
   })
 );
 

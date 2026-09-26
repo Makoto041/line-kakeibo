@@ -1,11 +1,14 @@
 'use client';
 
-// 精算: 未精算の立替から「誰が誰にいくら払うか」を出し、精算を記録する。
-// 値はすべてサーバー（/household/settlement）の応答から作る（LINE の「立替一覧」「精算」と同じ集合・同じ式）。
+// 精算:
+// - 期間の精算（折半）: 期間内の世帯の支出を折半し、指定したメンバーから集金する額（PeriodSplitCard）。
+// - 未精算の立替: 「誰が誰にいくら払うか」を出し、精算を記録する。値はすべてサーバー（/household/settlement）の
+//   応答から作る（LINE の「立替一覧」「精算」と同じ集合・同じ式）。
 import React, { useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 import { ArrowRight, CircleCheck, HandCoins, Loader2, RefreshCw, Users } from 'lucide-react';
 import PreviewModeBanner from '../../components/PreviewModeBanner';
+import PeriodSplitCard from '../../components/PeriodSplitCard';
 import { useHousehold, useLineAuth, useSettlement, patchCachedExpenses, invalidateStatsCache } from '../../lib/hooks';
 import { householdErrorCode, isHouseholdApiConfigured, settle } from '../../lib/householdApi';
 import { buildSettlementViewModel, clearedSettlement, groupSettlementItems } from '../../lib/settlementView';
@@ -163,6 +166,18 @@ export default function SettlementPage() {
         </div>
       ) : (
         <div className="space-y-4">
+          {/* 期間の精算（折半） */}
+          {lineId && (
+            <PeriodSplitCard
+              lineId={lineId}
+              groupId={household.groupId}
+              members={household.members}
+              collectFrom={household.splitCollectFrom}
+              onSaved={householdState.refetch}
+              canSave={apiAvailable}
+            />
+          )}
+
           {/* 精算額 */}
           <div className="glass animate-fade-up rounded-2xl p-5 shadow-glass">
             <div className="flex items-center justify-between">
