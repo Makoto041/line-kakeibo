@@ -4,10 +4,12 @@
 //   集金額 = 合計 ÷ 2 − 集金するメンバーの支払い（四捨五入）
 // クレジットカードの自動取得・共通口座の固定費など、集金するメンバー以外の支払いは相手の負担として扱う。
 // マイナスになるとき（集金するメンバーが半分より多く払っている）は、相手がその額を払う。
+// 支払者は支出画面の支払い者別の集計と同じく payerId（無ければ登録者）で判定する。
+// 立替精算済み（advance_settled）の明細は、立替の精算で半分ずつの負担になっているので折半しない（二重精算を防ぐ）。
 import type { Expense } from './hooks';
 
 export type SplitExpense = Pick<Expense, 'amount' | 'includeInTotal' | 'lineId'> &
-  Partial<Pick<Expense, 'groupId' | 'payerId'>>;
+  Partial<Pick<Expense, 'groupId' | 'payerId' | 'status' | 'date'>>;
 
 export interface SplitMember {
   lineId: string;
@@ -30,6 +32,8 @@ export interface PeriodSplit {
   count: number;
   /** 合計から除外した件数 */
   excludedCount: number;
+  /** 立替精算済みで折半しない件数 */
+  settledCount: number;
   /** 合計 ÷ 2（端数はそのまま。式の表示用） */
   half: number;
   /** 集金するメンバーと相手。決められないときは null */
@@ -52,15 +56,24 @@ export function computePeriodSplit(input: {
   groupId: string;
   members: readonly SplitMember[];
   targetLineId: string | null;
+  /** 期間（YYYY-MM-DD の両端を含む）。指定したときは date がこの範囲の支出だけを数える */
+  range?: { startDate: string; endDate: string };
 }): PeriodSplit {
+  const range = input.range;
   // 個人の支出（groupId なし・別の世帯）は折半しない。見る人によって金額が変わらないようにする
-  const pool = input.expenses.filter((e) => e.groupId === input.groupId);
-  const counted = pool.filter((e) => e.includeInTotal);
+  const pool = input.expenses.filter(
+    (e) =>
+      e.groupId === input.groupId &&
+      (!range || (typeof e.date === 'string' && e.date >= range.startDate && e.date <= range.endDate))
+  );
+  const included = pool.filter((e) => e.includeInTotal);
+  const counted = included.filter((e) => e.status !== 'advance_settled');
   const total = counted.reduce((sum, e) => sum + amountOf(e), 0);
   const base = {
     total,
     count: counted.length,
-    excludedCount: pool.length - counted.length,
+    excludedCount: pool.length - included.length,
+    settledCount: included.length - counted.length,
     half: total / 2,
   };
 

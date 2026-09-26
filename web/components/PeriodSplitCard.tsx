@@ -16,7 +16,9 @@ import {
 } from '../lib/dateSettings';
 import { computePeriodSplit, formatYenExact } from '../lib/periodSplit';
 
-const yen = (n: number) => `¥${n.toLocaleString()}`;
+const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`;
+// useExpenses の世帯クエリの上限。これに届いたら取りこぼしがありうる
+const FETCH_LIMIT = 500;
 
 interface Props {
   lineId: string;
@@ -30,36 +32,45 @@ interface Props {
 
 export default function PeriodSplitCard({ lineId, groupId, members, collectFrom, onSaved, canSave }: Props) {
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   // 締まった直後の期間から見る（期間が終わってから精算する）
   const [currentMonth, setCurrentMonth] = useState(() => dayjs().subtract(1, 'month'));
   useEffect(() => {
     let cancelled = false;
     getDateRangeSettings(lineId).then((s) => {
-      if (!cancelled) setDateSettings(s);
+      if (cancelled) return;
+      setDateSettings(s);
+      setSettingsLoaded(true);
     });
     return () => {
       cancelled = true;
     };
   }, [lineId]);
   const range = useMemo(() => getEffectiveDateRange(currentMonth, dateSettings), [currentMonth, dateSettings]);
-  const { expenses, loading } = useExpenses(lineId, 0, 500, range.startDate);
+  // 期間設定が届く前に既定（1 日始まり）の期間で取得しない
+  const { expenses, loading } = useExpenses(settingsLoaded ? lineId : null, 0, FETCH_LIMIT, range.startDate);
+  const busy = !settingsLoaded || loading;
 
-  // 保存して世帯の情報を取り直すまでの間も、選んだ人で計算する。
-  // 世帯の設定（collectFrom）が選んだ時点から変われば、そちらを正とする
-  const [pending, setPending] = useState<{ value: string; basis: string | null } | null>(null);
+  // 保存して世帯の情報を取り直すまでの間も、選んだ人で計算する。世帯の設定（collectFrom）が変われば、そちらを正とする
+  const [pending, setPending] = useState<string | null>(null);
+  const [seenCollectFrom, setSeenCollectFrom] = useState(collectFrom);
+  if (seenCollectFrom !== collectFrom) {
+    setSeenCollectFrom(collectFrom);
+    setPending(null);
+  }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const target = pending && pending.basis === collectFrom ? pending.value : collectFrom;
+  const target = pending ?? collectFrom;
 
   const split = useMemo(
-    () => computePeriodSplit({ expenses, groupId, members, targetLineId: target }),
-    [expenses, groupId, members, target]
+    () => computePeriodSplit({ expenses, groupId, members, targetLineId: target, range }),
+    [expenses, groupId, members, target, range]
   );
   const nameOf = (id: string | undefined) => members.find((m) => m.lineId === id)?.displayName || 'メンバー';
 
   const choose = async (id: string) => {
     if (saving || id === target) return;
-    setPending({ value: id, basis: collectFrom });
+    setPending(id);
     setSaving(true);
     setError(null);
     try {
@@ -85,7 +96,8 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
           <button
             type="button"
             onClick={() => setCurrentMonth((m) => m.subtract(1, 'month'))}
-            className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-card text-muted hover:bg-fg/5 hover:text-fg"
+            disabled={range.mode === 'custom'}
+            className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-card text-muted hover:bg-fg/5 hover:text-fg disabled:opacity-40"
             aria-label="前の期間"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -94,7 +106,8 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
           <button
             type="button"
             onClick={() => setCurrentMonth((m) => m.add(1, 'month'))}
-            className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-card text-muted hover:bg-fg/5 hover:text-fg"
+            disabled={range.mode === 'custom'}
+            className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-card text-muted hover:bg-fg/5 hover:text-fg disabled:opacity-40"
             aria-label="次の期間"
           >
             <ChevronRight className="h-4 w-4" />
@@ -133,7 +146,7 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
           </div>
           {error && <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
 
-          {loading && expenses.length === 0 ? (
+          {busy && expenses.length === 0 ? (
             <div className="py-8 text-center">
               <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted" />
             </div>
@@ -142,7 +155,8 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
               <dl className="mt-4 space-y-1.5 text-sm tabular-nums">
                 <div className="flex justify-between">
                   <dt className="text-muted">
-                    合計（{split.count}件{split.excludedCount > 0 ? `・除外${split.excludedCount}件` : ''}）
+                    合計（{split.count}件{split.excludedCount > 0 ? `・除外${split.excludedCount}件` : ''}
+                    {split.settledCount > 0 ? `・立替精算済み${split.settledCount}件` : ''}）
                   </dt>
                   <dd className="font-medium text-fg">{yen(split.total)}</dd>
                 </div>
@@ -157,6 +171,10 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
                   </div>
                 )}
               </dl>
+
+              {expenses.length >= FETCH_LIMIT && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">件数が多いため、一部を数えられていない可能性があります</p>
+              )}
 
               <div className="mt-4 border-t border-line pt-4 text-center">
                 {split.reason === 'no_target' ? (

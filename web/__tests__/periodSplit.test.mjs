@@ -96,6 +96,35 @@ test('有効メンバーが 2 人でなければ計算しない', () => {
   assert.equal(r.transfer, null);
 });
 
+test('立替精算済みの明細は折半しない（立替の精算と二重にしない）', () => {
+  const r = computePeriodSplit({
+    expenses: [e(4000, OWNER.lineId), e(6000, PARTNER.lineId, { status: 'advance_settled' })],
+    groupId: G,
+    members: MEMBERS,
+    targetLineId: PARTNER.lineId,
+  });
+  assert.equal(r.total, 4000);
+  assert.equal(r.settledCount, 1);
+  assert.equal(r.excludedCount, 0);
+  assert.deepEqual(r.transfer, { fromLineId: PARTNER.lineId, toLineId: OWNER.lineId, amount: 2000 });
+});
+
+test('期間を指定すると範囲外の日付は数えない（両端を含む）', () => {
+  const r = computePeriodSplit({
+    expenses: [
+      e(100, OWNER.lineId, { date: '2026-08-14' }),
+      e(200, OWNER.lineId, { date: '2026-08-15' }),
+      e(300, OWNER.lineId, { date: '2026-09-14' }),
+      e(400, OWNER.lineId, { date: '2026-09-15' }),
+    ],
+    groupId: G,
+    members: MEMBERS,
+    targetLineId: PARTNER.lineId,
+    range: { startDate: '2026-08-15', endDate: '2026-09-14' },
+  });
+  assert.equal(r.total, 500);
+});
+
 test('formatYenExact: 整数は小数なし', () => {
   assert.equal(formatYenExact(320853), '¥320,853');
   assert.equal(formatYenExact(0.5), '¥0.5');
