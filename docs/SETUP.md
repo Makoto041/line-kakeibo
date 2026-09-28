@@ -133,6 +133,7 @@ cd /path/to/line-kakeibo && ln -s /tmp/rules-tools/node_modules node_modules   #
 | Bot（Functions）＋ Firestore / Storage ルール | `master` へのマージで `ci-cd.yml` の `deploy-bot` が実行（`bot/**`・ルール・`firebase.json` に変更があるとき） |
 | 手動で再デプロイ | GitHub Actions で `Improved CI/CD Pipeline` を `master` 上で `workflow_dispatch` 実行 |
 | 手元から（緊急時） | `npm -w bot run deploy`（関数のみ）、`firebase deploy --only firestore:rules,storage --project line-kakeibo-0410`（ルール） |
+| タグ・リリース | 実装（`feat` / `fix` / `perf` / `refactor` / `revert`）のマージごとに `release.yml` が `vX.Y.Z` のタグと GitHub Release を自動作成。手動は Actions の `Release Tag` を `workflow_dispatch`（`version` 指定） |
 
 CI のデプロイには GitHub の `production-bot` environment に `GCP_SA_KEY`（Firebase Admin / Cloud Functions Developer 等を持つ
 サービスアカウントの JSON）が必要。詳細は `.github/README.md`。

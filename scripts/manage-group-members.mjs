@@ -143,7 +143,7 @@ async function cmdList() {
       const idOk = docId(m) === memberDocId(str(m, 'groupId'), str(m, 'lineId'));
       console.log(
         `  ${isActive(m) ? '有効  ' : '無効  '} ${mask(str(m, 'lineId'))}  ${str(m, 'displayName') ?? '-'}` +
-          (idOk ? '' : '  ← ドキュメントIDが決定的IDではない（migrate-group-members.mjs を実行）')
+          (idOk ? '' : '  ← ドキュメントIDが決定的IDではない（git 履歴の scripts/migrate-group-members.mjs を参照して移行）')
       );
     }
   }

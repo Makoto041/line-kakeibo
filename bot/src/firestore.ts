@@ -669,7 +669,7 @@ export async function joinGroup(inviteCode: string, lineId: string, displayName:
  * セキュリティルールから `exists()` でメンバーシップを検証できるよう、
  * 自動生成IDではなく (groupId, lineId) から決定的に導出する。
  * ルール側もこの組み立て方に依存するため、変更する場合は firestore.rules と
- * scripts/migrate-group-members.mjs も併せて更新すること。
+ * scripts/manage-group-members.mjs（memberDocId）も併せて更新すること。
  */
 export function groupMemberDocId(groupId: string, lineId: string): string {
   return `${groupId}_${lineId}`;

@@ -99,7 +99,7 @@ line-kakeibo/
 ├─ scripts/              # 管理スクリプト（世帯メンバー・アイコン生成）
 ├─ test/                 # Firestore / Storage ルールのテスト
 ├─ firestore.rules / storage.rules / firestore.indexes.json
-└─ .github/workflows/    # ci-cd.yml（ビルド・テスト・デプロイ）/ pr-checks.yml（ルールのテスト・依存の検査）
+└─ .github/workflows/    # ci-cd.yml（ビルド・テスト・デプロイ）/ pr-checks.yml（ルールのテスト）/ release.yml（タグ・Release）
 ```
 
 ## 🚀 セットアップ
@@ -121,6 +121,7 @@ npm -w bot run dev
 - ブランチを切って PR を作り、CI（型チェック・lint・ビルド・テスト・ルールのテスト・CodeQL）が通ったら squash マージする。`master` への直接コミットはしない
 - PR のタイトルは Conventional Commits（`feat:` / `fix:` / `refactor:` / `docs:` / `chore:`）。リリースノートに使う
 - マージ後は自動でデプロイされる（Web は Vercel、Bot とルールは `ci-cd.yml`）
+- 実装（`feat` / `fix` / `refactor` など）のマージごとに `release.yml` が `vX.Y.Z` のタグと GitHub Release を自動で作る。バージョンは git タグが正
 
 ```bash
 npm -w web test                 # web のロジックのテスト

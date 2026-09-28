@@ -118,7 +118,7 @@ LINEテキスト → webhook(署名検証)
 SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
   → history API差分取得 → SMBCフィルタ → 利用先/金額/利用日時パース
   → Gemini分類 → Firestoreトランザクションでアトミック保存
-     （gmailMessageId ＋ date+amount+usedAt±1分 の二重チェックで重複排除）
+     （gmailMessageId ＋ date+amount+店舗名の類似+usedAt±1分 の二重チェックで重複排除）
   → LINEグループへFlex通知（テキスト入力と同じ登録・編集カード）
 ```
 
@@ -231,7 +231,7 @@ line-kakeibo/
 │  ├─ __tests__/             # renewal-logic.test.mjs / periodSplit.test.mjs（node --test）
 │  ├─ public/icons/          # Flex メッセージ用アイコン PNG（scripts/gen-line-icons.mjs で生成）
 │  └─ .env.example
-├─ scripts/                  # manage-group-members.mjs（世帯メンバー管理）/ migrate-group-members.mjs / gen-line-icons.mjs
+├─ scripts/                  # manage-group-members.mjs（世帯メンバー管理）/ gen-line-icons.mjs（LINE カードのアイコン生成）
 ├─ test/                     # firestore.rules.test.mjs / storage.rules.test.mjs（エミュレータ）
 ├─ firestore.rules / firestore.indexes.json / storage.rules
 ├─ firebase.json / .firebaserc / vercel.json

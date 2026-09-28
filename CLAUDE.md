@@ -30,6 +30,7 @@ npm run gen:icons                             # LINE カード用アイコンを
 4. **PR タイトルは Conventional Commits**（`feat:` / `fix:` / `refactor:` / `docs:` / `chore:` / `ci:`、任意で `(web)` `(bot)` スコープ）。squash マージのコミットになり、リリースノートに使われる。
 5. **設計 / UX を変える変更はまずモック**: 方向性の合意を得てから実装に入る。サーバー環境で作業していて実機で見せたい場合は、下記「サーバー環境でのプレビュー」で URL を渡し、実機（iPhone / Mac など SP・PC 両方）で確認してもらう。
 6. **マージ後の確認**: Web は Vercel の Git 連携、Bot とルールは `ci-cd.yml` の `deploy-bot` が自動デプロイする。デプロイの成功と本番の疎通（webhook の署名なし 401、`/household/*` のトークンなし 401、Web の主要ページ 200）を確認して報告する。
+7. **タグ（リリース）**: 実装を master にマージするたびに `release.yml` が SemVer のタグ `vX.Y.Z` と GitHub Release を自動で作る。上げ幅は squash コミットの件名（= PR タイトル）で決まる: `feat` → minor、`!` / `BREAKING CHANGE` → major、`fix` / `perf` / `refactor` / `revert` → patch、`docs` / `chore` / `ci` / `test` はタグなし。**バージョンは git タグが正**で、`package.json` の `version` は使わない（コミットしない）。まとめて上げたいときや手動で打つときは、Actions の `Release Tag` を master 上で `workflow_dispatch`（`version` を指定）。マージ後の報告にはタグ名を含める。
 
 ## サーバー環境でのプレビュー（tailnet 経由で実機確認）
 

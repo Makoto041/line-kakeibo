@@ -1,0 +1,117 @@
+name: Release Tag
+
+# master にマージされた実装ごとに SemVer のタグ（vX.Y.Z）と GitHub Release を作る。
+#
+# - squash マージのコミット件名（= PR タイトル、Conventional Commits）から上げ幅を決める
+#     feat → minor / `!` または BREAKING CHANGE → major / fix・perf・refactor・revert → patch
+#     docs・chore・ci・test・style・build など実装を伴わないものはタグを作らない
+# - バージョンは git タグが正。package.json の version は変更しない（コミットを作らない）
+# - 手動で打つときは master 上で workflow_dispatch（version を指定。空なら直前のコミットから自動）
+# - Release の本文は GitHub の自動生成（前のタグ以降にマージされた PR の一覧）
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'タグにするバージョン（例: 1.2.0）。空なら直前のコミットの種別から自動で決める'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+# 連続マージでも順番に処理する（同時に走ると同じバージョンを計算しうる）
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Decide version
+        id: decide
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          latest="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          latest="${latest:-v0.0.0}"
+          echo "latest tag: $latest"
+          IFS=. read -r major minor patch <<< "${latest#v}"
+
+          subject="$(git log -1 --format=%s HEAD)"
+          body="$(git log -1 --format=%b HEAD)"
+          echo "head: $subject"
+
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            if ! [[ "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::version は X.Y.Z の形式で指定してください: $INPUT_VERSION"
+              exit 1
+            fi
+            next="v$INPUT_VERSION"
+          else
+            # Conventional Commits の件名から種別を取る（例: feat(web): ..., fix!: ...）
+            if [[ "$subject" =~ ^([a-z]+)(\([^)]*\))?(!)?: ]]; then
+              type="${BASH_REMATCH[1]}"; bang="${BASH_REMATCH[3]}"
+            else
+              type=""; bang=""
+            fi
+            bump="none"
+            if [ -n "$bang" ] || grep -q "BREAKING CHANGE" <<< "$body"; then
+              bump="major"
+            elif [ "$type" = "feat" ]; then
+              bump="minor"
+            elif [[ "$type" =~ ^(fix|perf|refactor|revert)$ ]]; then
+              bump="patch"
+            fi
+            echo "bump: $bump (type=${type:-none})"
+            case "$bump" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+              none)
+                echo "実装を伴わないコミットのためタグは作りません"
+                echo "tag=" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+            next="v${major}.${minor}.${patch}"
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$next" > /dev/null; then
+            echo "::error::タグ $next は既に存在します"
+            exit 1
+          fi
+          echo "next: $next"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag
+        if: steps.decide.outputs.tag != ''
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "refs/tags/$TAG"
+
+      - name: Create GitHub Release
+        if: steps.decide.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
+          echo "### Released $TAG" >> "$GITHUB_STEP_SUMMARY"
