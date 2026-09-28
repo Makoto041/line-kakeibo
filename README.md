@@ -19,7 +19,7 @@ Web では予算の進捗、支出の確認・編集、ふたりの精算、家�
 | 💬 **LINE テキスト入力** | `500 ランチ` のように送るだけで登録。確認カードから OK / 修正 / 立替 / 除外 / カテゴリ変更ができる |
 | 📧 **Gmail 自動取込** | クレジットカード利用通知メールを Gmail API + Pub/Sub でリアルタイムに取り込む |
 | 🔁 **固定費の自動計上** | 家賃・光熱費などを引き落とし日と見込み額で登録しておくと、毎月自動で支出に入る（Web の設定 → 固定費） |
-| 📊 **MoneyForward CSV** | Google Drive 上の CSV を日次バッチで取り込む |
+| 📊 **MoneyForward CSV** | Google Drive 上の CSV を日次バッチで外部 API へ送る（送信先は本リポジトリ外。未設定なら動かない） |
 | ✏️ **Web** | 支出の確認・編集・削除、レシート画像の添付 |
 
 ### 集計と精算
@@ -91,7 +91,7 @@ line-kakeibo/
 │  ├─ src/               # index.ts（webhook・API）, householdApi.ts, recurringExpenses.ts, line/, gmail/ など
 │  └─ scripts/           # スモーク・エミュレータのテスト
 ├─ web/                  # Next.js（Vercel）
-│  ├─ app/               # ホーム / expenses / settlement / settings / attach
+│  ├─ app/               # ホーム / expenses / settlement / settings / attach / dashboard / link / privacy / terms
 │  ├─ components/        # 画面部品
 │  ├─ lib/               # Firebase クライアント・hooks・ロジック（純関数）
 │  └─ __tests__/         # node --test

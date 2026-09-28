@@ -303,7 +303,7 @@ Storage: `receipts/{expenseId}/{fileName}` — cross-service rules で支出を�
 | `ADMIN_SECRET` | Gmail 管理 API 認証 |
 | `GITHUB_TOKEN` | フィードバック Issue 起票 |
 | `API_BASE_URL` / `MFKAKEIBO_TOKEN` | MoneyForward インポート先 |
-| `GOOGLE_APPLICATION_CREDENTIALS` / `FIREBASE_SA_BASE64` | Firebase Admin 認証（ローカルは JSON パス、本番は Base64） |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Firebase Admin 認証（ローカルのみ JSON パス。本番は ADC） |
 
 ### Web（Vercel, すべてクライアント公開）
 

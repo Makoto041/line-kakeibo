@@ -194,7 +194,7 @@ Web のアクセス制御は **LIFF ログイン → Firebase カスタムトー
   - Web（Vercel）→ **Vercel の Git 連携**が実行する（PR ごとにプレビュー、`master` へのマージで本番）。GitHub Actions 側にデプロイジョブは持たない。ロールバックは Vercel ダッシュボードから
   - Bot / Firestore ルール・インデックス / Storage ルール → `ci-cd.yml` の `deploy-bot`。`master` への push で `bot/**` やルール類に変更があるとき、または `master` 上での `workflow_dispatch`（再デプロイ用）に実行。Storage の cross-service rules に必要な IAM ロールを事前確認し、確認できない場合は `storage` を除外してデプロイする（SECURITY_OPERATIONS.md §4）。成功後に `post-deploy-check` が webhook の `/health` を確認し Slack へ通知
 - **`deploy-bot` の前提**: GitHub の `production-bot` Environment に **`GCP_SA_KEY`**（Firebase プロジェクトのサービスアカウント JSON）が必要。`onRequest({ secrets: [...] })` を使う関数をデプロイするため、Cloud Functions / Cloud Run のデプロイ権限に加えて **Secret Manager の参照権限**も要る。`FIREBASE_PROJECT_ID` は任意（未設定時は `line-kakeibo-0410`）、`SLACK_WEBHOOK_URL` は任意
-- **GitHub Actions**: `ci-cd.yml`（changes → install-deps → lint / build-and-test → security（PR のみ）→ deploy-bot → post-deploy-check）と `pr-checks.yml`（`rules-tests` / `dependency-review`）。詳細は `.github/README.md`
+- **GitHub Actions**: `ci-cd.yml`（changes → install-deps → lint / build-and-test → security（PR のみ）→ deploy-bot → post-deploy-check）と `pr-checks.yml`（`rules-tests`）。詳細は `.github/README.md`
 - **テスト**: `npm -w web test`（`node --test __tests__/*.test.mjs`）、`npm -w bot test`（ビルド＋スモークスクリプト）、`npm -w bot run test:emulator`（`/household` API と固定費を Firestore / Auth エミュレータで検証）、ルールテスト（上記）。`build-and-test` ジョブが web / bot の `npm test` を実行する
 - **ローカル開発**: `web` は `npm -w web run dev`（:3000）、`bot` は `npm -w bot run dev`（`ts-node-dev`）＋ Firebase Emulator（`NEXT_PUBLIC_USE_FIREBASE_EMULATOR`）。環境変数の準備は [SETUP.md](./SETUP.md)
 

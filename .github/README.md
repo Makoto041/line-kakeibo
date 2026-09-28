@@ -32,7 +32,6 @@
 | ジョブ | 内容 |
 |---|---|
 | `rules-tests` | Firestore / Storage エミュレータ（Java 21）で `test/firestore.rules.test.mjs` と `test/storage.rules.test.mjs` を実行。テスト用ツール（`firebase-tools@15` / `@firebase/rules-unit-testing@5` / `firebase@12`）はリポジトリ外に `--no-save` で入れる。デプロイには関与しない |
-| `dependency-review` | `actions/dependency-review-action`。moderate 以上の脆弱性と GPL-3.0 / AGPL-3.0 ライセンスを拒否 |
 
 ## セットアップ
 
@@ -66,11 +65,8 @@ npm -w bot test
 # bot の /household API と固定費を Firestore / Auth エミュレータで検証（firebase-tools を PATH に置く）
 npm -w bot run test:emulator
 
-# Firestore / Storage ルールのテスト（JDK 21 が必要。ツールは --no-save で入れる）
-npm i --no-save @firebase/rules-unit-testing@5 firebase@12 firebase-tools@15
-npx firebase emulators:exec --only firestore,storage --project demo-kakeibo \
-  "node test/firestore.rules.test.mjs && node test/storage.rules.test.mjs"
-git checkout -- package.json package-lock.json   # ロックファイルが変わった場合
+# Firestore / Storage ルールのテスト（JDK 21 が必要）。ツールはリポジトリの外に入れて
+# package-lock.json を汚さない。手順は docs/SETUP.md §6 を参照
 ```
 
 ## デプロイとロールバック
