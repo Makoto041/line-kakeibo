@@ -1,7 +1,9 @@
 name: PR Checks
 
-# PR ごとの追加チェック。型チェック・lint・ビルド・監査・CodeQL は ci-cd.yml が PR でも実行するので、
+# PR ごとの追加チェック。型チェック・lint・ビルド・npm audit・CodeQL は ci-cd.yml が PR でも実行するので、
 # ここには ci-cd.yml に無いものだけを置く。
+# （actions/dependency-review-action はリポジトリの Dependency graph が無効なため使えない。
+#   有効化したら追加できる: Settings → Security analysis → Dependency graph）
 on:
   pull_request:
     branches: [ master ]
@@ -61,17 +63,3 @@ jobs:
     # 将来リポジトリ内で npm i --no-save に変えた場合に、マニフェストの変更を検出するために残す。
     - name: Ensure package manifests are untouched (safety net)
       run: git diff --exit-code -- package.json package-lock.json
-
-  # 依存関係の追加・更新に既知の脆弱性や不許可ライセンスが無いか
-  dependency-review:
-    name: Dependency Review
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Dependency Review
-      uses: actions/dependency-review-action@v4
-      with:
-        fail-on-severity: moderate
-        deny-licenses: GPL-3.0, AGPL-3.0
