@@ -57,7 +57,7 @@ service cloud.firestore {
     //
     // groupMembers のドキュメントIDは bot/src/firestore.ts の groupMemberDocId() と
     // 同じ規則（`${groupId}_${lineId}`）で組み立てる。変更する場合は
-    // scripts/migrate-group-members.mjs も併せて更新すること。
+    // scripts/manage-group-members.mjs（memberDocId）も併せて更新すること。
     //
     // exists() と get() は同一パスならキャッシュされ、1評価あたり10回という
     // ドキュメントアクセス上限にも1回としてしか数えられない。支出一覧のように

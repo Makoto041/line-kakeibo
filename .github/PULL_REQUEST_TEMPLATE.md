@@ -24,7 +24,7 @@
 - [ ] ローカルでの動作確認済み
 - [ ] 新しいテストケースを追加した
 - [ ] 既存テストが全て通ることを確認した
-- [ ] プレビュー環境での動作確認が必要
+- [ ] Vercel のプレビュー環境（PR ごとに自動作成）で動作確認した
 
 ## 📱 動作環境
 
@@ -32,7 +32,7 @@
 - [ ] Web (Vercel)
 - [ ] Bot (Firebase Functions)
 - [ ] データベース (Firestore)
-- [ ] 外部API (LINE, Gemini, Vision)
+- [ ] 外部API (LINE, Gemini, Gmail)
 
 ## 🔗 関連Issue
 
@@ -73,6 +73,5 @@
 
 ---
 
-**このPRが`develop`ブランチへの場合**: プレビュー環境でテスト後、問題なければ`master`への追加PRを作成してください。
-
-**このPRが`master`ブランチへの場合**: マージ後、本番環境に自動デプロイされます。緊急時のロールバック手順を確認してください。
+マージ後は本番環境に自動デプロイされます（Web は Vercel の Git 連携、Bot / ルールは `ci-cd.yml` の `deploy-bot`）。
+PR のタイトルは Conventional Commits（`feat:` / `fix:` / `refactor:` / `docs:` / `chore:` など）で書いてください。リリースノートに使われます。

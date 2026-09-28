@@ -15,7 +15,6 @@ const eslintConfig = defineConfig([
     // (required by Next 16, which removed `next lint`) additionally covers
     // these dirs, newly surfacing pre-existing code. Keep them out of scope
     // to preserve the pre-upgrade lint behavior.
-    "types/**/*.d.ts", // hand-written ambient shim for recharts (3rd-party)
     "__tests__/**",    // test files were never linted by `next lint`
   ]),
   // react-hooks v7 (bundled by eslint-config-next@16) adds rules that did not
