@@ -1,8 +1,10 @@
 name: PR Checks
 
+# PR ごとの追加チェック。型チェック・lint・ビルド・監査・CodeQL は ci-cd.yml が PR でも実行するので、
+# ここには ci-cd.yml に無いものだけを置く。
 on:
   pull_request:
-    branches: [ master, develop ]
+    branches: [ master ]
 
 env:
   NODE_VERSION: '22'
@@ -12,44 +14,6 @@ permissions:
   contents: read
 
 jobs:
-  code-quality:
-    name: Code Quality Checks
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        cache: 'npm'
-
-    - name: Install all dependencies (workspaces)
-      run: npm ci
-        
-    - name: TypeScript Check (Bot)
-      run: |
-        cd bot
-        npm run build
-        
-    - name: Lint Check (Web)
-      run: |
-        cd web
-        npm run lint
-        
-    - name: Build Check (Web)
-      run: |
-        cd web
-        npm run build
-        
-    - name: Security Audit
-      run: |
-        cd bot && npm audit --audit-level=high --production
-        cd ../web && npm audit --audit-level=high --production
-      continue-on-error: true
-        
   rules-tests:
     name: Security Rules Tests (Emulator)
     runs-on: ubuntu-latest
@@ -98,119 +62,16 @@ jobs:
     - name: Ensure package manifests are untouched (safety net)
       run: git diff --exit-code -- package.json package-lock.json
 
-  preview-deploy:
-    name: Deploy Preview
+  # 依存関係の追加・更新に既知の脆弱性や不許可ライセンスが無いか
+  dependency-review:
+    name: Dependency Review
     runs-on: ubuntu-latest
-    if: github.event.pull_request.base.ref == 'develop'
-    # vercel-action と github-script がプレビュー URL を PR にコメントする
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
-    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
+
+    - name: Dependency Review
+      uses: actions/dependency-review-action@v4
       with:
-        node-version: ${{ env.NODE_VERSION }}
-        cache: 'npm'
-        
-    - name: Install dependencies (Web)
-      run: |
-        cd web
-        npm ci
-        
-    - name: Deploy Vercel Preview
-      uses: amondnet/vercel-action@v25
-      id: vercel-deploy
-      with:
-        vercel-token: ${{ secrets.VERCEL_TOKEN }}
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-        vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-        working-directory: ./web
-        scope: ${{ secrets.VERCEL_ORG_ID }}
-        
-    - name: Comment PR with Preview URL
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const { context } = require('@actions/github');
-          
-          // Find existing bot comment
-          const comments = await github.rest.issues.listComments({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-          });
-          
-          const botComment = comments.data.find(comment => 
-            comment.user.type === 'Bot' && 
-            comment.body.includes('Preview Deployment')
-          );
-          
-          const previewUrl = '${{ steps.vercel-deploy.outputs.preview-url }}';
-          const commentBody = `
-          ## 🔍 Preview Deployment
-          
-          📱 **Vercel Preview**: ${previewUrl}
-          
-          ### ✅ Checks Status
-          - TypeScript compilation: ✅
-          - Linting: ✅
-          - Build: ✅
-          
-          _Preview will be updated automatically with new commits._
-          `;
-          
-          if (botComment) {
-            // Update existing comment
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: botComment.id,
-              body: commentBody
-            });
-          } else {
-            // Create new comment
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: commentBody
-            });
-          }
-          
-  size-check:
-    name: Bundle Size Check
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        cache: 'npm'
-        
-    - name: Install dependencies (Web)
-      run: |
-        cd web
-        npm ci
-        
-    - name: Build and analyze bundle
-      run: |
-        cd web
-        npm run build
-        
-    - name: Upload bundle stats
-      uses: actions/upload-artifact@v4
-      with:
-        name: bundle-stats
-        path: web/.next/analyze/
-        retention-days: 30
+        fail-on-severity: moderate
+        deny-licenses: GPL-3.0, AGPL-3.0

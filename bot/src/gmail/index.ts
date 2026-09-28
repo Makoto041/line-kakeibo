@@ -1,8 +1,7 @@
 /**
  * Gmail連携自動化モジュール
  *
- * @see /.github/docs/GMAIL_AUTO_SPEC_V2.md
- * @see /.github/docs/IMPLEMENTATION_ROADMAP.md
+ * @see /docs/GMAIL_AUTO_SPEC.md
  */
 
 // 型定義

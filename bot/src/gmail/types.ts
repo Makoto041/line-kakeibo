@@ -2,7 +2,7 @@
  * Gmail連携自動化 - 型定義
  *
  * 既存のExpenseインターフェース（firestore.ts）を拡張する形で定義
- * @see /.github/docs/GMAIL_AUTO_SPEC_V2.md
+ * @see /docs/GMAIL_AUTO_SPEC.md
  */
 
 import { Expense, ExpenseStatusType } from '../firestore';

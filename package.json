@@ -10,8 +10,10 @@
   "engines": {
     "node": ">=22"
   },
-  "dependencies": {
-    "recharts": "^3.9.1"
+  "scripts": {
+    "build": "npm -w bot run build && npm -w web run build",
+    "test": "npm -w web test && npm -w bot test",
+    "gen:icons": "node scripts/gen-line-icons.mjs"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",
