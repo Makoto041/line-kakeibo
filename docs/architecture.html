@@ -1,0 +1,245 @@
+<title>ぶちこむ家計簿の仕組み</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700;900&family=BIZ+UDPGothic:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: 帳簿の見開き。左に節の見出しと要点、右に本文・図・表。狭い画面では 1 列 */
+:root {
+  --paper: #f5f7f4;
+  --sheet: #ffffff;
+  --ink: #1d2a26;
+  --muted: #5b6a64;
+  --rule: #d5ded9;
+  --accent: #0e7a5f;
+  --accent-soft: #e2f1eb;
+  --warn: #9a5b00;
+  --warn-soft: #fbefdc;
+  --font-display: "Zen Kaku Gothic New", "Hiragino Sans", sans-serif;
+  --font-body: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #111816; --sheet: #172120; --ink: #e3ebe7; --muted: #9aaba4; --rule: #2b3935;
+    --accent: #4cc39e; --accent-soft: #173a30; --warn: #f0b35a; --warn-soft: #3a2c14; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #111816; --sheet: #172120; --ink: #e3ebe7; --muted: #9aaba4; --rule: #2b3935;
+  --accent: #4cc39e; --accent-soft: #173a30; --warn: #f0b35a; --warn-soft: #3a2c14; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.75; padding: 0 16px; }
+main { max-width: 1080px; margin: 0 auto; padding-block: 40px 72px; }
+header.top { display: grid; gap: 10px; padding-bottom: 28px; border-bottom: 2px solid var(--ink); margin-bottom: 8px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; color: var(--accent); text-transform: uppercase; }
+h1 { font-family: var(--font-display); font-weight: 900; font-size: clamp(28px, 5vw, 44px); line-height: 1.25; margin: 0; text-wrap: balance; }
+.lede { max-width: 62ch; color: var(--muted); margin: 0; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.chip { font-family: var(--font-mono); font-size: 12px; padding: 3px 10px; border: 1px solid var(--rule); border-radius: 999px; background: var(--sheet); }
+section { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 32px; padding-block: 36px; border-bottom: 1px solid var(--rule); }
+section > aside h2 { font-family: var(--font-display); font-weight: 700; font-size: 20px; line-height: 1.4; margin: 0 0 8px; text-wrap: balance; }
+section > aside p { color: var(--muted); font-size: 13px; margin: 0; }
+.body { min-width: 0; display: grid; gap: 18px; }
+.body p { margin: 0; max-width: 68ch; }
+h3 { font-family: var(--font-display); font-weight: 700; font-size: 16px; margin: 0; }
+code, .mono { font-family: var(--font-mono); font-size: .88em; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; background: var(--sheet); }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-family: var(--font-display); font-weight: 700; font-size: 12.5px; color: var(--muted); background: var(--paper); }
+tr:last-child td { border-bottom: 0; }
+td.name { font-family: var(--font-mono); font-weight: 600; white-space: nowrap; }
+.region { font-family: var(--font-mono); font-size: 12px; white-space: nowrap; }
+.region.us { color: var(--warn); }
+.diagram { overflow-x: auto; background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; }
+.flows { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.flow { background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: 16px 18px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.flow ol { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; font-size: 14px; }
+.flow .src { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.pipeline { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--sheet); }
+.stage { padding: 14px 16px; border-right: 1px solid var(--rule); display: grid; gap: 4px; }
+.stage:last-child { border-right: 0; }
+.stage b { font-family: var(--font-display); }
+.stage .cost { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.note { background: var(--warn-soft); border-left: 3px solid var(--warn); padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 14px; max-width: 68ch; }
+ul.plain { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 68ch; }
+.bump { display: flex; flex-wrap: wrap; gap: 8px; }
+.bump span { font-family: var(--font-mono); font-size: 12.5px; padding: 4px 10px; border-radius: 6px; background: var(--sheet); border: 1px solid var(--rule); }
+.bump span b { color: var(--accent); }
+footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
+@media (max-width: 760px) {
+  section { grid-template-columns: minmax(0, 1fr); gap: 14px; padding-block: 28px; }
+  .stage { border-right: 0; border-bottom: 1px solid var(--rule); }
+  .stage:last-child { border-bottom: 0; }
+}
+</style>
+
+<main>
+  <header class="top">
+    <div class="eyebrow">line-kakeibo · v1.1.0 時点</div>
+    <h1>ぶちこむ家計簿の仕組み</h1>
+    <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
+    <div class="facts">
+      <span class="chip">Web: Next.js 16 on Vercel</span>
+      <span class="chip">Bot: Firebase Functions gen2 / Node 22</span>
+      <span class="chip">Data: Firestore + Cloud Storage</span>
+      <span class="chip">AI: Gemini 2.5 Flash</span>
+      <span class="chip">世帯: 2 名固定</span>
+    </div>
+  </header>
+
+  <section id="overview">
+    <aside><h2>全体像</h2><p>入口は LINE・Gmail・スケジュール・Web の 4 つ。書き込みは原則すべて bot を通る。</p></aside>
+    <div class="body">
+      <div class="diagram">
+<!-- この図は Artifact の表示側が Mermaid として描画する。ローカルでファイルを直接開くと図の元テキストのまま表示される -->
+<pre class="mermaid">
+flowchart LR
+  LINE["LINE アプリ"] -->|webhook| WH["webhook 関数<br/>asia-northeast1"]
+  Gmail["Gmail"] -->|Pub/Sub| GM["gmailPubSubHandler"]
+  Sched["Cloud Scheduler"] --> JOBS["postRecurringExpenses<br/>renewGmailWatch<br/>importMoneyForward"]
+  Browser["ブラウザ / LIFF"] --> WEB["Next.js（Vercel）"]
+  WEB -->|/auth/line・/household/*| API["api 関数<br/>us-central1"]
+  WEB -->|読み取り（ルールで制限）| FS[("Firestore")]
+  WEB -->|レシート| ST[("Cloud Storage")]
+  WH --> GEM["Gemini"]
+  WH --> FS
+  GM --> FS
+  JOBS --> FS
+  API --> FS
+</pre>
+      </div>
+      <p>Web はブラウザから Firestore を直接読む（セキュリティルールで世帯メンバーに限定）。確認・精算・固定費の登録のように状態を変える操作は、ID トークン付きで bot の <code>api</code> 関数に送る。</p>
+    </div>
+  </section>
+
+  <section id="functions">
+    <aside><h2>Cloud Functions</h2><p>関数名で本番デプロイされる。export を消すと本番の関数が消えるので注意。</p></aside>
+    <div class="body">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>関数</th><th>トリガー</th><th>リージョン</th><th>役割</th></tr></thead>
+          <tbody>
+            <tr><td class="name">webhook</td><td>HTTPS</td><td class="region">asia-northeast1</td><td>LINE の受信。署名が無いものは 401。<code>/health</code> も同居</td></tr>
+            <tr><td class="name">api</td><td>HTTPS</td><td class="region us">us-central1</td><td>LIFF ログイン <code>/auth/line</code>、Web 向け <code>/household/*</code>、Gmail 管理 <code>/gmail/*</code></td></tr>
+            <tr><td class="name">gmailPubSubHandler</td><td>Pub/Sub</td><td class="region">asia-northeast1</td><td>カード利用通知メールの取込</td></tr>
+            <tr><td class="name">postRecurringExpenses</td><td>毎日 06:10 JST</td><td class="region">asia-northeast1</td><td>引き落とし日を迎えた固定費を支出に計上（同じ月に 2 回は入らない）</td></tr>
+            <tr><td class="name">renewGmailWatch</td><td>6 日ごと 03:00 JST</td><td class="region">asia-northeast1</td><td>Gmail watch（7 日で失効）の更新</td></tr>
+            <tr><td class="name">importMoneyForward</td><td>毎日 05:00 JST</td><td class="region">asia-northeast1</td><td>Drive の CSV を外部 API へ送る（送信先未設定なら何もしない）</td></tr>
+            <tr><td class="name">syncUserLinks</td><td>Firestore onCreate</td><td class="region">asia-northeast1</td><td>何もしない。消すと CI の非対話デプロイが止まるため残置</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="flows">
+    <aside><h2>主なデータの流れ</h2><p>支出はどの入口から入っても <code>expenses</code> コレクションの 1 件になる。</p></aside>
+    <div class="body">
+      <div class="flows">
+        <div class="flow">
+          <h3>LINE のテキスト入力</h3>
+          <ol>
+            <li>「6/29 4800 家賃」を受信、署名を検証</li>
+            <li>金額・日付・支払方法・内容を解析</li>
+            <li>カテゴリを分類（下の 3 段）</li>
+            <li>支出を保存し確認カードで返信</li>
+            <li>カードの OK / 修正 / 立替 / 除外で更新</li>
+          </ol>
+          <span class="src">bot/src/index.ts · line/</span>
+        </div>
+        <div class="flow">
+          <h3>カード利用メール</h3>
+          <ol>
+            <li>Gmail の新着を Pub/Sub で受信</li>
+            <li>本文から金額・店名・利用日時を抽出</li>
+            <li>日付+金額 → 店名の類似 → 時刻 ±1 分で重複を除外</li>
+            <li>保存して LINE グループに通知</li>
+          </ol>
+          <span class="src">bot/src/gmail/</span>
+        </div>
+        <div class="flow">
+          <h3>固定費</h3>
+          <ol>
+            <li>Web の設定で家賃・光熱費などを見込み額と引き落とし日で登録</li>
+            <li>毎朝、当日が引き落とし日の項目を計上</li>
+            <li>ID は <code>recurring_{項目}_{年月}</code> で重複しない</li>
+            <li>実額が分かったら Web で修正</li>
+          </ol>
+          <span class="src">bot/src/recurringExpenses.ts</span>
+        </div>
+        <div class="flow">
+          <h3>立替の精算</h3>
+          <ol>
+            <li>立替は「未精算」として残る</li>
+            <li>未精算の立替から精算額を計算（<code>GET /household/settlement</code>）</li>
+            <li>「精算を記録」で立替が精算済みになる</li>
+            <li>精算済みは金額・日付・支払者の変更と削除ができない（内容・カテゴリは直せる）</li>
+          </ol>
+          <span class="src">bot/src/householdSettlement.ts</span>
+        </div>
+        <div class="flow">
+          <h3>期間の折半</h3>
+          <ol>
+            <li>精算タブで期間の支出合計を 2 で割る</li>
+            <li>送金する人の支払いとの差から「誰が誰にいくら送金するか」を表示</li>
+            <li>表示だけで、何も記録しない（送金する人の設定だけ保存）</li>
+          </ol>
+          <span class="src">web/lib/periodSplit.ts</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="classify">
+    <aside><h2>カテゴリ分類</h2><p>費用のかからない方法から試し、決まらないときだけ Gemini を呼ぶ。19 カテゴリ。</p></aside>
+    <div class="body">
+      <div class="pipeline">
+        <div class="stage"><b>1. キャッシュ</b><span>関数のメモリ上に残っている同じ内容の分類結果を再利用</span><span class="cost">費用 0</span></div>
+        <div class="stage"><b>2. キーワード辞書</b><span>「ランチ」→ 食費 など全カテゴリの辞書</span><span class="cost">費用 0</span></div>
+        <div class="stage"><b>3. Gemini</b><span>それでも決まらないものだけ、カテゴリ一覧を Firestore から読んで問い合わせ</span><span class="cost">API 呼び出し</span></div>
+      </div>
+      <p>Gemini が使えないときは辞書だけで動き、分類できなければ「その他」になる。</p>
+    </div>
+  </section>
+
+  <section id="security">
+    <aside><h2>認証とアクセス制御</h2><p>URL に載った ID は信用しない。本人確認はすべてトークンで行う。</p></aside>
+    <div class="body">
+      <ul class="plain">
+        <li><b>ログイン</b>: LIFF の ID トークンを <code>/auth/line</code> が LINE に照会し、<code>lineId</code> クレーム付きの Firebase カスタムトークンを発行する。</li>
+        <li><b>Firestore ルール</b>: 世帯のデータは <code>groupMembers/{groupId}_{lineId}</code> が有効なメンバーだけが読める。支出の項目は型と値を検証し、精算済みの立替は金額・日付・支払者の変更と削除を拒否する。</li>
+        <li><b>Storage ルール</b>: レシート画像は Firestore のメンバー情報を参照して制限（cross-service rules）。</li>
+        <li><b>/household API</b>: ID トークンを検証し、世帯メンバーかを確認。レート制限と CORS の許可リストあり。</li>
+        <li><b>世帯は 2 名固定</b>: メンバーの追加・無効化は bot ではなく管理スクリプト <code>scripts/manage-group-members.mjs</code> で行う。</li>
+        <li><b>シークレット</b>: LINE のトークンなどは Secret Manager に置き、関数は宣言した名前だけを読む。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="deploy">
+    <aside><h2>デプロイとリリース</h2><p>master にマージすれば全部自動。master への直接コミットはしない。</p></aside>
+    <div class="body">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>対象</th><th>いつ</th><th>どうやって</th></tr></thead>
+          <tbody>
+            <tr><td>Web</td><td>master へのマージ（PR はプレビュー）</td><td>Vercel の Git 連携</td></tr>
+            <tr><td>Bot・ルール</td><td>master へのマージで bot / ルールに変更があるとき</td><td><code>ci-cd.yml</code> の <code>deploy-bot</code> → <code>post-deploy-check</code></td></tr>
+            <tr><td>タグ・Release</td><td>実装のマージごと</td><td><code>release.yml</code> が <code>vX.Y.Z</code> と GitHub Release を作成</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>バージョンの上げ方（PR タイトルで決まる）</h3>
+      <div class="bump">
+        <span>feat: → <b>minor</b></span>
+        <span>fix: / refactor: / perf: → <b>patch</b></span>
+        <span>feat!: / BREAKING CHANGE: → <b>major</b></span>
+        <span>docs: / chore: / ci: → タグなし</span>
+      </div>
+      <p class="note">PR ごとに CI が型チェック・lint・ビルド・テスト・CodeQL・ルールのテストを行い、通ったものだけを squash マージする。バージョンは git タグが正で、<code>package.json</code> の version は使わない。</p>
+    </div>
+  </section>
+
+  <footer>リポジトリの docs/ARCHITECTURE.md・SPECIFICATION.md・SETUP.md・SECURITY_OPERATIONS.md を元に作成。</footer>
+</main>

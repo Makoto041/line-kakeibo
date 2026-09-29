@@ -95,7 +95,7 @@ line-kakeibo/
 │  ├─ components/        # 画面部品
 │  ├─ lib/               # Firebase クライアント・hooks・ロジック（純関数）
 │  └─ __tests__/         # node --test
-├─ docs/                 # ARCHITECTURE / SPECIFICATION / SETUP / SECURITY_OPERATIONS / GMAIL_AUTO_SPEC
+├─ docs/                 # architecture.html（説明資料） / ARCHITECTURE / SPECIFICATION / SETUP / SECURITY_OPERATIONS / GMAIL_AUTO_SPEC
 ├─ scripts/              # 管理スクリプト（世帯メンバー・アイコン生成）
 ├─ test/                 # Firestore / Storage ルールのテスト
 ├─ firestore.rules / storage.rules / firestore.indexes.json
