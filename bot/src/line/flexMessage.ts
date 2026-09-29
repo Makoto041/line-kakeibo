@@ -820,7 +820,7 @@ export async function sendTextExpenseNotification(
 ): Promise<void> {
   const message = buildTextExpenseFlexMessage(info);
   const sentVia = await replyWithPushFallback(replyToken, targetId, [message]);
-  console.log(`Text expense notification sent via ${sentVia}Message to ${maskId(targetId)}`);
+  console.log('Text expense notification sent', { via: sentVia, target: maskId(targetId) });
 }
 
 /**
