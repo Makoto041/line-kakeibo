@@ -33,7 +33,7 @@ jobs:
         node-version: ${{ env.NODE_VERSION }}
 
     - name: Setup Java 21 (emulators)
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v6
       with:
         distribution: 'temurin'
         java-version: '21'
