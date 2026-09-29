@@ -181,7 +181,7 @@ jobs:
       # 以前の web-build は中身が空になり deploy-web のダウンロードが失敗していた。
       - name: Upload build artifacts
         if: matrix.app == 'bot'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bot-build
           path: bot/dist
