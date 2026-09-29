@@ -61,32 +61,6 @@ export async function getOrCreateAppUidForLineId(lineId: string): Promise<string
 }
 
 /**
- * 複数のLINE UserIdからappUidのマップを取得する
- * 理想設計準拠: 1:1マッピングでバッチ処理
- */
-export async function getAppUidsByLineIds(lineIds: string[]): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
-  
-  try {
-    // バッチで並列処理
-    const promises = lineIds.map(async (lineId) => {
-      const appUid = await getAppUidByLineId(lineId);
-      if (appUid) {
-        result.set(lineId, appUid);
-      }
-    });
-    
-    await Promise.all(promises);
-    
-    console.log(`Resolved ${result.size}/${lineIds.length} appUids`);
-  } catch (error) {
-    console.error('Error resolving multiple appUids:', error);
-  }
-  
-  return result;
-}
-
-/**
  * LINE Botから送信される支出データを処理する際の appUid 解決
  * 理想設計準拠: 必要に応じて新規ユーザー作成も行う
  */

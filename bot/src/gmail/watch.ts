@@ -75,12 +75,16 @@ export async function stopWatch(): Promise<void> {
   console.log('Gmail Watch stopped');
 }
 
+/** Watch 状態の保存先（Firestore: system/gmailState）。管理 API もここを使う */
+export function gmailStateRef() {
+  return getFirestore().collection('system').doc('gmailState');
+}
+
 /**
  * Watch状態をFirestoreに保存
  */
 async function saveWatchState(state: GmailWatchState): Promise<void> {
-  const db = getFirestore();
-  await db.collection('system').doc('gmailState').set({
+  await gmailStateRef().set({
     ...state,
     updatedAt: Timestamp.now(),
   });
@@ -90,8 +94,7 @@ async function saveWatchState(state: GmailWatchState): Promise<void> {
  * Watch状態をFirestoreから読み込み
  */
 export async function getWatchState(): Promise<GmailWatchState | null> {
-  const db = getFirestore();
-  const doc = await db.collection('system').doc('gmailState').get();
+  const doc = await gmailStateRef().get();
 
   if (!doc.exists) {
     return null;
@@ -127,7 +130,7 @@ function isNewerHistoryId(candidate: string, current: string): boolean {
  */
 export async function updateHistoryId(historyId: string): Promise<void> {
   const db = getFirestore();
-  const ref = db.collection('system').doc('gmailState');
+  const ref = gmailStateRef();
 
   await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
@@ -140,35 +143,6 @@ export async function updateHistoryId(historyId: string): Promise<void> {
 
     transaction.set(ref, { historyId, updatedAt: Timestamp.now() }, { merge: true });
   });
-}
-
-/**
- * Watchが有効期限切れかどうかチェック
- * 期限の1日前から更新を推奨
- */
-export async function isWatchExpiringSoon(): Promise<boolean> {
-  const state = await getWatchState();
-
-  if (!state) {
-    return true; // 状態がない場合は更新が必要
-  }
-
-  // 1日のバッファを持って期限切れをチェック
-  const oneDayMs = 24 * 60 * 60 * 1000;
-  return state.watchExpiration < Date.now() + oneDayMs;
-}
-
-/**
- * Watchの有効期限を取得
- */
-export async function getWatchExpiration(): Promise<Date | null> {
-  const state = await getWatchState();
-
-  if (!state) {
-    return null;
-  }
-
-  return new Date(state.watchExpiration);
 }
 
 /**

@@ -1,6 +1,6 @@
 # LINE家計簿 Gmail 連携（カード利用通知の自動取込）仕様書
 
-> line-kakeibo / 三井住友カード利用通知メールの自動登録。実装は `bot/src/gmail/`・`bot/src/line/`・`bot/src/index.ts`（`api` 関数の `/gmail/*`）。
+> line-kakeibo / 三井住友カード利用通知メールの自動登録。実装は `bot/src/gmail/`・`bot/src/line/`・`bot/src/gmail/adminRouter.ts`（`api` 関数の `/gmail/*`）。
 > 全体の機能仕様は [SPECIFICATION.md](./SPECIFICATION.md)、構成は [ARCHITECTURE.md](./ARCHITECTURE.md) を参照。
 
 ## 1. 概要
@@ -13,8 +13,8 @@
 
 | 機能 | 説明 | 実装ファイル |
 |-----|------|-------------|
-| テキスト入力 | 「500 ランチ」形式で LINE から手動登録 | `textParser.ts` / `index.ts` |
-| カテゴリ設定 | 「カテゴリー 食費」でデフォルトカテゴリ変更 | `index.ts` |
+| テキスト入力 | 「500 ランチ」形式で LINE から手動登録 | `textParser.ts` / `line/expenseFlow.ts` |
+| カテゴリ設定 | 「カテゴリー 食費」でデフォルトカテゴリ変更 | `line/commands/category.ts` |
 | Gemini 分類 | キーワード + AI による自動カテゴリ分類 | `geminiCategoryClassifier.ts` |
 | グループ機能 | LINE グループに紐づく世帯（2 名固定）での共同家計簿 | `firestore.ts` / `expenseGroupScope.ts` |
 | 固定費 | 毎月の固定費を引き落とし日に自動計上 | `recurringExpenses.ts` |
@@ -116,12 +116,12 @@ Flex Message 通知（line/flexMessage.ts）
 
 | コマンド | 動作 | 実装場所 |
 |---------|------|---------|
-| 「家計簿」 | 当月サマリーの Flex メッセージ | index.ts |
-| 「カテゴリー」 | 利用可能カテゴリ一覧表示 | index.ts |
-| 「カテゴリー 食費」 | デフォルトカテゴリを食費に設定 | index.ts |
-| 「グループ作成 名前」 | 新規グループ作成 | index.ts |
-| 「グループ一覧」 | 参加中グループ表示 | index.ts |
-| 「立替一覧」/「精算」 | 未精算の立替の確認・精算 | index.ts |
+| 「家計簿」 | 当月サマリーの Flex メッセージ | line/commands/kakeibo.ts |
+| 「カテゴリー」 | 利用可能カテゴリ一覧表示 | line/commands/category.ts |
+| 「カテゴリー 食費」 | デフォルトカテゴリを食費に設定 | line/commands/category.ts |
+| 「グループ作成 名前」 | 新規グループ作成 | line/commands/group.ts |
+| 「グループ一覧」 | 参加中グループ表示 | line/commands/group.ts |
+| 「立替一覧」/「精算」 | 未精算の立替の確認・精算 | line/commands/advance.ts |
 
 （「参加 コード 名前」コマンドは無効化済み。世帯は 2 名固定で、メンバー追加は `scripts/manage-group-members.mjs` で行う）
 
@@ -255,9 +255,10 @@ bot/src/
 │   ├── auth.ts               # Gmail OAuth2 認証（トークンは system/gmailToken、CSRF state は system/oauthState）
 │   ├── watch.ts              # Gmail Watch 管理（system/gmailState）
 │   ├── parser.ts             # メールパース（送信元判定・利用先/金額/利用日時の抽出・重複判定）
-│   └── handler.ts            # Pub/Sub ハンドラー・手動処理（process-latest / force-process）
+│   ├── handler.ts            # Pub/Sub ハンドラー・手動処理（process-latest / force-process）
+│   └── adminRouter.ts        # /gmail/* 管理 API（Admin 認証・レート制限）
 └── line/
-    ├── index.ts              # エクスポート
+    ├── client.ts             # LINE クライアント・返信ヘルパー
     ├── flexMessage.ts        # Flex Message 生成（テキスト入力と共通の登録・編集カード）
     └── postback.ts           # Postback 処理
 ```
@@ -266,7 +267,7 @@ bot/src/
 
 ```
 bot/src/
-├── index.ts                      # Function エクスポート（gmailPubSubHandler / renewGmailWatch / api）と /gmail/* ルーター
+├── index.ts                      # Function エクスポート（gmailPubSubHandler / renewGmailWatch / api）
 ├── firestore.ts                  # saveGmailExpenseAtomic（重複排除つき保存）
 ├── expenseActions.ts             # postback / Web の確認で共用する状態遷移
 ├── geminiCategoryClassifier.ts   # Gemini 分類

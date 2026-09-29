@@ -22,7 +22,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
   - Web アプリ（Next.js / Vercel）: ホーム・支出一覧・精算・設定（予算 / 期間 / 固定費）
 - **共有機能**: LINE グループに紐づく世帯（2 名固定）での支出共有・立替（advance）管理・精算・期間の折半精算
 
-> 📸 **レシート画像 OCR は廃止済み**（`bot/src/index.ts`）。画像を送ると「画像からの読み取り機能は終了しました。テキストで入力してください」と案内されます。レシート画像は Web の `/attach` ページから支出への「添付」としてのみ扱われます。
+> 📸 **レシート画像 OCR は廃止済み**（`bot/src/line/webhookApp.ts`）。画像を送ると「画像からの読み取り機能は終了しました。テキストで入力してください」と案内されます。レシート画像は Web の `/attach` ページから支出への「添付」としてのみ扱われます。
 
 ---
 
@@ -61,7 +61,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 > ⚠️ **カテゴリトークンは現状指定しても反映されない**: `parseTextExpense()` はカテゴリを抽出するものの、登録処理（`processExpenseInBackground`）は `parsed.category` を参照せず、常に Gemini 分類／ユーザーデフォルトからカテゴリを決定します。カテゴリの変更は登録後の「カテゴリ変更」ボタンで行います。
 
-### 2.3 支出登録フロー（`processExpenseInBackground`, `bot/src/index.ts`)
+### 2.3 支出登録フロー（`processExpenseInBackground`, `bot/src/line/expenseFlow.ts`)
 
 1. LINE プロフィール取得（リトライ＋15分メモリキャッシュ）
 2. `appUid` 解決（LINE userId → Firebase Auth 匿名ユーザーを作成/取得。`linkUserResolver.ts`）

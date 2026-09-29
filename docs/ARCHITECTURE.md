@@ -204,7 +204,7 @@ Web のアクセス制御は **LIFF ログイン → Firebase カスタムトー
 line-kakeibo/
 ├─ bot/                      # Firebase Functions gen2 (Node 22)
 │  ├─ src/
-│  │  ├─ index.ts            # Express webhook・全コマンドルーティング・Function エクスポート・api（/gmail, /auth, /household）
+│  │  ├─ index.ts            # 初期化と Function のエクスポート（webhook / api / スケジュール関数）だけ
 │  │  ├─ textParser.ts       # 支出テキストパーサ
 │  │  ├─ firestore.ts        # Firestore データアクセス（支出/グループ/メンバー/予算/精算）
 │  │  ├─ expenseActions.ts   # 支出の確認の判定とトランザクション（LINE postback と Web API で共用）
@@ -216,11 +216,13 @@ line-kakeibo/
 │  │  ├─ adminAuth.ts        # ADMIN_SECRET の定数時間比較
 │  │  ├─ logSafe.ts / time.ts # ログのマスク・JST 日付
 │  │  ├─ geminiCategoryClassifier.ts / categoryNormalization.ts
-│  │  ├─ linkUserResolver.ts / userLinks.ts / syncUserLinks.ts
+│  │  ├─ linkUserResolver.ts / syncUserLinks.ts
 │  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue
 │  │  ├─ importMoneyForward.ts
-│  │  ├─ line/               # flexMessage.ts / postback.ts / index.ts
-│  │  └─ gmail/              # auth.ts / watch.ts / parser.ts / handler.ts / types.ts / index.ts
+│  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）
+│  │  ├─ line/               # webhookApp.ts（署名検証・イベント振り分け・/health）/ textMessage.ts / commands/*.ts（家計簿・要望・カテゴリー・グループ・立替/精算）
+│  │  │                      # / expenseFlow.ts（テキスト入力の支出登録）/ groupEvents.ts / client.ts（LINE クライアント・返信）/ flexMessage.ts / postback.ts
+│  │  └─ gmail/              # auth.ts / watch.ts / parser.ts / handler.ts / types.ts / adminRouter.ts（/gmail/* 管理 API）/ index.ts
 │  ├─ scripts/               # smoke-*.js（npm test）/ emulator-*.js（test:emulator）/ firebase.emulator.json
 │  └─ .env.example
 ├─ web/                      # Next.js 16 (Vercel)
