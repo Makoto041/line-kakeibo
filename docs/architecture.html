@@ -92,6 +92,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
     <aside><h2>全体像</h2><p>入口は LINE・Gmail・スケジュール・Web の 4 つ。書き込みは原則すべて bot を通る。</p></aside>
     <div class="body">
       <div class="diagram">
+<!-- この図は Artifact の表示側が Mermaid として描画する。ローカルでファイルを直接開くと図の元テキストのまま表示される -->
 <pre class="mermaid">
 flowchart LR
   LINE["LINE アプリ"] -->|webhook| WH["webhook 関数<br/>asia-northeast1"]
@@ -168,25 +169,35 @@ flowchart LR
           <span class="src">bot/src/recurringExpenses.ts</span>
         </div>
         <div class="flow">
-          <h3>精算</h3>
+          <h3>立替の精算</h3>
           <ol>
             <li>立替は「未精算」として残る</li>
-            <li>期間の支出を折半し「誰が誰にいくら送金するか」を計算</li>
-            <li>精算を記録すると立替は精算済みになり編集不可</li>
+            <li>未精算の立替から精算額を計算（<code>GET /household/settlement</code>）</li>
+            <li>「精算を記録」で立替が精算済みになる</li>
+            <li>精算済みは金額・日付・支払者の変更と削除ができない（内容・カテゴリは直せる）</li>
           </ol>
-          <span class="src">householdSettlement.ts · web/lib/periodSplit.ts</span>
+          <span class="src">bot/src/householdSettlement.ts</span>
+        </div>
+        <div class="flow">
+          <h3>期間の折半</h3>
+          <ol>
+            <li>精算タブで期間の支出合計を 2 で割る</li>
+            <li>送金する人の支払いとの差から「誰が誰にいくら送金するか」を表示</li>
+            <li>表示だけで、何も記録しない（送金する人の設定だけ保存）</li>
+          </ol>
+          <span class="src">web/lib/periodSplit.ts</span>
         </div>
       </div>
     </div>
   </section>
 
   <section id="classify">
-    <aside><h2>カテゴリ分類</h2><p>安い順に試し、分からないときだけ Gemini を呼ぶ。19 カテゴリ。</p></aside>
+    <aside><h2>カテゴリ分類</h2><p>費用のかからない方法から試し、決まらないときだけ Gemini を呼ぶ。19 カテゴリ。</p></aside>
     <div class="body">
       <div class="pipeline">
-        <div class="stage"><b>1. キーワード辞書</b><span>「ランチ」→ 食費 など全カテゴリの辞書</span><span class="cost">費用 0</span></div>
-        <div class="stage"><b>2. キャッシュ</b><span>過去に分類した同じ内容を再利用</span><span class="cost">Firestore 読み取り 1 回</span></div>
-        <div class="stage"><b>3. Gemini</b><span>それでも決まらないものだけ問い合わせ</span><span class="cost">API 呼び出し</span></div>
+        <div class="stage"><b>1. キャッシュ</b><span>関数のメモリ上に残っている同じ内容の分類結果を再利用</span><span class="cost">費用 0</span></div>
+        <div class="stage"><b>2. キーワード辞書</b><span>「ランチ」→ 食費 など全カテゴリの辞書</span><span class="cost">費用 0</span></div>
+        <div class="stage"><b>3. Gemini</b><span>それでも決まらないものだけ、カテゴリ一覧を Firestore から読んで問い合わせ</span><span class="cost">API 呼び出し</span></div>
       </div>
       <p>Gemini が使えないときは辞書だけで動き、分類できなければ「その他」になる。</p>
     </div>
@@ -197,7 +208,7 @@ flowchart LR
     <div class="body">
       <ul class="plain">
         <li><b>ログイン</b>: LIFF の ID トークンを <code>/auth/line</code> が LINE に照会し、<code>lineId</code> クレーム付きの Firebase カスタムトークンを発行する。</li>
-        <li><b>Firestore ルール</b>: 世帯のデータは <code>groupMembers/{groupId}_{lineId}</code> が有効なメンバーだけが読める。支出の項目は型と値を検証し、精算済みは書き換え不可。</li>
+        <li><b>Firestore ルール</b>: 世帯のデータは <code>groupMembers/{groupId}_{lineId}</code> が有効なメンバーだけが読める。支出の項目は型と値を検証し、精算済みの立替は金額・日付・支払者の変更と削除を拒否する。</li>
         <li><b>Storage ルール</b>: レシート画像は Firestore のメンバー情報を参照して制限（cross-service rules）。</li>
         <li><b>/household API</b>: ID トークンを検証し、世帯メンバーかを確認。レート制限と CORS の許可リストあり。</li>
         <li><b>世帯は 2 名固定</b>: メンバーの追加・無効化は bot ではなく管理スクリプト <code>scripts/manage-group-members.mjs</code> で行う。</li>
