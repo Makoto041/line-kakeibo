@@ -6,7 +6,7 @@ LINE 連携の家計簿アプリ（ふたり暮らし向け）。既存の CI �
 
 - `web/` … Next.js 16（App Router）。Firebase クライアント SDK で読み取り、状態を変える操作は bot の API 経由
 - `bot/` … Firebase Functions gen2（Node 22 / Express）。LINE webhook、Gmail 取込、`/auth/line`、`/household/*`、スケジュール関数
-- `docs/` … `ARCHITECTURE`（構成）/ `SPECIFICATION`（仕様）/ `SETUP`（環境構築・デプロイ）/ `SECURITY_OPERATIONS`（ルール・世帯運用）/ `GMAIL_AUTO_SPEC`
+- `docs/` … `architecture.html`（構成の説明資料。Artifact で公開）/ `ARCHITECTURE`（構成）/ `SPECIFICATION`（仕様）/ `SETUP`（環境構築・デプロイ）/ `SECURITY_OPERATIONS`（ルール・世帯運用）/ `GMAIL_AUTO_SPEC`
 - `scripts/` … 世帯メンバー管理（`manage-group-members.mjs`、既定 dry-run）、アイコン生成
 - `test/` … Firestore / Storage ルールのテスト（エミュレータ）
 - `firestore.rules` / `storage.rules` / `firestore.indexes.json` … CI がデプロイする
@@ -31,6 +31,7 @@ npm run gen:icons                             # LINE カード用アイコンを
 5. **設計 / UX を変える変更はまずモック**: 方向性の合意を得てから実装に入る。サーバー環境で作業していて実機で見せたい場合は、下記「サーバー環境でのプレビュー」で URL を渡し、実機（iPhone / Mac など SP・PC 両方）で確認してもらう。
 6. **マージ後の確認**: Web は Vercel の Git 連携、Bot とルールは `ci-cd.yml` の `deploy-bot` が自動デプロイする。デプロイの成功と本番の疎通（webhook の署名なし 401、`/household/*` のトークンなし 401、Web の主要ページ 200）を確認して報告する。
 7. **タグ（リリース）**: 実装を master にマージするたびに `release.yml` が SemVer のタグ `vX.Y.Z` と GitHub Release を自動で作る。上げ幅は前のタグ以降のコミット件名（= PR タイトル）で決まる: `feat` → minor、`!` / 本文行頭の `BREAKING CHANGE:` → major、`fix` / `perf` / `refactor` / `revert` → patch、`docs` / `chore` / `ci` / `test` だけならタグなし。**バージョンは git タグが正**で、`package.json` の `version` は使わない（コミットしない）。まとめて上げたいときや手動で打つときは、Actions の `Release Tag` を master 上で `workflow_dispatch`（`version` を指定）。GitHub UI の Revert は `Revert "..."` になり判定されないので `revert: ...` に改題する。マージ後の報告にはタグ名を含める。
+8. **アーキテクチャ説明資料（HTML）を維持する**: `docs/architecture.html` を Artifact（非公開）https://claude.ai/artifact/PSqtxq22hUpp3VrQW3uf5R として公開している。関数・データの流れ・認証・デプロイ・コード構成・タグ運用が変わる PR では、同じ PR で `docs/architecture.html`（と `docs/ARCHITECTURE.md`）を更新し、マージ後に Artifact ツールで `url` を指定して再公開する（新しい URL を作らない）。ヘッダーの版（`vX.Y.Z 時点`）も合わせる。
 
 ## サーバー環境でのプレビュー（tailnet 経由で実機確認）
 
