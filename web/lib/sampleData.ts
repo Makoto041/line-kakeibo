@@ -1,6 +1,5 @@
 import dayjs from 'dayjs';
 import type { Expense, ExpenseStats } from './hooks';
-import type { SettlementMember } from './householdContract';
 
 /**
  * ゲスト（プレビュー）モード用のサンプルデータ。
@@ -51,16 +50,9 @@ function buildSampleExpense(
   };
 }
 
-/** サンプルの世帯（ふたりタブ・立替の立替者） */
-export const SAMPLE_GROUP_ID = 'sample-household';
-export const SAMPLE_MEMBERS: readonly SettlementMember[] = [
-  { lineId: 'guest', displayName: 'あおい', isMember: true },
-  { lineId: 'guest-partner', displayName: 'はると', isMember: true },
-];
-
 /**
  * サンプル支出データ（要確認 2 件を含む。1 件はカード取込の未確認、1 件は手入力の未確認）。
- * 未精算の立替 3 件（ふたりタブのサンプル精算の元）と精算済み 1 件も含む。
+ * 未精算の立替 3 件と精算済み 1 件も含む。
  */
 export function getSampleExpenses(): Expense[] {
   return [

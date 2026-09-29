@@ -87,7 +87,6 @@
 
 /* Safe-area helpers (mobile bottom tab / notches) */
 .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-.h-safe-bottom { height: env(safe-area-inset-bottom); }
 
 /* Soft background blobs */
 .app-bg-blob {

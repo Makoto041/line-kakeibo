@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, initializeFirestore, connectFirestoreEmulator } from 'firebase/firestore';
-import { getAuth, signInAnonymously, UserCredential } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 
 // Firebase設定の型定義
@@ -218,14 +218,6 @@ export const ensureFirebaseInitialized = (): boolean => {
   return isInitialized && !initializationError;
 };
 
-// 匿名認証のラッパー関数
-export const signInAnonymous = async (): Promise<UserCredential> => {
-  if (!auth) {
-    throw new Error('Firebase Auth is not initialized. Please check your configuration.');
-  }
-  return signInAnonymously(auth);
-};
-
 // Firebase初期化状態を確認する関数
 export const getFirebaseStatus = () => ({
   isInitialized,
@@ -238,14 +230,6 @@ export const getFirebaseStatus = () => ({
     hasAppId: !!config.appId,
   }
 });
-
-// 手動で再初期化を試みる関数
-export const retryFirebaseInitialization = () => {
-  isInitialized = false;
-  initializationError = null;
-  initializeFirebase();
-  return getFirebaseStatus();
-};
 
 // エクスポート
 export { db, auth, app, storage, testFirebaseConnection };

@@ -10,14 +10,12 @@ import {
   parseConfirmResponse,
   parseSettleResult,
   parseSettlementResponse,
-  toastKeyForHouseholdError,
   type ConfirmedExpensePatch,
   type HouseholdErrorCode,
   type SettleResult,
   type SettlementResponse,
   type SettlementTransfer,
 } from './householdContract';
-import type { ToastKey } from './uiText';
 
 export type { ConfirmedExpensePatch, HouseholdErrorCode, SettleResult, SettlementResponse, SettlementTransfer };
 
@@ -46,11 +44,6 @@ export class HouseholdApiError extends Error {
 
 export function householdErrorCode(error: unknown): HouseholdErrorCode {
   return error instanceof HouseholdApiError ? error.code : 'failed';
-}
-
-/** 失敗時のトーストの語（T.toast のキー） */
-export function householdErrorToast(error: unknown): ToastKey {
-  return toastKeyForHouseholdError(householdErrorCode(error));
 }
 
 interface RawResponse {
@@ -129,7 +122,7 @@ export async function confirmExpense(expenseId: string): Promise<ConfirmedExpens
   return patch;
 }
 
-/** ふたりの精算（未精算の立替の全件） */
+/** 世帯の精算（未精算の立替の全件） */
 export async function fetchSettlement(groupId: string): Promise<SettlementResponse> {
   if (!isValidDocId(groupId)) throw new HouseholdApiError('invalid_request');
   const res = await send(`/household/settlement?groupId=${encodeURIComponent(groupId)}`, { method: 'GET' });

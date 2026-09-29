@@ -1,7 +1,6 @@
 // bot の /household/* エンドポイントとの契約（型・応答の検証・エラーの分類）。
 // 通信は householdApi.ts が行う。ここは node --test から直接読める純関数だけ（型以外の import なし）。
 import type { ExpenseStatus } from './hooks';
-import type { ToastKey } from './uiText';
 
 // ---- 型 ---------------------------------------------------------------------
 
@@ -257,24 +256,4 @@ export function classifyHouseholdFailure(status: number, body: unknown): Househo
   if (status === 429) return 'rate_limited';
   if (status >= 500) return 'internal';
   return 'failed';
-}
-
-/** トーストの語（uiText の T.toast のキー）。サーバーの message は表示しない */
-export function toastKeyForHouseholdError(code: HouseholdErrorCode): ToastKey {
-  switch (code) {
-    case 'unauthenticated':
-    case 'forbidden':
-      return 'forbidden';
-    case 'not_found':
-    case 'network':
-      return 'network';
-    case 'rate_limited':
-      return 'busy';
-    case 'settled':
-    case 'nothing_to_settle':
-    case 'nothing_settled':
-      return 'settled';
-    default:
-      return 'failed';
-  }
 }

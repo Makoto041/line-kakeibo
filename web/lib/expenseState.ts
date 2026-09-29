@@ -1,6 +1,5 @@
-// 明細の状態・並び・日付見出し・書き込み可否の純関数。
-// node --test から直接読めるよう、他のモジュールからは型だけを import する（値の import は dayjs のみ）。
-import dayjs from 'dayjs';
+// 明細の状態・絞り込み・並び・集計・書き込み可否の純関数。
+// node --test から直接読めるよう、他のモジュールからは型だけを import する。
 import type { Expense } from './hooks';
 
 type ExpenseFields = Partial<Omit<Expense, 'id'>>;
@@ -15,11 +14,6 @@ export const RECURRING_SYSTEM_LINE_ID = 'recurring-system';
 /** 要確認: status が無い / pending で、確認済みフラグが立っていない（bot の OK と同じ判定） */
 export function isPending(e: Pick<ExpenseFields, 'status' | 'confirmed'>): boolean {
   return (e.status == null || e.status === 'pending') && e.confirmed !== true;
-}
-
-/** 予算に計上されるか（useMonthlyStats の合計と同じ判定） */
-export function isCounted(e: Pick<ExpenseFields, 'includeInTotal'>): boolean {
-  return !!e.includeInTotal;
 }
 
 export function isAdvance(e: Pick<ExpenseFields, 'status'>): boolean {
@@ -84,7 +78,7 @@ export function matchesQuery(
   return terms.every((term) => haystack.includes(term));
 }
 
-// ---- 並び・日付見出し ----------------------------------------------------------
+// ---- 並び -----------------------------------------------------------------
 
 /**
  * Firestore の Timestamp / Date などをミリ秒にする。
@@ -130,40 +124,6 @@ export function sortForList<E extends Pick<ExpenseFields, 'date' | 'createdAt' |
       );
     })
     .map(({ e }) => e);
-}
-
-export interface DateGroup<E> {
-  date: string;
-  items: E[];
-}
-
-/** 日付ごとにまとめる（見出しの順は最初に現れた順） */
-export function groupByDate<E extends Pick<ExpenseFields, 'date'>>(list: readonly E[]): DateGroup<E>[] {
-  const groups = new Map<string, E[]>();
-  for (const e of list) {
-    const key = e.date ?? '';
-    const items = groups.get(key);
-    if (items) items.push(e);
-    else groups.set(key, [e]);
-  }
-  return Array.from(groups, ([date, items]) => ({ date, items }));
-}
-
-/** ホームの見出し: M月D日（年が違えば YYYY年M月D日） */
-export function absoluteDateLabel(date: string, today: dayjs.ConfigType): string {
-  const d = dayjs(date);
-  if (!d.isValid()) return date;
-  return d.year() === dayjs(today).year() ? d.format('M月D日') : d.format('YYYY年M月D日');
-}
-
-/** 明細の見出し: 今日 / 昨日 / M月D日（年が違えば YYYY年M月D日） */
-export function relativeDateLabel(date: string, today: dayjs.ConfigType): string {
-  const d = dayjs(date);
-  if (!d.isValid()) return date;
-  const t = dayjs(today);
-  if (d.isSame(t, 'day')) return '今日';
-  if (d.isSame(t.subtract(1, 'day'), 'day')) return '昨日';
-  return absoluteDateLabel(date, t);
 }
 
 // ---- 書き込み可否 -------------------------------------------------------------
@@ -225,8 +185,8 @@ export function canServerConfirm(
   return isActiveMemberOf(e.groupId, activeGroupIds);
 }
 
-// ---- 検索・絞り込み・集計（検索シート） -------------------------------------------
-// 刷新前の明細にあったフィルタ（すべて / 合計に含む / 合計から除外 / カテゴリ）・並び・合計カードと同じ計算。
+// ---- 絞り込み・集計（明細のフィルター・合計カード） ---------------------------------
+// フィルター（すべて / 合計に含む / 合計から除外 / カテゴリ）と合計カードの計算。
 
 export type BudgetFilter = 'all' | 'included' | 'excluded';
 
@@ -237,13 +197,6 @@ export interface ExpenseFilter {
   /** カテゴリ（'all' なら絞らない） */
   category: string;
   sortBy: SortKey;
-}
-
-export const DEFAULT_FILTER: ExpenseFilter = { query: '', budget: 'all', category: 'all', sortBy: 'date' };
-
-/** 既定から変えているか（検索ボタンの印に使う） */
-export function isFilterActive(f: ExpenseFilter): boolean {
-  return f.query.trim() !== '' || f.budget !== 'all' || f.category !== 'all' || f.sortBy !== 'date';
 }
 
 type FilterFields = Pick<ExpenseFields, 'description' | 'category' | 'includeInTotal'>;
@@ -282,7 +235,7 @@ export interface ExpenseSummary {
 }
 
 /**
- * 刷新前の明細の合計カード・支払い者別カードと同じ集計。
+ * 明細の合計カード・支払い者別カードの集計。
  * 支払い者名は呼び出し側の規則（expenseEdit.resolvePayerName）で解決して渡す。
  */
 export function summarizeExpenses<E extends Pick<ExpenseFields, 'amount' | 'includeInTotal'>>(
