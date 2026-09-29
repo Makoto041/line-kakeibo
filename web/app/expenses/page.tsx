@@ -2,48 +2,18 @@
 
 import React, { useState, useMemo, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Pencil,
-  Trash2,
-  Save,
-  X,
-  Check,
-  Ban,
-  Paperclip,
-  CreditCard,
-  Smartphone,
-  Inbox,
-  Wallet,
-  MessageCircle,
-  Send,
-  ListChecks,
-  Link2 as LinkIcon,
-  RefreshCw,
-  ExternalLink,
-  Search,
-  CircleCheck,
-  Clock,
-  Loader2,
-} from "lucide-react";
 import { useLineAuth, useExpenses, useGroupMembers, useHousehold, invalidateStatsCache } from "../../lib/hooks";
 import {
-  isPending,
-  splitChip,
   countPending,
   parseSegment,
   matchesSegment,
-  canClientWrite,
-  canClientDelete,
-  canServerConfirm,
   categoriesIn,
   filterExpenses,
-  isCardSource,
   resolvePayerName,
   sortForList,
   summarizeExpenses,
   type Segment,
+  type SortKey,
 } from "../../lib/expenseState";
 import {
   validateEditForm,
@@ -55,15 +25,17 @@ import {
   buildPayerOptions,
   payerDisplayNameFor,
   buildCategoryOptions,
+  type EditForm,
 } from "../../lib/expenseEdit";
 import { confirmExpense, isHouseholdApiConfigured, householdErrorCode } from "../../lib/householdApi";
 import type { Expense } from "../../lib/hooks";
 import PreviewModeBanner from "../../components/PreviewModeBanner";
-import GuestGuide from "../../components/GuestGuide";
-import { getCategoryVisual } from "../../lib/categoryVisuals";
+import ExpenseControls from "../../components/expenses/ExpenseControls";
+import ExpenseEmptyState from "../../components/expenses/ExpenseEmptyState";
+import ExpenseCard from "../../components/expenses/ExpenseCard";
+import EditDrawer from "../../components/expenses/EditDrawer";
+import ReceiptModal from "../../components/expenses/ReceiptModal";
 import { CANONICAL_CATEGORIES } from "../../lib/categoryNormalization";
-import { isSafeImageUrl, toSafeImageUrl } from "../../lib/imageUrl";
-import { yen } from "../../lib/money";
 import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
@@ -191,7 +163,7 @@ function ExpensesPageContent() {
   const { activeGroupIds } = useHousehold(effectiveUserId);
   const apiAvailable = isHouseholdApiConfigured();
   const [filter, setFilter] = useState("all");
-  const [sortBy, setSortBy] = useState<"date" | "amount">("date");
+  const [sortBy, setSortBy] = useState<SortKey>("date");
   const [editingExpense, setEditingExpense] = useState<string | null>(null);
   // レシートのインラインプレビュー（新規タブで開かずモーダル表示）
   const [receiptPreview, setReceiptPreview] = useState<{ url: string; expenseId: string } | null>(null);
@@ -200,15 +172,7 @@ function ExpensesPageContent() {
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeDrawerRef = useRef<() => void>(() => {});
   const lastFocusedRef = useRef<HTMLElement | null>(null);
-  const [editForm, setEditForm] = useState<{
-    amount: number;
-    description: string;
-    date: string;
-    category: string;
-    includeInTotal: boolean;
-    payerId: string;
-    payerDisplayName: string;
-  }>({ amount: 0, description: "", date: "", category: "", includeInTotal: true, payerId: "", payerDisplayName: "" });
+  const [editForm, setEditForm] = useState<EditForm>({ amount: 0, description: "", date: "", category: "", includeInTotal: true, payerId: "", payerDisplayName: "" });
   // Flag to prevent re-triggering edit mode after user closes the editor
   const [editConsumed, setEditConsumed] = useState(false);
 
@@ -477,144 +441,23 @@ function ExpensesPageContent() {
       )}
 
       <main>
-        {/* Controls — period navigation is ALWAYS visible so users can move
-            between months even when the current period has no expenses.
-            Filter/sort and totals only appear once there is data. */}
-        <div className="glass mb-4 rounded-2xl p-4 shadow-glass">
-          {/* 状態で絞り込み（すべて / 要確認 / 立替）と検索 */}
-          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div role="group" aria-label="状態で絞り込み" className="flex gap-1 rounded-xl bg-fg/[0.04] p-1">
-              {([
-                { key: "all", label: "すべて" },
-                { key: "pending", label: "要確認" },
-                { key: "advance", label: "立替" },
-              ] as const).map(({ key, label }) => (
-                <button
-                  key={key}
-                  type="button"
-                  aria-pressed={segment === key}
-                  onClick={() => setSegment(key)}
-                  className={`inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors sm:flex-none ${
-                    segment === key ? "bg-accent text-accent-fg shadow-sm" : "text-muted hover:bg-fg/5 hover:text-fg"
-                  }`}
-                >
-                  {label}
-                  {key === "pending" && pendingCount > 0 && (
-                    <span
-                      className={`rounded-full px-1.5 text-xs tabular-nums ${
-                        segment === key ? "bg-white/25" : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                      }`}
-                    >
-                      {pendingCount}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-            <label className="relative flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="内容・カテゴリで検索"
-                aria-label="検索"
-                className="w-full rounded-lg border border-line bg-card py-2 pl-9 pr-3 text-base text-fg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring sm:text-sm"
-              />
-            </label>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            {/* Period navigation (always) */}
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setCurrentMonth(prev => prev.subtract(1, 'month'))}
-                className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-card text-muted transition-colors hover:bg-fg/5 hover:text-fg"
-                aria-label="前の期間"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <div className="whitespace-nowrap rounded-lg border border-line bg-card px-3 py-2 text-sm font-medium text-fg">
-                {getDisplayTitle(currentMonth, dateSettings)}
-              </div>
-              <button
-                onClick={() => setCurrentMonth(prev => prev.add(1, 'month'))}
-                className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-card text-muted transition-colors hover:bg-fg/5 hover:text-fg"
-                aria-label="次の期間"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Filter & sort (only with data) */}
-            {expenses.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  aria-label="フィルター"
-                  className="rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <option value="all">すべて</option>
-                  <option value="included">合計に含む</option>
-                  <option value="excluded">合計から除外</option>
-                  {categories.map((category) => (
-                    <option key={category} value={category}>{category}</option>
-                  ))}
-                </select>
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as "date" | "amount")}
-                  aria-label="並び順"
-                  className="rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <option value="date">日付順</option>
-                  <option value="amount">金額順</option>
-                </select>
-              </div>
-            )}
-          </div>
-
-          {/* Totals (only with data) */}
-          {expenses.length > 0 && (
-            <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-stretch">
-              {summary.payers.length > 0 && (
-                <div className="grid flex-1 grid-cols-3 gap-3 lg:grid-cols-4">
-                  {summary.payers.map(({ name: personName, total, count }) => (
-                    <div key={personName} className="rounded-xl border border-line bg-fg/[0.02] p-3">
-                      <div className="text-center">
-                        <div className="mb-1 truncate text-sm font-medium text-fg">{personName}</div>
-                        <div className="text-lg font-bold tabular-nums text-accent">{yen(total)}</div>
-                        <div className="text-xs text-muted">
-                          {count}
-                          件
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="rounded-xl border border-accent/20 bg-accent/[0.06] p-4 sm:w-48">
-                <div className="text-center">
-                  <div className="mb-1 inline-flex items-center gap-1.5 text-xs font-medium text-muted">
-                    <Wallet className="h-3.5 w-3.5" />
-                    合計
-                  </div>
-                  <div className="text-sm font-semibold text-fg">{summary.count}件</div>
-                  <div className="my-1 text-2xl font-black tabular-nums text-fg">
-                    {yen(summary.total)}
-                  </div>
-                  <div className="text-xs text-muted">合計総支出額</div>
-                  {summary.excludedCount > 0 && (
-                    <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                      除外: {summary.excludedCount}件
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+        <ExpenseControls
+          segment={segment}
+          onSegmentChange={setSegment}
+          pendingCount={pendingCount}
+          query={query}
+          onQueryChange={setQuery}
+          periodTitle={getDisplayTitle(currentMonth, dateSettings)}
+          onPrevPeriod={() => setCurrentMonth(prev => prev.subtract(1, 'month'))}
+          onNextPeriod={() => setCurrentMonth(prev => prev.add(1, 'month'))}
+          hasExpenses={expenses.length > 0}
+          filter={filter}
+          onFilterChange={setFilter}
+          categories={categories}
+          sortBy={sortBy}
+          onSortChange={setSortBy}
+          summary={summary}
+        />
 
         {loading ? (
           <div className="py-16 text-center">
@@ -626,531 +469,54 @@ function ExpensesPageContent() {
             <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
           </div>
         ) : sortedExpenses.length === 0 ? (
-          isGuest ? (
-            // ゲスト（プレビュー）モード: 使い方ガイドを表示
-            <div className="space-y-6">
-              <div className="glass rounded-2xl p-6 text-center shadow-glass sm:p-8">
-                <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-accent/12 text-accent">
-                  <Inbox className="h-7 w-7" strokeWidth={1.8} />
-                </span>
-                <h3 className="text-lg font-semibold text-fg">
-                  ここにあなたの支出が一覧表示されます
-                </h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-muted">
-                  いまはプレビューモードのためデータがありません。
-                  <br className="hidden sm:block" />
-                  LINEボットから届くリンクで開くと、記録した支出の確認・編集ができます。
-                </p>
-              </div>
-              <GuestGuide />
-            </div>
-          ) : expenses.length === 0 ? (
-            // 初回 / データ無し: 「送る → 見る」導線を主役に
-            <div className="glass rounded-2xl p-6 shadow-glass sm:p-8">
-              <div className="text-center">
-                <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-accent/12 text-accent">
-                  <MessageCircle className="h-7 w-7" strokeWidth={1.9} />
-                </span>
-                <h3 className="text-lg font-semibold text-fg">
-                  この期間に支出はありません
-                </h3>
-                <p className="mt-1.5 text-sm text-muted">
-                  上の矢印で他の月を確認できます。LINEに送ると、ここに支出が記録されます。
-                </p>
-              </div>
-
-              <ol className="mx-auto mt-6 max-w-sm space-y-3">
-                {[
-                  { Icon: Send, title: "LINEで支出を送る", desc: "「500 ランチ」のように金額と内容を送るだけ。" },
-                  { Icon: ListChecks, title: "「家計簿」と送る", desc: "今月の集計とあなた専用のリンクが届きます。" },
-                  { Icon: LinkIcon, title: "リンクから確認・編集", desc: "届いたリンクを開くと、ここに支出が表示されます。" },
-                ].map(({ Icon, title, desc }, i) => (
-                  <li key={i} className="flex items-start gap-3 rounded-xl border border-line bg-fg/[0.02] p-3">
-                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent/12 text-accent">
-                      <Icon className="h-4 w-4" strokeWidth={2.1} />
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-fg">{title}</p>
-                      <p className="mt-0.5 text-xs leading-relaxed text-muted">{desc}</p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ) : (
-            // フィルタで0件
-            <div className="glass rounded-2xl p-10 text-center shadow-glass">
-              <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-fg/5 text-muted">
-                <Inbox className="h-7 w-7" strokeWidth={1.8} />
-              </span>
-              <h3 className="text-base font-semibold text-fg">
-                条件に一致する支出がありません
-              </h3>
-              <p className="mt-1.5 text-sm text-muted">
-                フィルターや期間を変更してみてください。
-              </p>
-            </div>
-          )
+          <ExpenseEmptyState isGuest={isGuest} hasExpenses={expenses.length > 0} />
         ) : (
           <div className="space-y-3">
             {sortedExpenses.map((expense) => (
-              <div
+              <ExpenseCard
                 key={expense.id}
-                id={`expense-${expense.id}`}
-                className={`glass overflow-hidden rounded-2xl border-l-4 shadow-glass transition-shadow hover:shadow-glass-lg ${
-                  !expense.includeInTotal ? "border-l-amber-400" : "border-l-accent"
-                } ${editingExpense === expense.id ? "ring-2 ring-ring" : ""}`}
-              >
-                <div className="p-4 sm:p-5">
-                    {/* Display mode (editing happens in the drawer below) */}
-                    <div className="space-y-4">
-                      {/* Header with title and amount */}
-                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
-                        <div className="min-w-0 flex-1">
-                          <h3 className="mb-1 break-words text-base font-semibold text-fg">
-                            {expense.description}
-                          </h3>
-                          <p className="text-sm text-muted">
-                            {dayjs(expense.date).format("YYYY年M月D日 (ddd)")}
-                          </p>
-                        </div>
-
-                        <div className="shrink-0">
-                          <p className="text-right text-xl font-bold tabular-nums text-fg sm:text-2xl">
-                            {yen(expense.amount)}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Tags */}
-                      <div className="flex flex-wrap items-center gap-2">
-                        {(() => {
-                          const v = getCategoryVisual(expense.category);
-                          const Icon = v.icon;
-                          return (
-                            <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${v.bg} ${v.fg}`}>
-                              <Icon className="h-3 w-3" strokeWidth={2.2} />
-                              {expense.category}
-                            </span>
-                          );
-                        })()}
-                        {expense.userDisplayName &&
-                          expense.userDisplayName !== "個人" && (
-                            <span className="rounded-md bg-fg/5 px-2 py-0.5 text-xs font-medium text-muted">
-                              入力: {expense.userDisplayName}
-                            </span>
-                          )}
-                        {(() => {
-                          // 支払い者の名前を共通ルールで解決（金額/件数集計と一致させる）
-                          const isDefaultPayer = !expense.payerId || expense.payerId === expense.lineId;
-                          const payerName = payerNameOf(expense);
-
-                          return payerName !== "個人" && (
-                            <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${
-                              isCardSource(expense)
-                                ? "bg-sky-500/12 text-sky-600 dark:text-sky-400"
-                                : isDefaultPayer
-                                ? "bg-fg/5 text-muted"
-                                : "bg-violet-500/12 text-violet-600 dark:text-violet-400"
-                            }`}>
-                              <CreditCard className="h-3 w-3" />
-                              {payerName}
-                            </span>
-                          );
-                        })()}
-                        {isPending(expense) && (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
-                            <Clock className="h-3 w-3" />
-                            要確認
-                          </span>
-                        )}
-                        {(() => {
-                          const chip = splitChip(expense);
-                          const label = { shared: "共同費", personal: "個人", advance: "立替", settled: "精算済み" }[chip];
-                          const tone = {
-                            shared: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
-                            personal: "bg-fg/5 text-muted",
-                            advance: "bg-violet-500/12 text-violet-600 dark:text-violet-400",
-                            settled: "bg-fg/5 text-muted",
-                          }[chip];
-                          // 要確認のうちは区分がまだ決まっていないので出さない
-                          return isPending(expense) ? null : (
-                            <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${tone}`}>{label}</span>
-                          );
-                        })()}
-                        {expense.inputSource === 'recurring' && (
-                          <span className="rounded-md bg-fg/5 px-2 py-0.5 text-xs font-medium text-muted">固定費</span>
-                        )}
-                        {expense.lineGroupId && (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-sky-500/12 px-2 py-0.5 text-xs font-medium text-sky-600 dark:text-sky-400">
-                            <Smartphone className="h-3 w-3" />
-                            グループ
-                          </span>
-                        )}
-                        {!expense.includeInTotal && (
-                          <span className="rounded-md bg-rose-500/12 px-2 py-0.5 text-xs font-medium text-rose-600 dark:text-rose-400">
-                            合計から除外
-                          </span>
-                        )}
-                        {expense.receiptUrl && (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/12 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-                            <Paperclip className="h-3 w-3" />
-                            レシートあり
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Items details */}
-                      {expense.items && expense.items.length > 0 && (
-                        <details className="group">
-                          <summary className="flex cursor-pointer list-none items-center gap-1 text-sm font-medium text-accent">
-                            <ChevronRight className="h-4 w-4 transition-transform duration-200 group-open:rotate-90" />
-                            商品詳細 ({expense.items.length}点)
-                          </summary>
-                          <div className="mt-3 rounded-lg bg-fg/[0.03] p-3">
-                            <ul className="space-y-2">
-                              {expense.items.map((item, index) => (
-                                <li
-                                  key={index}
-                                  className="flex items-center justify-between text-sm"
-                                >
-                                  <span className="mr-2 min-w-0 flex-1 break-words text-muted">
-                                    {item.name}
-                                  </span>
-                                  <span className="shrink-0 font-medium tabular-nums text-fg">
-                                    {yen(item.price)}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        </details>
-                      )}
-
-                      {/* Action buttons */}
-                      <div
-                        className="flex flex-wrap gap-2 border-t border-line pt-3"
-                        style={{ position: "relative", zIndex: 10 }}
-                      >
-                        {/* 要確認の支出を確認（LINE の OK と同じ。サーバー経由） */}
-                        {isPending(expense) && !isGuest && apiAvailable && canServerConfirm(expense, lineId, activeGroupIds) && (
-                          <button
-                            type="button"
-                            disabled={confirmingId === expense.id}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleConfirm(expense);
-                            }}
-                            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:opacity-90 disabled:opacity-60"
-                            style={{ pointerEvents: "auto" }}
-                          >
-                            {confirmingId === expense.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <CircleCheck className="h-4 w-4" />
-                            )}
-                            確認
-                          </button>
-                        )}
-
-                        {/* 合計に含める/除外する切り替えボタン */}
-                        {canClientWrite(expense, lineId, activeGroupIds) && (<>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            updateExpense(expense.id, { includeInTotal: !expense.includeInTotal });
-                          }}
-                          className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                            expense.includeInTotal
-                              ? "bg-accent/12 text-accent hover:bg-accent/20"
-                              : "bg-fg/5 text-muted hover:bg-fg/10"
-                          }`}
-                          style={{ pointerEvents: "auto" }}
-                        >
-                          {expense.includeInTotal ? <Check className="h-4 w-4" /> : <Ban className="h-4 w-4" />}
-                          {expense.includeInTotal ? "合計に含む" : "合計から除外"}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleEditStart(expense);
-                          }}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-card px-3 py-2 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
-                          style={{ pointerEvents: "auto" }}
-                        >
-                          <Pencil className="h-4 w-4" />
-                          編集
-                        </button>
-                        </>)}
-
-                        {/* レシート: 編集の隣に並べて発見しやすく。新規タブではなくアプリ内でプレビュー */}
-                        {expense.receiptUrl ? (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              // URLを正規化し https/blob のみ採用（XSS対策・CodeQLサニタイズ）
-                              const safe = toSafeImageUrl(expense.receiptUrl);
-                              if (safe) setReceiptPreview({ url: safe, expenseId: expense.id });
-                            }}
-                            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-amber-500/12 px-3 py-2 text-sm font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
-                            style={{ pointerEvents: "auto" }}
-                            title="レシートを表示"
-                          >
-                            <Paperclip className="h-4 w-4" />
-                            レシート
-                          </button>
-                        ) : (
-                          <a
-                            href={`/attach?expenseId=${encodeURIComponent(expense.id)}`}
-                            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-card px-3 py-2 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
-                            title="レシートを添付"
-                          >
-                            <Paperclip className="h-4 w-4" />
-                            レシート添付
-                          </a>
-                        )}
-
-                        {canClientDelete(expense, lineId, activeGroupIds) && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleDeleteExpense(expense.id);
-                          }}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-rose-600 transition-colors hover:bg-rose-500/10 dark:text-rose-400"
-                          style={{ pointerEvents: "auto" }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          削除
-                        </button>
-                        )}
-                      </div>
-                    </div>
-                </div>
-              </div>
+                expense={expense}
+                editing={editingExpense === expense.id}
+                payerName={payerNameOf(expense)}
+                lineId={lineId}
+                isGuest={isGuest}
+                apiAvailable={apiAvailable}
+                activeGroupIds={activeGroupIds}
+                confirming={confirmingId === expense.id}
+                onConfirm={() => handleConfirm(expense)}
+                onToggleInclude={() => updateExpense(expense.id, { includeInTotal: !expense.includeInTotal })}
+                onEdit={() => handleEditStart(expense)}
+                onPreviewReceipt={(url) => setReceiptPreview({ url, expenseId: expense.id })}
+                onDelete={() => handleDeleteExpense(expense.id)}
+              />
             ))}
           </div>
         )}
 
         {/* Edit drawer — mobile: bottom sheet / desktop: right side drawer */}
         {editingExpense && (
-          <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="支出の編集">
-            <button
-              type="button"
-              aria-label="閉じる"
-              onClick={handleEditCancel}
-              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-            />
-            <div
-              ref={drawerRef}
-              tabIndex={-1}
-              className="glass-strong relative z-10 ml-auto flex w-full animate-fade-up flex-col overflow-y-auto p-5 shadow-glass-lg outline-hidden max-sm:mt-auto max-sm:max-h-[88vh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl"
-            >
-              <div className="space-y-5">
-                <div className="flex items-center justify-between border-b border-line pb-3">
-                  <h4 className="text-base font-semibold text-fg">支出の編集</h4>
-                  <button
-                    type="button"
-                    aria-label="閉じる"
-                    onClick={handleEditCancel}
-                    className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-fg/5 hover:text-fg"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="sm:col-span-2">
-                    <label className="mb-2 block text-sm font-medium text-fg">説明</label>
-                    <input
-                      type="text"
-                      name="description"
-                      value={editForm.description}
-                      onChange={handleEditInputChange}
-                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                      placeholder="例: ランチ代"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-fg">金額 (円)</label>
-                    <input
-                      type="number"
-                      name="amount"
-                      value={editForm.amount}
-                      onChange={handleEditInputChange}
-                      disabled={editingExpenseData?.status === 'advance_settled'}
-                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                      placeholder="1000"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-fg">日付</label>
-                    <input
-                      type="date"
-                      name="date"
-                      value={editForm.date}
-                      onChange={handleEditInputChange}
-                      disabled={editingExpenseData?.status === 'advance_settled'}
-                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-fg">カテゴリ</label>
-                    <select
-                      name="category"
-                      value={editForm.category}
-                      onChange={handleEditInputChange}
-                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {allCategories.map((category) => (
-                        <option key={category} value={category}>{category}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="mb-2 flex items-center gap-1.5 text-sm font-medium text-fg">
-                      <CreditCard className="h-4 w-4 text-muted" />
-                      支払い者
-                    </label>
-                    <select
-                      name="payerId"
-                      value={editForm.payerId}
-                      onChange={handleEditInputChange}
-                      disabled={editingExpenseData?.status === 'advance_settled'}
-                      className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {/* 現在の支払い者と入力者を必ず含める（選択中の値に対応する option が消えて意図しない支払い者へ変わってしまうのを防ぐ） */}
-                      {buildPayerOptions(editingExpenseData, availableMembers, expenses, editForm).map(({ value, label }) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="mt-1 text-xs text-muted">デフォルトは入力者と同じです</p>
-                  </div>
-                </div>
-
-                <label className="flex cursor-pointer items-center rounded-lg border border-line bg-card p-3">
-                  <input
-                    type="checkbox"
-                    name="includeInTotal"
-                    checked={editForm.includeInTotal}
-                    onChange={handleEditCheckboxChange}
-                    className="h-4 w-4 rounded border-line accent-accent"
-                  />
-                  <span className="ml-3 text-sm font-medium text-fg">合計に含める</span>
-                </label>
-
-                {editingExpenseData?.status === 'advance_settled' && (
-                  <p className="rounded-lg bg-fg/[0.04] p-3 text-xs text-muted">
-                    精算済みの支出は、金額・日付・支払い者を変更できません
-                  </p>
-                )}
-                {editError && (
-                  <p role="alert" className="rounded-lg border border-rose-500/20 bg-rose-500/[0.08] p-3 text-sm text-rose-700 dark:text-rose-300">
-                    {editError}
-                  </p>
-                )}
-
-                <div className="flex gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => editingExpense && handleEditSave(editingExpense)}
-                    disabled={savingEdit}
-                    className="flex flex-1 disabled:opacity-60 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-3 text-sm font-medium text-accent-fg transition-colors hover:opacity-90"
-                  >
-                    <Save className="h-4 w-4" />
-                    保存
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleEditCancel}
-                    className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line bg-card px-4 py-3 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
-                  >
-                    <X className="h-4 w-4" />
-                    キャンセル
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <EditDrawer
+            panelRef={drawerRef}
+            form={editForm}
+            settled={editingExpenseData?.status === 'advance_settled'}
+            categories={allCategories}
+            payerOptions={buildPayerOptions(editingExpenseData, availableMembers, expenses, editForm)}
+            error={editError}
+            saving={savingEdit}
+            onChange={handleEditInputChange}
+            onCheckboxChange={handleEditCheckboxChange}
+            onSave={() => editingExpense && handleEditSave(editingExpense)}
+            onCancel={handleEditCancel}
+          />
         )}
 
         {/* レシートのインラインプレビュー（新規タブで開かず、その場で表示＋差し替え） */}
         {receiptPreview && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
-            role="dialog"
-            aria-modal="true"
-            aria-label="レシートプレビュー"
-          >
-            <div
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-              onClick={() => setReceiptPreview(null)}
-              aria-hidden
-            />
-            <div className="glass-strong relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl shadow-glass">
-              <div className="flex items-center justify-between border-b border-line/60 px-4 py-3">
-                <h2 className="flex items-center gap-1.5 text-sm font-semibold text-fg">
-                  <Paperclip className="h-4 w-4 text-amber-500" />
-                  レシート
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setReceiptPreview(null)}
-                  className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-fg/5"
-                  aria-label="閉じる"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="flex-1 overflow-auto bg-fg/[0.03] p-3">
-                {isSafeImageUrl(receiptPreview.url) ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={receiptPreview.url}
-                    alt="レシート"
-                    className="mx-auto max-h-[60vh] w-auto rounded-lg object-contain"
-                  />
-                ) : (
-                  <p className="py-10 text-center text-sm text-muted">画像を表示できません</p>
-                )}
-              </div>
-              <div className="flex gap-2 border-t border-line/60 p-3">
-                <a
-                  href={`/attach?expenseId=${encodeURIComponent(receiptPreview.expenseId)}`}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent/12 px-4 py-2.5 text-sm font-medium text-accent transition-colors hover:bg-accent/20"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  差し替え
-                </a>
-                {isSafeImageUrl(receiptPreview.url) && (
-                  <a
-                    href={receiptPreview.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-1.5 rounded-lg border border-line bg-card px-4 py-2.5 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                    新しいタブ
-                  </a>
-                )}
-              </div>
-            </div>
-          </div>
+          <ReceiptModal
+            url={receiptPreview.url}
+            expenseId={receiptPreview.expenseId}
+            onClose={() => setReceiptPreview(null)}
+          />
         )}
       </main>
     </div>
