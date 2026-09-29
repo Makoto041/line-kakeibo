@@ -111,6 +111,8 @@ export function initLineAuth(): Promise<void> {
     }
   })();
 
+  // 呼び出し側は結果を待たないので、ここで拒否を受け止めて unhandledrejection にしない
+  initPromise.catch((e) => console.error('LINE auth init failed:', e));
   return initPromise;
 }
 
