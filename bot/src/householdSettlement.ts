@@ -59,7 +59,7 @@ export function memberDisplayName(name: unknown, mayBePlaceholder = true): strin
   return mayBePlaceholder && name === CREATOR_PLACEHOLDER_NAME ? '' : name;
 }
 
-/** 表示名が分からないときの代わり（index.ts のプロフィール取得失敗時と同じ形） */
+/** 表示名が分からないときの代わり（line/expenseFlow.ts のプロフィール取得失敗時と同じ形） */
 export function fallbackDisplayName(userId: string): string {
   return `User_${userId.slice(-6)}`;
 }
@@ -262,7 +262,7 @@ export async function fillPartnerName(
  * `legacyPair` では立替者が 0 人・2 人・3 人以上のときの結果はメンバーに左右されないので、世帯の
  * メンバーを読むのは立替者が 1 人のときだけ（従来の経路に Firestore の読み取りを足さない）。
  *
- * @param resolveName 補った相手の表示名が分からないときに使う（index.ts は LINE のグループメンバーのプロフィール）
+ * @param resolveName 補った相手の表示名が分からないときに使う（line/commands/advance.ts は LINE のグループメンバーのプロフィール）
  */
 export async function computeLineGroupSettlement(
   lineGroupId: string,

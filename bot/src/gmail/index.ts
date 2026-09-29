@@ -1,7 +1,7 @@
 /**
  * Gmail連携自動化モジュール
  *
- * 関数の定義（index.ts）と管理 API から使うものだけを公開する。
+ * 関数の定義（index.ts）と管理 API（adminRouter.ts）から使うものだけを公開する。
  *
  * @see /docs/GMAIL_AUTO_SPEC.md
  */

@@ -1,7 +1,7 @@
 /**
  * Web（Next.js）のオリジン許可リスト
  *
- * `/auth/line`（index.ts）と `/household`（householdApi.ts）が共用する唯一の定義。既定は本番 Vercel と
+ * `/auth/line`（auth/lineAuth.ts）と `/household`（householdApi.ts）が共用する唯一の定義。既定は本番 Vercel と
  * localhost で、環境変数 `WEB_ORIGINS`（カンマ区切り）で上書きできる。このプロジェクトの Vercel プレビュー
  * （line-kakeibo*.vercel.app）も許可する。
  *
