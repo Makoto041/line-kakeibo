@@ -277,7 +277,7 @@ jobs:
           cache: 'npm'
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: bot-build
           # upload 側は `path: bot/dist` なので、アーティファクトのルートには
