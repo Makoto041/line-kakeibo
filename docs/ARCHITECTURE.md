@@ -158,7 +158,7 @@ Web を開く（LINE の「家計簿一覧を見る」/「修正」リンク、�
 入力テキスト
   ├─ 1. 結果キャッシュ（関数インスタンスのメモリ内。15分TTL）── ヒット→終了
   ├─ 2. FAST_KEYWORD_MAP（メモリ内・即時・conf 0.8）── ヒット→終了
-  └─ 3. Gemini gemini-2.5-flash（few-shot JSON・8sタイムアウト）
+  └─ 3. Gemini gemini-2.5-flash（few-shot JSON・8sタイムアウト。候補のカテゴリ一覧は Firestore から読み 30分キャッシュ）
         └─ 出力を categoryNormalization で正準19カテゴリに正規化
 ```
 
