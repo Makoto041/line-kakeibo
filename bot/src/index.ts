@@ -7,7 +7,7 @@ import {
   SignatureValidationFailed,
   JSONParseError,
 } from "@line/bot-sdk";
-import { initializeApp, cert, getApps } from "firebase-admin/app";
+import { initializeApp, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import dayjs from "dayjs";
 import dotenv from "dotenv";
@@ -15,21 +15,17 @@ import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import {
   saveExpense,
-  getExpenses,
   createGroup,
   getUserGroups,
   getGroupMembers,
-  getGroupExpenses,
   findLineGroupId,
   deactivateLineGroupMembers,
-  getGroupByLineGroupId,
   saveUserSettings,
   getUserSettings,
   // 立替機能
   getPendingAdvances,
   getAdvanceSummaryByUser,
   settleAdvances,
-  AdvanceSummary,
   // 月次サマリー
   getMonthlyGroupSummary,
   getMonthlyBudget,
@@ -47,7 +43,7 @@ import { resolveExpenseGroupScope } from "./expenseGroupScope";
 import { nowJST } from "./time";
 import { resolveAppUidForExpense, getOrCreateAppUidForLineId } from "./linkUserResolver";
 import { getAuth } from "firebase-admin/auth";
-import { classifyExpenseWithGemini, isGeminiAvailable, findCategoryWithGemini } from "./geminiCategoryClassifier";
+import { classifyExpenseWithGemini, isGeminiAvailable } from "./geminiCategoryClassifier";
 import { createIssueFromFeedback } from "./issueCreator";
 // Money Forward Me Import
 import { importMoneyForward } from "./importMoneyForward";
@@ -1454,7 +1450,6 @@ import {
 } from "./gmail";
 import {
   handlePostback,
-  isPostbackEvent,
   sendTextExpenseNotification,
   TextExpenseInfo,
 } from "./line";

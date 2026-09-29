@@ -1,26 +1,12 @@
 /**
  * LINE関連モジュール
  *
- * Gmail自動取得用のFlex MessageとPostback処理
+ * webhook の配線（index.ts）から使うものだけを公開する。
  */
 
-// Flex Message
 export {
-  buildCardUsageFlexMessage,
-  sendCardUsageNotification,
-  buildExpenseCardFromRecord,
-  buildExpenseEditUrl,
-  buildExpenseListUrl,
-  EXPENSE_LIST_URL,
-  CardUsageInfo,
-  // テキスト入力用
-  buildTextExpenseFlexMessage,
   sendTextExpenseNotification,
   TextExpenseInfo,
 } from './flexMessage';
 
-// Postback処理
-export {
-  handlePostback,
-  isPostbackEvent,
-} from './postback';
+export { handlePostback } from './postback';

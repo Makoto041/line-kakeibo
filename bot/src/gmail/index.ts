@@ -1,17 +1,15 @@
 /**
  * Gmail連携自動化モジュール
  *
+ * 関数の定義（index.ts）と管理 API から使うものだけを公開する。
+ *
  * @see /docs/GMAIL_AUTO_SPEC.md
  */
-
-// 型定義
-export * from './types';
 
 // OAuth2認証
 export {
   getAuthUrl,
   handleOAuthCallback,
-  getValidAccessToken,
   getGmailClient,
   isGmailAuthConfigured,
 } from './auth';
@@ -20,25 +18,8 @@ export {
 export {
   registerWatch,
   renewWatch,
-  stopWatch,
-  getWatchState,
-  updateHistoryId,
-  isWatchExpiringSoon,
-  getWatchExpiration,
   getWatchStatus,
 } from './watch';
-
-// メールパース
-export {
-  isSMBCGoldVISANL,
-  parseSMBCCardEmail,
-  decodeEmailBody,
-  getFromAddress,
-  isDuplicateExpense,
-  isDuplicateByContent,
-  isDuplicateByTimestamp,
-  getExpenseIdByGmailMessageId,
-} from './parser';
 
 // Pub/Subハンドラー
 export {

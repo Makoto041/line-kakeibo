@@ -143,35 +143,6 @@ export async function updateHistoryId(historyId: string): Promise<void> {
 }
 
 /**
- * Watchが有効期限切れかどうかチェック
- * 期限の1日前から更新を推奨
- */
-export async function isWatchExpiringSoon(): Promise<boolean> {
-  const state = await getWatchState();
-
-  if (!state) {
-    return true; // 状態がない場合は更新が必要
-  }
-
-  // 1日のバッファを持って期限切れをチェック
-  const oneDayMs = 24 * 60 * 60 * 1000;
-  return state.watchExpiration < Date.now() + oneDayMs;
-}
-
-/**
- * Watchの有効期限を取得
- */
-export async function getWatchExpiration(): Promise<Date | null> {
-  const state = await getWatchState();
-
-  if (!state) {
-    return null;
-  }
-
-  return new Date(state.watchExpiration);
-}
-
-/**
  * Watch状態のサマリーを取得（デバッグ用）
  */
 export async function getWatchStatus(): Promise<{

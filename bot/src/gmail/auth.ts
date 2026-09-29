@@ -233,29 +233,6 @@ async function refreshAccessToken(refreshToken: string): Promise<GmailToken> {
 }
 
 /**
- * 有効なアクセストークンを取得
- * 期限切れの場合は自動的にリフレッシュ
- */
-export async function getValidAccessToken(): Promise<string> {
-  const token = await loadTokenFromFirestore();
-
-  if (!token) {
-    throw new Error('Gmail token not found. Please run OAuth2 setup first.');
-  }
-
-  // トークンが期限切れかどうかチェック（5分のバッファ）
-  const isExpired = token.expiry_date < Date.now() + 5 * 60 * 1000;
-
-  if (isExpired) {
-    console.log('Gmail access token expired, refreshing...');
-    const newToken = await refreshAccessToken(token.refresh_token);
-    return newToken.access_token;
-  }
-
-  return token.access_token;
-}
-
-/**
  * 認証済みのGmail APIクライアントを取得
  */
 export async function getGmailClient() {

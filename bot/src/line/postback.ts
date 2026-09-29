@@ -10,7 +10,6 @@
 
 import { webhook, messagingApi } from '@line/bot-sdk';
 
-type WebhookEvent = webhook.Event;
 type PostbackEvent = webhook.PostbackEvent;
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { PostbackActionData } from '../gmail/types';
@@ -377,13 +376,6 @@ async function handleEdit(
  */
 async function handleShowList(event: PostbackEvent): Promise<void> {
   await replyText(event, `家計簿一覧はこちら\n${EXPENSE_LIST_URL}`);
-}
-
-/**
- * Postbackイベントかどうかチェック
- */
-export function isPostbackEvent(event: WebhookEvent): event is PostbackEvent {
-  return event.type === 'postback';
 }
 
 /**
