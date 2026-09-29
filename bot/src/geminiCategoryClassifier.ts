@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getAllUserCategories, CategoryMaster, UserCustomCategory } from './firestore';
-import { normalizeCategoryName } from './categoryNormalization';
+import { CANONICAL_CATEGORIES, normalizeCategoryName } from './categoryNormalization';
 import { maskId } from './logSafe';
 
 // Gemini APIクライアントの初期化
@@ -25,27 +25,7 @@ interface GeminiClassificationResult {
 }
 
 // デフォルトカテゴリリスト（Firestoreからの取得に失敗した場合のフォールバック）
-const DEFAULT_CATEGORIES = [
-  '食費',
-  '交通費',
-  '日用品',
-  '娯楽',
-  '衣服',
-  '医療・健康',
-  '教育',
-  '光熱費',
-  '住居費',
-  '保険',
-  '税金',
-  '美容',
-  '通信費',
-  'サブスク',
-  'プレゼント',
-  '旅行',
-  'ペット',
-  '貯金',
-  'その他',
-];
+const DEFAULT_CATEGORIES = CANONICAL_CATEGORIES;
 
 // カテゴリキャッシュ（メモリ内、30分TTL）
 const categoryCache = new Map<string, { categories: string[]; timestamp: number }>();

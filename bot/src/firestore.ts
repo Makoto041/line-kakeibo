@@ -1,7 +1,7 @@
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
-import dayjs from 'dayjs';
 import { randomInt } from 'node:crypto';
 import { maskId } from './logSafe';
+import { dayjs } from './time';
 
 let db: ReturnType<typeof getFirestore> | null = null;
 

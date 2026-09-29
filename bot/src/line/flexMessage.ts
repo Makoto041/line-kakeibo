@@ -8,29 +8,11 @@ import { messagingApi } from '@line/bot-sdk';
 import { ExpenseStatusType } from '../firestore';
 import { getPaymentMethodLabel, PaymentMethod } from '../textParser';
 import { maskId } from '../logSafe';
+import { getLineClient, replyWithPushFallback } from './client';
 
 type FlexMessage = messagingApi.FlexMessage;
 type FlexBubble = messagingApi.FlexBubble;
 type FlexComponent = messagingApi.FlexComponent;
-
-// LINEクライアントの初期化
-let lineClient: messagingApi.MessagingApiClient | null = null;
-
-function getLineClient(): messagingApi.MessagingApiClient {
-  if (!lineClient) {
-    const channelAccessToken = process.env.LINE_CHANNEL_TOKEN;
-    const channelSecret = process.env.LINE_CHANNEL_SECRET;
-
-    if (!channelAccessToken || !channelSecret) {
-      throw new Error('LINE credentials not configured');
-    }
-
-    lineClient = new messagingApi.MessagingApiClient({
-      channelAccessToken,
-    });
-  }
-  return lineClient;
-}
 
 // ============================================
 // アイコン（lucide風の静的PNGをWebから配信）
@@ -836,24 +818,9 @@ export async function sendTextExpenseNotification(
   info: TextExpenseInfo,
   replyToken?: string
 ): Promise<void> {
-  const client = getLineClient();
   const message = buildTextExpenseFlexMessage(info);
-
-  if (replyToken) {
-    try {
-      await client.replyMessage({ replyToken: replyToken, messages: [message] });
-      console.log(`Text expense notification sent via replyMessage (free) to ${maskId(targetId)}`);
-      return;
-    } catch (replyError) {
-      console.warn(
-        "replyMessage failed (token expired or already used), falling back to pushMessage:",
-        replyError
-      );
-    }
-  }
-
-  await client.pushMessage({ to: targetId, messages: [message] });
-  console.log(`Text expense notification sent via pushMessage to ${maskId(targetId)}`);
+  const sentVia = await replyWithPushFallback(replyToken, targetId, [message]);
+  console.log(`Text expense notification sent via ${sentVia}Message to ${maskId(targetId)}`);
 }
 
 /**

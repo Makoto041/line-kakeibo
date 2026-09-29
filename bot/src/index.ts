@@ -1,15 +1,14 @@
 // Version: 2026-03-28-2200 - Force redeploy
 import express, { Express, Request, Response } from "express";
 import { isAdminAuthorized } from "./adminAuth";
+import { getLineClient, pushText, replyMessages, replyText, replyWithPushFallback } from "./line/client";
 import {
-  messagingApi,
   middleware,
   SignatureValidationFailed,
   JSONParseError,
 } from "@line/bot-sdk";
 import { initializeApp, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
-import dayjs from "dayjs";
 import dotenv from "dotenv";
 import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
@@ -40,7 +39,7 @@ import {
 import { getCategoryEmoji } from "./gmail/types";
 import { parseTextExpense } from "./textParser";
 import { resolveExpenseGroupScope } from "./expenseGroupScope";
-import { nowJST } from "./time";
+import { dayjs, nowJST } from "./time";
 import { resolveAppUidForExpense, getOrCreateAppUidForLineId } from "./linkUserResolver";
 import { getAuth } from "firebase-admin/auth";
 import { classifyExpenseWithGemini, isGeminiAvailable } from "./geminiCategoryClassifier";
@@ -51,37 +50,13 @@ import rateLimit from "express-rate-limit";
 import { maskId, errorMessage } from "./logSafe";
 import { householdRouter, householdErrorHandler } from "./householdApi";
 import { computeLineGroupSettlement, isSettlementComputable } from "./householdSettlement";
-import { isAllowedWebOrigin } from "./webOrigins";
+import { applyWebCorsHeaders } from "./webOrigins";
 import { postDueRecurringExpenses } from "./recurringExpenses";
 
 dotenv.config();
 
 const app: Express = express();
 const port = process.env.PORT || 8080;
-
-// LINE Bot setup
-console.log("LINE_CHANNEL_TOKEN loaded:", !!process.env.LINE_CHANNEL_TOKEN);
-console.log("LINE_CHANNEL_SECRET loaded:", !!process.env.LINE_CHANNEL_SECRET);
-
-// channelSecret はここに持たない。署名検証はリクエスト時に環境変数から読む
-// （verifyLineSignature を参照）。ダミー値へのフォールバックは公開値で署名を
-// 検証する fail-open になるため廃止した。
-const config = {
-  channelAccessToken: process.env.LINE_CHANNEL_TOKEN || "dummy-token-for-build",
-};
-
-let client: messagingApi.MessagingApiClient;
-try {
-  client = new messagingApi.MessagingApiClient({
-    channelAccessToken: config.channelAccessToken,
-  });
-} catch (error) {
-  console.warn(
-    "LINE Client initialization failed during build, using dummy client"
-  );
-  // Create a dummy client for build analysis
-  client = {} as messagingApi.MessagingApiClient;
-}
 
 // Firebase Admin setup
 if (!getApps().length) {
@@ -164,15 +139,11 @@ app.post("/webhook", async (req: Request, res: Response) => {
     // Process events sequentially to avoid reply token issues and resource conflicts
     for (const event of events) {
       try {
-        console.log("Processing event:", event.type);
 
         if (event.type === "message" && event.message.type === "image") {
           // レシートOCR機能は廃止済み（replyMessageは無料）
           try {
-            await client.replyMessage({ replyToken: event.replyToken, messages: [{
-              type: "text",
-              text: "画像からの読み取り機能は終了しました。\nテキストで入力してください。\n例:「500 ランチ」「6/29 4800 家賃」",
-            }] });
+            await replyText(event.replyToken, "画像からの読み取り機能は終了しました。\nテキストで入力してください。\n例:「500 ランチ」「6/29 4800 家賃」");
           } catch (replyError) {
             console.warn("Failed to send OCR discontinued notice:", replyError);
           }
@@ -189,7 +160,6 @@ app.post("/webhook", async (req: Request, res: Response) => {
           });
         } else if (event.type === "postback") {
           // Postbackイベント処理
-          console.log("Processing postback event");
           await handlePostback(event).catch(error => {
             console.error("Postback processing error:", error);
           });
@@ -205,7 +175,6 @@ app.post("/webhook", async (req: Request, res: Response) => {
           console.log("Unhandled event type:", event.type);
         }
 
-        console.log("Successfully processed event:", event.type);
       } catch (error) {
         console.error("Event processing error:", error);
 
@@ -215,10 +184,7 @@ app.post("/webhook", async (req: Request, res: Response) => {
           (error as Error).message !== "Invalid reply token"
         ) {
           try {
-            await client.replyMessage({ replyToken: event.replyToken, messages: [{
-              type: "text",
-              text: "申し訳ございませんが、一時的なエラーが発生しました。しばらく後でお試しください。",
-            }] });
+            await replyText(event.replyToken, "申し訳ございませんが、一時的なエラーが発生しました。しばらく後でお試しください。");
           } catch (replyError) {
             console.error("Failed to send error reply:", replyError);
           }
@@ -238,18 +204,9 @@ async function handleTextMessage(event: any) {
   try {
     const text = event.message.text.trim();
     // 本文は個人情報を含みうるためログに出さない（長さと送信元の種別だけ）
-    console.log(
-      `=== TEXT MESSAGE DEBUG: source=${event.source.type} user=${maskId(event.source.userId)} length=${text.length} ===`
-    );
 
     // レシート一覧コマンド
-    console.log(
-      `=== COMMAND CHECK: Checking if text equals "家計簿": ${
-        text === "家計簿"
-      } ===`
-    );
     if (text === "家計簿") {
-      console.log(`=== COMMAND MATCHED: Processing 家計簿 command ===`);
       try {
         const isGroupContext = event.source.type === "group";
         const lineGroupId = isGroupContext ? event.source.groupId : undefined;
@@ -279,7 +236,7 @@ async function handleTextMessage(event: any) {
         if (summary.expenseCount === 0) {
           // データなしの場合
           const emptyMessage = buildEmptyExpenseSummaryFlexMessage(isGroupContext, webAppUrl);
-          await client.replyMessage({ replyToken: event.replyToken, messages: [emptyMessage] });
+          await replyMessages(event.replyToken, [emptyMessage]);
         } else {
           // カテゴリ別データの整形
           const totalIncluded = summary.includedTotalAmount || 1; // ゼロ除算防止
@@ -320,17 +277,14 @@ async function handleTextMessage(event: any) {
           };
 
           const flexMessage = buildExpenseSummaryFlexMessage(summaryInfo);
-          await client.replyMessage({ replyToken: event.replyToken, messages: [flexMessage] });
+          await replyMessages(event.replyToken, [flexMessage]);
         }
       } catch (error) {
         console.error("Error fetching expenses:", error);
 
         // Fallback response (テキストメッセージ)
         try {
-          await client.replyMessage({ replyToken: event.replyToken, messages: [{
-            type: "text",
-            text:
-              `家計簿\n\n現在データを読み込み中です...\n${
+          await replyText(event.replyToken, `家計簿\n\n現在データを読み込み中です...\n${
                 event.source.type === "group"
                   ? "グループ全体の支出が確認できます"
                   : "個人の支出が確認できます"
@@ -338,8 +292,7 @@ async function handleTextMessage(event: any) {
               encodeURIComponent(event.source.userId) +
               (event.source.type === "group" && event.source.groupId
                 ? `&lineGroupId=${encodeURIComponent(event.source.groupId)}`
-                : ""),
-          }] });
+                : ""));
         } catch (replyError) {
           console.error("Failed to send fallback reply:", replyError);
         }
@@ -358,29 +311,17 @@ async function handleTextMessage(event: any) {
       }
     }
     if (feedbackText !== null) {
-      console.log(
-        `=== FEEDBACK COMMAND MATCHED: Creating GitHub issue from feedback (length=${feedbackText.length}) ===`
-      );
       if (!feedbackText) {
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: "フィードバック内容を入力してください。\n例: 「要望 月別のグラフが見たい」\n「不具合 レシートが読み取れない」",
-        }] });
+        await replyText(event.replyToken, "フィードバック内容を入力してください。\n例: 「要望 月別のグラフが見たい」\n「不具合 レシートが読み取れない」");
         return;
       }
       try {
         const result = await createIssueFromFeedback(feedbackText);
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: result.message,
-        }] });
+        await replyText(event.replyToken, result.message);
       } catch (error) {
         console.error("Error creating issue from feedback:", error);
         try {
-          await client.replyMessage({ replyToken: event.replyToken, messages: [{
-            type: "text",
-            text: "Issueの作成に失敗しました。\n時間をおいてもう一度お試しください。",
-          }] });
+          await replyText(event.replyToken, "Issueの作成に失敗しました。\n時間をおいてもう一度お試しください。");
         } catch (replyError) {
           console.error("Failed to send feedback error reply:", replyError);
         }
@@ -393,23 +334,10 @@ async function handleTextMessage(event: any) {
       text === "カテゴリー" ||
       text.startsWith("カテゴリー ") ||
       text.startsWith("カテゴリー　");
-    console.log(
-      `=== COMMAND CHECK: Checking category command - exact: ${
-        text === "カテゴリー"
-      }, half-space: ${text.startsWith(
-        "カテゴリー "
-      )}, full-space: ${text.startsWith(
-        "カテゴリー　"
-      )}, result: ${isCategoryCommand} ===`
-    );
     if (isCategoryCommand) {
-      console.log(
-        `=== CATEGORY COMMAND MATCHED: Processing category command ===`
-      );
 
       // カテゴリー一覧表示
       if (text === "カテゴリー") {
-        console.log(`=== CATEGORY LIST: Showing available categories ===`);
         const validCategories = [
           "食費",
           "日用品",
@@ -430,17 +358,14 @@ async function handleTextMessage(event: any) {
             currentCategory = userSettings.defaultCategory;
           }
         } catch (error) {
-          console.log("Failed to get current category setting:", error);
+          console.warn("Failed to get current category setting:", error);
         }
 
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: `利用可能なカテゴリー:\n\n${validCategories
+        await replyText(event.replyToken, `利用可能なカテゴリー:\n\n${validCategories
             .map((c) => "• " + c)
             .join(
               "\n"
-            )}\n\n現在のデフォルト: ${currentCategory}\n\n設定方法:\n「カテゴリー 食費」のように送信してください`,
-        }] });
+            )}\n\n現在のデフォルト: ${currentCategory}\n\n設定方法:\n「カテゴリー 食費」のように送信してください`);
         return;
       }
 
@@ -451,14 +376,8 @@ async function handleTextMessage(event: any) {
       } else if (text.startsWith("カテゴリー　")) {
         category = text.replace("カテゴリー　", "").trim();
       }
-      console.log(
-        `=== CATEGORY COMMAND: Extracted category (length=${category.length}) ===`
-      );
       if (!category) {
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: "カテゴリー名を指定してください。\n例: 「カテゴリー 食費」\n\n利用可能なカテゴリー:\n• 食費\n• 日用品\n• 交通費\n• 医療費\n• 娯楽費\n• 衣服費\n• 教育費\n• 通信費\n• その他",
-        }] });
+        await replyText(event.replyToken, "カテゴリー名を指定してください。\n例: 「カテゴリー 食費」\n\n利用可能なカテゴリー:\n• 食費\n• 日用品\n• 交通費\n• 医療費\n• 娯楽費\n• 衣服費\n• 教育費\n• 通信費\n• その他");
         return;
       }
 
@@ -475,52 +394,28 @@ async function handleTextMessage(event: any) {
       ];
 
       if (!validCategories.includes(category)) {
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: `「${category}」は有効なカテゴリーではありません。\n\n利用可能なカテゴリー:\n${validCategories
+        await replyText(event.replyToken, `「${category}」は有効なカテゴリーではありません。\n\n利用可能なカテゴリー:\n${validCategories
             .map((c) => "• " + c)
-            .join("\n")}`,
-        }] });
+            .join("\n")}`);
         return;
       }
 
       try {
-        console.log(
-          `=== CATEGORY DEBUG: Setting default category for user ${maskId(event.source.userId)} to ${category} ===`
-        );
         await saveUserSettings(event.source.userId, category);
-        console.log(
-          `=== CATEGORY DEBUG: Successfully saved category ${category} ===`
-        );
 
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: `デフォルトカテゴリーを「${category}」に設定しました！\n\n今後の支出入力は自動的に「${category}」カテゴリーになります。\n\n変更するには「カテゴリー [新しいカテゴリー]」と送信してください。`,
-        }] });
+        await replyText(event.replyToken, `デフォルトカテゴリーを「${category}」に設定しました！\n\n今後の支出入力は自動的に「${category}」カテゴリーになります。\n\n変更するには「カテゴリー [新しいカテゴリー]」と送信してください。`);
       } catch (error) {
         console.error("Error saving user settings:", error);
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: "カテゴリーの設定に失敗しました。もう一度お試しください。",
-        }] });
+        await replyText(event.replyToken, "カテゴリーの設定に失敗しました。もう一度お試しください。");
       }
       return;
     }
 
     // グループ機能コマンド
-    console.log(
-      `=== COMMAND CHECK: Checking if text starts with "グループ作成 ": ${text.startsWith(
-        "グループ作成 "
-      )} ===`
-    );
     if (text.startsWith("グループ作成 ")) {
-      console.log(`=== COMMAND MATCHED: Processing グループ作成 command ===`);
       const groupName = text.replace("グループ作成 ", "").trim();
       if (!groupName) {
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: "グループ名を指定してください。\n例: 「グループ作成 田中夫婦の家計簿」",
-        }] });
+        await replyText(event.replyToken, "グループ名を指定してください。\n例: 「グループ作成 田中夫婦の家計簿」");
         return;
       }
 
@@ -529,90 +424,56 @@ async function handleTextMessage(event: any) {
         const groups = await getUserGroups(event.source.userId);
         const group = groups.find((g) => g.id === groupId);
 
-        const replyText = `グループ「${group?.name ?? groupName}」を作成しました！\n\nメンバーの追加は管理者にご依頼ください。`;
+        const message = `グループ「${group?.name ?? groupName}」を作成しました！\n\nメンバーの追加は管理者にご依頼ください。`;
 
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: replyText,
-        }] });
+        await replyText(event.replyToken, message);
       } catch (error) {
         console.error("Error creating group:", error);
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: "グループの作成に失敗しました。もう一度お試しください。",
-        }] });
+        await replyText(event.replyToken, "グループの作成に失敗しました。もう一度お試しください。");
       }
       return;
     }
 
-    console.log(
-      `=== COMMAND CHECK: Checking if text starts with "参加 ": ${text.startsWith(
-        "参加 "
-      )} ===`
-    );
     if (text.startsWith("参加 ")) {
       // 招待コードでの参加は無効化した。世帯はオーナーとパートナーの2名で固定し、
       // メンバーの追加は管理者が scripts/manage-group-members.mjs で行う。
       // （コードが漏れると第三者が気付かれずに参加できてしまうため。SEC-15 / CRIT-05）
-      console.log(`=== COMMAND MATCHED: 参加 command (disabled) ===`);
-      await client.replyMessage({ replyToken: event.replyToken, messages: [{
-        type: "text",
-        text: "招待コードでの参加は受け付けていません。\nメンバーの追加は管理者にご依頼ください。",
-      }] });
+      await replyText(event.replyToken, "招待コードでの参加は受け付けていません。\nメンバーの追加は管理者にご依頼ください。");
       return;
     }
 
-    console.log(
-      `=== COMMAND CHECK: Checking if text equals "グループ一覧": ${
-        text === "グループ一覧"
-      } ===`
-    );
     if (text === "グループ一覧") {
-      console.log(`=== COMMAND MATCHED: Processing グループ一覧 command ===`);
       try {
         const groups = await getUserGroups(event.source.userId);
 
         if (groups.length === 0) {
-          await client.replyMessage({ replyToken: event.replyToken, messages: [{
-            type: "text",
-            text: "まだグループに参加していません。\n\nメンバーの追加は管理者にご依頼ください。",
-          }] });
+          await replyText(event.replyToken, "まだグループに参加していません。\n\nメンバーの追加は管理者にご依頼ください。");
           return;
         }
 
-        let replyText = "参加中のグループ:\n\n";
+        let message = "参加中のグループ:\n\n";
         for (const group of groups) {
           const members = await getGroupMembers(group.id!);
           const memberNames = members.map((m) => m.displayName).join("、");
-          replyText += `${group.name}\n`;
-          replyText += `メンバー: ${memberNames}\n`;
-          replyText += `\n`;
+          message += `${group.name}\n`;
+          message += `メンバー: ${memberNames}\n`;
+          message += `\n`;
         }
 
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: replyText,
-        }] });
+        await replyText(event.replyToken, message);
       } catch (error) {
         console.error("Error getting groups:", error);
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: "グループ情報の取得に失敗しました。",
-        }] });
+        await replyText(event.replyToken, "グループ情報の取得に失敗しました。");
       }
       return;
     }
 
     // 立替一覧コマンド
     if (text === "立替一覧" || text === "立替") {
-      console.log(`=== COMMAND MATCHED: Processing 立替一覧 command ===`);
       try {
         // グループコンテキストが必要
         if (event.source.type !== "group") {
-          await client.replyMessage({ replyToken: event.replyToken, messages: [{
-            type: "text",
-            text: "立替一覧はグループ内でのみ利用できます。\n\nLINEグループで「立替一覧」と送信してください。",
-          }] });
+          await replyText(event.replyToken, "立替一覧はグループ内でのみ利用できます。\n\nLINEグループで「立替一覧」と送信してください。");
           return;
         }
 
@@ -620,72 +481,59 @@ async function handleTextMessage(event: any) {
         const summaries = await getAdvanceSummaryByUser(lineGroupId, true);
 
         if (summaries.length === 0) {
-          await client.replyMessage({ replyToken: event.replyToken, messages: [{
-            type: "text",
-            text: "未精算の立替はありません。\n\n支出登録時に「立替」ボタンを押すと、立替として記録できます。",
-          }] });
+          await replyText(event.replyToken, "未精算の立替はありません。\n\n支出登録時に「立替」ボタンを押すと、立替として記録できます。");
           return;
         }
 
         // サマリーを表示
-        let replyText = "未精算の立替一覧:\n\n";
+        let message = "未精算の立替一覧:\n\n";
 
         let totalAdvances = 0;
         for (const summary of summaries) {
-          replyText += `${summary.userDisplayName}\n`;
-          replyText += `   立替合計: ¥${summary.totalAdvanced.toLocaleString()}\n`;
+          message += `${summary.userDisplayName}\n`;
+          message += `   立替合計: ¥${summary.totalAdvanced.toLocaleString()}\n`;
           // 最近の3件のみ表示
           const recentExpenses = summary.expenses.slice(0, 3);
           for (const expense of recentExpenses) {
-            replyText += `   • ${expense.description} ¥${expense.amount.toLocaleString()}\n`;
+            message += `   • ${expense.description} ¥${expense.amount.toLocaleString()}\n`;
           }
           if (summary.expenses.length > 3) {
-            replyText += `   ...他${summary.expenses.length - 3}件\n`;
+            message += `   ...他${summary.expenses.length - 3}件\n`;
           }
-          replyText += "\n";
+          message += "\n";
           totalAdvances += summary.totalAdvanced;
         }
 
         // 精算額を計算（立替者が2人、または1人だけ立替で有効メンバーが2人の場合。householdSettlement.ts の共有関数）
         const household = await computeLineGroupSettlement(lineGroupId, summaries, (userId) =>
-          client.getGroupMemberProfile(lineGroupId, userId).then((p) => p.displayName)
+          getLineClient().getGroupMemberProfile(lineGroupId, userId).then((p) => p.displayName)
         );
         if (isSettlementComputable(household.basis)) {
           const settlement = household.settlement;
           if (settlement) {
-            replyText += `\n精算額:\n`;
-            replyText += `${settlement.fromUserName} ${settlement.toUserName}\n`;
-            replyText += `¥${settlement.amount.toLocaleString()}\n\n`;
-            replyText += `「精算」と送信すると精算を完了できます。`;
+            message += `\n精算額:\n`;
+            message += `${settlement.fromUserName} ${settlement.toUserName}\n`;
+            message += `¥${settlement.amount.toLocaleString()}\n\n`;
+            message += `「精算」と送信すると精算を完了できます。`;
           } else {
-            replyText += `\n精算不要（差額なし）`;
+            message += `\n精算不要（差額なし）`;
           }
         }
 
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: replyText,
-        }] });
+        await replyText(event.replyToken, message);
       } catch (error) {
         console.error("Error getting advance list:", error);
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: "立替一覧の取得に失敗しました。",
-        }] });
+        await replyText(event.replyToken, "立替一覧の取得に失敗しました。");
       }
       return;
     }
 
     // 精算コマンド
     if (text === "精算") {
-      console.log(`=== COMMAND MATCHED: Processing 精算 command ===`);
       try {
         // グループコンテキストが必要
         if (event.source.type !== "group") {
-          await client.replyMessage({ replyToken: event.replyToken, messages: [{
-            type: "text",
-            text: "精算はグループ内でのみ利用できます。\n\nLINEグループで「精算」と送信してください。",
-          }] });
+          await replyText(event.replyToken, "精算はグループ内でのみ利用できます。\n\nLINEグループで「精算」と送信してください。");
           return;
         }
 
@@ -693,10 +541,7 @@ async function handleTextMessage(event: any) {
         const pendingAdvances = await getPendingAdvances(lineGroupId, true);
 
         if (pendingAdvances.length === 0) {
-          await client.replyMessage({ replyToken: event.replyToken, messages: [{
-            type: "text",
-            text: "精算する立替がありません。",
-          }] });
+          await replyText(event.replyToken, "精算する立替がありません。");
           return;
         }
 
@@ -705,7 +550,7 @@ async function handleTextMessage(event: any) {
         // 精算額を計算（立替者が2人、または1人だけ立替で有効メンバーが2人の場合。householdSettlement.ts の共有関数）
         let settlementText = "";
         const household = await computeLineGroupSettlement(lineGroupId, summaries, (userId) =>
-          client.getGroupMemberProfile(lineGroupId, userId).then((p) => p.displayName)
+          getLineClient().getGroupMemberProfile(lineGroupId, userId).then((p) => p.displayName)
         );
         if (isSettlementComputable(household.basis)) {
           const settlement = household.settlement;
@@ -719,10 +564,7 @@ async function handleTextMessage(event: any) {
         const settleResult = await settleAdvances(expenseIds, lineGroupId, true);
 
         if (settleResult.settled === 0) {
-          await client.replyMessage({ replyToken: event.replyToken, messages: [{
-            type: "text",
-            text: "精算処理でエラーが発生しました。対象の立替が見つかりませんでした。",
-          }] });
+          await replyText(event.replyToken, "精算処理でエラーが発生しました。対象の立替が見つかりませんでした。");
           return;
         }
 
@@ -732,33 +574,22 @@ async function handleTextMessage(event: any) {
         }
         resultText += "\n\n次の立替からまた集計を開始します。";
 
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: resultText,
-        }] });
+        await replyText(event.replyToken, resultText);
       } catch (error) {
         console.error("Error settling advances:", error);
-        await client.replyMessage({ replyToken: event.replyToken, messages: [{
-          type: "text",
-          text: "精算処理に失敗しました。",
-        }] });
+        await replyText(event.replyToken, "精算処理に失敗しました。");
       }
       return;
     }
 
     // テキスト登録
-    console.log(`=== TEXT PROCESSING: Trying to parse as expense text ===`);
     const parsed = parseTextExpense(text);
     if (!parsed) {
-      console.log(
-        `=== TEXT PROCESSING: Failed to parse as expense, ignoring ===`
-      );
       // 金額が見つからない場合は無視（コマンドでもない一般的なテキスト）
       // replyMessageを送らないことで、エラーを防ぐ
       return;
     }
 
-    console.log(`=== TEXT PROCESSING: Successfully parsed expense ===`);
 
     // 注: 中間メッセージ（「登録中です...」）は送信しない。
     // replyTokenを最終のFlex Message通知に温存し、replyMessage（無料）で
@@ -773,10 +604,10 @@ async function handleTextMessage(event: any) {
     } catch (error) {
       console.error("Background expense processing failed:", error);
       // Send error notification
-      await client.pushMessage({ to: targetId, messages: [{
-        type: "text",
-        text: "支出の保存で問題が発生しました。データが正しく記録されていない可能性があります。",
-      }] }).catch((pushError) =>
+      await pushText(
+        targetId,
+        "支出の保存で問題が発生しました。データが正しく記録されていない可能性があります。"
+      ).catch((pushError) =>
         console.error("Failed to send error notification:", pushError)
       );
     }
@@ -787,10 +618,7 @@ async function handleTextMessage(event: any) {
       const targetId = event.source.type === "group"
         ? event.source.groupId
         : event.source.userId;
-      await client.pushMessage({ to: targetId, messages: [{
-        type: "text",
-        text: "メッセージの処理中にエラーが発生しました。もう一度お試しください。",
-      }] });
+      await pushText(targetId, "メッセージの処理中にエラーが発生しました。もう一度お試しください。");
     } catch (notifyError) {
       console.error("Failed to send error notification:", notifyError);
     }
@@ -815,6 +643,83 @@ function pickActiveGroup(groups: any[] | undefined, lineGroupId: string | null) 
 const userProfileCache = new Map<string, { profile: any; groups: any[]; timestamp: number }>();
 const CACHE_TTL = 15 * 60 * 1000; // 15分
 
+/** LINE API 呼び出しに打ち切り時間を付ける */
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * attemptTimeoutsMs の数だけ試す（各回の打ち切り時間を指定。失敗の間に 500ms 待つ）。
+ * すべて失敗したら最後のエラーを投げる。
+ */
+async function retryWithTimeouts<T>(
+  label: string,
+  attemptTimeoutsMs: number[],
+  call: () => Promise<T>
+): Promise<T> {
+  let lastError: unknown;
+  for (let i = 0; i < attemptTimeoutsMs.length; i++) {
+    const attempt = i + 1;
+    try {
+      return await withTimeout(call(), attemptTimeoutsMs[i], `${label} timeout (attempt ${attempt})`);
+    } catch (error) {
+      lastError = error;
+      console.warn(`${label} failed`, { attempt, error: errorMessage(error) });
+      if (attempt < attemptTimeoutsMs.length) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+  }
+  throw lastError;
+}
+
+type ProfileResult = { type: "profile"; data: { displayName?: string } | null; error?: unknown };
+
+/**
+ * LINE グループでの発言者のプロフィール。グループのメンバープロフィールを 2 回まで試し
+ * （テキスト処理は高速性を優先）、だめなら個人プロフィールを 1 回試す。
+ * グループの場合はフォールバック名を使わずエラーにする。
+ */
+async function fetchGroupPosterProfile(lineGroupId: string, userId: string): Promise<ProfileResult> {
+  const client = getLineClient();
+  try {
+    const profile = await retryWithTimeouts("Group profile", [5000, 8000], () =>
+      client.getGroupMemberProfile(lineGroupId, userId)
+    );
+    return { type: "profile", data: profile };
+  } catch {
+    try {
+      const profile = await withTimeout(client.getProfile(userId), 6000, "Individual profile timeout");
+      return { type: "profile", data: profile };
+    } catch (individualError) {
+      console.warn("Fallback getProfile also failed", { error: errorMessage(individualError) });
+      return { type: "profile", error: individualError, data: null };
+    }
+  }
+}
+
+/** 個人チャットの発言者のプロフィール（3 回まで試す） */
+async function fetchIndividualProfile(userId: string): Promise<ProfileResult> {
+  const client = getLineClient();
+  try {
+    const profile = await retryWithTimeouts("Profile", [6000, 10000, 10000], () => client.getProfile(userId));
+    return { type: "profile", data: profile };
+  } catch {
+    console.warn("All profile fetch attempts failed for individual chat");
+    return { type: "profile", error: new Error("All retries failed"), data: null };
+  }
+}
+
 async function processExpenseInBackground(
   event: any,
   parsed: any,
@@ -826,19 +731,13 @@ async function processExpenseInBackground(
     if (!event?.source?.userId) {
       console.warn("Skipping expense: event.source.userId is missing (user has not consented to the LINE OA terms)");
       if (replyToken) {
-        await client
-          .replyMessage({
-            replyToken,
-            messages: [{
-              type: "text",
-              text: "支出を記録できませんでした。この Bot を友だち追加すると、支出を記録できるようになります。",
-            }],
-          })
-          .catch((replyError) => console.warn("Failed to reply to a message without userId:", replyError));
+        await replyText(
+          replyToken,
+          "支出を記録できませんでした。この Bot を友だち追加すると、支出を記録できるようになります。"
+        ).catch((replyError) => console.warn("Failed to reply to a message without userId:", replyError));
       }
       return;
     }
-    console.log("Starting optimized background expense processing...");
 
     // 並列実行のためのプロミス配列
     const promises: Promise<any>[] = [];
@@ -861,62 +760,16 @@ async function processExpenseInBackground(
 
       if (hasCachedProfile) {
         // キャッシュヒット - 高速化
-        console.log("Using cached user profile (fast path)");
         userDisplayName = cached.profile.displayName;
         activeGroup = pickActiveGroup(cached.groups, lineGroupId);
       }
 
       if (!hasCachedProfile) {
         // キャッシュミスまたは名前がない場合 - 並列取得
-        console.log("Cache miss or invalid cache, fetching user profile (parallel)");
 
         // プロファイル取得を並列実行（リトライ機能付き）
-        console.log(`=== PROFILE DEBUG: Starting profile fetch for group context. LineGroupId: ${maskId(lineGroupId)}, UserId: ${maskId(event.source.userId)} ===`);
-        promises.push(
-          (async () => {
-            let profile = null;
-            let attempt = 0;
-            const maxAttempts = 2; // テキスト処理は高速性を優先して2回まで
-            
-            while (attempt < maxAttempts && !profile) {
-              attempt++;
-              console.log(`=== PROFILE DEBUG: Group profile attempt ${attempt}/${maxAttempts} ===`);
-              
-              try {
-                const timeout = attempt === 1 ? 5000 : 8000; // Increased timeout for better reliability
-                profile = await Promise.race([
-                  client.getGroupMemberProfile(lineGroupId, event.source.userId),
-                  new Promise((_, reject) => setTimeout(() => reject(new Error(`Group profile timeout (attempt ${attempt})`)), timeout))
-                ]);
-                console.log(`=== PROFILE DEBUG: getGroupMemberProfile SUCCESS on attempt ${attempt} ===`);
-                break;
-              } catch (groupError) {
-                console.warn(`=== PROFILE DEBUG: getGroupMemberProfile FAILED on attempt ${attempt}:`, groupError);
-                
-                if (attempt === maxAttempts) {
-                  // Final fallback: try individual getProfile
-                  try {
-                    console.log(`=== PROFILE DEBUG: Attempting final fallback getProfile ===`);
-                    profile = await Promise.race([
-                      client.getProfile(event.source.userId),
-                      new Promise((_, reject) => setTimeout(() => reject(new Error("Individual profile timeout")), 6000)) // Increased timeout
-                    ]);
-                    console.log(`=== PROFILE DEBUG: getProfile SUCCESS ===`);
-                  } catch (individualError) {
-                    console.warn(`=== PROFILE DEBUG: getProfile ALSO FAILED:`, individualError);
-                    // グループの場合はフォールバック名を返さないでエラーにする
-                    return { type: 'profile', error: individualError, data: null };
-                  }
-                } else {
-                  await new Promise(resolve => setTimeout(resolve, 500)); // Short wait between retries
-                }
-              }
-            }
-            
-            return { type: 'profile', data: profile };
-          })()
-        );
-        
+        promises.push(fetchGroupPosterProfile(lineGroupId, event.source.userId));
+
         // グループ取得は後で（プロファイル取得後に実行）
         // promises.pushはせずに、プロファイル取得が完了した後に実行
       }
@@ -927,47 +780,12 @@ async function processExpenseInBackground(
       const now = Date.now();
       
       if (cached && (now - cached.timestamp < CACHE_TTL)) {
-        console.log("Using cached individual user data (fast path)");
         activeGroup = pickActiveGroup(cached.groups, lineGroupId);
         userDisplayName = cached.profile?.displayName;
       } else {
         // 個人チャットの場合もプロファイルを取得（リトライ機能付き）
-        console.log(`=== PROFILE DEBUG: Starting profile fetch for individual context. UserId: ${maskId(event.source.userId)} ===`);
-        promises.push(
-          (async () => {
-            let profile = null;
-            let attempt = 0;
-            const maxAttempts = 3; // 個人チャットでもリトライ
+        promises.push(fetchIndividualProfile(event.source.userId));
 
-            while (attempt < maxAttempts && !profile) {
-              attempt++;
-              console.log(`=== PROFILE DEBUG: Individual profile attempt ${attempt}/${maxAttempts} ===`);
-
-              try {
-                const timeout = attempt === 1 ? 6000 : 10000; // Increased timeout for better reliability
-                profile = await Promise.race([
-                  client.getProfile(event.source.userId),
-                  new Promise((_, reject) => setTimeout(() => reject(new Error(`Profile timeout (attempt ${attempt})`)), timeout))
-                ]);
-                console.log(`=== PROFILE DEBUG: Individual getProfile SUCCESS on attempt ${attempt} ===`);
-                return { type: 'profile', data: profile };
-              } catch (error) {
-                console.warn(`=== PROFILE DEBUG: Individual getProfile FAILED on attempt ${attempt}:`, error);
-
-                if (attempt < maxAttempts) {
-                  // リトライ前に短い待機
-                  await new Promise(resolve => setTimeout(resolve, 500));
-                }
-              }
-            }
-
-            // すべてのリトライが失敗した場合のみフォールバック
-            const fallbackName = `User_${event.source.userId.slice(-6)}`;
-            console.warn(`=== PROFILE DEBUG: All retry attempts failed for individual chat, using fallback display name ===`);
-            return { type: 'profile', error: new Error('All retries failed'), data: { displayName: fallbackName } };
-          })()
-        );
-        
         promises.push(
           getUserGroups(event.source.userId)
             .then(groups => ({ type: 'groups', data: groups }))
@@ -1036,7 +854,6 @@ async function processExpenseInBackground(
           const groups = await getUserGroups(event.source.userId);
           activeGroup = groups.find((g) => g.id === groupId) || null;
         }
-        console.log("Resolved LINE group after profile fetch");
       } catch (groupError) {
         console.error("Failed to setup group after profile fetch:", groupError);
       }
@@ -1044,7 +861,6 @@ async function processExpenseInBackground(
 
     // フォールバック処理
     if (!appUid) {
-      console.log("No appUid resolved, using lineId as fallback");
       appUid = event.source.userId;
     }
     
@@ -1065,18 +881,7 @@ async function processExpenseInBackground(
       };
 
       // replyToken（無料）を優先使用し、失敗時のみpushMessageにフォールバック
-      let errorNotified = false;
-      if (replyToken) {
-        try {
-          await client.replyMessage({ replyToken: replyToken, messages: [profileErrorMessage] });
-          errorNotified = true;
-        } catch (replyError) {
-          console.warn("replyMessage failed for profile error, falling back to pushMessage:", replyError);
-        }
-      }
-      if (!errorNotified) {
-        await client.pushMessage({ to: targetId, messages: [profileErrorMessage] });
-      }
+      await replyWithPushFallback(replyToken, targetId, [profileErrorMessage]);
       return; // 処理を中断（データは書き込まない）
     }
     
@@ -1091,7 +896,6 @@ async function processExpenseInBackground(
 
     if (parsed.category) {
       finalCategory = parsed.category;
-      console.log(`Using user-specified category from text: ${finalCategory}`);
     } else {
       // カテゴリ分類を並列実行（Gemini + ユーザーデフォルト）
       const [geminiResult, userSettingsResult] = await Promise.allSettled([
@@ -1104,7 +908,6 @@ async function processExpenseInBackground(
         const result = geminiResult.value;
         if (result && result.category && result.confidence >= 0.4) {
           finalCategory = result.category;
-          console.log(`Fast Gemini classification: ${finalCategory} (confidence: ${result.confidence})`);
         }
       }
 
@@ -1113,7 +916,6 @@ async function processExpenseInBackground(
         const userSettings = userSettingsResult.value;
         if (userSettings?.defaultCategory) {
           finalCategory = userSettings.defaultCategory;
-          console.log(`Using user default category: ${finalCategory}`);
         }
       }
     }
@@ -1161,31 +963,6 @@ async function processExpenseInBackground(
       : event.source.userId;
 
     if (targetId) {
-      const getCategoryEmoji = (category: string): string => {
-        const emojiMap: Record<string, string> = {
-          '食費': '',
-          '日用品': '',
-          '交通費': '',
-          '医療費': '',
-          '娯楽費': '',
-          '衣服費': '',
-          '教育費': '',
-          '通信費': '',
-          '光熱費': '',
-          '住居費': '',
-          '保険': '',
-          '税金': '',
-          '貯蓄': '',
-          '投資': '',
-          '美容': '',
-          'ペット': '',
-          '趣味': '',
-          '交際費': '',
-          'その他': '',
-        };
-        return emojiMap[category] || '';
-      };
-
       const textExpenseInfo: TextExpenseInfo = {
         expenseId,
         description: parsed.description,
@@ -1211,7 +988,6 @@ async function processExpenseInBackground(
       await sendTextExpenseNotification(targetId, textExpenseInfo, replyToken);
     }
 
-    console.log("Background expense processing completed successfully");
   } catch (error) {
     console.error("Background expense processing error:", error);
     throw error; // Re-throw to trigger error notification
@@ -1234,10 +1010,7 @@ async function handleJoin(event: any) {
 
     // Send welcome message with error handling
     try {
-      await client.pushMessage({ to: lineGroupId, messages: [{
-        type: "text",
-        text: "家計簿ボットがグループに参加しました！\n\nレシート画像を送信すると支出を自動記録\n「500 ランチ」のようにテキストでも記録\n「家計簿」で支出一覧を表示\n\nグループメンバーの支出が自動的に共有されます",
-      }] });
+      await pushText(lineGroupId, "家計簿ボットがグループに参加しました！\n\nレシート画像を送信すると支出を自動記録\n「500 ランチ」のようにテキストでも記録\n「家計簿」で支出一覧を表示\n\nグループメンバーの支出が自動的に共有されます");
 
       console.log(
         `Bot successfully joined and sent welcome to LINE group: ${maskId(lineGroupId)}`
@@ -1269,10 +1042,7 @@ async function handleMemberJoined(event: any) {
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         // Use pushMessage instead of replyMessage for better compatibility
-        await client.pushMessage({ to: lineGroupId, messages: [{
-          type: "text",
-          text: "新しいメンバーがグループに参加しました！\n家計簿ボットで支出を記録・共有できます。\n\n「家計簿」と送信すると使い方を確認できます。",
-        }] });
+        await pushText(lineGroupId, "新しいメンバーがグループに参加しました！\n家計簿ボットで支出を記録・共有できます。\n\n「家計簿」と送信すると使い方を確認できます。");
 
         console.log(
           `Successfully sent welcome message for new member in group: ${maskId(lineGroupId)}`
@@ -1333,15 +1103,9 @@ function handleLeave(event: any) {
 
 app.get("/health", async (_req: Request, res: Response) => {
   try {
-    // Check if LINE client is properly initialized
-    if (!client || typeof client.getProfile !== "function") {
-      throw new Error("LINE client not properly initialized");
-    }
-
-    // Check environment variables
-    if (!process.env.LINE_CHANNEL_TOKEN || !process.env.LINE_CHANNEL_SECRET) {
-      throw new Error("LINE credentials not configured");
-    }
+    // 認証情報（LINE_CHANNEL_TOKEN / LINE_CHANNEL_SECRET）が無ければ
+    // "LINE credentials not configured" を投げる
+    const client = getLineClient();
 
     res.status(200).json({
       status: "healthy",
@@ -1447,6 +1211,8 @@ import {
   isGmailAuthConfigured,
   getGmailClient,
   forceProcessMessage,
+  gmailTokenRef,
+  gmailStateRef,
 } from "./gmail";
 import {
   handlePostback,
@@ -1660,8 +1426,7 @@ gmailRouter.get("/status", adminApiLimiter as any, requireAdminAuth, async (_req
     const isConfigured = await isGmailAuthConfigured();
 
     // デバッグ: Firestoreのトークンスコープを確認
-    const db = getFirestore();
-    const tokenDoc = await db.collection('system').doc('gmailToken').get();
+    const tokenDoc = await gmailTokenRef().get();
     const tokenData = tokenDoc.exists ? tokenDoc.data() : null;
 
     res.json({
@@ -1680,8 +1445,7 @@ gmailRouter.get("/status", adminApiLimiter as any, requireAdminAuth, async (_req
  */
 gmailRouter.post("/refresh-token", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
   try {
-    const db = getFirestore();
-    const tokenDoc = await db.collection('system').doc('gmailToken').get();
+    const tokenDoc = await gmailTokenRef().get();
     const tokenData = tokenDoc.data();
 
     if (!tokenData?.refresh_token) {
@@ -1689,7 +1453,7 @@ gmailRouter.post("/refresh-token", adminApiLimiter as any, requireAdminAuth, asy
     }
 
     // 強制的にexpiry_dateを過去にしてリフレッシュをトリガー
-    await db.collection('system').doc('gmailToken').update({
+    await gmailTokenRef().update({
       expiry_date: 0,
     });
 
@@ -1707,8 +1471,7 @@ gmailRouter.post("/refresh-token", adminApiLimiter as any, requireAdminAuth, asy
  */
 gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
   try {
-    const db = getFirestore();
-    const tokenDoc = await db.collection('system').doc('gmailToken').get();
+    const tokenDoc = await gmailTokenRef().get();
     const tokenData = tokenDoc.data();
 
     if (tokenData?.access_token) {
@@ -1739,10 +1502,10 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
     }
 
     // Firestoreからトークンを削除
-    await db.collection('system').doc('gmailToken').delete();
+    await gmailTokenRef().delete();
 
     // watchステータスもリセット（gmailStateが正しいドキュメント名）
-    await db.collection('system').doc('gmailState').delete().catch(() => {});
+    await gmailStateRef().delete().catch(() => {});
 
     res.json({
       success: true,
@@ -1888,13 +1651,8 @@ const authRouter = express.Router();
 // CORS: Web オリジンのみ許可（webOrigins.ts。/household と共通）。既定は本番 Vercel と localhost、
 // このプロジェクトの Vercel プレビュー。追加/変更は環境変数 WEB_ORIGINS（カンマ区切り）で上書き可能。
 const authCors = (req: Request, res: Response, next: express.NextFunction) => {
-  const origin = req.headers.origin as string | undefined;
-  if (isAllowedWebOrigin(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin as string);
+  if (applyWebCorsHeaders(req, res, { methods: "POST, OPTIONS", allowHeaders: "Content-Type" })) {
     res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    res.setHeader("Access-Control-Max-Age", "3600");
   }
   if (req.method === "OPTIONS") {
     return res.status(204).end();

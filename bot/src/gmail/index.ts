@@ -12,6 +12,7 @@ export {
   handleOAuthCallback,
   getGmailClient,
   isGmailAuthConfigured,
+  gmailTokenRef,
 } from './auth';
 
 // Gmail Watch管理
@@ -19,6 +20,7 @@ export {
   registerWatch,
   renewWatch,
   getWatchStatus,
+  gmailStateRef,
 } from './watch';
 
 // Pub/Subハンドラー

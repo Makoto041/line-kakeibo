@@ -23,3 +23,22 @@ export function isAllowedWebOrigin(origin?: string): boolean {
   if (webOriginAllowlist().includes(origin)) return true;
   return /^https:\/\/line-kakeibo[a-z0-9-]*\.vercel\.app$/.test(origin);
 }
+
+/**
+ * 許可したオリジンからのリクエストにだけ CORS の許可ヘッダーを付ける。
+ *
+ * @returns 許可ヘッダーを付けたか（オリジンが許可リストにあったか）
+ */
+export function applyWebCorsHeaders(
+  req: { headers: { origin?: string } },
+  res: { setHeader(name: string, value: string): unknown },
+  options: { methods: string; allowHeaders: string }
+): boolean {
+  const origin = req.headers.origin;
+  if (typeof origin !== 'string' || !isAllowedWebOrigin(origin)) return false;
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', options.methods);
+  res.setHeader('Access-Control-Allow-Headers', options.allowHeaders);
+  res.setHeader('Access-Control-Max-Age', '3600');
+  return true;
+}

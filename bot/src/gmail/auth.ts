@@ -165,12 +165,16 @@ export async function handleOAuthCallback(code: string, state: string): Promise<
   return gmailToken;
 }
 
+/** OAuth トークンの保存先（Firestore: system/gmailToken）。管理 API もここを使う */
+export function gmailTokenRef() {
+  return getFirestore().collection('system').doc('gmailToken');
+}
+
 /**
  * トークンをFirestoreに保存
  */
 async function saveTokenToFirestore(token: GmailToken): Promise<void> {
-  const db = getFirestore();
-  await db.collection('system').doc('gmailToken').set({
+  await gmailTokenRef().set({
     ...token,
     updatedAt: Timestamp.now(),
   });
@@ -180,8 +184,7 @@ async function saveTokenToFirestore(token: GmailToken): Promise<void> {
  * Firestoreからトークンを読み込み
  */
 async function loadTokenFromFirestore(): Promise<GmailToken | null> {
-  const db = getFirestore();
-  const doc = await db.collection('system').doc('gmailToken').get();
+  const doc = await gmailTokenRef().get();
 
   if (!doc.exists) {
     return null;

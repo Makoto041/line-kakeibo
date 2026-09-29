@@ -22,6 +22,7 @@ import {
   EXPENSE_LIST_URL,
   CategorySelectInfo,
 } from './flexMessage';
+import { replyWithPushFallback } from './client';
 
 /**
  * 拡張されたPostbackアクションデータ
@@ -38,30 +39,11 @@ interface ExtendedPostbackActionData extends PostbackActionData {
   to?: 'shared' | 'personal' | 'on' | 'off';
 }
 
-// LINEクライアントの初期化
-let lineClient: messagingApi.MessagingApiClient | null = null;
-
-function getLineClient(): messagingApi.MessagingApiClient {
-  if (!lineClient) {
-    const channelAccessToken = process.env.LINE_CHANNEL_TOKEN;
-    const channelSecret = process.env.LINE_CHANNEL_SECRET;
-
-    if (!channelAccessToken || !channelSecret) {
-      throw new Error('LINE credentials not configured');
-    }
-
-    lineClient = new messagingApi.MessagingApiClient({
-      channelAccessToken,
-    });
-  }
-  return lineClient;
-}
-
 /** 返信先（グループならグループ、そうでなければ本人） */
 function getReplyTarget(event: PostbackEvent): string | undefined {
-  return event.source!.type === 'group'
+  return event.source?.type === 'group'
     ? (event.source as any).groupId
-    : event.source!.userId;
+    : event.source?.userId;
 }
 
 /**
@@ -74,26 +56,7 @@ async function replyToPostback(
   event: PostbackEvent,
   messages: messagingApi.Message[]
 ): Promise<void> {
-  const client = getLineClient();
-
-  if (event.replyToken) {
-    try {
-      await client.replyMessage({ replyToken: event.replyToken, messages });
-      return;
-    } catch (replyError) {
-      console.warn(
-        'replyMessage failed (token expired or already used), falling back to pushMessage:',
-        replyError
-      );
-    }
-  }
-
-  const target = getReplyTarget(event);
-  if (!target) {
-    console.warn('Cannot determine push target for postback reply');
-    return;
-  }
-  await client.pushMessage({ to: target, messages });
+  await replyWithPushFallback(event.replyToken, getReplyTarget(event), messages);
 }
 
 /** テキスト1通の返信 */
