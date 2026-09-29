@@ -17,6 +17,6 @@
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",
-    "lucide-static": "^1.23.0"
+    "lucide-static": "^1.48.0"
   }
 }

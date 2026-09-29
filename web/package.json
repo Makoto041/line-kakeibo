@@ -21,14 +21,14 @@
     "recharts": "^3.9.1"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3.3.5",
+    "@eslint/eslintrc": "^3.3.7",
     "@tailwindcss/postcss": "^4.3.2",
     "@types/node": "^26.6.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^16.2.10",
-    "postcss": "^8.5.16",
+    "eslint-config-next": "^16.3.6",
+    "postcss": "^8.5.28",
     "tailwindcss": "^4.3.2",
     "typescript": "^7.0.2"
   },
