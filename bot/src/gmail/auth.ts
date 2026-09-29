@@ -165,12 +165,16 @@ export async function handleOAuthCallback(code: string, state: string): Promise<
   return gmailToken;
 }
 
+/** OAuth トークンの保存先（Firestore: system/gmailToken）。管理 API もここを使う */
+export function gmailTokenRef() {
+  return getFirestore().collection('system').doc('gmailToken');
+}
+
 /**
  * トークンをFirestoreに保存
  */
 async function saveTokenToFirestore(token: GmailToken): Promise<void> {
-  const db = getFirestore();
-  await db.collection('system').doc('gmailToken').set({
+  await gmailTokenRef().set({
     ...token,
     updatedAt: Timestamp.now(),
   });
@@ -180,8 +184,7 @@ async function saveTokenToFirestore(token: GmailToken): Promise<void> {
  * Firestoreからトークンを読み込み
  */
 async function loadTokenFromFirestore(): Promise<GmailToken | null> {
-  const db = getFirestore();
-  const doc = await db.collection('system').doc('gmailToken').get();
+  const doc = await gmailTokenRef().get();
 
   if (!doc.exists) {
     return null;
@@ -230,29 +233,6 @@ async function refreshAccessToken(refreshToken: string): Promise<GmailToken> {
 
   console.log('Gmail access token refreshed successfully');
   return newToken;
-}
-
-/**
- * 有効なアクセストークンを取得
- * 期限切れの場合は自動的にリフレッシュ
- */
-export async function getValidAccessToken(): Promise<string> {
-  const token = await loadTokenFromFirestore();
-
-  if (!token) {
-    throw new Error('Gmail token not found. Please run OAuth2 setup first.');
-  }
-
-  // トークンが期限切れかどうかチェック（5分のバッファ）
-  const isExpired = token.expiry_date < Date.now() + 5 * 60 * 1000;
-
-  if (isExpired) {
-    console.log('Gmail access token expired, refreshing...');
-    const newToken = await refreshAccessToken(token.refresh_token);
-    return newToken.access_token;
-  }
-
-  return token.access_token;
 }
 
 /**

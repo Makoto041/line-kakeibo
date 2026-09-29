@@ -1,7 +1,7 @@
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
-import dayjs from 'dayjs';
 import { randomInt } from 'node:crypto';
 import { maskId } from './logSafe';
+import { dayjs } from './time';
 
 let db: ReturnType<typeof getFirestore> | null = null;
 
@@ -81,14 +81,6 @@ export interface Expense {
   updatedAt?: Timestamp;
 }
 
-// 統計情報インターフェース
-export interface ExpenseStats {
-  totalAmount: number;
-  expenseCount: number;
-  categoryTotals: Record<string, number>;
-  dailyTotals: Record<string, number>;
-}
-
 // Helper to normalize Expense data from Firestore (ensures status is always defined)
 function normalizeExpense(id: string, data: FirebaseFirestore.DocumentData): Expense {
   return {
@@ -96,13 +88,6 @@ function normalizeExpense(id: string, data: FirebaseFirestore.DocumentData): Exp
     ...data,
     status: data.status || 'pending', // Default to 'pending' if not set
   } as Expense;
-}
-
-// UserLink インターフェース
-export interface UserLink {
-  lineId: string;
-  createdAt?: Timestamp;
-  updatedAt?: Timestamp;
 }
 
 // 重複する定義を削除（後に正しい定義があります）
@@ -221,187 +206,6 @@ export async function saveGmailExpenseAtomic(
       alreadyExists: false,
     };
   });
-}
-
-// LINE IDベースのクエリに変更
-export async function getExpenses(lineId: string, limit: number = 50): Promise<Expense[]> {
-  try {
-    const snapshot = await getDb()
-      .collection('expenses')
-      .where('lineId', '==', lineId)
-      .limit(limit)
-      .get();
-
-    // Sort in memory to avoid index requirement
-    const expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
-
-    return expenses.sort((a, b) => {
-      const aTime = a.createdAt?.toMillis() || 0;
-      const bTime = b.createdAt?.toMillis() || 0;
-      return bTime - aTime; // desc order
-    });
-  } catch (error) {
-    console.error('Error getting expenses:', error);
-    throw error;
-  }
-}
-
-// Fast version for LINE Bot quick responses - minimal data transfer
-export async function getExpensesSummary(lineId: string, limit: number = 5): Promise<Expense[]> {
-  try {
-    console.log(`Getting expenses summary for lineId: ${maskId(lineId)}, limit: ${limit}`);
-    
-    // Get user's groups to aggregate group expenses (same logic as web app)
-    const membershipSnapshot = await getDb()
-      .collection('groupMembers')
-      .where('lineId', '==', lineId)
-      .where('isActive', '==', true)
-      .get();
-    
-    const userGroupIds = membershipSnapshot.docs.map(doc => doc.data().groupId);
-    console.log(`User belongs to ${userGroupIds.length} group(s)`);
-    
-    // Fetch expenses: personal + group expenses
-    const expensePromises: Promise<Expense[]>[] = [];
-    
-    // 1. Personal expenses (individual chat)
-    const personalSnapshot = await getDb()
-      .collection('expenses')
-      .where('lineId', '==', lineId)
-      .limit(limit * 2) // Get more to ensure we have enough after merging
-      .get();
-    
-    let allExpenses = personalSnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        amount: data.amount || 0,
-        description: data.description || 'Unknown',
-        date: data.date || '',
-        includeInTotal: data.includeInTotal ?? true, // デフォルトはtrue（既存データ互換性）
-        createdAt: data.createdAt
-      } as Expense;
-    });
-    
-    // 2. Group expenses (if user belongs to groups)
-    if (userGroupIds.length > 0) {
-      for (const groupId of userGroupIds) {
-        const groupSnapshot = await getDb()
-          .collection('expenses')
-          .where('groupId', '==', groupId)
-          .limit(limit * 2)
-          .get();
-        
-        const groupExpenses = groupSnapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            amount: data.amount || 0,
-            description: data.description || 'Unknown',
-            date: data.date || '',
-            includeInTotal: data.includeInTotal ?? true, // デフォルトはtrue（既存データ互換性）
-            createdAt: data.createdAt
-          } as Expense;
-        });
-        
-        allExpenses = allExpenses.concat(groupExpenses);
-      }
-    }
-    
-    // Remove duplicates
-    const uniqueExpenses = allExpenses.filter((expense, index, self) => 
-      index === self.findIndex(e => e.id === expense.id)
-    );
-    
-    console.log(`Found ${uniqueExpenses.length} total expenses (personal + group)`);
-    
-    const expenses = uniqueExpenses;
-
-    return expenses.sort((a, b) => {
-      const aTime = a.createdAt?.toMillis() || 0;
-      const bTime = b.createdAt?.toMillis() || 0;
-      return bTime - aTime; // desc order
-    });
-  } catch (error) {
-    console.error('Error getting expenses summary:', error);
-    throw error;
-  }
-}
-
-// LINE IDベースのクエリに変更
-export async function getExpensesByDateRange(
-  lineId: string, 
-  startDate: string, 
-  endDate: string
-): Promise<Expense[]> {
-  try {
-    const snapshot = await getDb()
-      .collection('expenses')
-      .where('lineId', '==', lineId)
-      .where('date', '>=', startDate)
-      .where('date', '<=', endDate)
-      .get();
-
-    // Sort in memory to avoid index requirement
-    const expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
-
-    return expenses.sort((a, b) => b.date.localeCompare(a.date)); // desc order by date
-  } catch (error) {
-    console.error('Error getting expenses by date range:', error);
-    throw error;
-  }
-}
-
-export async function updateExpense(id: string, updates: Partial<Expense>): Promise<void> {
-  try {
-    await getDb().collection('expenses').doc(id).update({
-      ...updates,
-      updatedAt: Timestamp.now()
-    });
-  } catch (error) {
-    console.error('Error updating expense:', error);
-    throw error;
-  }
-}
-
-export async function deleteExpense(id: string): Promise<void> {
-  try {
-    await getDb().collection('expenses').doc(id).delete();
-  } catch (error) {
-    console.error('Error deleting expense:', error);
-    throw error;
-  }
-}
-
-// LINE IDベースの統計取得
-export async function getMonthlyStats(lineId: string, year: number, month: number): Promise<ExpenseStats> {
-  try {
-    const startDate = dayjs(`${year}-${month.toString().padStart(2, '0')}-01`).format('YYYY-MM-DD');
-    const endDate = dayjs(startDate).endOf('month').format('YYYY-MM-DD');
-    
-    const expenses = await getExpensesByDateRange(lineId, startDate, endDate);
-    
-    const totalAmount = expenses.reduce((sum, expense) => sum + expense.amount, 0);
-    const categoryTotals = expenses.reduce((acc, expense) => {
-      acc[expense.category] = (acc[expense.category] || 0) + expense.amount;
-      return acc;
-    }, {} as Record<string, number>);
-    
-    const dailyTotals = expenses.reduce((acc, expense) => {
-      acc[expense.date] = (acc[expense.date] || 0) + expense.amount;
-      return acc;
-    }, {} as Record<string, number>);
-    
-    return {
-      totalAmount,
-      expenseCount: expenses.length,
-      categoryTotals,
-      dailyTotals
-    };
-  } catch (error) {
-    console.error('Error getting monthly stats:', error);
-    throw error;
-  }
 }
 
 /**
@@ -543,19 +347,6 @@ export async function createUserLink(appUid: string, lineId: string): Promise<vo
   }
 }
 
-export async function getUserLink(appUid: string): Promise<UserLink | null> {
-  try {
-    const doc = await getDb().collection('userLinks').doc(appUid).get();
-    if (doc.exists) {
-      return doc.data() as UserLink;
-    }
-    return null;
-  } catch (error) {
-    console.error('Error getting user link:', error);
-    throw error;
-  }
-}
-
 export async function findAppUidByLineId(lineId: string): Promise<string | null> {
   try {
     const snapshot = await getDb()
@@ -602,63 +393,6 @@ export async function createGroup(name: string, createdBy: string, lineGroupId?:
     return docRef.id;
   } catch (error) {
     console.error('Error creating group:', error);
-    throw error;
-  }
-}
-
-/**
- * @deprecated 呼び出し元なし。LINE の「参加」コマンドは無効化済みで、世帯は2名固定。
- * メンバーの追加・再有効化は scripts/manage-group-members.mjs で
- * 行うこと（メンバー管理の API は無い）。招待コードでメンバーを作れる経路なので、LINE のコマンド等へ再び配線しないこと。
- * syncUserLinks の削除と同じ後続 PR で削除する予定。
- */
-export async function joinGroup(inviteCode: string, lineId: string, displayName: string): Promise<string | null> {
-  try {
-    // Find group by invite code
-    const groupSnapshot = await getDb()
-      .collection('groups')
-      .where('inviteCode', '==', inviteCode)
-      .limit(1)
-      .get();
-    
-    if (groupSnapshot.empty) {
-      return null; // Invalid invite code
-    }
-    
-    const groupDoc = groupSnapshot.docs[0];
-    const groupId = groupDoc.id;
-
-    // 世帯の人数上限。既に有効なメンバーであれば（表示名の更新として）通す。
-    const activeMembers = await getGroupMembers(groupId);
-    const alreadyActive = activeMembers.some((m) => m.lineId === lineId);
-    if (!alreadyActive && activeMembers.length >= HOUSEHOLD_MAX_MEMBERS) {
-      console.warn(`Join refused: group ${groupId} already has ${activeMembers.length} active members`);
-      return null;
-    }
-    
-    // Check if user is already a member
-    const memberSnapshot = await getDb()
-      .collection('groupMembers')
-      .where('groupId', '==', groupId)
-      .where('lineId', '==', lineId)
-      .limit(1)
-      .get();
-    
-    if (!memberSnapshot.empty) {
-      // User is already a member, just activate them
-      await getDb().collection('groupMembers').doc(memberSnapshot.docs[0].id).update({
-        isActive: true,
-        displayName
-      });
-    } else {
-      // Add new member
-      await addGroupMember(groupId, lineId, displayName);
-    }
-    
-    console.log(`User ${maskId(lineId)} joined group ${groupId}`);
-    return groupId;
-  } catch (error) {
-    console.error('Error joining group:', error);
     throw error;
   }
 }
@@ -747,50 +481,6 @@ export async function getGroupMembers(groupId: string): Promise<GroupMember[]> {
     }));
   } catch (error) {
     console.error('Error getting group members:', error);
-    throw error;
-  }
-}
-
-// Enhanced expense functions for group support
-export async function getGroupExpenses(groupId: string, limitCount: number = 50): Promise<Expense[]> {
-  try {
-    const snapshot = await getDb()
-      .collection('expenses')
-      .where('groupId', '==', groupId)
-      .limit(limitCount)
-      .get();
-
-    const expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
-
-    return expenses.sort((a, b) => {
-      const aTime = a.createdAt?.toMillis() || 0;
-      const bTime = b.createdAt?.toMillis() || 0;
-      return bTime - aTime; // desc order
-    });
-  } catch (error) {
-    console.error('Error getting group expenses:', error);
-    throw error;
-  }
-}
-
-// Get expenses for a specific LINE group
-export async function getLineGroupExpenses(lineGroupId: string, limitCount: number = 50): Promise<Expense[]> {
-  try {
-    const snapshot = await getDb()
-      .collection('expenses')
-      .where('lineGroupId', '==', lineGroupId)
-      .limit(limitCount)
-      .get();
-
-    const expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
-
-    return expenses.sort((a, b) => {
-      const aTime = a.createdAt?.toMillis() || 0;
-      const bTime = b.createdAt?.toMillis() || 0;
-      return bTime - aTime; // desc order
-    });
-  } catch (error) {
-    console.error('Error getting LINE group expenses:', error);
     throw error;
   }
 }
@@ -963,35 +653,6 @@ export async function getUserSettings(lineId: string): Promise<UserSettings | nu
   }
 }
 
-export async function updateUserSettings(lineId: string, updates: Partial<UserSettings>): Promise<void> {
-  try {
-    const db = getDb();
-    const userSettingsRef = db.collection('userSettings').doc(lineId);
-    
-    await userSettingsRef.update({
-      ...updates,
-      updatedAt: Timestamp.now()
-    });
-    
-    console.log('User settings updated for:', maskId(lineId));
-  } catch (error) {
-    console.error('Error updating user settings:', error);
-    throw error;
-  }
-}
-
-export async function deleteUserSettings(lineId: string): Promise<void> {
-  try {
-    const db = getDb();
-    await db.collection('userSettings').doc(lineId).delete();
-    
-    console.log('User settings deleted for:', maskId(lineId));
-  } catch (error) {
-    console.error('Error deleting user settings:', error);
-    throw error;
-  }
-}
-
 // 招待コードの生成（暗号学的乱数）。
 // 紛らわしい文字（0/O, 1/I/L）を除いた 31 文字種 × 8 桁（約 8.5e11 通り）。
 // 注: 招待コードでの参加（LINE の「参加」コマンド）は世帯2名固定の運用により無効化済み。
@@ -1023,16 +684,6 @@ export interface UserCustomCategory {
   isDefault: boolean;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
-}
-
-export interface CategoryFeedback {
-  id?: string;
-  lineId: string;
-  originalCategory: string;
-  correctedCategory: string;
-  description: string;
-  amount?: number;
-  createdAt?: Timestamp;
 }
 
 // Category management functions
@@ -1083,41 +734,6 @@ export async function getAllUserCategories(lineId: string): Promise<Array<Catego
       { id: 'entertainment', name: '娯楽', icon: '🎮', isDefault: true },
       { id: 'other', name: 'その他', icon: '📝', isDefault: true }
     ];
-  }
-}
-
-export async function getUserCategoryFeedback(
-  lineId: string,
-  limit: number = 100
-): Promise<CategoryFeedback[]> {
-  try {
-    const snapshot = await getDb()
-      .collection('categoryFeedback')
-      .where('lineId', '==', lineId)
-      .orderBy('createdAt', 'desc')
-      .limit(limit)
-      .get();
-    
-    return snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as CategoryFeedback));
-  } catch (error) {
-    console.error('Error getting category feedback:', error);
-    return [];
-  }
-}
-
-export async function recordCategoryFeedback(feedback: Omit<CategoryFeedback, 'id' | 'createdAt'>): Promise<void> {
-  try {
-    await getDb().collection('categoryFeedback').add({
-      ...feedback,
-      createdAt: Timestamp.now()
-    });
-    console.log(`Category feedback recorded for ${maskId(feedback.lineId)}`);
-  } catch (error) {
-    console.error('Error recording category feedback:', error);
-    throw error;
   }
 }
 
@@ -1206,35 +822,6 @@ export async function getAdvanceSummaryByUser(
   }
 
   return Array.from(userMap.values());
-}
-
-/**
- * 月別の立替一覧を取得
- */
-export async function getMonthlyAdvances(
-  groupIdOrLineGroupId: string,
-  year: number,
-  month: number,
-  isLineGroupId: boolean = false
-): Promise<Expense[]> {
-  try {
-    const field = isLineGroupId ? 'lineGroupId' : 'groupId';
-    const startDate = dayjs(`${year}-${month.toString().padStart(2, '0')}-01`).format('YYYY-MM-DD');
-    const endDate = dayjs(startDate).endOf('month').format('YYYY-MM-DD');
-
-    const snapshot = await getDb()
-      .collection('expenses')
-      .where(field, '==', groupIdOrLineGroupId)
-      .where('status', '==', 'advance_pending')
-      .where('date', '>=', startDate)
-      .where('date', '<=', endDate)
-      .get();
-
-    return snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
-  } catch (error) {
-    console.error('Error getting monthly advances:', error);
-    throw error;
-  }
 }
 
 /**
@@ -1348,36 +935,6 @@ export async function settleAdvances(
     return result;
   } catch (error) {
     console.error('Error settling advances:', error);
-    throw error;
-  }
-}
-
-/**
- * グループの精算履歴を取得
- */
-export async function getSettledAdvances(
-  groupIdOrLineGroupId: string,
-  isLineGroupId: boolean = false,
-  limitCount: number = 50
-): Promise<Expense[]> {
-  try {
-    const field = isLineGroupId ? 'lineGroupId' : 'groupId';
-    const snapshot = await getDb()
-      .collection('expenses')
-      .where(field, '==', groupIdOrLineGroupId)
-      .where('status', '==', 'advance_settled')
-      .limit(limitCount)
-      .get();
-
-    const expenses = snapshot.docs.map(doc => normalizeExpense(doc.id, doc.data()));
-
-    return expenses.sort((a, b) => {
-      const aTime = a.advanceSettledAt?.toMillis() || 0;
-      const bTime = b.advanceSettledAt?.toMillis() || 0;
-      return bTime - aTime;
-    });
-  } catch (error) {
-    console.error('Error getting settled advances:', error);
     throw error;
   }
 }

@@ -10,8 +10,8 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore';
  *
  * userLinks は `/auth/line`（linkUserResolver.getOrCreateAppUidForLineId →
  * firestore.createUserLink）が appUid ↔ lineId を 1 対 1 で管理している。このトリガーが
- * 書く `lineIds` 配列を読むのは bot/src/userLinks.ts だけで、そのモジュール自体が現在
- * どこからも呼ばれていない。そのため書き込みを完全に止める。
+ * 書く `lineIds` 配列を読むコードは無い（唯一の読み手だった bot/src/userLinks.ts は未使用の
+ * ため削除済み）。そのため書き込みを完全に止める。
  *
  * 関数そのものを export から外すと、CI の非対話 `firebase deploy` が「本番にだけ存在する
  * 関数」の削除確認で失敗するため、関数の削除は別途（手動で `firebase functions:delete

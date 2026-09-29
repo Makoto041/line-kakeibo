@@ -53,7 +53,7 @@ import {
   type RecurringInput,
 } from './recurringExpenses';
 import { todayJST } from './time';
-import { isAllowedWebOrigin } from './webOrigins';
+import { applyWebCorsHeaders } from './webOrigins';
 
 /** 1 回に精算できる件数の上限（Firestore の batch の上限） */
 export const MAX_SETTLE_IDS = 500;
@@ -196,14 +196,11 @@ export async function authorizeExpenseWrite(
 
 /** `/auth/line` と同じ許可リストで CORS ヘッダーを付ける（エラー応答にも付ける） */
 export function applyHouseholdCors(req: Request, res: Response): void {
-  const origin = req.headers.origin;
   res.setHeader('Vary', 'Origin');
-  if (typeof origin === 'string' && isAllowedWebOrigin(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Max-Age', '3600');
-  }
+  applyWebCorsHeaders(req, res, {
+    methods: 'GET, POST, PATCH, DELETE, OPTIONS',
+    allowHeaders: 'Content-Type, Authorization',
+  });
   res.setHeader('Cache-Control', 'no-store');
   // 応答は Firestore の利用者入力（description・displayName など）を含む JSON。型の推測をさせない
   res.setHeader('X-Content-Type-Options', 'nosniff');

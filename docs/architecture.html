@@ -217,6 +217,33 @@ flowchart LR
     </div>
   </section>
 
+  <section id="code">
+    <aside><h2>コード構成</h2><p>どこを読めば何が分かるか。bot の <code>index.ts</code> は関数の定義だけ。</p></aside>
+    <div class="body">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>場所</th><th>中身</th></tr></thead>
+          <tbody>
+            <tr><td class="name">bot/src/index.ts</td><td>初期化と Cloud Functions の export だけ（関数名・リージョン・シークレットはここで決まる）</td></tr>
+            <tr><td class="name">bot/src/line/webhookApp.ts</td><td>webhook の Express アプリ。本文サイズ制限、署名検証、イベントの振り分け、<code>/health</code></td></tr>
+            <tr><td class="name">bot/src/line/textMessage.ts</td><td>テキストを受けてコマンドを試し、当たらなければ支出として解析</td></tr>
+            <tr><td class="name">bot/src/line/commands/</td><td>家計簿・要望/不具合・カテゴリー・グループ・立替一覧/精算の各コマンド</td></tr>
+            <tr><td class="name">bot/src/line/expenseFlow.ts</td><td>支出の登録と確認カードの返信（プロフィール取得のリトライ込み）</td></tr>
+            <tr><td class="name">bot/src/line/groupEvents.ts</td><td>グループへの参加・メンバーの参加/退出</td></tr>
+            <tr><td class="name">bot/src/line/client.ts</td><td>LINE クライアントと返信・push の共通処理（返信できなければ push）</td></tr>
+            <tr><td class="name">bot/src/line/flexMessage.ts · postback.ts</td><td>確認カードの組み立てと、カードのボタン操作</td></tr>
+            <tr><td class="name">bot/src/auth/lineAuth.ts</td><td><code>/auth/line</code>（LIFF → カスタムトークン）</td></tr>
+            <tr><td class="name">bot/src/householdApi.ts</td><td><code>/household/*</code>（確認・精算・固定費・折半設定）</td></tr>
+            <tr><td class="name">bot/src/gmail/</td><td>Gmail 取込と管理 API（<code>adminRouter.ts</code>）</td></tr>
+            <tr><td class="name">bot/src/recurringExpenses.ts</td><td>固定費の計上ロジック</td></tr>
+            <tr><td class="name">web/app/ · components/ · lib/</td><td>画面・部品・ロジック（lib は純関数でテストあり）</td></tr>
+            <tr><td class="name">firestore.rules · storage.rules</td><td>アクセス制御（CI がデプロイ、エミュレータでテスト）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <section id="deploy">
     <aside><h2>デプロイとリリース</h2><p>master にマージすれば全部自動。master への直接コミットはしない。</p></aside>
     <div class="body">

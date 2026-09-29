@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getAllUserCategories, CategoryMaster, UserCustomCategory } from './firestore';
-import { normalizeCategoryName } from './categoryNormalization';
+import { CANONICAL_CATEGORIES, normalizeCategoryName } from './categoryNormalization';
 import { maskId } from './logSafe';
 
 // Gemini APIクライアントの初期化
@@ -25,27 +25,7 @@ interface GeminiClassificationResult {
 }
 
 // デフォルトカテゴリリスト（Firestoreからの取得に失敗した場合のフォールバック）
-const DEFAULT_CATEGORIES = [
-  '食費',
-  '交通費',
-  '日用品',
-  '娯楽',
-  '衣服',
-  '医療・健康',
-  '教育',
-  '光熱費',
-  '住居費',
-  '保険',
-  '税金',
-  '美容',
-  '通信費',
-  'サブスク',
-  'プレゼント',
-  '旅行',
-  'ペット',
-  '貯金',
-  'その他',
-];
+const DEFAULT_CATEGORIES = CANONICAL_CATEGORIES;
 
 // カテゴリキャッシュ（メモリ内、30分TTL）
 const categoryCache = new Map<string, { categories: string[]; timestamp: number }>();
@@ -163,7 +143,6 @@ function fastLocalClassification(description: string): { category: string | null
   
   return { category: null, confidence: 0 };
 }
-
 
 /**
  * 最適化されたカテゴリ分類（ローカル判定 + キャッシュ + Gemini）
@@ -313,21 +292,17 @@ ${categoryNames.join(', ')}
         classificationCache.set(cacheKey, { result, timestamp: Date.now() });
         console.log(`Gemini classification cached -> ${result.category}`);
         
-        updateClassificationStats(true, result.confidence);
         return result;
       }
-      console.warn(`Gemini suggested invalid category: ${parsed.category}`);
-      updateClassificationStats(false, 0);
+      console.warn('Gemini suggested invalid category:', parsed.category);
       return { category: null, confidence: 0 };
     } catch (parseError) {
       console.error('Failed to parse Gemini response as JSON:', (parseError as Error)?.message);
-      updateClassificationStats(false, 0);
       return { category: null, confidence: 0 };
     }
 
   } catch (error) {
     console.error('Gemini API classification error:', error);
-    updateClassificationStats(false, 0);
     
     // タイムアウトまたはAPI障害の場合、フォールバックとしてユーザーデフォルトを返す
     if (error instanceof Error && error.message?.includes('timeout')) {
@@ -336,72 +311,6 @@ ${categoryNames.join(', ')}
     
     return { category: null, confidence: 0 };
   }
-}
-
-/**
- * Gemini APIベースの高度なカテゴリ検出（フォールバック付き）
- */
-export async function findCategoryWithGemini(
-  lineId: string, 
-  description: string
-): Promise<CategoryMaster | UserCustomCategory | null> {
-  try {
-    // Gemini APIで分類を試行
-    const geminiResult = await classifyExpenseWithGemini(lineId, description);
-
-    // 信頼度が十分高い場合はGeminiの結果を使用（閾値を0.4に下げて精度向上）
-    if (geminiResult.category && geminiResult.confidence >= 0.4) {
-      console.log(`Gemini classification success: ${geminiResult.category} (confidence: ${geminiResult.confidence})`);
-
-      // カテゴリ名から実際のカテゴリオブジェクトを取得
-      const availableCategories = await getAllUserCategories(lineId);
-      const matchedCategory = availableCategories.find((cat: CategoryMaster | UserCustomCategory) => cat.name === geminiResult.category);
-
-      if (matchedCategory) {
-        return matchedCategory;
-      }
-    }
-
-    console.log(`Gemini classification failed or low confidence: ${geminiResult.confidence}, falling back to keywords`);
-    return null;
-    
-  } catch (error) {
-    console.error('Error in Gemini category classification:', error);
-    return null;
-  }
-}
-
-/**
- * 分類の統計情報を取得（デバッグ・分析用）
- */
-export interface ClassificationStats {
-  totalAttempts: number;
-  geminiSuccessCount: number;
-  fallbackCount: number;
-  averageConfidence: number;
-}
-
-// 簡単な統計トラッキング（メモリ内）
-let classificationStats: ClassificationStats = {
-  totalAttempts: 0,
-  geminiSuccessCount: 0,
-  fallbackCount: 0,
-  averageConfidence: 0
-};
-
-export function updateClassificationStats(success: boolean, confidence: number) {
-  classificationStats.totalAttempts++;
-  if (success) {
-    classificationStats.geminiSuccessCount++;
-    const totalConf = classificationStats.averageConfidence * (classificationStats.geminiSuccessCount - 1) + confidence;
-    classificationStats.averageConfidence = totalConf / classificationStats.geminiSuccessCount;
-  } else {
-    classificationStats.fallbackCount++;
-  }
-}
-
-export function getClassificationStats(): ClassificationStats {
-  return { ...classificationStats };
 }
 
 /**
