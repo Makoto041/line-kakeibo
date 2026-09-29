@@ -6,6 +6,7 @@ import { Plus, Pencil, Trash2, Repeat } from 'lucide-react';
 import { useUserGroups } from '../lib/hooks';
 import { getCategoryVisual } from '../lib/categoryVisuals';
 import { CANONICAL_CATEGORIES } from '../lib/categoryNormalization';
+import { yen } from '../lib/money';
 import {
   createRecurring,
   dayLabel,
@@ -248,7 +249,7 @@ export default function RecurringExpensesPanel({ lineId }: { lineId: string }) {
       <div className="glass rounded-2xl shadow-glass p-5">
         <div className="mb-1 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-fg">固定費</h3>
-          <span className="text-xs text-muted">毎月の合計: ¥{total.toLocaleString()}</span>
+          <span className="text-xs text-muted">毎月の合計: {yen(total)}</span>
         </div>
         <ul className="mb-4 space-y-0.5 text-xs text-muted">
           <li>・引き落とし日に明細へ自動で追加</li>
@@ -298,7 +299,7 @@ export default function RecurringExpensesPanel({ lineId }: { lineId: string }) {
                       {!item.active && '・停止中'}
                     </p>
                   </div>
-                  <span className="shrink-0 text-sm font-bold text-fg">¥{item.amount.toLocaleString()}</span>
+                  <span className="shrink-0 text-sm font-bold text-fg">{yen(item.amount)}</span>
                 </div>
                 <div className="mt-2 flex items-center justify-end gap-1">
                   <button

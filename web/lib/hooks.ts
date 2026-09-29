@@ -956,7 +956,7 @@ export interface BudgetConfig {
 /** 予算を未設定のときの月の予算 */
 export const DEFAULT_MONTHLY_BUDGET = 200000;
 
-const defaultBudgetConfig: BudgetConfig = {
+export const DEFAULT_BUDGET_CONFIG: BudgetConfig = {
   monthlyBudget: DEFAULT_MONTHLY_BUDGET,
   categoryBudgets: {},
   alertThreshold: 20,
@@ -972,7 +972,7 @@ export function useBudgetConfig(userId: string | null) {
 
   useEffect(() => {
     if (!userId || userId === 'guest') {
-      setConfig(defaultBudgetConfig);
+      setConfig(DEFAULT_BUDGET_CONFIG);
       setLoading(false);
       return;
     }
@@ -1009,15 +1009,15 @@ export function useBudgetConfig(userId: string | null) {
           ? {
               monthlyBudget: typeof docSnap.data().monthlyBudget === 'number' && docSnap.data().monthlyBudget > 0
                 ? docSnap.data().monthlyBudget
-                : defaultBudgetConfig.monthlyBudget,
+                : DEFAULT_BUDGET_CONFIG.monthlyBudget,
               categoryBudgets: docSnap.data().categoryBudgets && typeof docSnap.data().categoryBudgets === 'object'
                 ? docSnap.data().categoryBudgets
                 : {},
               alertThreshold: typeof docSnap.data().alertThreshold === 'number'
                 ? docSnap.data().alertThreshold
-                : defaultBudgetConfig.alertThreshold,
+                : DEFAULT_BUDGET_CONFIG.alertThreshold,
             }
-          : defaultBudgetConfig;
+          : DEFAULT_BUDGET_CONFIG;
 
         setCached(budgetCacheKey, nextConfig);
         setConfig(nextConfig);
@@ -1027,7 +1027,7 @@ export function useBudgetConfig(userId: string | null) {
         console.error('Error fetching budget config:', err);
         setError(errorMessage);
         if (!hasCached(budgetCacheKey)) {
-          setConfig(defaultBudgetConfig);
+          setConfig(DEFAULT_BUDGET_CONFIG);
         }
       } finally {
         setLoading(false);

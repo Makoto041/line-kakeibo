@@ -24,59 +24,24 @@ import { getCategoryVisual } from '../lib/categoryVisuals';
 import PreviewModeBanner from '../components/PreviewModeBanner';
 import GuestGuide from '../components/GuestGuide';
 import { getSampleStats } from '../lib/sampleData';
+import { yen } from '../lib/money';
+import {
+  buildCategoryBudgetRows,
+  calculatePace,
+  computePeriodInsights,
+  idealProgress as calcIdealProgress,
+  type Pace,
+} from '../lib/budgetAnalytics';
 import { getCached, setCached, hasCached } from '../lib/swrCache';
 import dayjs from 'dayjs';
 import { db } from '../lib/firebase';
 
-const yen = (v: number) => `¥${Number(v).toLocaleString()}`;
-
-// 予算カテゴリ名（正準）→ 支出データのカテゴリ名（旧表記ゆれも吸収）
-const budgetToExpenseCategory: Record<string, string[]> = {
-  食費: ['食費'],
-  交通費: ['交通費'],
-  日用品: ['日用品', '日用品費'],
-  娯楽: ['娯楽', '娯楽費'],
-  衣服: ['衣服', '衣服費', '被服費'],
-  '医療・健康': ['医療・健康', '医療費', '医療', '健康'],
-  教育: ['教育', '教育費'],
-  光熱費: ['光熱費', '水道光熱費'],
-  住居費: ['住居費', '居住費', '家賃'],
-  保険: ['保険', '保険料'],
-  税金: ['税金'],
-  美容: ['美容', '美容費', '美容・理容'],
-  通信費: ['通信費'],
-  サブスク: ['サブスク', 'サブスクリプション'],
-  プレゼント: ['プレゼント', 'ギフト'],
-  旅行: ['旅行'],
-  ペット: ['ペット'],
-  貯金: ['貯金'],
-  その他: ['その他'],
+const PACE_LABEL: Record<Pace, string> = {
+  good: '順調',
+  warning: 'やや超過',
+  danger: '超過',
+  unset: '未設定',
 };
-
-function getActualSpending(budgetCategory: string, categoryTotals: Record<string, number>): number {
-  let mapped = budgetToExpenseCategory[budgetCategory];
-  if (!mapped) {
-    // 旧予算キー（例: 娯楽費・医療費）を逆引きして正準キーに解決する。
-    // 正準キーへ統一する以前に保存された予算でも実支出と突き合うようにする。
-    const canonical = Object.keys(budgetToExpenseCategory).find((key) =>
-      budgetToExpenseCategory[key].includes(budgetCategory)
-    );
-    mapped = canonical ? budgetToExpenseCategory[canonical] : [budgetCategory];
-  }
-  return mapped.reduce((sum, cat) => sum + (categoryTotals[cat] || 0), 0);
-}
-
-type Pace = 'good' | 'warning' | 'danger';
-
-function calculatePace(actual: number, budget: number): { pace: Pace; label: string } {
-  const today = dayjs();
-  const prorated = (budget / today.daysInMonth()) * today.date();
-  if (budget === 0) return { pace: 'good', label: '未設定' };
-  const ratio = actual / prorated;
-  if (ratio <= 1) return { pace: 'good', label: '順調' };
-  if (ratio <= 1.2) return { pace: 'warning', label: 'やや超過' };
-  return { pace: 'danger', label: '超過' };
-}
 
 function progressColor(pct: number): string {
   if (pct <= 80) return 'bg-emerald-500';
@@ -85,7 +50,7 @@ function progressColor(pct: number): string {
 }
 
 function paceBadge(pace: Pace): string {
-  if (pace === 'good') return 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400';
+  if (pace === 'good' || pace === 'unset') return 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400';
   if (pace === 'warning') return 'bg-amber-500/12 text-amber-600 dark:text-amber-400';
   return 'bg-rose-500/12 text-rose-600 dark:text-rose-400';
 }
@@ -124,50 +89,15 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
   const categoryTotals = stats?.categoryTotals || {};
   const { categoryBudgets, monthlyBudget } = budgetConfig;
 
-  // 予算>0 のカテゴリに加え、実支出があるカテゴリも表示する
-  // （予算0でも記録があれば出す）。
-  const rowsMap = new Map<string, { category: string; budget: number; actual: number }>();
-
-  // 1) 正準カテゴリ: 予算あり or 実支出あり
-  Object.keys(budgetToExpenseCategory).forEach((category) => {
-    const budget = categoryBudgets[category] || 0;
-    const actual = getActualSpending(category, categoryTotals);
-    if (budget > 0 || actual > 0) rowsMap.set(category, { category, budget, actual });
-  });
-
-  // 2) エイリアスに無いカスタム/旧表記の支出カテゴリも拾う
-  const aliasClaimed = new Set<string>();
-  Object.values(budgetToExpenseCategory).forEach((arr) => arr.forEach((a) => aliasClaimed.add(a)));
-  Object.entries(categoryTotals).forEach(([category, amt]) => {
-    if (amt > 0 && !aliasClaimed.has(category) && !rowsMap.has(category)) {
-      rowsMap.set(category, { category, budget: categoryBudgets[category] || 0, actual: amt });
-    }
-  });
-
-  // 3) 予算>0 だが上で拾えていない旧キーも残す（後方互換）
-  Object.keys(categoryBudgets).forEach((category) => {
-    if (categoryBudgets[category] > 0 && !rowsMap.has(category)) {
-      rowsMap.set(category, {
-        category,
-        budget: categoryBudgets[category],
-        actual: getActualSpending(category, categoryTotals),
-      });
-    }
-  });
-
-  const cats = Array.from(rowsMap.values()).sort((a, b) => {
-    // 予算ありを使用率の高い順に上へ、予算なし(0)は実支出の多い順で下へ
-    const ra = a.budget > 0 ? a.actual / a.budget : -1;
-    const rb = b.budget > 0 ? b.actual / b.budget : -1;
-    if (rb !== ra) return rb - ra;
-    return b.actual - a.actual;
-  });
+  // 予算>0 のカテゴリに加え、実支出があるカテゴリも表示する（予算0でも記録があれば出す）。
+  // 予算ありを使用率の高い順に上へ、予算なし(0)は実支出の多い順で下へ
+  const cats = buildCategoryBudgetRows(categoryTotals, categoryBudgets);
 
   const totalActual = stats?.totalAmount || 0;
   const totalPct = monthlyBudget > 0 ? (totalActual / monthlyBudget) * 100 : 0;
   const totalRemaining = monthlyBudget - totalActual;
   const totalPace = calculatePace(totalActual, monthlyBudget);
-  const idealProgress = (dayjs().date() / dayjs().daysInMonth()) * 100;
+  const idealProgress = calcIdealProgress();
 
   return (
     <GlassCard className="p-5">
@@ -180,8 +110,8 @@ function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; b
       <div className="rounded-xl border border-line/70 bg-fg/[0.02] p-4">
         <div className="mb-2.5 flex items-center justify-between">
           <span className="text-sm font-medium text-fg">月間予算</span>
-          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${paceBadge(totalPace.pace)}`}>
-            {totalPace.label}
+          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${paceBadge(totalPace)}`}>
+            {PACE_LABEL[totalPace]}
           </span>
         </div>
         <div className="relative h-2.5 overflow-hidden rounded-full bg-fg/10">
@@ -363,34 +293,25 @@ export default function Dashboard() {
   const isGuest = !lineId;
   const displayStats = isGuest ? sampleStats : stats;
 
-  const totalExpense = displayStats?.totalAmount || 0;
-  const expenseCount = displayStats?.expenseCount || 0;
-  const days = dayjs(effectiveRange.endDate).diff(dayjs(effectiveRange.startDate), 'day') + 1;
-  const dailyAverage = totalExpense > 0 ? Math.round(totalExpense / days) : 0;
-
-  // --- 判断インサイト（予算・前月比・残ペース） ---
-  const monthlyBudget = budgetConfig?.monthlyBudget || 0;
-  const budgetPct = monthlyBudget > 0 ? Math.round((totalExpense / monthlyBudget) * 100) : null;
-  const budgetRemaining = monthlyBudget > 0 ? monthlyBudget - totalExpense : null;
-
-  // この期間の残り日数（今日が期間内なら今日〜終了日、過ぎていれば0扱い）
-  const today = dayjs();
-  const endD = dayjs(effectiveRange.endDate);
-  const daysLeft = endD.isBefore(today, 'day')
-    ? 0
-    : endD.diff(today.isBefore(dayjs(effectiveRange.startDate)) ? dayjs(effectiveRange.startDate) : today, 'day') + 1;
-  const perDayAvailable =
-    monthlyBudget > 0 && budgetRemaining !== null && budgetRemaining > 0 && daysLeft > 0
-      ? Math.floor(budgetRemaining / daysLeft)
-      : null;
-
-  const prevTotal = isGuest ? 0 : prevStats?.totalAmount || 0;
-  // 固定のカスタム期間では getEffectiveDateRange が prevDate を無視し、前期間が
-  // 現在と同一になる（＝自分自身と比較して常に0%）。その場合は前月比を出さない。
-  const momPct =
-    dateSettings.mode !== 'custom' && prevTotal > 0
-      ? Math.round(((totalExpense - prevTotal) / prevTotal) * 100)
-      : null;
+  // --- サマリーと判断インサイト（予算・前月比・残ペース） ---
+  // 固定のカスタム期間では前期間が現在と同一になる（＝自分自身と比較して常に0%）ため、前月比は出さない。
+  const {
+    totalExpense,
+    expenseCount,
+    dailyAverage,
+    budgetPct,
+    budgetRemaining,
+    daysLeft,
+    perDayAvailable,
+    momPct,
+    prevTotal,
+  } = computePeriodInsights({
+    stats: displayStats,
+    prevStats: isGuest ? null : prevStats,
+    monthlyBudget: budgetConfig?.monthlyBudget,
+    range: effectiveRange,
+    mode: dateSettings.mode,
+  });
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-5 md:px-8 md:py-7">

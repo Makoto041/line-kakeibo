@@ -251,31 +251,6 @@ export function payerDisplayNameFor(
 }
 
 /**
- * 支払い者名（一覧・詳細・集計で共通）。
- * - Gmail 自動取込は「クレジットカード」にまとめる
- * - payerDisplayName を最優先し、不明系の名前は支出履歴から補う
- */
-export function resolvePayerName(
-  expense: Pick<Expense, 'lineId'> &
-    Partial<Pick<Expense, 'inputSource' | 'payerId' | 'payerDisplayName' | 'userDisplayName'>>,
-  historicalUsers: readonly KnownUser[]
-): string {
-  if (expense.inputSource === 'gmail_auto') return 'クレジットカード';
-  const payerId = expense.payerId || expense.lineId;
-  let payerName = expense.payerDisplayName || expense.userDisplayName || '個人';
-  if (
-    payerName === 'メンバー' ||
-    payerName === '個人' ||
-    payerName.startsWith('Unknown_') ||
-    payerName.startsWith('User_')
-  ) {
-    const historical = historicalUsers.find((u) => u.lineId === payerId);
-    if (historical) payerName = historical.displayName;
-  }
-  return payerName;
-}
-
-/**
  * カテゴリの選択肢: 正準カテゴリ → データ内の既存カテゴリ → 編集中の現在値。
  * 未知のカテゴリでも先頭（食費）に勝手に落ちないようにする。
  */

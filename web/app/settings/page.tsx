@@ -4,27 +4,15 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Wallet, CalendarRange, Repeat } from 'lucide-react';
 import RecurringExpensesPanel from '../../components/RecurringExpensesPanel';
-import { useLineAuth } from '../../lib/hooks';
+import { useLineAuth, DEFAULT_BUDGET_CONFIG, type BudgetConfig } from '../../lib/hooks';
 import { getDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, DEFAULT_SETTINGS, type DateRangeSettings } from '../../lib/dateSettings';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { getCategoryVisual } from '../../lib/categoryVisuals';
 import { CANONICAL_CATEGORIES } from '../../lib/categoryNormalization';
 import { getCached, setCached } from '../../lib/swrCache';
+import { yen } from '../../lib/money';
 import dayjs from 'dayjs';
-
-// 予算設定インターフェース
-interface BudgetConfig {
-  monthlyBudget: number;
-  categoryBudgets: Record<string, number>;
-  alertThreshold: number;
-}
-
-const defaultBudgetConfig: BudgetConfig = {
-  monthlyBudget: 200000,
-  categoryBudgets: {},
-  alertThreshold: 20,
-};
 
 // カテゴリ別予算の項目は正準カテゴリ（bot/分類器・支出データと統一）。
 // 予算は category.name をキーに保存するため、名称を揃えることで実支出と突き合う。
@@ -46,11 +34,11 @@ function normalizeBudgetConfig(data: unknown): BudgetConfig {
   return {
     monthlyBudget: typeof raw?.monthlyBudget === 'number' && raw.monthlyBudget > 0
       ? raw.monthlyBudget
-      : defaultBudgetConfig.monthlyBudget,
+      : DEFAULT_BUDGET_CONFIG.monthlyBudget,
     categoryBudgets: normalizedCategoryBudgets,
     alertThreshold: typeof raw?.alertThreshold === 'number' && raw.alertThreshold >= 0 && raw.alertThreshold <= 100
       ? raw.alertThreshold
-      : defaultBudgetConfig.alertThreshold,
+      : DEFAULT_BUDGET_CONFIG.alertThreshold,
   };
 }
 
@@ -70,7 +58,7 @@ export default function Settings() {
   const [tempStartDay, setTempStartDay] = useState(cachedDate?.customStartDay || 1);
 
   // 予算設定
-  const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(cachedBudget || defaultBudgetConfig);
+  const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(cachedBudget || DEFAULT_BUDGET_CONFIG);
   const [budgetHasLoaded, setBudgetHasLoaded] = useState(!!cachedBudget);
   const [budgetLoadError, setBudgetLoadError] = useState(false);
 
@@ -316,7 +304,7 @@ export default function Settings() {
                 </span>
               </div>
               <p className="text-xs text-muted mt-2">
-                残り予算が{budgetConfig.alertThreshold}%（¥{Math.round(budgetConfig.monthlyBudget * budgetConfig.alertThreshold / 100).toLocaleString()}）を下回ると警告
+                残り予算が{budgetConfig.alertThreshold}%（{yen(Math.round(budgetConfig.monthlyBudget * budgetConfig.alertThreshold / 100))}）を下回ると警告
               </p>
             </div>
 
@@ -325,7 +313,7 @@ export default function Settings() {
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-sm font-semibold text-fg">カテゴリ別予算</h3>
                 <span className={`text-xs ${categoryBudgetTotal > budgetConfig.monthlyBudget ? 'text-rose-500' : 'text-muted'}`}>
-                  合計: ¥{categoryBudgetTotal.toLocaleString()}
+                  合計: {yen(categoryBudgetTotal)}
                 </span>
               </div>
 

@@ -34,13 +34,28 @@ import {
   countPending,
   parseSegment,
   matchesSegment,
-  matchesQuery,
   canClientWrite,
   canClientDelete,
   canServerConfirm,
+  categoriesIn,
+  filterExpenses,
+  isCardSource,
+  resolvePayerName,
+  sortForList,
+  summarizeExpenses,
   type Segment,
 } from "../../lib/expenseState";
-import { validateEditForm, buildEditUpdate, hasEditChanges } from "../../lib/expenseEdit";
+import {
+  validateEditForm,
+  buildEditUpdate,
+  hasEditChanges,
+  collectHistoricalUsers,
+  collectGroupExpenseUsers,
+  mergeAvailableMembers,
+  buildPayerOptions,
+  payerDisplayNameFor,
+  buildCategoryOptions,
+} from "../../lib/expenseEdit";
 import { confirmExpense, isHouseholdApiConfigured, householdErrorCode } from "../../lib/householdApi";
 import type { Expense } from "../../lib/hooks";
 import PreviewModeBanner from "../../components/PreviewModeBanner";
@@ -48,6 +63,7 @@ import GuestGuide from "../../components/GuestGuide";
 import { getCategoryVisual } from "../../lib/categoryVisuals";
 import { CANONICAL_CATEGORIES } from "../../lib/categoryNormalization";
 import { isSafeImageUrl, toSafeImageUrl } from "../../lib/imageUrl";
+import { yen } from "../../lib/money";
 import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
@@ -285,132 +301,16 @@ function ExpensesPageContent() {
   // セキュリティルールがメンバーシップを groupId で判定するようになったこととも整合する。
   const { members: groupMembers } = useGroupMembers(editingGroupId);
   
-  // Get all users who have ever created expenses (across all groups)
-  // 入力者と支払い者の両方を含める
-  const allHistoricalUsers = useMemo(() => {
-    const usersMap = new Map();
-
-    expenses.forEach((expense) => {
-      // 入力者を追加
-      if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
-        usersMap.set(expense.lineId, {
-          lineId: expense.lineId,
-          displayName: expense.userDisplayName
-        });
-      }
-
-      // 支払い者を追加（入力者と異なる場合）
-      if (expense.payerId && expense.payerDisplayName &&
-          expense.payerDisplayName !== "個人" &&
-          expense.payerId !== expense.lineId) {
-        usersMap.set(expense.payerId, {
-          lineId: expense.payerId,
-          displayName: expense.payerDisplayName
-        });
-      }
-    });
-
-    const result = Array.from(usersMap.values());
-    return result;
-  }, [expenses]);
-  
-  // Get users who have expense history in this specific group
-  // 入力者と支払い者の両方を含める
-  const groupExpenseUsers = useMemo(() => {
-    if (!editingExpenseData) return [];
-
-    const groupFilter = editingExpenseData.groupId
-      ? (e: Expense) => e.groupId === editingExpenseData.groupId
-      : editingExpenseData.lineGroupId
-      ? (e: Expense) => e.lineGroupId === editingExpenseData.lineGroupId
-      : () => false;
-
-    const usersMap = new Map();
-
-    expenses
-      .filter(groupFilter)
-      .forEach(expense => {
-        // 入力者を追加
-        if (expense.lineId && expense.userDisplayName && expense.userDisplayName !== "個人") {
-          usersMap.set(expense.lineId, {
-            lineId: expense.lineId,
-            displayName: expense.userDisplayName
-          });
-        }
-
-        // 支払い者を追加（入力者と異なる場合）
-        if (expense.payerId && expense.payerDisplayName &&
-            expense.payerDisplayName !== "個人" &&
-            expense.payerId !== expense.lineId) {
-          usersMap.set(expense.payerId, {
-            lineId: expense.payerId,
-            displayName: expense.payerDisplayName
-          });
-        }
-      });
-
-    return Array.from(usersMap.values());
-  }, [expenses, editingExpenseData]);
-  
-  // Combine all available users: formal group members, group history users, and all historical users
-  // 支出履歴のdisplayNameを優先（より正確な名前が入っている）
-  const availableMembers = useMemo(() => {
-    const formalMembers = groupMembers;
-    const combinedMap = new Map();
-
-    // Priority 1: Add formal group members (メンバーシップ情報として追加)
-    formalMembers.forEach(member => {
-      combinedMap.set(member.lineId, {
-        lineId: member.lineId,
-        displayName: member.displayName,
-        source: 'group'
-      });
-    });
-
-    // Priority 2: Add/Update users from this group's expense history
-    // 支出履歴のdisplayNameで上書き（より正確）
-    groupExpenseUsers.forEach(user => {
-      const existing = combinedMap.get(user.lineId);
-      if (existing) {
-        // 既存のグループメンバーがいる場合、displayNameだけ更新
-        combinedMap.set(user.lineId, {
-          ...existing,
-          displayName: user.displayName, // 支出履歴の名前を優先
-          source: 'group' // グループメンバーとして保持
-        });
-      } else {
-        // 新規追加
-        combinedMap.set(user.lineId, {
-          lineId: user.lineId,
-          displayName: user.displayName,
-          source: 'group-history'
-        });
-      }
-    });
-
-    // Priority 3: Add/Update all historical users (from any group)
-    allHistoricalUsers.forEach(user => {
-      const existing = combinedMap.get(user.lineId);
-      if (existing) {
-        // 既存のユーザーがいる場合、displayNameが「メンバー」なら更新
-        if (existing.displayName === 'メンバー' || existing.displayName.startsWith('Unknown_')) {
-          combinedMap.set(user.lineId, {
-            ...existing,
-            displayName: user.displayName
-          });
-        }
-      } else {
-        // 新規追加
-        combinedMap.set(user.lineId, {
-          lineId: user.lineId,
-          displayName: user.displayName,
-          source: 'all-history'
-        });
-      }
-    });
-
-    return Array.from(combinedMap.values());
-  }, [groupMembers, groupExpenseUsers, allHistoricalUsers]);
+  // 支払い者の候補: グループの正式メンバー → このグループの支出履歴 → 全体の支出履歴（入力者と支払い者の両方）
+  const allHistoricalUsers = useMemo(() => collectHistoricalUsers(expenses), [expenses]);
+  const groupExpenseUsers = useMemo(
+    () => collectGroupExpenseUsers(expenses, editingExpenseData),
+    [expenses, editingExpenseData]
+  );
+  const availableMembers = useMemo(
+    () => mergeAvailableMembers(groupMembers, groupExpenseUsers, allHistoricalUsers),
+    [groupMembers, groupExpenseUsers, allHistoricalUsers]
+  );
 
   if (authLoading || (editExpenseId && !editMonthResolved)) {
     return (
@@ -425,72 +325,24 @@ function ExpensesPageContent() {
 
   const pendingCount = countPending(expenses);
 
-  const filteredExpenses = expenses.filter((expense) => {
-    if (!matchesSegment(expense, segment)) return false;
-    if (!matchesQuery(expense, query)) return false;
-    if (filter === "all") return true;
-    if (filter === "included") return expense.includeInTotal;
-    if (filter === "excluded") return !expense.includeInTotal;
-    return expense.category === filter;
-  });
+  // フィルターの選択肢は「すべて / 合計に含む / 合計から除外 / 各カテゴリ」の 1 つ
+  const budgetFilter = filter === "included" || filter === "excluded" ? filter : "all";
+  const filteredExpenses = filterExpenses(
+    expenses.filter((expense) => matchesSegment(expense, segment)),
+    { query, budget: budgetFilter, category: budgetFilter === "all" ? filter : "all" }
+  );
+  const sortedExpenses = sortForList(filteredExpenses, sortBy);
 
-  const sortedExpenses = [...filteredExpenses].sort((a, b) => {
-    if (sortBy === "date") {
-      return dayjs(b.date).valueOf() - dayjs(a.date).valueOf();
-    }
-    return b.amount - a.amount;
-  });
-
-  const categories = [...new Set(expenses.map((e) => e.category))];
+  const categories = categoriesIn(expenses);
   // カテゴリ編集の選択肢は正準カテゴリ（bot/分類器と統一）。
   // データ内の既存カテゴリや編集中の現在値も取り込み、未知カテゴリでも
   // 先頭（食費）に勝手に落ちないようにする。
-  // 注: この関数は早期returnより後ろにあるため、Hook(useMemo)ではなく純粋計算で構築する。
-  const allCategories = (() => {
-    const set = new Set<string>(CANONICAL_CATEGORIES);
-    categories.forEach((c) => {
-      if (c) set.add(c);
-    });
-    if (editForm.category) set.add(editForm.category);
-    return Array.from(set);
-  })();
+  const allCategories = buildCategoryOptions(CANONICAL_CATEGORIES, expenses, editForm.category);
 
-  // 支払い者名の解決ルール（金額/件数/チップ表示で共通利用）。
-  // - クレジットカード通知（Gmail自動取得）由来は「クレジットカード」にまとめる
-  // - payerDisplayName を最優先、不明系は支出履歴から表示名を補完
-  const resolvePayerName = (expense: Expense): string => {
-    if (expense.inputSource === 'gmail_auto') {
-      return 'クレジットカード';
-    }
-    // 固定費の自動計上（共通のカード・口座から引き落とし）
-    if (expense.inputSource === 'recurring' && expense.payerId === 'recurring-system') {
-      return '共通口座';
-    }
-    const payerId = expense.payerId || expense.lineId;
-    let payerName = expense.payerDisplayName || expense.userDisplayName || "個人";
-    if (payerName === 'メンバー' || payerName === '個人' || payerName.startsWith('Unknown_') || payerName.startsWith('User_')) {
-      const historicalUser = allHistoricalUsers.find(u => u.lineId === payerId);
-      if (historicalUser) {
-        payerName = historicalUser.displayName;
-      }
-    }
-    return payerName;
-  };
-
-  // Calculate individual person totals based on payer
-  const personTotals = filteredExpenses.reduce((acc, expense) => {
-    const payerName = resolvePayerName(expense);
-
-    // 承認済みの項目のみ合計に含める
-    if (expense.includeInTotal) {
-      acc[payerName] = (acc[payerName] || 0) + expense.amount;
-    }
-    return acc;
-  }, {} as Record<string, number>);
-
-  const sortedPersonTotals = Object.entries(personTotals).sort(
-    (a, b) => b[1] - a[1]
-  );
+  // 支払い者名の解決ルール（金額/件数/チップ表示で共通利用）
+  const payerNameOf = (expense: Expense) => resolvePayerName(expense, allHistoricalUsers);
+  // 合計カード・支払い者別の合計（承認済みの項目のみ合計に含める）
+  const summary = summarizeExpenses(filteredExpenses, payerNameOf);
 
   const handleEditStart = (expense: Expense) => {
     setEditError(null);
@@ -582,10 +434,8 @@ function ExpensesPageContent() {
     const { name, value, type } = e.target;
     if (name === "payerId") {
       // 支払い者IDが変更されたら、対応する表示名も更新
-      const selectedMember = availableMembers.find(member => member.lineId === value);
-      const selectedFromHistory = expenses.find(expense => expense.lineId === value);
-      const displayName = selectedMember?.displayName || selectedFromHistory?.userDisplayName || value;
-      
+      const displayName = payerDisplayNameFor(value, availableMembers, expenses);
+
       setEditForm((prev) => ({
         ...prev,
         payerId: value,
@@ -727,19 +577,15 @@ function ExpensesPageContent() {
           {/* Totals (only with data) */}
           {expenses.length > 0 && (
             <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-stretch">
-              {sortedPersonTotals.length > 0 && (
+              {summary.payers.length > 0 && (
                 <div className="grid flex-1 grid-cols-3 gap-3 lg:grid-cols-4">
-                  {sortedPersonTotals.map(([personName, total]) => (
+                  {summary.payers.map(({ name: personName, total, count }) => (
                     <div key={personName} className="rounded-xl border border-line bg-fg/[0.02] p-3">
                       <div className="text-center">
                         <div className="mb-1 truncate text-sm font-medium text-fg">{personName}</div>
-                        <div className="text-lg font-bold tabular-nums text-accent">¥{total.toLocaleString()}</div>
+                        <div className="text-lg font-bold tabular-nums text-accent">{yen(total)}</div>
                         <div className="text-xs text-muted">
-                          {
-                            filteredExpenses.filter(
-                              (e) => resolvePayerName(e) === personName
-                            ).length
-                          }
+                          {count}
                           件
                         </div>
                       </div>
@@ -754,14 +600,14 @@ function ExpensesPageContent() {
                     <Wallet className="h-3.5 w-3.5" />
                     合計
                   </div>
-                  <div className="text-sm font-semibold text-fg">{filteredExpenses.length}件</div>
+                  <div className="text-sm font-semibold text-fg">{summary.count}件</div>
                   <div className="my-1 text-2xl font-black tabular-nums text-fg">
-                    ¥{filteredExpenses.filter(e => e.includeInTotal).reduce((sum, e) => sum + e.amount, 0).toLocaleString()}
+                    {yen(summary.total)}
                   </div>
                   <div className="text-xs text-muted">合計総支出額</div>
-                  {filteredExpenses.some(e => !e.includeInTotal) && (
+                  {summary.excludedCount > 0 && (
                     <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                      除外: {filteredExpenses.filter(e => !e.includeInTotal).length}件
+                      除外: {summary.excludedCount}件
                     </div>
                   )}
                 </div>
@@ -871,7 +717,7 @@ function ExpensesPageContent() {
 
                         <div className="shrink-0">
                           <p className="text-right text-xl font-bold tabular-nums text-fg sm:text-2xl">
-                            ¥{expense.amount.toLocaleString()}
+                            {yen(expense.amount)}
                           </p>
                         </div>
                       </div>
@@ -897,14 +743,11 @@ function ExpensesPageContent() {
                         {(() => {
                           // 支払い者の名前を共通ルールで解決（金額/件数集計と一致させる）
                           const isDefaultPayer = !expense.payerId || expense.payerId === expense.lineId;
-                          const isCardSource =
-                            expense.inputSource === 'gmail_auto' ||
-                            (expense.inputSource === 'recurring' && expense.payerId === 'recurring-system');
-                          const payerName = resolvePayerName(expense);
+                          const payerName = payerNameOf(expense);
 
                           return payerName !== "個人" && (
                             <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${
-                              isCardSource
+                              isCardSource(expense)
                                 ? "bg-sky-500/12 text-sky-600 dark:text-sky-400"
                                 : isDefaultPayer
                                 ? "bg-fg/5 text-muted"
@@ -975,7 +818,7 @@ function ExpensesPageContent() {
                                     {item.name}
                                   </span>
                                   <span className="shrink-0 font-medium tabular-nums text-fg">
-                                    ¥{item.price.toLocaleString()}
+                                    {yen(item.price)}
                                   </span>
                                 </li>
                               ))}
@@ -1189,42 +1032,12 @@ function ExpensesPageContent() {
                       disabled={editingExpenseData?.status === 'advance_settled'}
                       className="w-full rounded-lg border border-line bg-card px-4 py-3 text-base text-fg focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      {(() => {
-                        // 候補を重複排除で構築し、現在の支払い者と入力者を必ず含める
-                        // （選択中の値に対応する option が消えて意図しない支払い者へ
-                        // 変わってしまうのを防ぐ）。
-                        const map = new Map<string, string>();
-                        if (editingExpenseData?.lineId) {
-                          map.set(
-                            editingExpenseData.lineId,
-                            `${editingExpenseData.userDisplayName || "入力者"}（入力者）`,
-                          );
-                        }
-                        if (availableMembers.length > 0) {
-                          availableMembers.forEach((member) => {
-                            const label =
-                              member.source === "group" ? "（グループメンバー）"
-                              : member.source === "group-history" ? "（このグループ）"
-                              : member.source === "all-history" ? "（他グループ）"
-                              : "";
-                            if (!map.has(member.lineId)) map.set(member.lineId, `${member.displayName}${label}`);
-                          });
-                        } else {
-                          expenses.forEach((exp) => {
-                            if (exp.userDisplayName && exp.userDisplayName !== "個人" && !map.has(exp.lineId)) {
-                              map.set(exp.lineId, `${exp.userDisplayName}（支出履歴から）`);
-                            }
-                          });
-                        }
-                        if (editForm.payerId && !map.has(editForm.payerId)) {
-                          map.set(editForm.payerId, editForm.payerDisplayName || "不明なユーザー");
-                        }
-                        return Array.from(map.entries()).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ));
-                      })()}
+                      {/* 現在の支払い者と入力者を必ず含める（選択中の値に対応する option が消えて意図しない支払い者へ変わってしまうのを防ぐ） */}
+                      {buildPayerOptions(editingExpenseData, availableMembers, expenses, editForm).map(({ value, label }) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
                     </select>
                     <p className="mt-1 text-xs text-muted">デフォルトは入力者と同じです</p>
                   </div>

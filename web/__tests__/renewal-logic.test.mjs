@@ -12,6 +12,8 @@ import {
   matchesSegment,
   matchesQuery,
   sortForList,
+  isCardSource,
+  resolvePayerName,
   timestampToMillis,
   canClientWrite,
   canClientDelete,
@@ -39,7 +41,6 @@ import {
   mergeAvailableMembers,
   buildPayerOptions,
   payerDisplayNameFor,
-  resolvePayerName,
   buildCategoryOptions,
 } from '../lib/expenseEdit.ts';
 import { yen } from '../lib/money.ts';
@@ -127,28 +128,17 @@ test('セグメントと検索', () => {
 
 // ---- 並び -------------------------------------------------------------
 
-test('sortForList: 日付の降順 → 登録日時の降順（同じなら元の順）', () => {
+test('sortForList: 日付の降順・金額の降順（同じ値は元の順）', () => {
   const list = [
-    { id: 'a', date: '2026-09-10', createdAt: { seconds: 300, nanoseconds: 0 } },
-    { id: 'b', date: '2026-09-12', createdAt: { seconds: 100, nanoseconds: 0 } },
-    { id: 'c', date: '2026-09-12', createdAt: { seconds: 200, nanoseconds: 0 } },
-    { id: 'd', date: '2026-09-12', createdAt: { seconds: 200, nanoseconds: 999 } },
-    { id: 'e', date: '2026-09-11' },
-    { id: 'f', date: '2026-09-12', createdAt: new Date(250_000) },
+    { id: 'a', date: '2026-09-10', amount: 100 },
+    { id: 'b', date: '2026-09-12', amount: 300 },
+    { id: 'c', date: '2026-09-11', amount: 100 },
+    { id: 'd', date: '2026-09-12', amount: 200 },
   ];
-  assert.deepEqual(sortForList(list).map((e) => e.id), ['f', 'c', 'd', 'b', 'e', 'a']);
+  assert.deepEqual(sortForList(list).map((e) => e.id), ['b', 'd', 'c', 'a']);
+  assert.deepEqual(sortForList(list, 'amount').map((e) => e.id), ['b', 'd', 'a', 'c']);
   // 入力は変更しない
-  assert.deepEqual(list.map((e) => e.id), ['a', 'b', 'c', 'd', 'e', 'f']);
-
-  const byAmount = sortForList(
-    [
-      { id: 'x', amount: 100 },
-      { id: 'y', amount: 300 },
-      { id: 'z', amount: 100 },
-    ],
-    'amount'
-  );
-  assert.deepEqual(byAmount.map((e) => e.id), ['y', 'x', 'z']);
+  assert.deepEqual(list.map((e) => e.id), ['a', 'b', 'c', 'd']);
 });
 
 test('timestampToMillis: Timestamp 風・Date・文字列・不正値', () => {
@@ -295,14 +285,31 @@ test('支払い者の候補と表示名（既存の編集ドロワーと同じ�
   assert.equal(payerDisplayNameFor('U-none', [], expenses), 'U-none');
 });
 
-test('resolvePayerName: Gmail はクレジットカード、不明系は履歴で補う', () => {
+test('resolvePayerName: Gmail はクレジットカード、固定費の自動計上は共通口座、不明系は履歴で補う', () => {
   const historical = [{ lineId: ME, displayName: 'あおい' }];
   assert.equal(resolvePayerName(expense({ inputSource: 'gmail_auto' }), historical), 'クレジットカード');
+  assert.equal(
+    resolvePayerName(expense({ inputSource: 'recurring', payerId: 'recurring-system', lineId: 'recurring-system' }), historical),
+    '共通口座'
+  );
+  // 固定費でも個人が立て替えたもの（支払い者がメンバー）は、その人の名前
+  assert.equal(
+    resolvePayerName(expense({ inputSource: 'recurring', payerId: ME, payerDisplayName: 'あおい' }), historical),
+    'あおい'
+  );
   assert.equal(resolvePayerName(expense({ payerDisplayName: 'べん' }), historical), 'べん');
   assert.equal(resolvePayerName(expense({ userDisplayName: 'メンバー' }), historical), 'あおい');
   assert.equal(resolvePayerName(expense({ userDisplayName: 'Unknown_1' }), historical), 'あおい');
   assert.equal(resolvePayerName(expense({}), historical), 'あおい');
   assert.equal(resolvePayerName(expense({ lineId: 'U-z' }), historical), '個人');
+});
+
+test('isCardSource: Gmail 取込と固定費の自動計上（共通口座）', () => {
+  assert.equal(isCardSource({ inputSource: 'gmail_auto' }), true);
+  assert.equal(isCardSource({ inputSource: 'recurring', payerId: 'recurring-system' }), true);
+  assert.equal(isCardSource({ inputSource: 'recurring', payerId: ME }), false);
+  assert.equal(isCardSource({ inputSource: 'line_text', payerId: 'recurring-system' }), false);
+  assert.equal(isCardSource({}), false);
 });
 
 test('buildCategoryOptions: 正準 → 既存 → 現在値', () => {
@@ -370,11 +377,13 @@ test('canClientDelete', () => {
 // ---- 金額 ------------------------------------------------------------
 
 test('yen', () => {
-  assert.equal(yen(3150), '¥3,150');
-  assert.equal(yen(0), '¥0');
-  assert.equal(yen(1234567), '¥1,234,567');
-  assert.equal(yen(Number.NaN), '¥0');
+  assert.equal(yen(3150, 'ja-JP'), '¥3,150');
+  assert.equal(yen(0, 'ja-JP'), '¥0');
+  assert.equal(yen(1234567, 'ja-JP'), '¥1,234,567');
+  assert.equal(yen(-500, 'ja-JP'), '¥-500');
   assert.equal(yen(3150).codePointAt(0), 0xa5); // 半角の円記号
+  // ロケール省略時は Number.prototype.toLocaleString() と同じ（既存の表示と同じ）
+  assert.equal(yen(1234567), `¥${(1234567).toLocaleString()}`);
 });
 
 // ---- household API の契約 ------------------------------------------------------

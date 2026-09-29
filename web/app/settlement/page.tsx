@@ -13,8 +13,7 @@ import { useHousehold, useLineAuth, useSettlement, patchCachedExpenses, invalida
 import { householdErrorCode, isHouseholdApiConfigured, settle } from '../../lib/householdApi';
 import { buildSettlementViewModel, clearedSettlement, groupSettlementItems } from '../../lib/settlementView';
 import { getCategoryVisual } from '../../lib/categoryVisuals';
-
-const yen = (n: number) => `¥${n.toLocaleString()}`;
+import { yen } from '../../lib/money';
 
 function settleErrorMessage(error: unknown): string {
   switch (householdErrorCode(error)) {

@@ -1,6 +1,8 @@
 // 明細の状態・絞り込み・並び・集計・書き込み可否の純関数。
-// node --test から直接読めるよう、他のモジュールからは型だけを import する。
+// node --test から直接読めるよう、他のモジュールからは型だけを import する（値の import は dayjs のみ）。
+import dayjs from 'dayjs';
 import type { Expense } from './hooks';
+import type { KnownUser } from './expenseEdit';
 
 type ExpenseFields = Partial<Omit<Expense, 'id'>>;
 
@@ -103,27 +105,50 @@ export function timestampToMillis(value: unknown): number {
 export type SortKey = 'date' | 'amount';
 
 /**
- * 一覧の並び。
- * - date: 日付の降順 → 登録日時の降順（既存の「日付降順・同日は取得順＝createdAt 降順」と同じ結果）
- * - amount: 金額の降順（同額は元の順）
+ * 一覧の並び（同じ値のものは元の順のまま）。
+ * - date: 日付の降順
+ * - amount: 金額の降順
  */
-export function sortForList<E extends Pick<ExpenseFields, 'date' | 'createdAt' | 'amount'>>(
-  list: readonly E[],
-  sortBy: SortKey = 'date'
-): E[] {
-  return list
-    .map((e, index) => ({ e, index }))
-    .sort((a, b) => {
-      if (sortBy === 'amount') {
-        return (Number(b.e.amount) || 0) - (Number(a.e.amount) || 0) || a.index - b.index;
-      }
-      return (
-        (b.e.date ?? '').localeCompare(a.e.date ?? '') ||
-        timestampToMillis(b.e.createdAt) - timestampToMillis(a.e.createdAt) ||
-        a.index - b.index
-      );
-    })
-    .map(({ e }) => e);
+export function sortForList<E extends Pick<Expense, 'date' | 'amount'>>(list: readonly E[], sortBy: SortKey = 'date'): E[] {
+  return [...list].sort((a, b) => {
+    if (sortBy === 'date') {
+      return dayjs(b.date).valueOf() - dayjs(a.date).valueOf();
+    }
+    return b.amount - a.amount;
+  });
+}
+
+// ---- 支払い者 -----------------------------------------------------------------
+
+/** 共通のカード・口座から払った支出（Gmail 自動取込・固定費の自動計上） */
+export function isCardSource(e: Pick<ExpenseFields, 'inputSource' | 'payerId'>): boolean {
+  return e.inputSource === 'gmail_auto' || (e.inputSource === 'recurring' && e.payerId === RECURRING_SYSTEM_LINE_ID);
+}
+
+/**
+ * 支払い者名（一覧のチップ・支払い者別の合計で共通）。
+ * - Gmail 自動取込は「クレジットカード」、固定費の自動計上は「共通口座」にまとめる
+ * - payerDisplayName を最優先し、不明系の名前は支出履歴から補う
+ */
+export function resolvePayerName(
+  expense: Pick<Expense, 'lineId'> &
+    Partial<Pick<Expense, 'inputSource' | 'payerId' | 'payerDisplayName' | 'userDisplayName'>>,
+  historicalUsers: readonly KnownUser[]
+): string {
+  if (expense.inputSource === 'gmail_auto') return 'クレジットカード';
+  if (expense.inputSource === 'recurring' && expense.payerId === RECURRING_SYSTEM_LINE_ID) return '共通口座';
+  const payerId = expense.payerId || expense.lineId;
+  let payerName = expense.payerDisplayName || expense.userDisplayName || '個人';
+  if (
+    payerName === 'メンバー' ||
+    payerName === '個人' ||
+    payerName.startsWith('Unknown_') ||
+    payerName.startsWith('User_')
+  ) {
+    const historical = historicalUsers.find((u) => u.lineId === payerId);
+    if (historical) payerName = historical.displayName;
+  }
+  return payerName;
 }
 
 // ---- 書き込み可否 -------------------------------------------------------------
@@ -196,7 +221,6 @@ export interface ExpenseFilter {
   budget: BudgetFilter;
   /** カテゴリ（'all' なら絞らない） */
   category: string;
-  sortBy: SortKey;
 }
 
 type FilterFields = Pick<ExpenseFields, 'description' | 'category' | 'includeInTotal'>;
@@ -236,7 +260,7 @@ export interface ExpenseSummary {
 
 /**
  * 明細の合計カード・支払い者別カードの集計。
- * 支払い者名は呼び出し側の規則（expenseEdit.resolvePayerName）で解決して渡す。
+ * 支払い者名は呼び出し側で（resolvePayerName で）解決して渡す。
  */
 export function summarizeExpenses<E extends Pick<ExpenseFields, 'amount' | 'includeInTotal'>>(
   list: readonly E[],

@@ -1,6 +1,9 @@
-// 金額の書式（既存の yen と同じ: 半角の円記号 U+00A5 ＋ 3 桁区切り）
+// 金額の書式（半角の円記号 U+00A5 ＋ 3 桁区切り）。
 
-export function yen(value: number): string {
-  const n = Number(value);
-  return `¥${(Number.isFinite(n) ? n : 0).toLocaleString('ja-JP')}`;
+/**
+ * 例: yen(1234) → "¥1,234"。
+ * locale を省くとブラウザの既定ロケールで区切る（Number.prototype.toLocaleString と同じ）。
+ */
+export function yen(value: number, locale?: string): string {
+  return `¥${Number(value).toLocaleString(locale)}`;
 }
