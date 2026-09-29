@@ -3,6 +3,7 @@
 import * as Recharts from 'recharts';
 import dayjs from 'dayjs';
 import { getCategoryVisual } from '../lib/categoryVisuals';
+import { yen } from '../lib/money';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // recharts + React 19 の JSX 型不整合(TS2786)を回避するためのキャスト。
@@ -19,8 +20,6 @@ const {
   CartesianGrid,
 } = Recharts as unknown as Record<string, any>;
 /* eslint-enable @typescript-eslint/no-explicit-any */
-
-const yen = (v: number) => `¥${Number(v).toLocaleString()}`;
 
 /* ----------------------------- Category donut ---------------------------- */
 interface CategoryPieChartProps {

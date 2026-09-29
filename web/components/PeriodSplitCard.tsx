@@ -15,8 +15,8 @@ import {
   type DateRangeSettings,
 } from '../lib/dateSettings';
 import { computePeriodSplit, formatYenExact } from '../lib/periodSplit';
+import { yen } from '../lib/money';
 
-const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`;
 // useExpenses の世帯クエリの上限。これに届いたら取りこぼしがありうる
 const FETCH_LIMIT = 500;
 
@@ -181,7 +181,7 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
                     ) : (
                       <>
                         <p className="mt-4 text-center text-4xl font-black tabular-nums text-fg">
-                          {yen(split.transfer?.amount ?? 0)}
+                          {yen(split.transfer?.amount ?? 0, 'ja-JP')}
                         </p>
                         <p className="mt-1 text-center text-xs text-muted">
                           {split.transfer
@@ -200,13 +200,13 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
                 <div className="mt-5 grid grid-cols-2 gap-3">
                   <div className="rounded-xl border border-line bg-fg/[0.02] p-3 text-center">
                     <p className="truncate text-xs text-muted">{split.target.displayName || 'メンバー'}の支払い</p>
-                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{yen(split.targetPaid)}</p>
+                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{yen(split.targetPaid, 'ja-JP')}</p>
                   </div>
                   <div className="rounded-xl border border-line bg-fg/[0.02] p-3 text-center">
                     <p className="truncate text-xs text-muted">
                       {split.counterpart.displayName || 'メンバー'}・カード・共通口座
                     </p>
-                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{yen(split.total - split.targetPaid)}</p>
+                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{yen(split.total - split.targetPaid, 'ja-JP')}</p>
                   </div>
                 </div>
               )}
@@ -217,7 +217,7 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
                     合計（{split.count}件{split.excludedCount > 0 ? `・除外${split.excludedCount}件` : ''}
                     {split.settledCount > 0 ? `・立替精算済み${split.settledCount}件` : ''}）
                   </dt>
-                  <dd className="font-medium text-fg">{yen(split.total)}</dd>
+                  <dd className="font-medium text-fg">{yen(split.total, 'ja-JP')}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-muted">1人あたり（÷ 2）</dt>
@@ -226,7 +226,7 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
                 {split.target && (
                   <div className="flex justify-between">
                     <dt className="text-muted">− {split.target.displayName || 'メンバー'}の支払い</dt>
-                    <dd className="font-medium text-fg">{yen(split.targetPaid)}</dd>
+                    <dd className="font-medium text-fg">{yen(split.targetPaid, 'ja-JP')}</dd>
                   </div>
                 )}
               </dl>

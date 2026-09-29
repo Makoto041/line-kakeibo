@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 
 import {
   isPending,
-  isCounted,
   isAdvance,
   isSettled,
   splitChip,
@@ -13,30 +12,25 @@ import {
   matchesSegment,
   matchesQuery,
   sortForList,
-  groupByDate,
-  relativeDateLabel,
-  absoluteDateLabel,
+  isCardSource,
+  resolvePayerName,
   timestampToMillis,
   canClientWrite,
   canClientDelete,
   canServerConfirm,
   isPersonalExpense,
-  DEFAULT_FILTER,
-  isFilterActive,
   filterExpenses,
   categoriesIn,
   summarizeExpenses,
 } from '../lib/expenseState.ts';
 import {
-  computeBudgetHero,
   computePeriodInsights,
   getActualSpending,
   calculatePace,
   idealProgress,
   buildCategoryBudgetRows,
 } from '../lib/budgetAnalytics.ts';
-import { getSampleExpenses, getSampleStats, SAMPLE_MEMBERS } from '../lib/sampleData.ts';
-import { shortPeriodLabel } from '../lib/periodLabel.ts';
+import { getSampleExpenses, getSampleStats } from '../lib/sampleData.ts';
 import {
   formFromExpense,
   validateEditForm,
@@ -47,12 +41,9 @@ import {
   mergeAvailableMembers,
   buildPayerOptions,
   payerDisplayNameFor,
-  resolvePayerName,
   buildCategoryOptions,
 } from '../lib/expenseEdit.ts';
-import { rowIconKey } from '../lib/expenseIcon.ts';
-import { yen, amountTier } from '../lib/money.ts';
-import { T } from '../lib/uiText.ts';
+import { yen } from '../lib/money.ts';
 import {
   deriveApiBase,
   isValidDocId,
@@ -60,12 +51,8 @@ import {
   parseConfirmResponse,
   parseSettleResult,
   classifyHouseholdFailure,
-  toastKeyForHouseholdError,
 } from '../lib/householdContract.ts';
 import {
-  summarizeAdvances,
-  computeHouseholdSettlement,
-  buildLocalSettlementResponse,
   initialsFor,
   buildSettlementViewModel,
   groupSettlementItems,
@@ -115,9 +102,6 @@ test('splitChip と状態の判定（bot の deriveExpenseSettings と同じ分�
   assert.equal(isAdvance({ status: 'shared' }), false);
   assert.equal(isSettled({ status: 'advance_settled' }), true);
   assert.equal(isSettled({ status: 'advance_pending' }), false);
-  assert.equal(isCounted({ includeInTotal: true }), true);
-  assert.equal(isCounted({ includeInTotal: false }), false);
-  assert.equal(isCounted({}), false); // useMonthlyStats と同じ truthy 判定
 });
 
 test('セグメントと検索', () => {
@@ -142,30 +126,19 @@ test('セグメントと検索', () => {
   assert.equal(matchesQuery({}, 'x'), false);
 });
 
-// ---- 並び・日付見出し -------------------------------------------------------------
+// ---- 並び -------------------------------------------------------------
 
-test('sortForList: 日付の降順 → 登録日時の降順（同じなら元の順）', () => {
+test('sortForList: 日付の降順・金額の降順（同じ値は元の順）', () => {
   const list = [
-    { id: 'a', date: '2026-09-10', createdAt: { seconds: 300, nanoseconds: 0 } },
-    { id: 'b', date: '2026-09-12', createdAt: { seconds: 100, nanoseconds: 0 } },
-    { id: 'c', date: '2026-09-12', createdAt: { seconds: 200, nanoseconds: 0 } },
-    { id: 'd', date: '2026-09-12', createdAt: { seconds: 200, nanoseconds: 999 } },
-    { id: 'e', date: '2026-09-11' },
-    { id: 'f', date: '2026-09-12', createdAt: new Date(250_000) },
+    { id: 'a', date: '2026-09-10', amount: 100 },
+    { id: 'b', date: '2026-09-12', amount: 300 },
+    { id: 'c', date: '2026-09-11', amount: 100 },
+    { id: 'd', date: '2026-09-12', amount: 200 },
   ];
-  assert.deepEqual(sortForList(list).map((e) => e.id), ['f', 'c', 'd', 'b', 'e', 'a']);
+  assert.deepEqual(sortForList(list).map((e) => e.id), ['b', 'd', 'c', 'a']);
+  assert.deepEqual(sortForList(list, 'amount').map((e) => e.id), ['b', 'd', 'a', 'c']);
   // 入力は変更しない
-  assert.deepEqual(list.map((e) => e.id), ['a', 'b', 'c', 'd', 'e', 'f']);
-
-  const byAmount = sortForList(
-    [
-      { id: 'x', amount: 100 },
-      { id: 'y', amount: 300 },
-      { id: 'z', amount: 100 },
-    ],
-    'amount'
-  );
-  assert.deepEqual(byAmount.map((e) => e.id), ['y', 'x', 'z']);
+  assert.deepEqual(list.map((e) => e.id), ['a', 'b', 'c', 'd']);
 });
 
 test('timestampToMillis: Timestamp 風・Date・文字列・不正値', () => {
@@ -175,50 +148,6 @@ test('timestampToMillis: Timestamp 風・Date・文字列・不正値', () => {
   assert.equal(timestampToMillis('1970-01-01T00:00:01.000Z'), 1000);
   assert.equal(timestampToMillis(undefined), 0);
   assert.equal(timestampToMillis('x'), 0);
-});
-
-test('groupByDate: 並んだ順に日付でまとめる', () => {
-  const groups = groupByDate([
-    { id: 1, date: '2026-09-12' },
-    { id: 2, date: '2026-09-12' },
-    { id: 3, date: '2026-09-11' },
-  ]);
-  assert.deepEqual(
-    groups.map((g) => [g.date, g.items.map((e) => e.id)]),
-    [
-      ['2026-09-12', [1, 2]],
-      ['2026-09-11', [3]],
-    ]
-  );
-  assert.deepEqual(groupByDate([]), []);
-});
-
-test('日付見出し: 今日 / 昨日 / M月D日 / 年跨ぎ', () => {
-  const today = '2026-09-24';
-  assert.equal(relativeDateLabel('2026-09-24', today), '今日');
-  assert.equal(relativeDateLabel('2026-09-23', today), '昨日');
-  assert.equal(relativeDateLabel('2026-09-12', today), '9月12日');
-  assert.equal(relativeDateLabel('2025-12-31', today), '2025年12月31日');
-  // 年初: 昨日は前年の 12/31
-  assert.equal(relativeDateLabel('2025-12-31', '2026-01-01'), '昨日');
-  assert.equal(relativeDateLabel('2025-12-30', '2026-01-01'), '2025年12月30日');
-  assert.equal(absoluteDateLabel('2026-09-24', today), '9月24日'); // ホームは今日でも絶対日付
-  assert.equal(absoluteDateLabel('2025-09-24', today), '2025年9月24日');
-  assert.equal(relativeDateLabel('not-a-date', today), 'not-a-date');
-});
-
-// ---- 月ラベル ------------------------------------------------------------------
-
-test('shortPeriodLabel: 起算日 1 / 16 / 期間指定 / 前年', () => {
-  const today = '2026-09-24';
-  assert.equal(shortPeriodLabel({ startDate: '2026-09-01', endDate: '2026-09-30', mode: 'monthly' }, today), '9月');
-  // 起算日 16: 9/16〜10/15 は開始月の「9月」
-  assert.equal(shortPeriodLabel({ startDate: '2026-09-16', endDate: '2026-10-15', mode: 'monthly' }, today), '9月');
-  assert.equal(shortPeriodLabel({ startDate: '2026-08-16', endDate: '2026-09-15', mode: 'monthly' }, today), '8月');
-  assert.equal(shortPeriodLabel({ startDate: '2026-09-01', endDate: '2026-09-30', mode: 'custom' }, today), '9/1〜9/30');
-  assert.equal(shortPeriodLabel({ startDate: '2025-12-01', endDate: '2025-12-31', mode: 'monthly' }, today), '2025年12月');
-  // 年跨ぎの起算日 16: 12/16〜1/15 を 1 月に見ると前年の 12 月
-  assert.equal(shortPeriodLabel({ startDate: '2025-12-16', endDate: '2026-01-15', mode: 'monthly' }, '2026-01-10'), '2025年12月');
 });
 
 // ---- 編集（PR #172 の入力チェックの移植） ---------------------------------------------
@@ -356,14 +285,31 @@ test('支払い者の候補と表示名（既存の編集ドロワーと同じ�
   assert.equal(payerDisplayNameFor('U-none', [], expenses), 'U-none');
 });
 
-test('resolvePayerName: Gmail はクレジットカード、不明系は履歴で補う', () => {
+test('resolvePayerName: Gmail はクレジットカード、固定費の自動計上は共通口座、不明系は履歴で補う', () => {
   const historical = [{ lineId: ME, displayName: 'あおい' }];
   assert.equal(resolvePayerName(expense({ inputSource: 'gmail_auto' }), historical), 'クレジットカード');
+  assert.equal(
+    resolvePayerName(expense({ inputSource: 'recurring', payerId: 'recurring-system', lineId: 'recurring-system' }), historical),
+    '共通口座'
+  );
+  // 固定費でも個人が立て替えたもの（支払い者がメンバー）は、その人の名前
+  assert.equal(
+    resolvePayerName(expense({ inputSource: 'recurring', payerId: ME, payerDisplayName: 'あおい' }), historical),
+    'あおい'
+  );
   assert.equal(resolvePayerName(expense({ payerDisplayName: 'べん' }), historical), 'べん');
   assert.equal(resolvePayerName(expense({ userDisplayName: 'メンバー' }), historical), 'あおい');
   assert.equal(resolvePayerName(expense({ userDisplayName: 'Unknown_1' }), historical), 'あおい');
   assert.equal(resolvePayerName(expense({}), historical), 'あおい');
   assert.equal(resolvePayerName(expense({ lineId: 'U-z' }), historical), '個人');
+});
+
+test('isCardSource: Gmail 取込と固定費の自動計上（共通口座）', () => {
+  assert.equal(isCardSource({ inputSource: 'gmail_auto' }), true);
+  assert.equal(isCardSource({ inputSource: 'recurring', payerId: 'recurring-system' }), true);
+  assert.equal(isCardSource({ inputSource: 'recurring', payerId: ME }), false);
+  assert.equal(isCardSource({ inputSource: 'line_text', payerId: 'recurring-system' }), false);
+  assert.equal(isCardSource({}), false);
 });
 
 test('buildCategoryOptions: 正準 → 既存 → 現在値', () => {
@@ -428,50 +374,16 @@ test('canClientDelete', () => {
   assert.equal(canClientDelete(expense(), null, groups), false);
 });
 
-// ---- 行アイコン・金額 ------------------------------------------------------------
+// ---- 金額 ------------------------------------------------------------
 
-test('rowIconKey: キーワードで上書き、無ければ null', () => {
-  assert.equal(rowIconKey('スーパー'), 'cart');
-  assert.equal(rowIconKey('まいばすけっと'), 'cart');
-  assert.equal(rowIconKey('ｽｰﾊﾟｰ'), 'cart');
-  assert.equal(rowIconKey('カフェ'), 'coffee');
-  assert.equal(rowIconKey('スタバ'), 'coffee');
-  assert.equal(rowIconKey('珈琲店'), 'coffee');
-  assert.equal(rowIconKey('交通費'), 'train');
-  assert.equal(rowIconKey('ＪＲ 定期'), 'train');
-  assert.equal(rowIconKey('Suicaチャージ'), 'train');
-  assert.equal(rowIconKey('スーパーでコーヒー'), 'cart'); // 上から順
-  assert.equal(rowIconKey('ランチ'), null);
-  assert.equal(rowIconKey(''), null);
-  assert.equal(rowIconKey(undefined), null);
-});
-
-test('yen と amountTier', () => {
-  assert.equal(yen(3150), '¥3,150');
-  assert.equal(yen(0), '¥0');
-  assert.equal(yen(1234567), '¥1,234,567');
-  assert.equal(yen(Number.NaN), '¥0');
+test('yen', () => {
+  assert.equal(yen(3150, 'ja-JP'), '¥3,150');
+  assert.equal(yen(0, 'ja-JP'), '¥0');
+  assert.equal(yen(1234567, 'ja-JP'), '¥1,234,567');
+  assert.equal(yen(-500, 'ja-JP'), '¥-500');
   assert.equal(yen(3150).codePointAt(0), 0xa5); // 半角の円記号
-  assert.equal(amountTier('¥38,150', 62), 62);
-  assert.equal(amountTier('¥123,456', 62), 62); // 8 字
-  assert.equal(amountTier('¥1,234,567', 62), 52); // 10 字
-  assert.equal(amountTier('¥123,456,789', 62), 44); // 12 字
-  assert.equal(amountTier('¥123,456', 68), 68);
-  assert.equal(amountTier('¥1,234,567', 68), 56);
-  assert.equal(amountTier('¥12,345,678', 68), 46);
-  assert.equal(amountTier('¥3,150', 44), 44);
-  assert.equal(amountTier('¥12,345,678', 44), 36);
-  assert.equal(amountTier('¥12,345,678', 24), 24);
-});
-
-test('uiText: トーストは 8 字以内、説明文にしない', () => {
-  for (const text of Object.values(T.toast)) {
-    assert.ok(Array.from(text).length <= 8, text);
-    assert.ok(!/しました|ください/.test(text), text);
-  }
-  assert.equal(T.home.remaining.length, T.home.over.length);
-  assert.ok(T.home.guest.length <= T.home.household.length);
-  assert.ok(T.expenses.uncounted.length <= T.expenses.counted.length);
+  // ロケール省略時は Number.prototype.toLocaleString() と同じ（既存の表示と同じ）
+  assert.equal(yen(1234567), `¥${(1234567).toLocaleString()}`);
 });
 
 // ---- household API の契約 ------------------------------------------------------
@@ -567,7 +479,7 @@ test('parseConfirmResponse / parseSettleResult', () => {
   assert.equal(parseSettleResult({ error: 'x' }), null);
 });
 
-test('エラーの分類とトーストの語（K5-1）', () => {
+test('エラーの分類（K5-1）', () => {
   assert.equal(classifyHouseholdFailure(409, { error: 'settled', message: '精算済みのため変更できません' }), 'settled');
   assert.equal(classifyHouseholdFailure(409, { error: 'stale' }), 'failed');
   assert.equal(classifyHouseholdFailure(403, {}), 'forbidden');
@@ -576,95 +488,9 @@ test('エラーの分類とトーストの語（K5-1）', () => {
   assert.equal(classifyHouseholdFailure(503, null), 'internal');
   assert.equal(classifyHouseholdFailure(401, null), 'unauthenticated');
   assert.equal(classifyHouseholdFailure(418, { error: '__proto__' }), 'failed');
-
-  assert.equal(toastKeyForHouseholdError('forbidden'), 'forbidden');
-  assert.equal(toastKeyForHouseholdError('unauthenticated'), 'forbidden');
-  assert.equal(toastKeyForHouseholdError('not_found'), 'network');
-  assert.equal(toastKeyForHouseholdError('network'), 'network');
-  assert.equal(toastKeyForHouseholdError('rate_limited'), 'busy');
-  assert.equal(toastKeyForHouseholdError('settled'), 'settled');
-  assert.equal(toastKeyForHouseholdError('nothing_to_settle'), 'settled');
-  assert.equal(toastKeyForHouseholdError('internal'), 'failed');
-  assert.equal(toastKeyForHouseholdError('undeterminable'), 'failed');
 });
 
 // ---- 精算 ---------------------------------------------------------------------
-
-test('computeHouseholdSettlement: bot と同じ式（SET-3 の補完、計算できない形）', () => {
-  const members = ['U-a', 'U-b'];
-  assert.deepEqual(computeHouseholdSettlement([], members), { basis: 'none', settlement: null });
-  // 2 人: 差額の 1/2（奇数は Math.round）
-  assert.deepEqual(
-    computeHouseholdSettlement(
-      [
-        { userId: 'U-a', totalAdvanced: 9001 },
-        { userId: 'U-b', totalAdvanced: 3000 },
-      ],
-      members
-    ),
-    { basis: 'pair', settlement: { fromUserId: 'U-b', toUserId: 'U-a', amount: 3001 } }
-  );
-  assert.deepEqual(
-    computeHouseholdSettlement(
-      [
-        { userId: 'U-a', totalAdvanced: 1000 },
-        { userId: 'U-b', totalAdvanced: 5000 },
-      ],
-      members
-    ).settlement,
-    { fromUserId: 'U-a', toUserId: 'U-b', amount: 2000 }
-  );
-  // 差額 0
-  assert.deepEqual(
-    computeHouseholdSettlement(
-      [
-        { userId: 'U-a', totalAdvanced: 1000 },
-        { userId: 'U-b', totalAdvanced: 1000 },
-      ],
-      members
-    ),
-    { basis: 'pair', settlement: null }
-  );
-  // 1 人だけ立替: 相手を 0 円で補う
-  assert.deepEqual(computeHouseholdSettlement([{ userId: 'U-a', totalAdvanced: 10000 }], members), {
-    basis: 'single_advancer',
-    settlement: { fromUserId: 'U-b', toUserId: 'U-a', amount: 5000 },
-  });
-  // 3 人以上・メンバー外・0 人
-  assert.equal(computeHouseholdSettlement([{ userId: 'U-a', totalAdvanced: 1 }], ['U-a', 'U-b', 'U-c']).basis, 'undeterminable');
-  assert.equal(computeHouseholdSettlement([{ userId: 'U-x', totalAdvanced: 1 }], members).basis, 'undeterminable');
-  assert.equal(computeHouseholdSettlement([{ userId: 'U-a', totalAdvanced: 1 }], []).basis, 'undeterminable');
-});
-
-test('summarizeAdvances と buildLocalSettlementResponse（ゲスト用サンプルの導出）', () => {
-  const expenses = [
-    { id: 's1', amount: 3000, status: 'advance_pending', advanceBy: 'U-a', createdAt: { seconds: 10 } },
-    { id: 's2', amount: 1500, status: 'advance_pending', payerId: 'U-b', createdAt: { seconds: 30 } },
-    { id: 's3', amount: 700, status: 'advance_settled', advanceBy: 'U-a' },
-    { id: 's4', amount: 800, status: 'shared', advanceBy: 'U-a' },
-    { id: 's5', amount: 2000, status: 'advance_pending', advanceBy: 'U-a', createdAt: { seconds: 20 } },
-  ];
-  assert.deepEqual(summarizeAdvances(expenses), [
-    { userId: 'U-a', totalAdvanced: 5000, expenseIds: ['s1', 's5'] },
-    { userId: 'U-b', totalAdvanced: 1500, expenseIds: ['s2'] },
-  ]);
-  const resp = buildLocalSettlementResponse({
-    groupId: 'sample',
-    members: [
-      { lineId: 'U-a', displayName: 'A' },
-      { lineId: 'U-b', displayName: 'B' },
-    ],
-    expenses,
-    asOf: 'now',
-  });
-  assert.deepEqual(resp.totals, { 'U-a': 5000, 'U-b': 1500 });
-  assert.equal(resp.basis, 'pair');
-  assert.deepEqual(resp.settlement, { fromUserId: 'U-b', toUserId: 'U-a', amount: 1750 });
-  assert.deepEqual(resp.expenseIds, ['s2', 's5', 's1']); // 登録日時の降順
-  assert.equal(resp.items[0].advanceBy, 'U-b');
-  // 返した形はサーバー応答の検証も通る
-  assert.ok(parseSettlementResponse(resp));
-});
 
 test('initialsFor: 先頭 1 文字・英字は大文字・重なれば 2 文字', () => {
   assert.deepEqual(initialsFor(['aoi', 'ben']), ['A', 'B']);
@@ -753,27 +579,25 @@ test('groupSettlementItems: 立替者ごとに合計', () => {
 });
 
 
-// ---- 検索・絞り込み・集計（検索シート） -------------------------------------------
+// ---- 絞り込み・集計（フィルター・合計カード） -------------------------------------------
 
-test('filterExpenses / isFilterActive: 文字・予算・カテゴリの順に絞る', () => {
+test('filterExpenses: 文字・予算・カテゴリの順に絞る', () => {
+  const NO_FILTER = { query: '', budget: 'all', category: 'all' };
   const list = [
     expense({ id: 'a', description: 'スーパー 駅前', category: '食費', includeInTotal: true }),
     expense({ id: 'b', description: 'カフェ', category: '食費', includeInTotal: false }),
     expense({ id: 'c', description: '電車', category: '交通費', includeInTotal: true }),
   ];
-  assert.equal(isFilterActive(DEFAULT_FILTER), false);
-  assert.deepEqual(filterExpenses(list, DEFAULT_FILTER).map((e) => e.id), ['a', 'b', 'c']);
-  assert.deepEqual(filterExpenses(list, { ...DEFAULT_FILTER, query: 'ｽｰﾊﾟｰ' }).map((e) => e.id), ['a']);
-  assert.deepEqual(filterExpenses(list, { ...DEFAULT_FILTER, query: '食費' }).map((e) => e.id), ['a', 'b']);
-  assert.deepEqual(filterExpenses(list, { ...DEFAULT_FILTER, budget: 'included' }).map((e) => e.id), ['a', 'c']);
-  assert.deepEqual(filterExpenses(list, { ...DEFAULT_FILTER, budget: 'excluded' }).map((e) => e.id), ['b']);
-  assert.deepEqual(filterExpenses(list, { ...DEFAULT_FILTER, category: '交通費' }).map((e) => e.id), ['c']);
-  assert.equal(isFilterActive({ ...DEFAULT_FILTER, query: '  ' }), false);
-  assert.equal(isFilterActive({ ...DEFAULT_FILTER, sortBy: 'amount' }), true);
+  assert.deepEqual(filterExpenses(list, NO_FILTER).map((e) => e.id), ['a', 'b', 'c']);
+  assert.deepEqual(filterExpenses(list, { ...NO_FILTER, query: 'ｽｰﾊﾟｰ' }).map((e) => e.id), ['a']);
+  assert.deepEqual(filterExpenses(list, { ...NO_FILTER, query: '食費' }).map((e) => e.id), ['a', 'b']);
+  assert.deepEqual(filterExpenses(list, { ...NO_FILTER, budget: 'included' }).map((e) => e.id), ['a', 'c']);
+  assert.deepEqual(filterExpenses(list, { ...NO_FILTER, budget: 'excluded' }).map((e) => e.id), ['b']);
+  assert.deepEqual(filterExpenses(list, { ...NO_FILTER, category: '交通費' }).map((e) => e.id), ['c']);
   assert.deepEqual(categoriesIn(list), ['食費', '交通費']);
 });
 
-test('summarizeExpenses: 刷新前の合計カード・支払い者別カードと同じ集計', () => {
+test('summarizeExpenses: 合計カード・支払い者別カードの集計', () => {
   const list = [
     expense({ id: 'a', amount: 1000, includeInTotal: true, payerDisplayName: 'Aoi' }),
     expense({ id: 'b', amount: 500, includeInTotal: false, payerDisplayName: 'Aoi' }),
@@ -791,24 +615,9 @@ test('summarizeExpenses: 刷新前の合計カード・支払い者別カード�
   ]);
 });
 
-// ---- 予算（ホームの予算残り・予算シート） ------------------------------------------
+// ---- 予算（ホームの判断インサイト・予算管理） ------------------------------------------
 
-test('computeBudgetHero: 残り・超過・使った割合', () => {
-  assert.deepEqual(computeBudgetHero(150000, 200000), {
-    spent: 150000, budget: 200000, remaining: 50000, over: false, pct: 75, barPct: 75,
-  });
-  const over = computeBudgetHero(230000, 200000);
-  assert.equal(over.remaining, -30000);
-  assert.equal(over.over, true);
-  assert.equal(over.pct, 115);
-  assert.equal(over.barPct, 100);
-  // 四捨五入（刷新前の Math.round(spent / budget * 100) と同じ）
-  assert.equal(computeBudgetHero(1234, 10000).pct, 12);
-  assert.equal(computeBudgetHero(1250, 10000).pct, 13);
-  assert.equal(computeBudgetHero(100, 0).pct, 0);
-});
-
-test('computePeriodInsights: 刷新前のホームと同じ式', () => {
+test('computePeriodInsights: ホームの判断インサイトの式', () => {
   const x = computePeriodInsights({
     stats: { totalAmount: 90000, expenseCount: 12 },
     prevStats: { totalAmount: 100000 },
@@ -822,7 +631,7 @@ test('computePeriodInsights: 刷新前のホームと同じ式', () => {
   assert.equal(x.dailyAverage, 3000);
   assert.equal(x.budgetPct, 60);
   assert.equal(x.budgetRemaining, 60000);
-  assert.equal(x.daysLeft, 6); // 9/24 20:00 → 9/30（刷新前と同じ日数差 + 1）
+  assert.equal(x.daysLeft, 6); // 9/24 20:00 → 9/30（日数差 + 1）
   assert.equal(x.perDayAvailable, 10000);
   assert.equal(x.momPct, -10);
   // 期間指定では前月比を出さない。前期間が 0 でも出さない
@@ -904,17 +713,3 @@ test('clearedSettlement: 精算後は未精算なし・¥0・ボタン無効', (
   assert.equal(vm.canOpenBreakdown, false);
 });
 
-test('ゲスト用のサンプル精算: サンプル支出から導出し、参照画像の金額を使わない', () => {
-  const resp = buildLocalSettlementResponse({
-    groupId: 'sample',
-    members: SAMPLE_MEMBERS,
-    expenses: getSampleExpenses(),
-    asOf: 'now',
-  });
-  assert.equal(resp.basis, 'pair');
-  assert.equal(resp.expenseIds.length, 3);
-  const vm = buildSettlementViewModel(resp, { apiAvailable: true, guest: true });
-  assert.equal(vm.canSettle, false); // ゲストは記録できない
-  const shown = [vm.amount, ...vm.rows.map((r) => r.total)];
-  for (const reference of [4200, 12400, 4000]) assert.ok(!shown.includes(reference));
-});

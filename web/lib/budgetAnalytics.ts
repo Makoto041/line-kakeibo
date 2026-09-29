@@ -1,39 +1,9 @@
-// 予算まわりの計算（ホームの「予算残り」と予算シート）。計算式は刷新前のホームと同じ。
+// 予算まわりの計算（ホームの判断インサイトと予算管理カード）。
 // node --test から直接読めるよう、他のモジュールからは型だけを import する（値の import は dayjs のみ）。
 import dayjs from 'dayjs';
 import type { ExpenseStats } from './hooks';
 
-// ---- ホームの「予算残り」 --------------------------------------------------------
-
-export interface BudgetHeroNumbers {
-  spent: number;
-  budget: number;
-  /** 予算 − 支出（超過ならマイナス） */
-  remaining: number;
-  over: boolean;
-  /** 使った割合（四捨五入。100 を超えることもある） */
-  pct: number;
-  /** バーの長さ（0〜100） */
-  barPct: number;
-}
-
-/** spent / budget の表示用の値（刷新前の予算進捗と同じ Math.round(spent / budget * 100)） */
-export function computeBudgetHero(spent: number, budget: number): BudgetHeroNumbers {
-  const s = Number.isFinite(spent) ? spent : 0;
-  const b = Number.isFinite(budget) ? budget : 0;
-  const remaining = b - s;
-  const pct = b > 0 ? Math.round((s / b) * 100) : 0;
-  return {
-    spent: s,
-    budget: b,
-    remaining,
-    over: remaining < 0,
-    pct,
-    barPct: Math.max(0, Math.min(pct, 100)),
-  };
-}
-
-// ---- 予算シートの数値 ----------------------------------------------------------
+// ---- 期間の数値（サマリー・判断インサイト） ------------------------------------
 
 export interface PeriodInsights {
   totalExpense: number;
@@ -136,7 +106,7 @@ export function getActualSpending(budgetCategory: string, categoryTotals: Record
 
 export type Pace = 'good' | 'warning' | 'danger' | 'unset';
 
-/** ペース（暦月で日割りした予算との比。刷新前と同じく今日の日付で見る） */
+/** ペース（暦月で日割りした予算との比。今日の日付で見る） */
 export function calculatePace(actual: number, budget: number, now?: dayjs.ConfigType): Pace {
   const today = dayjs(now ?? undefined);
   const prorated = (budget / today.daysInMonth()) * today.date();

@@ -8,6 +8,7 @@ import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
 import { isSafeImageUrl } from "../../lib/imageUrl";
 import { compressImage } from "../../lib/imageCompress";
+import { yen } from "../../lib/money";
 import dayjs from "dayjs";
 
 // Suspense boundary for useSearchParams（ビルドエラー防止）
@@ -247,7 +248,7 @@ function AttachPageContent() {
                 {expense.description}
               </p>
               <p className="mt-1 text-2xl font-bold tabular-nums text-fg">
-                ¥{expense.amount.toLocaleString()}
+                {yen(expense.amount)}
               </p>
               <p className="mt-1 text-sm text-muted">
                 {expense.date

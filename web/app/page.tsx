@@ -15,243 +15,22 @@ import {
   AlertTriangle,
   Clock,
 } from 'lucide-react';
-import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses, ExpenseStats, BudgetConfig } from '../lib/hooks';
+import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses } from '../lib/hooks';
 import { countPending } from '../lib/expenseState';
 import Link from 'next/link';
 import { CategoryPieChart, DailyLineChart } from '../components/Charts';
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
-import { getCategoryVisual } from '../lib/categoryVisuals';
 import PreviewModeBanner from '../components/PreviewModeBanner';
 import GuestGuide from '../components/GuestGuide';
 import { getSampleStats } from '../lib/sampleData';
+import { yen } from '../lib/money';
+import { computePeriodInsights } from '../lib/budgetAnalytics';
+import { GlassCard } from '../components/home/GlassCard';
+import { SummaryCard } from '../components/home/SummaryCard';
+import { BudgetProgress } from '../components/home/BudgetProgress';
 import { getCached, setCached, hasCached } from '../lib/swrCache';
 import dayjs from 'dayjs';
 import { db } from '../lib/firebase';
-
-const yen = (v: number) => `¥${Number(v).toLocaleString()}`;
-
-// 予算カテゴリ名（正準）→ 支出データのカテゴリ名（旧表記ゆれも吸収）
-const budgetToExpenseCategory: Record<string, string[]> = {
-  食費: ['食費'],
-  交通費: ['交通費'],
-  日用品: ['日用品', '日用品費'],
-  娯楽: ['娯楽', '娯楽費'],
-  衣服: ['衣服', '衣服費', '被服費'],
-  '医療・健康': ['医療・健康', '医療費', '医療', '健康'],
-  教育: ['教育', '教育費'],
-  光熱費: ['光熱費', '水道光熱費'],
-  住居費: ['住居費', '居住費', '家賃'],
-  保険: ['保険', '保険料'],
-  税金: ['税金'],
-  美容: ['美容', '美容費', '美容・理容'],
-  通信費: ['通信費'],
-  サブスク: ['サブスク', 'サブスクリプション'],
-  プレゼント: ['プレゼント', 'ギフト'],
-  旅行: ['旅行'],
-  ペット: ['ペット'],
-  貯金: ['貯金'],
-  その他: ['その他'],
-};
-
-function getActualSpending(budgetCategory: string, categoryTotals: Record<string, number>): number {
-  let mapped = budgetToExpenseCategory[budgetCategory];
-  if (!mapped) {
-    // 旧予算キー（例: 娯楽費・医療費）を逆引きして正準キーに解決する。
-    // 正準キーへ統一する以前に保存された予算でも実支出と突き合うようにする。
-    const canonical = Object.keys(budgetToExpenseCategory).find((key) =>
-      budgetToExpenseCategory[key].includes(budgetCategory)
-    );
-    mapped = canonical ? budgetToExpenseCategory[canonical] : [budgetCategory];
-  }
-  return mapped.reduce((sum, cat) => sum + (categoryTotals[cat] || 0), 0);
-}
-
-type Pace = 'good' | 'warning' | 'danger';
-
-function calculatePace(actual: number, budget: number): { pace: Pace; label: string } {
-  const today = dayjs();
-  const prorated = (budget / today.daysInMonth()) * today.date();
-  if (budget === 0) return { pace: 'good', label: '未設定' };
-  const ratio = actual / prorated;
-  if (ratio <= 1) return { pace: 'good', label: '順調' };
-  if (ratio <= 1.2) return { pace: 'warning', label: 'やや超過' };
-  return { pace: 'danger', label: '超過' };
-}
-
-function progressColor(pct: number): string {
-  if (pct <= 80) return 'bg-emerald-500';
-  if (pct <= 100) return 'bg-amber-500';
-  return 'bg-rose-500';
-}
-
-function paceBadge(pace: Pace): string {
-  if (pace === 'good') return 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400';
-  if (pace === 'warning') return 'bg-amber-500/12 text-amber-600 dark:text-amber-400';
-  return 'bg-rose-500/12 text-rose-600 dark:text-rose-400';
-}
-
-/* -------------------------------- Card ---------------------------------- */
-function GlassCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <div className={`glass rounded-2xl shadow-glass ${className}`}>{children}</div>;
-}
-
-/* ---------------------------- Summary card ------------------------------ */
-function SummaryCard({
-  label,
-  value,
-  Icon,
-  tone,
-}: {
-  label: string;
-  value: string;
-  Icon: typeof Wallet;
-  tone: string;
-}) {
-  return (
-    <GlassCard className="p-4">
-      <span className={`inline-grid h-9 w-9 place-items-center rounded-xl ${tone}`}>
-        <Icon className="h-[18px] w-[18px]" strokeWidth={2.1} />
-      </span>
-      <p className="mt-3 text-[11px] font-medium text-muted">{label}</p>
-      <p className="mt-0.5 text-xl font-bold tracking-tight text-fg tabular-nums">{value}</p>
-    </GlassCard>
-  );
-}
-
-/* --------------------------- Budget progress ---------------------------- */
-function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; budgetConfig: BudgetConfig | null }) {
-  if (!budgetConfig) return null;
-  const categoryTotals = stats?.categoryTotals || {};
-  const { categoryBudgets, monthlyBudget } = budgetConfig;
-
-  // 予算>0 のカテゴリに加え、実支出があるカテゴリも表示する
-  // （予算0でも記録があれば出す）。
-  const rowsMap = new Map<string, { category: string; budget: number; actual: number }>();
-
-  // 1) 正準カテゴリ: 予算あり or 実支出あり
-  Object.keys(budgetToExpenseCategory).forEach((category) => {
-    const budget = categoryBudgets[category] || 0;
-    const actual = getActualSpending(category, categoryTotals);
-    if (budget > 0 || actual > 0) rowsMap.set(category, { category, budget, actual });
-  });
-
-  // 2) エイリアスに無いカスタム/旧表記の支出カテゴリも拾う
-  const aliasClaimed = new Set<string>();
-  Object.values(budgetToExpenseCategory).forEach((arr) => arr.forEach((a) => aliasClaimed.add(a)));
-  Object.entries(categoryTotals).forEach(([category, amt]) => {
-    if (amt > 0 && !aliasClaimed.has(category) && !rowsMap.has(category)) {
-      rowsMap.set(category, { category, budget: categoryBudgets[category] || 0, actual: amt });
-    }
-  });
-
-  // 3) 予算>0 だが上で拾えていない旧キーも残す（後方互換）
-  Object.keys(categoryBudgets).forEach((category) => {
-    if (categoryBudgets[category] > 0 && !rowsMap.has(category)) {
-      rowsMap.set(category, {
-        category,
-        budget: categoryBudgets[category],
-        actual: getActualSpending(category, categoryTotals),
-      });
-    }
-  });
-
-  const cats = Array.from(rowsMap.values()).sort((a, b) => {
-    // 予算ありを使用率の高い順に上へ、予算なし(0)は実支出の多い順で下へ
-    const ra = a.budget > 0 ? a.actual / a.budget : -1;
-    const rb = b.budget > 0 ? b.actual / b.budget : -1;
-    if (rb !== ra) return rb - ra;
-    return b.actual - a.actual;
-  });
-
-  const totalActual = stats?.totalAmount || 0;
-  const totalPct = monthlyBudget > 0 ? (totalActual / monthlyBudget) * 100 : 0;
-  const totalRemaining = monthlyBudget - totalActual;
-  const totalPace = calculatePace(totalActual, monthlyBudget);
-  const idealProgress = (dayjs().date() / dayjs().daysInMonth()) * 100;
-
-  return (
-    <GlassCard className="p-5">
-      <h2 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-fg">
-        <Wallet className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
-        予算管理
-      </h2>
-
-      {/* Monthly total */}
-      <div className="rounded-xl border border-line/70 bg-fg/[0.02] p-4">
-        <div className="mb-2.5 flex items-center justify-between">
-          <span className="text-sm font-medium text-fg">月間予算</span>
-          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${paceBadge(totalPace.pace)}`}>
-            {totalPace.label}
-          </span>
-        </div>
-        <div className="relative h-2.5 overflow-hidden rounded-full bg-fg/10">
-          <div
-            className="absolute inset-y-0 z-10 w-px bg-accent/70"
-            style={{ left: `${Math.min(idealProgress, 100)}%` }}
-            aria-hidden
-          />
-          <div
-            className={`h-full rounded-full ${progressColor(totalPct)} transition-[width] duration-500`}
-            style={{ width: `${Math.min(totalPct, 100)}%` }}
-          />
-        </div>
-        <div className="mt-2 flex items-center justify-between text-sm">
-          <span className="tabular-nums text-muted">
-            {yen(totalActual)} / {yen(monthlyBudget)}
-          </span>
-          <span className={`font-semibold tabular-nums ${totalRemaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-            {totalRemaining >= 0 ? `残り ${yen(totalRemaining)}` : `超過 ${yen(Math.abs(totalRemaining))}`}
-          </span>
-        </div>
-      </div>
-
-      {/* Category budgets */}
-      {cats.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted">記録がまだありません</p>
-      ) : (
-        <ul className="mt-4 space-y-3.5">
-          {cats.map(({ category, budget, actual }) => {
-            const hasBudget = budget > 0;
-            const pct = hasBudget ? (actual / budget) * 100 : 0;
-            const remaining = budget - actual;
-            const v = getCategoryVisual(category);
-            const Icon = v.icon;
-            return (
-              <li key={category}>
-                <div className="mb-1.5 flex items-center gap-2">
-                  <span className={`inline-grid h-6 w-6 place-items-center rounded-lg ${v.bg} ${v.fg}`}>
-                    <Icon className="h-3.5 w-3.5" strokeWidth={2.2} />
-                  </span>
-                  <span className="text-sm font-medium text-fg">{category}</span>
-                  <span className="ml-auto tabular-nums text-xs text-muted">
-                    {hasBudget ? `${yen(actual)} / ${yen(budget)}` : yen(actual)}
-                  </span>
-                </div>
-                {hasBudget ? (
-                  <>
-                    <div className="relative h-1.5 overflow-hidden rounded-full bg-fg/10">
-                      <div
-                        className={`h-full rounded-full ${progressColor(pct)} transition-[width] duration-500`}
-                        style={{ width: `${Math.min(pct, 100)}%` }}
-                      />
-                    </div>
-                    <div className="mt-1 text-right text-xs">
-                      <span className={remaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
-                        {remaining >= 0 ? `残 ${yen(remaining)}` : `超 ${yen(Math.abs(remaining))}`}
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="mt-1 text-right text-[11px] text-muted">予算未設定</div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </GlassCard>
-  );
-}
 
 /* ------------------------------- Page ----------------------------------- */
 export default function Dashboard() {
@@ -363,34 +142,25 @@ export default function Dashboard() {
   const isGuest = !lineId;
   const displayStats = isGuest ? sampleStats : stats;
 
-  const totalExpense = displayStats?.totalAmount || 0;
-  const expenseCount = displayStats?.expenseCount || 0;
-  const days = dayjs(effectiveRange.endDate).diff(dayjs(effectiveRange.startDate), 'day') + 1;
-  const dailyAverage = totalExpense > 0 ? Math.round(totalExpense / days) : 0;
-
-  // --- 判断インサイト（予算・前月比・残ペース） ---
-  const monthlyBudget = budgetConfig?.monthlyBudget || 0;
-  const budgetPct = monthlyBudget > 0 ? Math.round((totalExpense / monthlyBudget) * 100) : null;
-  const budgetRemaining = monthlyBudget > 0 ? monthlyBudget - totalExpense : null;
-
-  // この期間の残り日数（今日が期間内なら今日〜終了日、過ぎていれば0扱い）
-  const today = dayjs();
-  const endD = dayjs(effectiveRange.endDate);
-  const daysLeft = endD.isBefore(today, 'day')
-    ? 0
-    : endD.diff(today.isBefore(dayjs(effectiveRange.startDate)) ? dayjs(effectiveRange.startDate) : today, 'day') + 1;
-  const perDayAvailable =
-    monthlyBudget > 0 && budgetRemaining !== null && budgetRemaining > 0 && daysLeft > 0
-      ? Math.floor(budgetRemaining / daysLeft)
-      : null;
-
-  const prevTotal = isGuest ? 0 : prevStats?.totalAmount || 0;
-  // 固定のカスタム期間では getEffectiveDateRange が prevDate を無視し、前期間が
-  // 現在と同一になる（＝自分自身と比較して常に0%）。その場合は前月比を出さない。
-  const momPct =
-    dateSettings.mode !== 'custom' && prevTotal > 0
-      ? Math.round(((totalExpense - prevTotal) / prevTotal) * 100)
-      : null;
+  // --- サマリーと判断インサイト（予算・前月比・残ペース） ---
+  // 固定のカスタム期間では前期間が現在と同一になる（＝自分自身と比較して常に0%）ため、前月比は出さない。
+  const {
+    totalExpense,
+    expenseCount,
+    dailyAverage,
+    budgetPct,
+    budgetRemaining,
+    daysLeft,
+    perDayAvailable,
+    momPct,
+    prevTotal,
+  } = computePeriodInsights({
+    stats: displayStats,
+    prevStats: isGuest ? null : prevStats,
+    monthlyBudget: budgetConfig?.monthlyBudget,
+    range: effectiveRange,
+    mode: dateSettings.mode,
+  });
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-5 md:px-8 md:py-7">

@@ -201,7 +201,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - Tailwind CSS v4（CSS 変数トークン、ライト/ダーク/システム切替）
 - framer-motion による SPA 風ページ遷移アニメーション＋メモリ内 SWR キャッシュ（`lib/swrCache.ts`）で再読込感を排除
 - レスポンシブ: デスクトップはサイドバー、モバイルはボトムタブ。タブは **ホーム / 支出 / 精算 / 設定** の 4 つ（`components/layout/nav.ts`）
-- `/attach` `/link` はナビ chrome なし（`lib/routes.ts` の BARE_ROUTES）
+- `/attach` `/link` はナビ chrome なし（`components/layout/AppShell.tsx` の BARE_ROUTES）
 - セキュリティヘッダー（`next.config.ts`）: CSP は Report-Only、`X-Frame-Options: DENY`、`X-Robots-Tag: noindex`
 
 ### 5.3 データアクセス

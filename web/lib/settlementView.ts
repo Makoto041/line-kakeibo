@@ -1,135 +1,5 @@
-// ふたり（精算）の表示用の純関数。
-// 実データの値はすべてサーバー応答（SettlementResponse）から作る。ゲスト用のサンプルだけは
-// サンプルの支出から同じ式（bot の getAdvanceSummaryByUser / calculateSettlement と同じ）で導出する。
-import type { Expense } from './hooks';
-import type {
-  SettlementBasis,
-  SettlementItem,
-  SettlementMember,
-  SettlementResponse,
-  SettlementTransfer,
-} from './householdContract';
-
-// ---- 計算（bot と同じ式） -------------------------------------------------------
-
-export interface AdvanceSummary {
-  userId: string;
-  totalAdvanced: number;
-  expenseIds: string[];
-}
-
-type AdvanceFields = Pick<Expense, 'id' | 'amount'> & Partial<Pick<Expense, 'status' | 'advanceBy' | 'payerId'>>;
-
-/** 未精算の立替を立替者（advanceBy、無ければ payerId）ごとに合計する */
-export function summarizeAdvances(expenses: readonly AdvanceFields[]): AdvanceSummary[] {
-  const byUser = new Map<string, AdvanceSummary>();
-  for (const e of expenses) {
-    if (e.status !== 'advance_pending') continue;
-    const userId = e.advanceBy || e.payerId || '';
-    let summary = byUser.get(userId);
-    if (!summary) {
-      summary = { userId, totalAdvanced: 0, expenseIds: [] };
-      byUser.set(userId, summary);
-    }
-    summary.totalAdvanced += Number(e.amount) || 0;
-    summary.expenseIds.push(e.id);
-  }
-  return Array.from(byUser.values());
-}
-
-/** bot の calculateSettlement と同じ: 2 人の差額の 1/2 を Math.round。差額 0 なら null */
-function calculateSettlement(
-  a: Pick<AdvanceSummary, 'userId' | 'totalAdvanced'>,
-  b: Pick<AdvanceSummary, 'userId' | 'totalAdvanced'>
-): SettlementTransfer | null {
-  const diff = a.totalAdvanced - b.totalAdvanced;
-  if (diff === 0) return null;
-  return diff > 0
-    ? { fromUserId: b.userId, toUserId: a.userId, amount: Math.round(diff / 2) }
-    : { fromUserId: a.userId, toUserId: b.userId, amount: Math.round(Math.abs(diff) / 2) };
-}
-
-/**
- * 世帯の精算額。
- * - none: 立替なし
- * - pair: 2 人とも立替あり
- * - single_advancer: 1 人だけ立替（相手を 0 円として補う）
- * - undeterminable: 有効メンバーが 2 人でない・立替者がメンバー外（金額を出さない）
- */
-export function computeHouseholdSettlement(
-  summaries: ReadonlyArray<Pick<AdvanceSummary, 'userId' | 'totalAdvanced'>>,
-  activeMemberIds: readonly string[]
-): { basis: SettlementBasis; settlement: SettlementTransfer | null } {
-  if (summaries.length === 0) return { basis: 'none', settlement: null };
-  const members = Array.from(new Set(activeMemberIds));
-  const allMembers = summaries.every((s) => members.includes(s.userId));
-  if (members.length !== 2 || !allMembers) return { basis: 'undeterminable', settlement: null };
-  if (summaries.length === 2) {
-    return { basis: 'pair', settlement: calculateSettlement(summaries[0], summaries[1]) };
-  }
-  if (summaries.length === 1) {
-    const other = members.find((id) => id !== summaries[0].userId) as string;
-    return {
-      basis: 'single_advancer',
-      settlement: calculateSettlement(summaries[0], { userId: other, totalAdvanced: 0 }),
-    };
-  }
-  return { basis: 'undeterminable', settlement: null };
-}
-
-function createdMillis(value: unknown): number {
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === 'object' && value !== null && typeof (value as { seconds?: unknown }).seconds === 'number') {
-    return (value as { seconds: number }).seconds * 1000;
-  }
-  return 0;
-}
-
-type LocalAdvanceFields = AdvanceFields &
-  Partial<Pick<Expense, 'date' | 'description' | 'category' | 'createdAt'>>;
-
-/**
- * 支出の一覧からサーバー応答と同じ形を作る（ゲスト用サンプル）。
- * items は登録日時の降順（getPendingAdvances と同じ）。
- */
-export function buildLocalSettlementResponse(input: {
-  groupId: string;
-  members: readonly SettlementMember[];
-  expenses: readonly LocalAdvanceFields[];
-  asOf: string;
-}): SettlementResponse {
-  const pending = input.expenses
-    .filter((e) => e.status === 'advance_pending')
-    .map((e, index) => ({ e, index }))
-    .sort((a, b) => createdMillis(b.e.createdAt) - createdMillis(a.e.createdAt) || a.index - b.index)
-    .map(({ e }) => e);
-  const summaries = summarizeAdvances(pending);
-  const memberIds = input.members.map((m) => m.lineId);
-  const totals: Record<string, number> = {};
-  for (const id of memberIds) totals[id] = 0;
-  for (const s of summaries) totals[s.userId] = (totals[s.userId] ?? 0) + s.totalAdvanced;
-  const { basis, settlement } = computeHouseholdSettlement(summaries, memberIds);
-  const people = new Set([...memberIds, ...summaries.map((s) => s.userId)]);
-  return {
-    groupId: input.groupId,
-    scope: 'group',
-    members: input.members.map((m) => ({ ...m })),
-    totals,
-    basis,
-    reason: basis === 'undeterminable' ? (people.size > 2 ? 'more_than_two' : 'partner_unknown') : null,
-    settlement,
-    items: pending.map((e) => ({
-      id: e.id,
-      date: e.date ?? '',
-      description: e.description ?? '',
-      amount: Number(e.amount) || 0,
-      category: e.category ?? '',
-      advanceBy: e.advanceBy || e.payerId || null,
-    })),
-    expenseIds: pending.map((e) => e.id),
-    asOf: input.asOf,
-  };
-}
+// 精算画面の表示用の純関数。値はすべてサーバー応答（SettlementResponse）から作る。
+import type { SettlementItem, SettlementMember, SettlementResponse } from './householdContract';
 
 // ---- 頭文字 ------------------------------------------------------------------
 
@@ -191,12 +61,12 @@ export interface SettlementViewModel {
   canOpenBreakdown: boolean;
 }
 
-/** 表示名（応答の名前が空なら、世帯のメンバー名で補う） */
 /** 自分自身のキーだけを読む（lineId が constructor などでも Object.prototype の値を拾わない） */
 function ownValue<V>(record: Readonly<Record<string, V>> | undefined, key: string): V | undefined {
   return record && Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
 }
 
+/** 表示名（応答の名前が空なら、世帯のメンバー名で補う） */
 function displayNameOf(m: SettlementMember, fallbackNames?: Readonly<Record<string, string>>): string {
   return m.displayName.trim() || ownValue(fallbackNames, m.lineId)?.trim() || '';
 }

@@ -13,9 +13,9 @@ import {
   deleteDoc,
   FirestoreError
 } from 'firebase/firestore';
-import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth, getFirebaseStatus, ensureFirebaseInitialized } from './firebase';
-import { initLineAuth, getLineIdClaim, isLineAuthSettled, onLineAuthSettled } from './lineAuth';
+import { initLineAuth, getLineIdClaim } from './lineAuth';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
 import { getCached, setCached, hasCached, clearCached, updateCachedByPrefix } from './swrCache';
@@ -221,10 +221,6 @@ let cachedLineAuth: LineAuthState | null = null;
 export function useLineAuth() {
   const [state, setState] = useState<LineAuthState | null>(() => cachedLineAuth);
   const [loading, setLoading] = useState(() => cachedLineAuth === null);
-  // 起動時サインイン（initLineAuth）が終わったか
-  const [initSettled, setInitSettled] = useState(() => isLineAuthSettled());
-
-  useEffect(() => onLineAuthSettled(() => setInitSettled(true)), []);
 
   useEffect(() => {
     ensureFirebaseInitialized();
@@ -260,33 +256,13 @@ export function useLineAuth() {
     return () => unsubscribe();
   }, []);
 
-  const signOutUser = async () => {
-    try {
-      if (auth) await firebaseSignOut(auth);
-    } catch (e) {
-      console.error('Sign out failed:', e);
-    }
-    cachedLineAuth = null;
-    setState(null);
-  };
-
   // 旧: URL に lineId を引き回すヘルパー。現在は認証が Firebase に永続化されるため
   // URL への付与は不要。互換のため関数は残し、パスをそのまま返す。
   const getUrlWithLineId = (path: string) => path;
 
-  // 認証の確定: 起動時サインインが終わり、その時点のユーザーについて lineId の解決が済んだ。
-  // 未確定の間（匿名セッションの復元直後など）は、ゲスト表示ではなく読み込み中として扱う。
-  const currentUid = auth?.currentUser?.uid ?? null;
-  const settled = initSettled && !loading && (state?.uid ?? null) === currentUid;
-
   return {
-    user: state ? { uid: state.uid, isAnonymous: state.isAnonymous } : null,
-    uid: state?.uid ?? null,
     lineId: state?.lineId ?? null,
     loading,
-    settled,
-    signOut: signOutUser,
-    isAnonymous: state?.isAnonymous ?? true,
     getUrlWithLineId,
   };
 }
@@ -980,7 +956,7 @@ export interface BudgetConfig {
 /** 予算を未設定のときの月の予算 */
 export const DEFAULT_MONTHLY_BUDGET = 200000;
 
-const defaultBudgetConfig: BudgetConfig = {
+export const DEFAULT_BUDGET_CONFIG: BudgetConfig = {
   monthlyBudget: DEFAULT_MONTHLY_BUDGET,
   categoryBudgets: {},
   alertThreshold: 20,
@@ -996,7 +972,7 @@ export function useBudgetConfig(userId: string | null) {
 
   useEffect(() => {
     if (!userId || userId === 'guest') {
-      setConfig(defaultBudgetConfig);
+      setConfig(DEFAULT_BUDGET_CONFIG);
       setLoading(false);
       return;
     }
@@ -1033,15 +1009,15 @@ export function useBudgetConfig(userId: string | null) {
           ? {
               monthlyBudget: typeof docSnap.data().monthlyBudget === 'number' && docSnap.data().monthlyBudget > 0
                 ? docSnap.data().monthlyBudget
-                : defaultBudgetConfig.monthlyBudget,
+                : DEFAULT_BUDGET_CONFIG.monthlyBudget,
               categoryBudgets: docSnap.data().categoryBudgets && typeof docSnap.data().categoryBudgets === 'object'
                 ? docSnap.data().categoryBudgets
                 : {},
               alertThreshold: typeof docSnap.data().alertThreshold === 'number'
                 ? docSnap.data().alertThreshold
-                : defaultBudgetConfig.alertThreshold,
+                : DEFAULT_BUDGET_CONFIG.alertThreshold,
             }
-          : defaultBudgetConfig;
+          : DEFAULT_BUDGET_CONFIG;
 
         setCached(budgetCacheKey, nextConfig);
         setConfig(nextConfig);
@@ -1051,7 +1027,7 @@ export function useBudgetConfig(userId: string | null) {
         console.error('Error fetching budget config:', err);
         setError(errorMessage);
         if (!hasCached(budgetCacheKey)) {
-          setConfig(defaultBudgetConfig);
+          setConfig(DEFAULT_BUDGET_CONFIG);
         }
       } finally {
         setLoading(false);
@@ -1251,7 +1227,7 @@ export function useHousehold(lineId: string | null) {
 }
 
 // ---------------------------------------------------------------------------
-// ふたりの精算（bot の /household/settlement）
+// 世帯の精算（bot の /household/settlement）
 // ---------------------------------------------------------------------------
 
 /**
