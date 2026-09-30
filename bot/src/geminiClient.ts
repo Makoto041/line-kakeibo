@@ -40,6 +40,11 @@ function getClient(): GenAI.GoogleGenAI | null {
   return client;
 }
 
+/** thinkingLevel は Gemini 3 系の設定（2.5 系は thinkingBudget で、thinkingLevel を送ると 400 になる） */
+function supportsThinkingLevel(model: string): boolean {
+  return /^gemini-3/.test(model);
+}
+
 export function isGeminiConfigured(): boolean {
   return !!process.env.GEMINI_API_KEY;
 }
@@ -65,28 +70,37 @@ export async function generateJson<T = unknown>(
   const ai = getClient();
   if (!ai) return null;
 
+  const model = geminiModel();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
     const response = await ai.models.generateContent({
-      model: geminiModel(),
+      model,
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
         ...(options.schema ? { responseSchema: options.schema } : {}),
-        thinkingConfig: { thinkingLevel: options.thinkingLevel ?? ThinkingLevel.MINIMAL },
+        ...(supportsThinkingLevel(model)
+          ? { thinkingConfig: { thinkingLevel: options.thinkingLevel ?? ThinkingLevel.MINIMAL } }
+          : {}),
         abortSignal: controller.signal,
+        // SDK の既定は最大 5 回・最大 60 秒待ちの再試行で、待ち中は abort が効かない。
+        // 呼び出し側の打ち切り時間を守るため、再試行は 1 回・短い待ちに抑え、1 回ごとにも時間を区切る
+        httpOptions: {
+          timeout: options.timeoutMs,
+          retryOptions: { attempts: 2, initialDelay: 0.5, maxDelay: 1 },
+        },
       },
     });
     const text = (response.text ?? '').trim();
-    console.log('Gemini response received', { model: geminiModel(), chars: text.length });
+    console.log('Gemini response received', { model, chars: text.length });
     if (!text) return null;
     return JSON.parse(stripCodeFence(text)) as T;
   } catch (error) {
     if (controller.signal.aborted) {
-      console.warn('Gemini request timed out', { model: geminiModel(), timeoutMs: options.timeoutMs });
+      console.warn('Gemini request timed out', { model, timeoutMs: options.timeoutMs });
     } else {
-      console.error('Gemini request failed', { model: geminiModel(), error: (error as Error)?.message });
+      console.error('Gemini request failed', { model, error: (error as Error)?.message });
     }
     return null;
   } finally {

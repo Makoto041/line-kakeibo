@@ -89,7 +89,7 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 ### Gemini
 
 API キーを `GEMINI_API_KEY` に入れる。モデルは既定 `gemini-3.5-flash-lite`（`bot/src/geminiClient.ts`）で、
-環境変数 `GEMINI_MODEL` で差し替えられる（Gemini 3 系のモデルを指定する。思考の深さを `thinkingLevel` で指定しているため）。
+環境変数 `GEMINI_MODEL` で差し替えられる（思考の深さ `thinkingLevel` は Gemini 3 系のときだけ送る）。
 分類の順序は入力の種類で違い、Gmail の店名は Gemini を優先する（SPECIFICATION.md §4）。Gemini が使えないときは辞書だけで動く。
 
 ### Vercel

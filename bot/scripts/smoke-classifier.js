@@ -57,7 +57,6 @@ async function main() {
   r = await classifyExpenseWithGemini('U_text', 'ボルダリング');
   check('Gemini の結果を採用', r.category === '娯楽', JSON.stringify(r));
   check('Gemini を 1 回呼ぶ', geminiCalls.length === 1);
-  check('分類は思考 MINIMAL', geminiCalls[0]?.options?.thinkingLevel === undefined || geminiCalls[0]?.options?.thinkingLevel === 'MINIMAL');
   check('スキーマで一覧に限定', Array.isArray(geminiCalls[0]?.options?.schema?.properties?.category?.enum));
 
   console.log('\n# カード利用通知の店名（merchant）: 辞書より Gemini を優先');
@@ -81,8 +80,7 @@ async function main() {
   console.log('\n# merchant: 一覧に無いカテゴリは採用しない');
   geminiReply = { category: '謎カテゴリ', confidence: 0.9 };
   r = await classifyExpenseWithGemini('gmail-auto-system', 'XYZ SHOP', { source: 'merchant' });
-  // normalizeCategoryName が一覧外の名前を「その他」に寄せる（従来どおり）
-  check('一覧外は「その他」に寄せる', r.category === 'その他' || r.category === null, JSON.stringify(r));
+  check('採用しない（呼び出し側で「その他」）', r.category === null, JSON.stringify(r));
 
   console.log('\n# GEMINI_API_KEY が無いとき');
   delete process.env.GEMINI_API_KEY;

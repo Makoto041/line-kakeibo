@@ -220,6 +220,7 @@ function classificationSchema(categoryNames: string[]): Schema {
       confidence: { type: Type.NUMBER },
     },
     required: ['category', 'confidence'],
+    propertyOrdering: ['category', 'confidence'],
   };
 }
 
@@ -257,11 +258,13 @@ async function classifyWithGemini(
     { schema: classificationSchema(categoryNames), timeoutMs: GEMINI_TIMEOUT_MS }
   );
   if (!parsed || typeof parsed.category !== 'string') return null;
-  const normalized = normalizeCategoryName(parsed.category, categoryNames);
-  if (!normalized) {
+  // スキーマで一覧に限定しているが、万一一覧外が返ったときは採用せずキャッシュもしない
+  // （normalizeCategoryName は一覧外を「その他」に寄せてしまうため、その前に弾く）
+  if (!categoryNames.includes(parsed.category)) {
     console.warn('Gemini suggested a category outside the list');
     return null;
   }
+  const normalized = normalizeCategoryName(parsed.category, categoryNames);
   const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
   return {
     category: normalized,
