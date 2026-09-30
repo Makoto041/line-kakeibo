@@ -246,10 +246,11 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       return;
     }
 
-    // Geminiでカテゴリを分類
+    // カテゴリを判定（店名なので Gemini を優先。geminiCategoryClassifier.ts 参照）
     const categoryResult = await classifyExpenseWithGemini(
       GMAIL_SYSTEM_LINE_ID,
-      parsed.merchant
+      parsed.merchant,
+      { source: 'merchant' }
     );
     const category = categoryResult.category || 'その他';
 
@@ -364,7 +365,8 @@ export async function processLatestEmail(): Promise<{
 
       const categoryResult = await classifyExpenseWithGemini(
         GMAIL_SYSTEM_LINE_ID,
-        parsed.merchant
+        parsed.merchant,
+        { source: 'merchant' }
       );
 
       const expense = {
@@ -467,10 +469,11 @@ export async function forceProcessMessage(messageId: string): Promise<{
       };
     }
 
-    // Geminiでカテゴリを分類
+    // カテゴリを判定（店名なので Gemini を優先。geminiCategoryClassifier.ts 参照）
     const categoryResult = await classifyExpenseWithGemini(
       GMAIL_SYSTEM_LINE_ID,
-      parsed.merchant
+      parsed.merchant,
+      { source: 'merchant' }
     );
     const category = categoryResult.category || 'その他';
 

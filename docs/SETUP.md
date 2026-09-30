@@ -53,6 +53,7 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 | `LINE_LIFF_CHANNEL_ID` | LINE Login チャネルの ID（`/auth/line` で ID トークンの `aud` を検証する） |
 | `ADMIN_SECRET` | 管理 API（`/gmail/*`）の Bearer トークン |
 | `GEMINI_API_KEY` | カテゴリ分類・フィードバック解析 |
+| `GEMINI_MODEL` | 任意。Gemini のモデル（既定 `gemini-3.5-flash-lite`） |
 | `GITHUB_TOKEN` | 「要望 / 不具合」からの Issue 自動起票 |
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REDIRECT_URI` | Gmail 自動取込の OAuth |
 | `FIREBASE_PROJECT_ID` | 既定 `line-kakeibo-0410` |
@@ -87,8 +88,9 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 
 ### Gemini
 
-API キーを `GEMINI_API_KEY` に入れる。分類は キーワード辞書 → キャッシュ → Gemini（`bot/src/geminiCategoryClassifier.ts`）
-の順で行い、Gemini が使えないときは辞書だけで動く。
+API キーを `GEMINI_API_KEY` に入れる。モデルは既定 `gemini-3.5-flash-lite`（`bot/src/geminiClient.ts`）で、
+環境変数 `GEMINI_MODEL` で差し替えられる（思考の深さ `thinkingLevel` は Gemini 3 系のときだけ送る）。
+分類の順序は入力の種類で違い、Gmail の店名は Gemini を優先する（SPECIFICATION.md §4）。Gemini が使えないときは辞書だけで動く。
 
 ### Vercel
 

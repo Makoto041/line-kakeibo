@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc",
     "lint": "eslint .",
-    "smoke": "npm run build && node scripts/smoke-expense-card.js && node scripts/smoke-text-parser.js && node scripts/smoke-gmail-parse.js && node scripts/smoke-admin-auth.js && node scripts/smoke-expense-group-scope.js && node scripts/smoke-household-api.js && node scripts/smoke-recurring.js",
+    "smoke": "npm run build && node scripts/smoke-expense-card.js && node scripts/smoke-text-parser.js && node scripts/smoke-gmail-parse.js && node scripts/smoke-admin-auth.js && node scripts/smoke-expense-group-scope.js && node scripts/smoke-household-api.js && node scripts/smoke-recurring.js && node scripts/smoke-classifier.js",
     "test": "npm run smoke",
     "test:emulator": "npm run build && firebase --config scripts/firebase.emulator.json emulators:exec --only firestore,auth --project demo-kakeibo \"node scripts/emulator-household-api.js && node scripts/emulator-recurring.js\"",
     "predeploy": "npm run build",
@@ -19,7 +19,7 @@
   ],
   "dependencies": {
     "@google-cloud/functions-framework": "^5.0.5",
-    "@google/generative-ai": "^0.24.1",
+    "@google/genai": "^2.25.0",
     "@line/bot-sdk": "^11.2.0",
     "axios": "^1.20.0",
     "dayjs": "^1.11.23",

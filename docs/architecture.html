@@ -83,7 +83,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
       <span class="chip">Web: Next.js 16 on Vercel</span>
       <span class="chip">Bot: Firebase Functions gen2 / Node 22</span>
       <span class="chip">Data: Firestore + Cloud Storage</span>
-      <span class="chip">AI: Gemini 2.5 Flash</span>
+      <span class="chip">AI: Gemini 3.5 Flash-Lite</span>
       <span class="chip">世帯: 2 名固定</span>
     </div>
   </header>
@@ -103,6 +103,7 @@ flowchart LR
   WEB -->|読み取り（ルールで制限）| FS[("Firestore")]
   WEB -->|レシート| ST[("Cloud Storage")]
   WH --> GEM["Gemini"]
+  GM --> GEM
   WH --> FS
   GM --> FS
   JOBS --> FS
@@ -192,14 +193,14 @@ flowchart LR
   </section>
 
   <section id="classify">
-    <aside><h2>カテゴリ分類</h2><p>費用のかからない方法から試し、決まらないときだけ Gemini を呼ぶ。19 カテゴリ。</p></aside>
+    <aside><h2>カテゴリ分類</h2><p>LINE の入力は費用のかからない方法から試す。カードの店名は取り違えやすいので Gemini を先に使う。19 カテゴリ。</p></aside>
     <div class="body">
       <div class="pipeline">
         <div class="stage"><b>1. キャッシュ</b><span>関数のメモリ上に残っている同じ内容の分類結果を再利用</span><span class="cost">費用 0</span></div>
         <div class="stage"><b>2. キーワード辞書</b><span>「ランチ」→ 食費 など全カテゴリの辞書</span><span class="cost">費用 0</span></div>
-        <div class="stage"><b>3. Gemini</b><span>それでも決まらないものだけ、カテゴリ一覧を Firestore から読んで問い合わせ</span><span class="cost">API 呼び出し</span></div>
+        <div class="stage"><b>3. Gemini</b><span>それでも決まらないものだけ問い合わせ（3.5 Flash-Lite、思考は最小、カテゴリ一覧の中から選ばせる）</span><span class="cost">API 呼び出し</span></div>
       </div>
-      <p>Gemini が使えないときは辞書だけで動き、分類できなければ「その他」になる。</p>
+      <p>上は LINE の入力（「500 ランチ」の「ランチ」）の順序。<b>カード利用メールの店名</b>（「ｾﾌﾞﾝ-ｲﾚﾌﾞﾝ」「AMAZON.CO.JP」など）は、辞書の部分一致だと「au」「etc」「パン」などが店名の一部に当たって取り違えるため、<b>キャッシュ → Gemini → 辞書</b>の順にしている。Gemini が使えないときは辞書だけで動き、分類できなければ「その他」になる。</p>
     </div>
   </section>
 

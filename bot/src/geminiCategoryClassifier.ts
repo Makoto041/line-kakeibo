@@ -1,24 +1,9 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getAllUserCategories, CategoryMaster, UserCustomCategory } from './firestore';
 import { CANONICAL_CATEGORIES, normalizeCategoryName } from './categoryNormalization';
+import { generateJson, isGeminiConfigured, Type, type Schema } from './geminiClient';
 import { maskId } from './logSafe';
 
-// Gemini APIクライアントの初期化
-let genAI: GoogleGenerativeAI | null = null;
-
-function getGeminiClient(): GoogleGenerativeAI | null {
-  if (!genAI) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn('GEMINI_API_KEY not found in environment variables');
-      return null;
-    }
-    genAI = new GoogleGenerativeAI(apiKey);
-  }
-  return genAI;
-}
-
-interface GeminiClassificationResult {
+export interface GeminiClassificationResult {
   category: string | null;
   confidence: number; // 0-1の信頼度
   reasoning?: string; // 分類の理由（デバッグ用）
@@ -145,177 +130,199 @@ function fastLocalClassification(description: string): { category: string | null
 }
 
 /**
- * 最適化されたカテゴリ分類（ローカル判定 + キャッシュ + Gemini）
+ * 分類する文字列の種類。
+ * - text: LINE で利用者が打った内容（「500 ランチ」の「ランチ」）。短い日本語が多く、キーワード辞書がよく当たる
+ * - merchant: カード利用通知の店名（「ｾﾌﾞﾝ-ｲﾚﾌﾞﾝ」「AMAZON.CO.JP」など）。半角カナ・ローマ字・略称が多く、
+ *   部分一致のキーワード辞書は取り違えやすい（例: "au" "gu" "etc" "sim" "パン" が店名の一部に一致する）
+ */
+export type ClassificationSource = 'text' | 'merchant';
+
+export interface ClassifyOptions {
+  source?: ClassificationSource;
+}
+
+const GEMINI_TIMEOUT_MS = 8000;
+
+/** 各カテゴリの判断基準（プロンプト用）。CANONICAL_CATEGORIES にあるものは全て説明する */
+const CATEGORY_GUIDE: Record<string, string> = {
+  '食費': '食材、外食、カフェ、コンビニ・スーパーでの買い物、飲み物、デリバリー',
+  '交通費': '電車、バス、タクシー、新幹線、ガソリン、駐車場、高速料金(ETC)、レンタカー',
+  '日用品': '洗剤、ティッシュ、シャンプーなどの消耗品、ドラッグストア・100円ショップ・ホームセンターの買い物',
+  '娯楽': '映画、ゲーム、書籍、漫画、おもちゃ、カラオケ、ライブ、趣味用品',
+  '衣服': '服、靴、バッグ、アクセサリー、クリーニング',
+  '医療・健康': '病院、歯科、薬、サプリ、ジム、整体',
+  '教育': '学費、塾、習い事、参考書、講座、資格試験',
+  '光熱費': '電気、ガス、水道',
+  '住居費': '家賃、管理費、家具、家電、修繕',
+  '保険': '生命保険、医療保険、自動車保険、火災保険',
+  '税金': '住民税、所得税、自動車税、年金、ふるさと納税',
+  '美容': '美容院、ネイル、化粧品、エステ、脱毛',
+  '通信費': '携帯電話料金、インターネット回線、プロバイダ',
+  'サブスク': '月額の動画・音楽配信やクラウドサービス（Netflix、Spotify、Amazon プライム会費、iCloud など）',
+  'プレゼント': '贈り物、お祝い、お土産、ご祝儀',
+  '旅行': 'ホテル・旅館などの宿泊、ツアー、旅行予約サイト',
+  'ペット': 'ペットフード、ペット用品、動物病院、トリミング',
+  '貯金': '貯金、積立、投資',
+  'その他': 'どれにも当てはまらない、または店名だけでは判断できないもの',
+};
+
+const TEXT_EXAMPLES = `入力: "ランチ" → {"category":"食費","confidence":0.95}
+入力: "洗剤" → {"category":"日用品","confidence":0.95}
+入力: "電車賃" → {"category":"交通費","confidence":0.95}
+入力: "ぬいぐるみ" → {"category":"娯楽","confidence":0.9}
+入力: "風邪薬" → {"category":"医療・健康","confidence":0.95}
+入力: "電気代" → {"category":"光熱費","confidence":0.95}`;
+
+const MERCHANT_EXAMPLES = `入力: "ｾﾌﾞﾝ-ｲﾚﾌﾞﾝ" → {"category":"食費","confidence":0.85}
+入力: "ｲｵﾝﾓｰﾙ" → {"category":"食費","confidence":0.6}
+入力: "AMAZON.CO.JP" → {"category":"その他","confidence":0.4}
+入力: "AMAZON PRIME ｶｲﾋ" → {"category":"サブスク","confidence":0.9}
+入力: "NETFLIX.COM" → {"category":"サブスク","confidence":0.95}
+入力: "ETC ﾘﾖｳ" → {"category":"交通費","confidence":0.9}
+入力: "ENEOS" → {"category":"交通費","confidence":0.85}
+入力: "ﾕﾆｸﾛ" → {"category":"衣服","confidence":0.9}
+入力: "ﾏﾂﾓﾄｷﾖｼ" → {"category":"日用品","confidence":0.8}
+入力: "東京電力ｴﾅｼﾞｰﾊﾟｰﾄﾅｰ" → {"category":"光熱費","confidence":0.95}
+入力: "ｿﾌﾄﾊﾞﾝｸ" → {"category":"通信費","confidence":0.9}`;
+
+/** Gemini に渡すプロンプトを組み立てる（テスト用に公開） */
+export function buildClassificationPrompt(
+  description: string,
+  categoryNames: string[],
+  source: ClassificationSource
+): string {
+  const guide = categoryNames
+    .map((name) => `- ${name}${CATEGORY_GUIDE[name] ? `: ${CATEGORY_GUIDE[name]}` : ''}`)
+    .join('\n');
+  const subject =
+    source === 'merchant'
+      ? 'クレジットカードの利用明細に載った「店名・加盟店名」です。半角カナ、ローマ字、略称、支店名が混ざることがあります。店の業態から、この家計で一番ありそうな支出カテゴリを選んでください。総合通販・百貨店など店名だけで中身が決まらないものは「その他」にし、confidence を低くしてください。'
+      : '家計簿アプリに利用者が入力した支出の内容です。';
+  return `あなたは家計簿の支出分類の専門家です。次の文字列は${subject}
+
+## カテゴリ（この中から 1 つだけ選ぶ）
+${guide}
+
+## 例
+${source === 'merchant' ? MERCHANT_EXAMPLES : TEXT_EXAMPLES}
+
+## 分類する文字列
+${JSON.stringify(description)}
+
+category はカテゴリ一覧の名前と完全に一致させてください。confidence は 0〜1 の数値です。`;
+}
+
+function classificationSchema(categoryNames: string[]): Schema {
+  return {
+    type: Type.OBJECT,
+    properties: {
+      category: { type: Type.STRING, enum: categoryNames },
+      confidence: { type: Type.NUMBER },
+    },
+    required: ['category', 'confidence'],
+    propertyOrdering: ['category', 'confidence'],
+  };
+}
+
+async function categoriesFor(lineId: string): Promise<string[]> {
+  const cached = categoryCache.get(lineId);
+  if (cached && Date.now() - cached.timestamp < CATEGORY_CACHE_TTL) {
+    return cached.categories;
+  }
+  let names: string[] = [];
+  try {
+    const available = await getAllUserCategories(lineId);
+    names = available.map((cat: CategoryMaster | UserCustomCategory) => cat.name);
+  } catch (error) {
+    console.warn('Failed to get categories from Firestore, using default categories', {
+      user: maskId(lineId),
+      error: (error as Error)?.message,
+    });
+  }
+  if (names.length === 0) names = [...DEFAULT_CATEGORIES];
+  const unique = [...new Set(names)];
+  categoryCache.set(lineId, { categories: unique, timestamp: Date.now() });
+  return unique;
+}
+
+/** Gemini で分類する。使えない・失敗・一覧に無いカテゴリを返したときは null */
+async function classifyWithGemini(
+  lineId: string,
+  description: string,
+  source: ClassificationSource
+): Promise<GeminiClassificationResult | null> {
+  if (!isGeminiConfigured()) return null;
+  const categoryNames = await categoriesFor(lineId);
+  const parsed = await generateJson<{ category?: unknown; confidence?: unknown }>(
+    buildClassificationPrompt(description, categoryNames, source),
+    { schema: classificationSchema(categoryNames), timeoutMs: GEMINI_TIMEOUT_MS }
+  );
+  if (!parsed || typeof parsed.category !== 'string') return null;
+  // スキーマで一覧に限定しているが、万一一覧外が返ったときは採用せずキャッシュもしない
+  // （normalizeCategoryName は一覧外を「その他」に寄せてしまうため、その前に弾く）
+  if (!categoryNames.includes(parsed.category)) {
+    console.warn('Gemini suggested a category outside the list');
+    return null;
+  }
+  const normalized = normalizeCategoryName(parsed.category, categoryNames);
+  const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
+  return {
+    category: normalized,
+    confidence: Math.max(0, Math.min(1, confidence)),
+    reasoning: 'Gemini classification',
+  };
+}
+
+/**
+ * 支出のカテゴリを判定する（キャッシュ + キーワード辞書 + Gemini）。
+ *
+ * - source='text'（LINE の入力）: キャッシュ → キーワード辞書 → Gemini の順。辞書で決まれば API を呼ばない
+ * - source='merchant'（カード利用通知の店名）: キャッシュ → Gemini → キーワード辞書の順。
+ *   店名は辞書の部分一致で取り違えやすいため Gemini を優先し、Gemini が使えないときだけ辞書に頼る
+ *
+ * どれでも決まらなければ { category: null }（呼び出し側で「その他」にする）。
  */
 export async function classifyExpenseWithGemini(
-  lineId: string, 
-  description: string
+  lineId: string,
+  description: string,
+  options: ClassifyOptions = {}
 ): Promise<GeminiClassificationResult> {
-  // キャッシュキー
-  const cacheKey = `${lineId}_${description.toLowerCase().trim()}`;
-  
-  // 分類結果キャッシュをチェック
+  const source: ClassificationSource = options.source ?? 'text';
+  const cacheKey = `${source}_${lineId}_${description.toLowerCase().trim()}`;
+
   const cached = classificationCache.get(cacheKey);
-  if (cached && (Date.now() - cached.timestamp < CLASSIFICATION_CACHE_TTL)) {
-    console.log(`Cache hit for classification -> ${cached.result.category}`);
+  if (cached && Date.now() - cached.timestamp < CLASSIFICATION_CACHE_TTL) {
     return cached.result;
   }
-  
-  // 1. 高速ローカル分類を最初に試行
-  const localResult = fastLocalClassification(description);
-  if (localResult.category) {
-    const result = {
-      category: localResult.category,
-      confidence: localResult.confidence,
-      reasoning: 'Fast local keyword matching'
-    };
-    
-    // 結果をキャッシュ
+
+  const remember = (result: GeminiClassificationResult) => {
     classificationCache.set(cacheKey, { result, timestamp: Date.now() });
-    console.log(`Fast local classification -> ${result.category} (confidence: ${result.confidence})`);
     return result;
+  };
+  const byKeyword = (): GeminiClassificationResult | null => {
+    const local = fastLocalClassification(description);
+    return local.category
+      ? { category: local.category, confidence: local.confidence, reasoning: 'Fast local keyword matching' }
+      : null;
+  };
+
+  if (source === 'merchant') {
+    const gemini = await classifyWithGemini(lineId, description, source);
+    if (gemini) return remember(gemini);
+    const local = byKeyword();
+    // Gemini が使えなかった結果はキャッシュしない（復旧後に Gemini で判定し直せるように）
+    return local ?? { category: null, confidence: 0 };
   }
 
-  // 2. Gemini APIでの詳細分類（ローカルで分類できない場合のみ）
-  try {
-    const client = getGeminiClient();
-    if (!client) {
-      return { category: null, confidence: 0 };
-    }
-
-    // カテゴリキャッシュをチェック
-    let categoryNames: string[] = [];
-    const categoryCached = categoryCache.get(lineId);
-    if (categoryCached && (Date.now() - categoryCached.timestamp < CATEGORY_CACHE_TTL)) {
-      categoryNames = categoryCached.categories;
-      console.log(`Using cached categories for user ${maskId(lineId)} (${categoryNames.length} categories)`);
-    } else {
-      // カテゴリを取得してキャッシュ
-      try {
-        const availableCategories = await getAllUserCategories(lineId);
-        categoryNames = availableCategories.map((cat: CategoryMaster | UserCustomCategory) => cat.name);
-        
-        // キャッシュに保存
-        categoryCache.set(lineId, { categories: categoryNames, timestamp: Date.now() });
-        console.log(`Fetched and cached ${categoryNames.length} categories for user ${maskId(lineId)}`);
-      } catch (firestoreError) {
-        console.warn('Failed to get categories from Firestore, using default categories:', firestoreError);
-        categoryNames = DEFAULT_CATEGORIES;
-      }
-      
-      if (categoryNames.length === 0) {
-        console.warn('No categories available, using default categories');
-        categoryNames = DEFAULT_CATEGORIES;
-      }
-    }
-    
-    // Geminiモデルを取得
-    const model = client.getGenerativeModel({ model: "gemini-2.5-flash" });
-
-    // Few-shot学習形式の高精度プロンプト
-    const prompt = `あなたは家計簿の支出分類の専門家です。以下の支出内容を最も適切なカテゴリに正確に分類してください。
-
-## 利用可能なカテゴリ
-${categoryNames.join(', ')}
-
-## 分類例（Few-shot Examples）
-入力: "ぬいぐるみ" → {"category":"娯楽","confidence":0.95,"reasoning":"おもちゃ・趣味用品"}
-入力: "洗剤" → {"category":"日用品","confidence":0.95,"reasoning":"掃除用品"}
-入力: "ランチ" → {"category":"食費","confidence":0.95,"reasoning":"食事"}
-入力: "電車賃" → {"category":"交通費","confidence":0.95,"reasoning":"公共交通機関"}
-入力: "Tシャツ" → {"category":"衣服","confidence":0.95,"reasoning":"衣類"}
-入力: "映画チケット" → {"category":"娯楽","confidence":0.95,"reasoning":"エンターテイメント"}
-入力: "風邪薬" → {"category":"医療・健康","confidence":0.95,"reasoning":"医薬品"}
-入力: "携帯代" → {"category":"通信費","confidence":0.95,"reasoning":"通信サービス"}
-入力: "電気代" → {"category":"光熱費","confidence":0.95,"reasoning":"公共料金"}
-入力: "本" → {"category":"娯楽","confidence":0.90,"reasoning":"書籍・読み物"}
-入力: "おもちゃ" → {"category":"娯楽","confidence":0.95,"reasoning":"玩具・趣味用品"}
-入力: "ゲーム" → {"category":"娯楽","confidence":0.95,"reasoning":"ゲームソフト・娯楽"}
-
-## カテゴリの詳細定義
-- 食費: 食事、飲食店、食材、飲み物など食べ物・飲み物関連
-- 日用品: 洗剤、ティッシュ、シャンプー、掃除用品、トイレットペーパーなど生活必需品
-- 交通費: 電車、バス、タクシー、ガソリン、駐車場など移動関連
-- 娯楽: 映画、ゲーム、本、おもちゃ、ぬいぐるみ、漫画、趣味用品など娯楽・趣味関連
-- 衣服: 服、靴、バッグ、アクセサリーなど衣類・ファッション関連
-- 医療・健康: 病院、薬、サプリ、ジムなど健康・医療関連
-- 通信費: スマホ、インターネット、Wi-Fi、電話代など通信サービス
-- 光熱費: 電気、ガス、水道など公共料金
-- その他: 上記に当てはまらないもの
-
-## 分類する支出内容
-"${description}"
-
-## 出力形式
-必ずJSON形式のみで回答してください（他の説明文は不要）:
-{"category":"カテゴリ名","confidence":0.0-1.0,"reasoning":"分類理由"}
-
-重要: categoryは必ず上記の利用可能なカテゴリリストから完全一致するものを選んでください。`;
-
-    // Gemini APIを呼び出し（タイムアウト付き）
-    const geminiPromise = model.generateContent(prompt);
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Gemini API timeout')), 8000) // 8秒タイムアウト（精度向上のため延長）
-    );
-
-    const result = await Promise.race([geminiPromise, timeoutPromise]) as any;
-    const response = result.response;
-    const text = response.text().trim();
-
-    // 入力（支出の摘要）と応答本文はログに出さない
-    console.log(`Gemini classification response received (${text.length} chars)`);
-
-    // JSONレスポンスをパース（Markdownコードブロック形式の場合も対応）
-    try {
-      let jsonText = text;
-      
-      // Markdownコードブロック形式の場合（```json ... ```）を処理
-      if (text.startsWith('```json') && text.endsWith('```')) {
-        jsonText = text.replace(/^```json\s*\n/, '').replace(/\n\s*```$/, '').trim();
-      } else if (text.startsWith('```') && text.endsWith('```')) {
-        // 一般的なコードブロック形式も処理
-        jsonText = text.replace(/^```\s*\n/, '').replace(/\n\s*```$/, '').trim();
-      }
-      
-      const parsed = JSON.parse(jsonText);
-      
-      // 正規化してから、利用可能なカテゴリに合わせる
-      const normalized = normalizeCategoryName(parsed.category, categoryNames);
-      if (normalized) {
-        const result = {
-          category: normalized,
-          confidence: Math.max(0, Math.min(1, parsed.confidence || 0.5)),
-          reasoning: parsed.reasoning || 'Gemini AI classification'
-        };
-        
-        // 結果をキャッシュ
-        classificationCache.set(cacheKey, { result, timestamp: Date.now() });
-        console.log(`Gemini classification cached -> ${result.category}`);
-        
-        return result;
-      }
-      console.warn('Gemini suggested invalid category:', parsed.category);
-      return { category: null, confidence: 0 };
-    } catch (parseError) {
-      console.error('Failed to parse Gemini response as JSON:', (parseError as Error)?.message);
-      return { category: null, confidence: 0 };
-    }
-
-  } catch (error) {
-    console.error('Gemini API classification error:', error);
-    
-    // タイムアウトまたはAPI障害の場合、フォールバックとしてユーザーデフォルトを返す
-    if (error instanceof Error && error.message?.includes('timeout')) {
-      console.log('Gemini timeout, falling back to default category');
-    }
-    
-    return { category: null, confidence: 0 };
-  }
+  const local = byKeyword();
+  if (local) return remember(local);
+  const gemini = await classifyWithGemini(lineId, description, source);
+  return gemini ? remember(gemini) : { category: null, confidence: 0 };
 }
 
 /**
  * Geminiの利用可能性をチェック
  */
 export function isGeminiAvailable(): boolean {
-  return !!process.env.GEMINI_API_KEY;
+  return isGeminiConfigured();
 }

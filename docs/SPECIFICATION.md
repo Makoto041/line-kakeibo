@@ -169,11 +169,16 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 正準カテゴリは **19種**（`bot/src/categoryNormalization.ts` / `web/lib/categoryNormalization.ts`）。エイリアス・キーワード・正規表現で表記ゆれを正準化。
 
-分類は 3 段のコスト最適化パイプライン（`bot/src/geminiCategoryClassifier.ts`）:
+分類はキャッシュ・キーワード辞書・Gemini を組み合わせる（`bot/src/geminiCategoryClassifier.ts`）。入力の種類で順序が違う:
 
-1. **高速キーワードマップ**（メモリ内、確信度 0.8）
-2. **分類結果キャッシュ**（15分 TTL）＋ユーザー別カテゴリキャッシュ（30分 TTL）
-3. **Gemini `gemini-2.5-flash`**（few-shot JSON プロンプト、8秒タイムアウト）— 上記ミス時のみ
+| 入力 | 順序 | 理由 |
+|---|---|---|
+| LINE のテキスト（`source: 'text'`） | 分類結果キャッシュ（15分）→ キーワード辞書（確信度 0.8）→ Gemini | 「ランチ」のような短い日本語は辞書でほぼ決まり、API を呼ばずに済む |
+| カード利用通知の店名（`source: 'merchant'`、Gmail 取込） | 分類結果キャッシュ → **Gemini** → キーワード辞書（Gemini が使えないときだけ） | 店名は半角カナ・ローマ字・略称が多く、部分一致の辞書は取り違えやすい（例: `au` `gu` `etc` `sim` `パン` が店名の一部に一致する） |
+
+- Gemini は `@google/genai` SDK 経由、モデルは既定 `gemini-3.5-flash-lite`（環境変数 `GEMINI_MODEL` で差し替え可。`bot/src/geminiClient.ts`）。思考は `MINIMAL`（フィードバック解析は `LOW`）、8 秒で打ち切り。SDK の再試行は 1 回に抑え、打ち切り時間を超えないようにしている。`GEMINI_MODEL` に 2.5 系を指定した場合は思考の設定を送らない
+- 応答は構造化出力（JSON スキーマで `category` をカテゴリ一覧の enum に限定）。カテゴリ一覧は Firestore から取得し 30 分キャッシュ
+- Gemini が使えなかった店名の結果はキャッシュしない（復旧後に Gemini で判定し直す）
 
 ユーザーの修正は `categoryFeedback` コレクションに記録される。
 
