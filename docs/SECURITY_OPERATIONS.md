@@ -202,7 +202,8 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
 ## 6. 既知の残課題
 
 - `syncUserLinks` トリガーは書き込みを止めた空の関数として残している。関数を export から外すと、
-  CI の非対話デプロイが関数の削除確認で失敗するため。不要になったら、手動で `firebase functions:delete syncUserLinks` を実行する。
+  CI の非対話デプロイが関数の削除確認で失敗するため。廃止した `importMoneyForward` も同じ扱い。オーナーが手動で
+  `firebase functions:delete syncUserLinks importMoneyForward --region asia-northeast1` を実行したあと、`bot/src/index.ts` の export を消す。
 - レシートはトークン付きのダウンロード URL を `receiptUrl` に保存している。この URL は Storage ルールを経由しない（REC-SEC-2）。
   パスを保存する方式への移行は、別の PR で扱う。
 - LINE の postback（区分・立替の変更）で、押した人のメンバーシップを確認していない（SET-18）。
@@ -220,4 +221,3 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
 - `receiptUrl` は `https://firebasestorage.googleapis.com/` から始まる URL だけを許可する。ローカルの Storage エミュレータが
   返す URL（`http://127.0.0.1:9199/...`）は拒否されるため、レシート添付の導線を端から端まで確認するときは本番（または
   実バケットのある検証用プロジェクト）で行う。
-- `joinGroup()`（bot/src/firestore.ts）は呼び出し元の無い非推奨関数として残している。`syncUserLinks` の削除と同じ後続 PR で消す。

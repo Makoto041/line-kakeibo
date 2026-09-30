@@ -19,7 +19,6 @@ Web では予算の進捗、支出の確認・編集、ふたりの精算、家�
 | 💬 **LINE テキスト入力** | `500 ランチ` のように送るだけで登録。確認カードから OK / 修正 / 立替 / 除外 / カテゴリ変更ができる |
 | 📧 **Gmail 自動取込** | クレジットカード利用通知メールを Gmail API + Pub/Sub でリアルタイムに取り込む |
 | 🔁 **固定費の自動計上** | 家賃・光熱費などを引き落とし日と見込み額で登録しておくと、毎月自動で支出に入る（Web の設定 → 固定費） |
-| 📊 **MoneyForward CSV** | Google Drive 上の CSV を日次バッチで外部 API へ送る（送信先は本リポジトリ外。未設定なら動かない） |
 | ✏️ **Web** | 支出の確認・編集・削除、レシート画像の添付 |
 
 ### 集計と精算
@@ -57,7 +56,6 @@ Web では予算の進捗、支出の確認・編集、ふたりの精算、家�
 flowchart LR
     LINE["LINE アプリ"] -->|webhook| Bot["Firebase Functions gen2<br/>(bot/ Node.js 22 + Express)"]
     Gmail["Gmail API"] -->|Pub/Sub push| Bot
-    Drive["Google Drive<br/>(MoneyForward CSV)"] -->|日次 cron| Bot
     Cron["Cloud Scheduler"] -->|固定費の計上 / watch 更新| Bot
     Bot --> Gemini["Gemini 2.5 Flash"]
     Bot --> FS[("Firestore")]
@@ -80,7 +78,7 @@ flowchart LR
 | Backend | Node.js 22 + TypeScript + Express 5 + `@line/bot-sdk` v11（Firebase Functions gen2） |
 | Data | Firestore + Cloud Storage（ルールでアクセス制御） |
 | AI | Gemini 2.5 Flash（カテゴリ分類・フィードバック解析） |
-| 外部連携 | LINE Messaging API / LIFF / Gmail API + Pub/Sub / Google Drive API / GitHub API |
+| 外部連携 | LINE Messaging API / LIFF / Gmail API + Pub/Sub / GitHub API |
 | Hosting / CI | Vercel（Web）+ Firebase（Bot・ルール）/ GitHub Actions |
 
 ## 📁 プロジェクト構成

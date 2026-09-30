@@ -14,9 +14,8 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 - **入力チャネル**
   1. **LINE Bot へのテキスト入力**（例: `500 ランチ`）
   2. **Gmail 連携**: 三井住友カード ゴールド(NL) の利用通知メールを自動取込
-  3. **MoneyForward CSV**: Google Drive 上の CSV を日次バッチでインポート
-  4. **固定費**: Web で登録した毎月の固定費（家賃・光熱費など）を引き落とし日に自動計上
-  5. **Web アプリ**での手動編集・レシート画像添付
+  3. **固定費**: Web で登録した毎月の固定費（家賃・光熱費など）を引き落とし日に自動計上
+  4. **Web アプリ**での手動編集・レシート画像添付
 - **閲覧チャネル**
   - LINE Bot（`家計簿` コマンドで月次サマリー Flex メッセージ）
   - Web アプリ（Next.js / Vercel）: ホーム・支出一覧・精算・設定（予算 / 期間 / 固定費）
@@ -149,11 +148,10 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - watch は7日で失効するため、**6日ごとの cron**（`renewGmailWatch`）で更新
 - 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。認証は `ADMIN_SECRET` を **`Authorization: Bearer` ヘッダーでのみ**受け付け、定数時間で比較する（`requireAdminAuth`）＋レートリミット（OAuth callback のみ CSRF state 検証）。`?adminSecret=` クエリ渡しはアクセスログ等に秘密値が残るため廃止した。詳細は [GMAIL_AUTO_SPEC.md](./GMAIL_AUTO_SPEC.md)
 
-### 3.2 MoneyForward CSV インポート
+### 3.2 MoneyForward CSV インポート（廃止）
 
-- `importMoneyForward`（cron: 毎日 5:00 JST）
-- Google Drive（ADC, `drive.readonly`）から最新の `MoneyForward*.csv` を取得 → 正規化 → `${API_BASE_URL}/api/mf/import` へ POST（`MFKAKEIBO_TOKEN` 認証）
-- ⚠️ **送信先エンドポイントは本リポジトリの web に存在しない**: `web/app/api/` は無く `/api/mf/import` の実装は見当たらない（§8 参照）。`API_BASE_URL` が別サービスを指していない限り、このバッチは現状機能しない可能性が高い
+- 送信先の `/api/mf/import` がリポジトリの履歴上一度も存在せず、送信先の設定（`API_BASE_URL` / `MFKAKEIBO_TOKEN`）も関数に渡していなかったため、機能していなかった。処理は削除済み
+- 関数 `importMoneyForward` は、CI の非対話デプロイが本番関数の削除確認で失敗しないよう、何もしない関数として名前だけ残している（ARCHITECTURE.md §3）
 
 ### 3.3 固定費の自動計上（`bot/src/recurringExpenses.ts`）
 
@@ -281,9 +279,8 @@ Storage: `receipts/{expenseId}/{fileName}` — cross-service rules で支出を�
 ## 8. 既知の不整合・技術的負債
 
 1. **`userLinks` の 2 形式併存**: `lineId`（1:1）と `lineIds[]`（1:N）。`syncUserLinks` トリガーは何もしない関数として残置（削除は手動 `firebase functions:delete`）、`userLinks.ts` と `firestore.ts` の `joinGroup()` は呼び出し元が無い
-2. **MoneyForward インポート先 `/api/mf/import` が web 側に存在しない**（§3.2）。`importMoneyForward` は `API_BASE_URL` が別サービスを指していない限り機能しない
-3. **ビルド時の型チェックを無効化**: `web/next.config.ts` は `typescript.ignoreBuildErrors: true`。CI の `lint` ジョブも ESLint / `tsc --noEmit` の失敗を警告扱いにしており（`|| echo ::warning`）、型エラーでは落ちない。テストは `build-and-test` ジョブで実行され、失敗すれば落ちる
-4. **セキュリティ上の残課題**は `docs/SECURITY_OPERATIONS.md` §6 を参照
+2. **ビルド時の型チェックを無効化**: `web/next.config.ts` は `typescript.ignoreBuildErrors: true`。CI の `lint` ジョブも ESLint / `tsc --noEmit` の失敗を警告扱いにしており（`|| echo ::warning`）、型エラーでは落ちない。テストは `build-and-test` ジョブで実行され、失敗すれば落ちる
+3. **セキュリティ上の残課題**は `docs/SECURITY_OPERATIONS.md` §6 を参照
 
 ---
 
@@ -302,7 +299,6 @@ Storage: `receipts/{expenseId}/{fileName}` — cross-service rules で支出を�
 | `DEFAULT_GROUP_ID` / `LINE_GROUP_ID` | Gmail 自動登録・通知先 |
 | `ADMIN_SECRET` | Gmail 管理 API 認証 |
 | `GITHUB_TOKEN` | フィードバック Issue 起票 |
-| `API_BASE_URL` / `MFKAKEIBO_TOKEN` | MoneyForward インポート先 |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Firebase Admin 認証（ローカルのみ JSON パス。本番は ADC） |
 
 ### Web（Vercel, すべてクライアント公開）
