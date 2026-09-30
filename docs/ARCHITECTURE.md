@@ -20,7 +20,7 @@ flowchart LR
             webhook["webhook<br/>(Express: LINE webhook, /health)"]
             gmailHandler["gmailPubSubHandler"]
             renewWatch["renewGmailWatch<br/>(cron: 6日ごと 3:00 JST)"]
-            mfImport["importMoneyForward<br/>(cron: 毎日 5:00 JST)"]
+            mfImport["importMoneyForward<br/>(廃止・何もしない)"]
             recurring["postRecurringExpenses<br/>(cron: 毎日 6:10 JST)"]
             syncLinks["syncUserLinks<br/>(Firestoreトリガー・無効化済み)"]
             gmailApi["api (us-central1)<br/>/gmail/* /auth/line /household/*"]
@@ -40,7 +40,6 @@ flowchart LR
         LLogin["LINE Login (LIFF)"]
         Gemini["Gemini 2.5 Flash"]
         Gmail["Gmail API"]
-        Drive["Google Drive<br/>(MoneyForward CSV)"]
         GH["GitHub API<br/>(Issue起票)"]
     end
 
@@ -56,8 +55,6 @@ flowchart LR
     gmailHandler --> FS
     gmailHandler -->|Flex通知| LMA
     renewWatch --> Gmail
-    mfImport --> Drive
-    mfImport -->|POST /api/mf/import| Web
     recurring --> FS
     FS -->|onDocumentCreated expenses| syncLinks
     Browser --> Web
@@ -74,7 +71,7 @@ flowchart LR
 
 | コンポーネント | 技術 | ホスティング | 役割 |
 |---|---|---|---|
-| `bot/` | Node.js 22 + TypeScript + Express 5 + `@line/bot-sdk` v11 + `firebase-functions` v7 | Firebase Functions gen2（`firebase.json` の `functions.source: "bot"` / `runtime: nodejs22` / region `asia-northeast1`。`api` 関数のみ `us-central1`） | LINE webhook、Gmail 取込、cron バッチ（MoneyForward 取込・Gmail watch 更新・固定費計上）、Web 向け API（LIFF ログイン・確認・精算・固定費） |
+| `bot/` | Node.js 22 + TypeScript + Express 5 + `@line/bot-sdk` v11 + `firebase-functions` v7 | Firebase Functions gen2（`firebase.json` の `functions.source: "bot"` / `runtime: nodejs22` / region `asia-northeast1`。`api` 関数のみ `us-central1`） | LINE webhook、Gmail 取込、cron バッチ（Gmail watch 更新・固定費計上）、Web 向け API（LIFF ログイン・確認・精算・固定費） |
 | `web/` | Next.js 16（App Router）+ React 19 + TypeScript + Tailwind CSS v4 + Recharts + framer-motion + `@line/liff` | Vercel（Git 連携。設定はリポジトリ直下の `vercel.json`） | ダッシュボード・支出管理 UI。読み取りと通常の編集は**クライアントから Firestore/Storage 直アクセス**（セキュリティルールで制御）。確認・精算・固定費・折半設定は bot の `api` 関数経由 |
 | Firestore | − | GCP | 唯一の永続データストア。ルール/インデックスはリポジトリ管理（`firestore.rules` / `firestore.indexes.json`） |
 | Cloud Storage | − | GCP | レシート画像（`receipts/{expenseId}/`）。`storage.rules` は cross-service rules で Firestore の支出・メンバーシップを参照 |
@@ -92,7 +89,7 @@ flowchart LR
 | `webhook` | HTTPS（Express） | asia-northeast1 | LINE webhook 本体（署名検証は fail-closed、本文上限 1MB）。`/health` も同居（認証なしのデバッグ用 `/classification-stats` `/test-classification` は削除済み）。本番 URL は Cloud Run 形式 `https://webhook-4tgziqsylq-an.a.run.app/webhook` |
 | `gmailPubSubHandler` | Pub/Sub `gmail-notifications` | asia-northeast1 | SMBC カード利用メールの取込 |
 | `renewGmailWatch` | cron `0 3 */6 * *` JST | asia-northeast1 | Gmail watch（7日失効）の更新 |
-| `importMoneyForward` | cron `0 5 * * *` JST | asia-northeast1 | Drive の MoneyForward CSV 取込 |
+| `importMoneyForward` | cron `0 5 * * *` JST | asia-northeast1 | **廃止（何もしない）**。旧 MoneyForward CSV 取込。送信先 `/api/mf/import` が存在せず機能していなかったため処理を削除。`syncUserLinks` と同じ理由で関数名だけ残置。削除は手動 `firebase functions:delete importMoneyForward --region asia-northeast1` |
 | `postRecurringExpenses` | cron `10 6 * * *` JST | asia-northeast1 | 固定費（`recurringExpenses`）のうち引き落とし日を迎えた項目を `expenses` に計上（`recurringExpenses.ts`。同じ月に 2 回は入らない。LINE 通知なし） |
 | `syncUserLinks` | Firestore `expenses/{id}` onCreate | asia-northeast1 | **無効化済み（何もしない）**。export から外すと CI の非対話デプロイが関数削除の確認で失敗するため残置。削除は手動 `firebase functions:delete syncUserLinks` |
 | `api` | HTTPS（Express） | **us-central1** | Gmail OAuth / watch 管理 `/gmail/*`（`ADMIN_SECRET` 認証）、LIFF ログイン `/auth/line`、Web の確認・精算・固定費・折半設定 `/household/*`（Firebase ID トークン認証。SPECIFICATION.md §5.4） |
@@ -168,7 +165,7 @@ Web を開く（LINE の「家計簿一覧を見る」/「修正」リンク、�
 - LINE プロフィール 15 分メモリキャッシュ、`Promise.allSettled` による並列化
 - レシート画像はアップロード前にクライアントで圧縮（`web/lib/imageCompress.ts`。OCR / Vision API は廃止済み）
 - 固定費の自動計上は LINE 通知を送らない（push 枠を使わない）
-- Function ごとのメモリチューニング（webhook / importMoneyForward 512MiB、Gmail 系 / 固定費 256MiB）
+- Function ごとのメモリチューニング（webhook 512MiB、Gmail 系 / 固定費 256MiB）
 
 ## 6. 認証・セキュリティモデル
 
@@ -218,7 +215,6 @@ line-kakeibo/
 │  │  ├─ geminiCategoryClassifier.ts / categoryNormalization.ts
 │  │  ├─ linkUserResolver.ts / syncUserLinks.ts
 │  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue
-│  │  ├─ importMoneyForward.ts
 │  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）
 │  │  ├─ line/               # webhookApp.ts（署名検証・イベント振り分け・/health）/ textMessage.ts / commands/*.ts（家計簿・要望・カテゴリー・グループ・立替/精算）
 │  │  │                      # / expenseFlow.ts（テキスト入力の支出登録）/ groupEvents.ts / client.ts（LINE クライアント・返信）/ flexMessage.ts / postback.ts

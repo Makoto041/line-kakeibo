@@ -58,7 +58,6 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 | `FIREBASE_PROJECT_ID` | 既定 `line-kakeibo-0410` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | ローカルでの Admin SDK 認証（サービスアカウント JSON のパス）。本番では不要 |
 | `LINE_GROUP_ID` / `DEFAULT_GROUP_ID` / `WEB_ORIGINS` | 任意（既定値あり） |
-| `API_BASE_URL` / `MFKAKEIBO_TOKEN` | MoneyForward CSV 取込（`importMoneyForward`）の送信先。送信先 `/api/mf/import` は本リポジトリに無く、未設定ならバッチは失敗するだけで他に影響しない |
 
 ## 4. 外部サービスの設定
 

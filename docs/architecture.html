@@ -97,7 +97,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 flowchart LR
   LINE["LINE アプリ"] -->|webhook| WH["webhook 関数<br/>asia-northeast1"]
   Gmail["Gmail"] -->|Pub/Sub| GM["gmailPubSubHandler"]
-  Sched["Cloud Scheduler"] --> JOBS["postRecurringExpenses<br/>renewGmailWatch<br/>importMoneyForward"]
+  Sched["Cloud Scheduler"] --> JOBS["postRecurringExpenses<br/>renewGmailWatch"]
   Browser["ブラウザ / LIFF"] --> WEB["Next.js（Vercel）"]
   WEB -->|/auth/line・/household/*| API["api 関数<br/>us-central1"]
   WEB -->|読み取り（ルールで制限）| FS[("Firestore")]
@@ -125,7 +125,7 @@ flowchart LR
             <tr><td class="name">gmailPubSubHandler</td><td>Pub/Sub</td><td class="region">asia-northeast1</td><td>カード利用通知メールの取込</td></tr>
             <tr><td class="name">postRecurringExpenses</td><td>毎日 06:10 JST</td><td class="region">asia-northeast1</td><td>引き落とし日を迎えた固定費を支出に計上（同じ月に 2 回は入らない）</td></tr>
             <tr><td class="name">renewGmailWatch</td><td>6 日ごと 03:00 JST</td><td class="region">asia-northeast1</td><td>Gmail watch（7 日で失効）の更新</td></tr>
-            <tr><td class="name">importMoneyForward</td><td>毎日 05:00 JST</td><td class="region">asia-northeast1</td><td>Drive の CSV を外部 API へ送る（送信先未設定なら何もしない）</td></tr>
+            <tr><td class="name">importMoneyForward</td><td>毎日 05:00 JST</td><td class="region">asia-northeast1</td><td>廃止。旧 MoneyForward CSV 取込（一度も機能していなかった）。消すと CI の非対話デプロイが止まるため、何もしない関数として名前だけ残置</td></tr>
             <tr><td class="name">syncUserLinks</td><td>Firestore onCreate</td><td class="region">asia-northeast1</td><td>何もしない。消すと CI の非対話デプロイが止まるため残置</td></tr>
           </tbody>
         </table>

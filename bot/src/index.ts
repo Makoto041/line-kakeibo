@@ -20,7 +20,6 @@ import { handleGmailPubSub, renewWatch } from "./gmail";
 import { authRouter } from "./auth/lineAuth";
 import { householdRouter, householdErrorHandler } from "./householdApi";
 // Money Forward Me Import
-import { importMoneyForward as runMoneyForwardImport } from "./importMoneyForward";
 import { postDueRecurringExpenses } from "./recurringExpenses";
 
 dotenv.config();
@@ -75,16 +74,24 @@ export const webhook = onRequest(
 // デプロイが本番関数の削除確認で失敗するため残す。
 export { syncUserLinks } from "./syncUserLinks";
 
+// 【廃止】MoneyForward CSV 取込。送信先の /api/mf/import がどこにも存在せず、送信先の
+// 設定（API_BASE_URL / MFKAKEIBO_TOKEN）も渡していなかったため、一度も機能していなかった。
+// 処理は削除し、関数名だけを何もしない関数として残す（export から外すと CI の非対話
+// デプロイが本番関数の削除確認で失敗するため）。本番の関数はオーナーが
+// `firebase functions:delete importMoneyForward --region asia-northeast1` で削除し、
+// その後この export を消す。
 export const importMoneyForward = onSchedule(
   {
-    schedule: "0 5 * * *", // 毎朝5時
+    schedule: "0 5 * * *",
     timeZone: "Asia/Tokyo",
     region: "asia-northeast1",
-    timeoutSeconds: 300,
-    memory: "512MiB",
-    maxInstances: 2,
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    maxInstances: 1,
   },
-  runMoneyForwardImport
+  async () => {
+    // 意図的に何もしない（上記コメント参照）。
+  }
 );
 
 // ============================================
