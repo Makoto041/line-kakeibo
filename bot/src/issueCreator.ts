@@ -1,21 +1,6 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import axios from 'axios';
+import { generateJson, isGeminiConfigured, ThinkingLevel } from './geminiClient';
 import { errorMessage } from './logSafe';
-
-// Gemini APIクライアントの初期化
-let genAI: GoogleGenerativeAI | null = null;
-
-function getGeminiClient(): GoogleGenerativeAI | null {
-  if (!genAI) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn('GEMINI_API_KEY not found in environment variables');
-      return null;
-    }
-    genAI = new GoogleGenerativeAI(apiKey);
-  }
-  return genAI;
-}
 
 export type RequirementType = '機能要件' | '非機能要件';
 
@@ -44,15 +29,11 @@ const GITHUB_REPO = 'Makoto041/line-kakeibo';
 export async function analyzeFeedbackWithGemini(
   feedbackText: string
 ): Promise<FeedbackAnalysis | null> {
+  if (!isGeminiConfigured()) {
+    console.warn('Gemini client not available, using fallback analysis');
+    return null;
+  }
   try {
-    const client = getGeminiClient();
-    if (!client) {
-      console.warn('Gemini client not available, using fallback analysis');
-      return null;
-    }
-
-    const model = client.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
     const prompt = `あなたはソフトウェア開発プロジェクトの要件アナリストです。LINE家計簿botのユーザーから寄せられた以下のフィードバック（要望・改善・不具合報告）を分析し、GitHub Issueとして起票するための情報をJSON形式で出力してください。
 
 ## 要件分類の定義
@@ -74,28 +55,12 @@ export async function analyzeFeedbackWithGemini(
 
 重要: typeは必ず「機能要件」または「非機能要件」のどちらかにしてください。acceptanceCriteriaは2〜5個の具体的な条件にしてください。`;
 
-    // Gemini APIを呼び出し（タイムアウト付き）
-    const geminiPromise = model.generateContent(prompt);
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Gemini API timeout')), 15000)
-    );
-
-    const result = (await Promise.race([geminiPromise, timeoutPromise])) as any;
-    const response = result.response;
-    const text = response.text().trim();
-
-    // フィードバック本文と応答本文はログに出さない
-    console.log(`Gemini feedback analysis response received (${text.length} chars)`);
-
-    // JSONレスポンスをパース（Markdownコードブロック形式の場合も対応）
-    let jsonText = text;
-    if (text.startsWith('```json') && text.endsWith('```')) {
-      jsonText = text.replace(/^```json\s*\n/, '').replace(/\n\s*```$/, '').trim();
-    } else if (text.startsWith('```') && text.endsWith('```')) {
-      jsonText = text.replace(/^```\s*\n/, '').replace(/\n\s*```$/, '').trim();
-    }
-
-    const parsed = JSON.parse(jsonText);
+    // 要約と受け入れ条件の整理は分類より考える量が多いので LOW にする
+    const parsed = await generateJson<Record<string, unknown>>(prompt, {
+      timeoutMs: 15000,
+      thinkingLevel: ThinkingLevel.LOW,
+    });
+    if (!parsed) return null;
 
     const type: RequirementType =
       parsed.type === '非機能要件' ? '非機能要件' : '機能要件';

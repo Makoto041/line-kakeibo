@@ -38,7 +38,7 @@ flowchart LR
     subgraph External["外部サービス"]
         LMA["LINE Messaging API"]
         LLogin["LINE Login (LIFF)"]
-        Gemini["Gemini 2.5 Flash"]
+        Gemini["Gemini 3.5 Flash-Lite"]
         Gmail["Gmail API"]
         GH["GitHub API<br/>(Issue起票)"]
     end
@@ -102,7 +102,7 @@ flowchart LR
 LINEテキスト → webhook(署名検証)
   → parseTextExpense()（金額必須・日付/支払方法/カテゴリ/摘要を抽出）
   → 並列: プロフィール取得(15分cache) / appUid解決(匿名Auth) / カテゴリ分類
-  → カテゴリ分類: キーワードマップ → キャッシュ → Gemini 2.5 Flash（確信度≥0.4で採用）
+  → カテゴリ分類: キャッシュ → キーワードマップ → Gemini（確信度≥0.4で採用）
   → グループ所属の決定（expenseGroupScope.ts: 発言元 LINE グループに紐づく世帯の有効メンバーなら groupId+lineGroupId、それ以外は個人支出）
   → expenses 保存 (confirmed:false, includeInTotal:false, inputSource:'line_text')
   → 確認Flex返信（現在の設定3行＋[変更] / OK / 修正 / レシート添付 / 家計簿一覧を見る）
@@ -114,7 +114,7 @@ LINEテキスト → webhook(署名検証)
 ```text
 SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
   → history API差分取得 → SMBCフィルタ → 利用先/金額/利用日時パース
-  → Gemini分類 → Firestoreトランザクションでアトミック保存
+  → カテゴリ分類（店名なので Gemini を優先。使えないときだけキーワードマップ）→ Firestoreトランザクションでアトミック保存
      （gmailMessageId ＋ date+amount+店舗名の類似+usedAt±1分 の二重チェックで重複排除）
   → LINEグループへFlex通知（テキスト入力と同じ登録・編集カード）
 ```
@@ -152,11 +152,20 @@ Web を開く（LINE の「家計簿一覧を見る」/「修正」リンク、�
 ## 5. カテゴリ分類パイプライン（コスト最適化）
 
 ```text
-入力テキスト
+LINE のテキスト（source: 'text'）
   ├─ 1. 結果キャッシュ（関数インスタンスのメモリ内。15分TTL）── ヒット→終了
   ├─ 2. FAST_KEYWORD_MAP（メモリ内・即時・conf 0.8）── ヒット→終了
-  └─ 3. Gemini gemini-2.5-flash（few-shot JSON・8sタイムアウト。候補のカテゴリ一覧は Firestore から読み 30分キャッシュ）
-        └─ 出力を categoryNormalization で正準19カテゴリに正規化
+  └─ 3. Gemini
+
+カード利用通知の店名（source: 'merchant'、Gmail 取込）
+  ├─ 1. 結果キャッシュ ── ヒット→終了
+  ├─ 2. Gemini ── 成功→終了
+  └─ 3. FAST_KEYWORD_MAP（Gemini が使えないときだけ。店名は部分一致で取り違えやすいため後回し）
+
+Gemini: @google/genai 経由、既定モデル gemini-3.5-flash-lite（GEMINI_MODEL で差し替え可、geminiClient.ts）
+  ・思考 MINIMAL・8s タイムアウト・構造化出力（category をカテゴリ一覧の enum に限定）
+  ・候補のカテゴリ一覧は Firestore から読み 30分キャッシュ
+  └─ 出力を categoryNormalization で正準19カテゴリに正規化
 ```
 
 その他のコスト施策:

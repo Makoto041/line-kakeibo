@@ -23,7 +23,7 @@ Web では予算の進捗、支出の確認・編集、ふたりの精算、家�
 
 ### 集計と精算
 
-- 🤖 **AI カテゴリ分類**: キーワード辞書 → キャッシュ → Gemini 2.5 Flash の 3 段で、コストを抑えつつ 19 カテゴリに分類
+- 🤖 **AI カテゴリ分類**: キャッシュ・キーワード辞書・Gemini（3.5 Flash-Lite）を組み合わせ、コストを抑えつつ 19 カテゴリに分類
 - 📈 **ホーム**: 月次の支出・予算の進捗・カテゴリ別・日別推移・前月比。要確認の支出があれば案内
 - 🧾 **支出**: すべて / 要確認 / 立替 の絞り込み、検索、確認ボタン（LINE の OK と同じ処理）
 - 🤝 **精算**: 期間の支出を折半して「誰が誰にいくら送金するか」を出す。未精算の立替の精算も同じ画面で記録
@@ -57,7 +57,7 @@ flowchart LR
     LINE["LINE アプリ"] -->|webhook| Bot["Firebase Functions gen2<br/>(bot/ Node.js 22 + Express)"]
     Gmail["Gmail API"] -->|Pub/Sub push| Bot
     Cron["Cloud Scheduler"] -->|固定費の計上 / watch 更新| Bot
-    Bot --> Gemini["Gemini 2.5 Flash"]
+    Bot --> Gemini["Gemini 3.5 Flash-Lite"]
     Bot --> FS[("Firestore")]
     Browser["ブラウザ /<br/>LINE 内ブラウザ (LIFF)"] --> Web["Next.js 16 (web/)<br/>Vercel"]
     Web -->|LIFF → カスタムトークン| Bot
@@ -77,7 +77,7 @@ flowchart LR
 | Frontend | Next.js 16（App Router）+ React 19 + TypeScript + Tailwind CSS 4 + Recharts + framer-motion |
 | Backend | Node.js 22 + TypeScript + Express 5 + `@line/bot-sdk` v11（Firebase Functions gen2） |
 | Data | Firestore + Cloud Storage（ルールでアクセス制御） |
-| AI | Gemini 2.5 Flash（カテゴリ分類・フィードバック解析） |
+| AI | Gemini 3.5 Flash-Lite（`@google/genai`。カテゴリ分類・フィードバック解析） |
 | 外部連携 | LINE Messaging API / LIFF / Gmail API + Pub/Sub / GitHub API |
 | Hosting / CI | Vercel（Web）+ Firebase（Bot・ルール）/ GitHub Actions |
 

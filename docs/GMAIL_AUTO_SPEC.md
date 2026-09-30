@@ -235,7 +235,7 @@ OAuth 認可の CSRF 用 state。`/gmail/auth` で発行し、`/gmail/callback` 
 
 ## 6. カテゴリ定義
 
-正準カテゴリは `categoryNormalization.ts` の 19 種で、Gmail 取込も同じ分類器（`classifyExpenseWithGemini`）を使う:
+正準カテゴリは `categoryNormalization.ts` の 19 種で、Gmail 取込も同じ分類器（`classifyExpenseWithGemini`）を使う。ただし店名は部分一致のキーワード辞書で取り違えやすいため、`source: 'merchant'` を渡して **Gemini を先に使い**、Gemini が使えないときだけ辞書で判定する（SPECIFICATION.md §4）:
 
 食費 / 交通費 / 日用品 / 娯楽 / 衣服 / 医療・健康 / 教育 / 光熱費 / 住居費 / 保険 / 税金 / 美容 / 通信費 / サブスク / プレゼント / 旅行 / ペット / 貯金 / その他
 
