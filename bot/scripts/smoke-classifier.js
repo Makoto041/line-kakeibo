@@ -34,8 +34,8 @@ async function main() {
   check('既定は gemini-3.5-flash-lite', geminiClient.DEFAULT_GEMINI_MODEL === 'gemini-3.5-flash-lite');
   delete process.env.GEMINI_MODEL;
   check('GEMINI_MODEL 未設定なら既定', geminiClient.geminiModel() === 'gemini-3.5-flash-lite');
-  process.env.GEMINI_MODEL = ' gemini-3.8-flash ';
-  check('GEMINI_MODEL で差し替え', geminiClient.geminiModel() === 'gemini-3.8-flash');
+  process.env.GEMINI_MODEL = ' gemini-3.1-flash-lite ';
+  check('GEMINI_MODEL で差し替え', geminiClient.geminiModel() === 'gemini-3.1-flash-lite');
   delete process.env.GEMINI_MODEL;
 
   console.log('\n# コードブロックの除去');

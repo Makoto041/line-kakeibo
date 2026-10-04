@@ -53,8 +53,7 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 | `LINE_LIFF_CHANNEL_ID` | LINE Login チャネルの ID（`/auth/line` で ID トークンの `aud` を検証する） |
 | `ADMIN_SECRET` | 管理 API（`/gmail/*`）の Bearer トークン |
 | `GEMINI_API_KEY` | カテゴリ分類・フィードバック解析 |
-| `GEMINI_MODEL` | 任意。Gemini のモデル（既定 `gemini-3.5-flash-lite`） |
-| `GEMINI_FALLBACK_MODEL` | 任意。既定モデルが終了・提供停止になったときに使う予備（既定 `gemini-3.6-flash`、`none` で無効） |
+| `GEMINI_MODEL` | 任意。メインのモデルを固定する（Flash-Lite のみ。未設定なら利用できる一番新しい Flash-Lite） |
 | `GITHUB_TOKEN` | 「要望 / 不具合」からの Issue 自動起票 |
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REDIRECT_URI` | Gmail 自動取込の OAuth |
 | `FIREBASE_PROJECT_ID` | 既定 `line-kakeibo-0410` |
@@ -89,8 +88,9 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 
 ### Gemini
 
-API キーを `GEMINI_API_KEY` に入れる。モデルは既定 `gemini-3.5-flash-lite`（`bot/src/geminiClient.ts`）で、
-環境変数 `GEMINI_MODEL` で差し替えられる（思考の深さ `thinkingLevel` は Gemini 3 系のときだけ送る）。
+API キーを `GEMINI_API_KEY` に入れる。モデルは **Flash-Lite 系だけ**を使い（Flash 系は無料枠から外れるため）、
+利用できる一番新しい Flash-Lite を自動で選ぶ（現在は `gemini-3.5-flash-lite`、予備は `gemini-3.1-flash-lite`。`bot/src/geminiClient.ts`）。
+環境変数 `GEMINI_MODEL` でメインを固定できる（Flash-Lite 以外の名前は無視する）。
 分類の順序は入力の種類で違い、Gmail の店名は Gemini を優先する（SPECIFICATION.md §4）。Gemini が使えないときは辞書だけで動く。
 
 ### Vercel

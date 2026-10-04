@@ -14,44 +14,115 @@ export type ThinkingLevel = GenAI.ThinkingLevel;
 /**
  * Gemini API の共通クライアント（カテゴリ分類・フィードバック解析で共用）。
  *
- * モデルは短い分類・要約が中心なので、安価で速い Flash-Lite を既定にする。
- * 環境変数 GEMINI_MODEL で差し替えられる（モデルの廃止・値上げ時にコード変更なしで切り替えるため）。
+ * 使うのは Flash-Lite 系だけ（Flash 系は無料枠から外れるため、課金を避ける）。
+ * - メイン: 利用できる Flash-Lite の安定版のうち一番新しいもの。モデル一覧 API で調べるので、
+ *   上位の Flash-Lite（例: 3.6 Flash-Lite）が出れば自動でそれがメインになる
+ * - 予備: その次に新しい Flash-Lite。メインが終了・提供停止になったら自動で切り替える
+ * - 一覧を取れないときは既知の順（gemini-3.5-flash-lite → gemini-3.1-flash-lite）を使う
+ * 環境変数 GEMINI_MODEL でメインを固定できる（Flash-Lite 以外の名前は無視する）。
  * 料金と廃止予定: https://ai.google.dev/gemini-api/docs/pricing / https://ai.google.dev/gemini-api/docs/deprecations
- *
- * 既定モデルが終了・提供停止（404 や「not found / deprecated / no longer available」）になったときは、
- * 予備モデル（GEMINI_FALLBACK_MODEL、既定 gemini-3.6-flash）に自動で切り替える。予備は通常は呼ばれない。
  */
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
-/** 予備モデル。安定版で終了予定がなく、思考 MINIMAL にも対応している（単価は既定の約 1.5〜2.5 倍） */
-export const DEFAULT_GEMINI_FALLBACK_MODEL = 'gemini-3.6-flash';
 
+/** 一覧を取れないときに使う既知の Flash-Lite（新しい順）。3.1 Flash-Lite は 2027/5/7 終了予定 */
+export const KNOWN_FLASH_LITE_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
+export const DEFAULT_GEMINI_MODEL = KNOWN_FLASH_LITE_MODELS[0];
+/** 1 回の呼び出しで試すモデルの数の上限（メイン + 予備） */
+const MAX_CANDIDATES = 2;
+
+/** Flash-Lite の安定版のモデル ID か（-preview / -image / -001 などの派生は含めない） */
+export function isStableFlashLiteModel(model: string): boolean {
+  return /^gemini-\d+(\.\d+)?-flash-lite$/.test(model);
+}
+
+function versionOf(model: string): number {
+  const match = model.match(/^gemini-(\d+(?:\.\d+)?)-/);
+  return match ? Number(match[1]) : 0;
+}
+
+/** Flash-Lite の安定版だけを残し、新しい順に並べる（重複は除く） */
+export function sortFlashLiteModels(models: string[]): string[] {
+  return [...new Set(models.filter(isStableFlashLiteModel))].sort((x, y) => versionOf(y) - versionOf(x));
+}
+
+/** 環境変数 GEMINI_MODEL（Flash-Lite のときだけ有効） */
+export function configuredModel(): string | null {
+  const configured = process.env.GEMINI_MODEL?.trim();
+  if (!configured) return null;
+  if (!isStableFlashLiteModel(configured)) {
+    console.warn('GEMINI_MODEL is not a stable Flash-Lite model; ignoring it', { model: configured });
+    return null;
+  }
+  return configured;
+}
+
+/** 既知の一覧から決めたメインモデル（一覧 API を使わない場合の値。ログ・テスト用） */
 export function geminiModel(): string {
-  return process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  return configuredModel() ?? DEFAULT_GEMINI_MODEL;
 }
 
-/** 予備モデル。GEMINI_FALLBACK_MODEL=none で無効化できる */
-export function geminiFallbackModel(): string | null {
-  const configured = process.env.GEMINI_FALLBACK_MODEL?.trim();
-  if (configured?.toLowerCase() === 'none') return null;
-  const fallback = configured || DEFAULT_GEMINI_FALLBACK_MODEL;
-  return fallback === geminiModel() ? null : fallback;
+// --- 利用できる Flash-Lite の一覧（モデル一覧 API の結果をインスタンス内にキャッシュ） ---
+const DISCOVERY_TTL_MS = 24 * 60 * 60 * 1000; // 成功: 24 時間
+const DISCOVERY_RETRY_MS = 10 * 60 * 1000; // 失敗: 10 分は既知の一覧で動く
+const DISCOVERY_TIMEOUT_MS = 3000;
+let discovered: { models: string[]; expiresAt: number } | null = null;
+
+/** モデル一覧 API から、generateContent に使える Flash-Lite の安定版を新しい順に取る */
+async function discoverFlashLiteModels(ai: GenAI.GoogleGenAI): Promise<string[]> {
+  if (discovered && Date.now() < discovered.expiresAt) return discovered.models;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DISCOVERY_TIMEOUT_MS);
+  try {
+    const pager = await ai.models.list({ config: { pageSize: 100, abortSignal: controller.signal } });
+    const names: string[] = [];
+    for await (const model of pager) {
+      const name = (model.name ?? '').replace(/^models\//, '');
+      const actions = model.supportedActions;
+      if (actions && !actions.includes('generateContent')) continue;
+      names.push(name);
+    }
+    const models = sortFlashLiteModels(names);
+    discovered = { models, expiresAt: Date.now() + (models.length ? DISCOVERY_TTL_MS : DISCOVERY_RETRY_MS) };
+    console.log('Gemini Flash-Lite models discovered', { models });
+    return models;
+  } catch (error) {
+    console.warn('Gemini model list unavailable; using the known Flash-Lite models', {
+      status: (error as { status?: unknown })?.status,
+    });
+    discovered = { models: [], expiresAt: Date.now() + DISCOVERY_RETRY_MS };
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-/** このインスタンスで「使えない」と分かったモデル（毎回失敗させないため、以後は予備を直接使う） */
-const unavailableModels = new Set<string>();
+/** このインスタンスで「使えない」と分かったモデルと、その記録の期限（一時的な誤判定で固定されないよう 1 時間） */
+const UNAVAILABLE_TTL_MS = 60 * 60 * 1000;
+const unavailableModels = new Map<string, number>();
 
-/** テスト用: 使えないモデルの記録を消す */
+function isMarkedUnavailable(model: string): boolean {
+  const until = unavailableModels.get(model);
+  if (until === undefined) return false;
+  if (Date.now() < until) return true;
+  unavailableModels.delete(model);
+  return false;
+}
+
+/** テスト用: 使えないモデルの記録と一覧のキャッシュを消す */
 export function resetGeminiModelState(): void {
   unavailableModels.clear();
+  discovered = null;
 }
 
-/** 今回使うモデルの順番（既定 → 予備）。使えないと分かった既定はとばす */
-export function modelCandidates(): string[] {
-  const primary = geminiModel();
-  const fallback = geminiFallbackModel();
-  const list = unavailableModels.has(primary) && fallback ? [fallback] : [primary];
-  if (fallback && !list.includes(fallback)) list.push(fallback);
-  return list;
+/**
+ * 今回試すモデルの順番（メイン → 予備）。すべて Flash-Lite。
+ * GEMINI_MODEL → 一覧 API で見つかった新しい順 → 既知の一覧、の順に並べ、使えないと分かったものは後ろに回す。
+ */
+export function orderCandidates(discoveredModels: string[]): string[] {
+  const preferred = configuredModel();
+  const all = [...new Set([...(preferred ? [preferred] : []), ...discoveredModels, ...KNOWN_FLASH_LITE_MODELS])];
+  const available = all.filter((m) => !isMarkedUnavailable(m));
+  const ordered = available.length ? available : all;
+  return ordered.slice(0, MAX_CANDIDATES);
 }
 
 /** モデルの終了・提供停止・権限なしによる失敗か（スキーマ誤りなどの 400 とは区別する） */
@@ -118,9 +189,9 @@ export async function generateJson<T = unknown>(
   if (!ai) return null;
 
   // 打ち切り時間は予備モデルへの切り替えも含めた全体で守る
+  const candidates = orderCandidates(await discoverFlashLiteModels(ai));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs);
-  const candidates = modelCandidates();
   try {
     for (let i = 0; i < candidates.length; i++) {
       const model = candidates[i];
@@ -159,7 +230,7 @@ export async function generateJson<T = unknown>(
           }
           // モデルが終了・提供停止なら予備モデルへ
           if (isModelUnavailableError(error) && i < candidates.length - 1) {
-            unavailableModels.add(model);
+            unavailableModels.set(model, Date.now() + UNAVAILABLE_TTL_MS);
             console.error('Gemini model is unavailable; switching to the fallback model', {
               model,
               fallback: candidates[i + 1],
