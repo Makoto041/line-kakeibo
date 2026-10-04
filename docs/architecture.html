@@ -198,7 +198,7 @@ flowchart LR
       <div class="pipeline">
         <div class="stage"><b>1. キャッシュ</b><span>関数のメモリ上に残っている同じ内容の分類結果を再利用</span><span class="cost">費用 0</span></div>
         <div class="stage"><b>2. キーワード辞書</b><span>「ランチ」→ 食費 など全カテゴリの辞書</span><span class="cost">費用 0</span></div>
-        <div class="stage"><b>3. Gemini</b><span>それでも決まらないものだけ問い合わせ（3.5 Flash-Lite、思考は最小、カテゴリ一覧の中から選ばせる）</span><span class="cost">API 呼び出し</span></div>
+        <div class="stage"><b>3. Gemini</b><span>それでも決まらないものだけ問い合わせ（3.5 Flash-Lite、思考は最小、カテゴリ一覧の中から選ばせる。モデルが終了したら予備の 3.6 Flash に自動で切り替え）</span><span class="cost">API 呼び出し</span></div>
       </div>
       <p>上は LINE の入力（「500 ランチ」の「ランチ」）の順序。<b>カード利用メールの店名</b>（「ｾﾌﾞﾝ-ｲﾚﾌﾞﾝ」「AMAZON.CO.JP」など）は、辞書の部分一致だと「au」「etc」「パン」などが店名の一部に当たって取り違えるため、<b>キャッシュ → Gemini → 辞書</b>の順にしている。Gemini が使えないときは辞書だけで動き、分類できなければ「その他」になる。</p>
     </div>

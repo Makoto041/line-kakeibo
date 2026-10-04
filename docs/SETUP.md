@@ -54,6 +54,7 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 | `ADMIN_SECRET` | 管理 API（`/gmail/*`）の Bearer トークン |
 | `GEMINI_API_KEY` | カテゴリ分類・フィードバック解析 |
 | `GEMINI_MODEL` | 任意。Gemini のモデル（既定 `gemini-3.5-flash-lite`） |
+| `GEMINI_FALLBACK_MODEL` | 任意。既定モデルが終了・提供停止になったときに使う予備（既定 `gemini-3.6-flash`、`none` で無効） |
 | `GITHUB_TOKEN` | 「要望 / 不具合」からの Issue 自動起票 |
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REDIRECT_URI` | Gmail 自動取込の OAuth |
 | `FIREBASE_PROJECT_ID` | 既定 `line-kakeibo-0410` |

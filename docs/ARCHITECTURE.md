@@ -163,6 +163,7 @@ LINE のテキスト（source: 'text'）
   └─ 3. FAST_KEYWORD_MAP（Gemini が使えないときだけ。店名は部分一致で取り違えやすいため後回し）
 
 Gemini: @google/genai 経由、既定モデル gemini-3.5-flash-lite（GEMINI_MODEL で差し替え可、geminiClient.ts）
+  ・既定モデルが終了・提供停止なら予備 gemini-3.6-flash（GEMINI_FALLBACK_MODEL）に自動で切り替え
   ・思考 MINIMAL・8s タイムアウト・構造化出力（category をカテゴリ一覧の enum に限定）
   ・候補のカテゴリ一覧は Firestore から読み 30分キャッシュ
   └─ 出力を categoryNormalization で正準19カテゴリに正規化
