@@ -67,6 +67,7 @@ async function main() {
   check('3.5 Flash-Lite は安定版', client.isStableFlashLiteModel('gemini-3.5-flash-lite'));
   check('Flash は対象外', !client.isStableFlashLiteModel('gemini-3.6-flash'));
   check('preview / image / 版番号付きは対象外', ['gemini-3.1-flash-lite-preview', 'gemini-3.1-flash-lite-image', 'gemini-3.5-flash-lite-001'].every((m) => !client.isStableFlashLiteModel(m)));
+  check('3.10 は 3.9 より新しい', client.sortFlashLiteModels(['gemini-3.9-flash-lite', 'gemini-3.10-flash-lite'])[0] === 'gemini-3.10-flash-lite');
   check('新しい順に並べる', client.sortFlashLiteModels(['gemini-2.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-4-flash-lite', 'gemini-3.5-flash-lite']).join(',') === 'gemini-4-flash-lite,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite');
   check('既定は gemini-3.5-flash-lite', client.geminiModel() === 'gemini-3.5-flash-lite');
   process.env.GEMINI_MODEL = 'gemini-3.6-flash';
@@ -85,6 +86,15 @@ async function main() {
   listCalls = 0;
   await client.generateJson('p', opts);
   check('一覧はキャッシュする（2 回目は取らない）', listCalls === 0, `listCalls=${listCalls}`);
+  client.resetGeminiModelState();
+  listedModels = [{ name: 'models/gemini-3.7-flash-lite', supportedActions: ['embedContent'] }, 'gemini-3.5-flash-lite'];
+  calls = [];
+  await client.generateJson('p', opts);
+  check('generateContent に使えないモデルは選ばない', calls[0].model === 'gemini-3.5-flash-lite', JSON.stringify(calls));
+  process.env.GEMINI_MODEL = 'gemini-3.1-flash-lite';
+  check('GEMINI_MODEL を固定すると先頭、次に一覧の最上位', client.orderCandidates(['gemini-3.6-flash-lite', 'gemini-3.5-flash-lite']).join(',') === 'gemini-3.1-flash-lite,gemini-3.6-flash-lite');
+  delete process.env.GEMINI_MODEL;
+  listedModels = ['gemini-3.8-flash', 'gemini-3.6-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite-preview'];
   check('候補は Flash-Lite だけ（メイン + 予備）', client.orderCandidates(client.sortFlashLiteModels(listedModels)).join(',') === 'gemini-3.6-flash-lite,gemini-3.5-flash-lite');
 
   // 以降は一覧 API が失敗する（既知の一覧で動く）前提

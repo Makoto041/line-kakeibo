@@ -34,22 +34,33 @@ export function isStableFlashLiteModel(model: string): boolean {
   return /^gemini-\d+(\.\d+)?-flash-lite$/.test(model);
 }
 
-function versionOf(model: string): number {
-  const match = model.match(/^gemini-(\d+(?:\.\d+)?)-/);
-  return match ? Number(match[1]) : 0;
+/** 版番号を [メジャー, マイナー] で返す（"3.10" を 3.1 と取り違えないよう数値ではなく組で比べる） */
+function versionOf(model: string): [number, number] {
+  const match = model.match(/^gemini-(\d+)(?:\.(\d+))?-/);
+  return match ? [Number(match[1]), Number(match[2] ?? 0)] : [0, 0];
 }
 
 /** Flash-Lite の安定版だけを残し、新しい順に並べる（重複は除く） */
 export function sortFlashLiteModels(models: string[]): string[] {
-  return [...new Set(models.filter(isStableFlashLiteModel))].sort((x, y) => versionOf(y) - versionOf(x));
+  return [...new Set(models.filter(isStableFlashLiteModel))].sort((x, y) => {
+    const [xMajor, xMinor] = versionOf(x);
+    const [yMajor, yMinor] = versionOf(y);
+    return yMajor - xMajor || yMinor - xMinor;
+  });
 }
+
+let warnedIgnoredModel: string | null = null;
 
 /** 環境変数 GEMINI_MODEL（Flash-Lite のときだけ有効） */
 export function configuredModel(): string | null {
   const configured = process.env.GEMINI_MODEL?.trim();
   if (!configured) return null;
   if (!isStableFlashLiteModel(configured)) {
-    console.warn('GEMINI_MODEL is not a stable Flash-Lite model; ignoring it', { model: configured });
+    // 呼び出しのたびに出さないよう、同じ値については 1 回だけ警告する
+    if (warnedIgnoredModel !== configured) {
+      console.warn('GEMINI_MODEL is not a stable Flash-Lite model; ignoring it', { model: configured });
+      warnedIgnoredModel = configured;
+    }
     return null;
   }
   return configured;
@@ -67,10 +78,10 @@ const DISCOVERY_TIMEOUT_MS = 3000;
 let discovered: { models: string[]; expiresAt: number } | null = null;
 
 /** モデル一覧 API から、generateContent に使える Flash-Lite の安定版を新しい順に取る */
-async function discoverFlashLiteModels(ai: GenAI.GoogleGenAI): Promise<string[]> {
+async function discoverFlashLiteModels(ai: GenAI.GoogleGenAI, timeoutMs: number): Promise<string[]> {
   if (discovered && Date.now() < discovered.expiresAt) return discovered.models;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DISCOVERY_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const pager = await ai.models.list({ config: { pageSize: 100, abortSignal: controller.signal } });
     const names: string[] = [];
@@ -192,10 +203,11 @@ export async function generateJson<T = unknown>(
   const ai = getClient();
   if (!ai) return null;
 
-  // 打ち切り時間は予備モデルへの切り替えも含めた全体で守る
-  const candidates = orderCandidates(await discoverFlashLiteModels(ai));
+  // 打ち切り時間はモデル一覧の取得と予備モデルへの切り替えも含めた全体で守る
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+  const discoveryTimeout = Math.min(DISCOVERY_TIMEOUT_MS, Math.floor(options.timeoutMs / 3));
+  const candidates = orderCandidates(await discoverFlashLiteModels(ai, discoveryTimeout));
   try {
     for (let i = 0; i < candidates.length; i++) {
       const model = candidates[i];
@@ -212,8 +224,8 @@ export async function generateJson<T = unknown>(
                 ? { thinkingConfig: { thinkingLevel: options.thinkingLevel ?? ThinkingLevel.MINIMAL } }
                 : {}),
               abortSignal: controller.signal,
-              // SDK の既定は最大 5 回・最大 60 秒待ちの再試行で、待ち中は abort が効かない。
-              // 呼び出し側の打ち切り時間を守るため、再試行は 1 回・短い待ちに抑え、1 回ごとにも時間を区切る
+              // 一時的な失敗（429 / 5xx）だけ 1 回・短い待ちで再試行し、1 回ごとにも時間を区切る
+              // （再試行の待ち中は abort が効かないため、待ちは最大 1 秒に抑える）
               httpOptions: {
                 timeout: options.timeoutMs,
                 retryOptions: { attempts: 2, initialDelay: 0.5, maxDelay: 1 },
