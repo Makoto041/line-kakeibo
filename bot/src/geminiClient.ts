@@ -131,7 +131,11 @@ export function isModelUnavailableError(error: unknown): boolean {
   const message = String((error as Error)?.message ?? '');
   if (status === 404) return true;
   if (status === 400 || status === 403) {
-    return /not found|not supported|deprecat|no longer|discontinu|shut ?down|retired|is not available|not available to/i.test(message);
+    // 地域制限は予備モデルでも同じく失敗するので切り替えない
+    if (/user location/i.test(message)) return false;
+    if (/deprecat|no longer|discontinu|shut ?down|retired/i.test(message)) return true;
+    // 「not supported」などは形式の誤りでも出るので、モデルについての文言のときだけ切り替える
+    return /\bmodels?\b/i.test(message) && /not found|not supported|not available/i.test(message);
   }
   return false;
 }
@@ -242,14 +246,16 @@ export async function generateJson<T = unknown>(
         }
       }
     }
+    // ここには来ない（候補は空にならず、最後の候補の失敗は throw する）
     return null;
   } catch (error) {
     if (controller.signal.aborted) {
       console.warn('Gemini request timed out', { timeoutMs: options.timeoutMs });
     } else {
+      // SDK のエラー文は API のエラー本文（JSON）全体で長くなりうるので切り詰める
       console.error('Gemini request failed', {
         status: (error as { status?: unknown })?.status,
-        error: (error as Error)?.message,
+        error: String((error as Error)?.message ?? '').slice(0, 300),
       });
     }
     return null;

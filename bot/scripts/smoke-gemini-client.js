@@ -138,6 +138,29 @@ async function main() {
   check('null を返す', r === null);
   check('既定モデルだけを呼ぶ', calls.length === 1, JSON.stringify(calls));
 
+  console.log('\n# 地域制限・API キー誤りの 400 では予備に切り替えない');
+  for (const msg of ['User location is not supported for the API use.', 'API key not valid. Please pass a valid API key.', 'response_schema: JSON mode is not supported with this field']) {
+    client.resetGeminiModelState();
+    calls = [];
+    behavior = () => {
+      throw new ApiError(400, msg);
+    };
+    r = await client.generateJson('p', opts);
+    check(`「${msg.slice(0, 28)}…」→ 切り替えない`, r === null && calls.length === 1, JSON.stringify(calls));
+  }
+
+  console.log('\n# 予備も使えないとき');
+  client.resetGeminiModelState();
+  calls = [];
+  behavior = (p) => {
+    throw new ApiError(404, `models/${p.model} is not found for API version v1beta`);
+  };
+  r = await client.generateJson('p', opts);
+  check('null を返す（メイン → 予備の 2 回）', r === null && calls.length === 2, JSON.stringify(calls));
+  calls = [];
+  r = await client.generateJson('p', opts);
+  check('次はメインをとばして予備だけ', calls.length === 1 && calls[0].model === 'gemini-3.1-flash-lite', JSON.stringify(calls));
+
   console.log('\n# レート制限（429）でも予備に切り替えない（SDK の再試行に任せる）');
   client.resetGeminiModelState();
   calls = [];
