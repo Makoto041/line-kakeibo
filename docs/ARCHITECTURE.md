@@ -162,7 +162,10 @@ LINE のテキスト（source: 'text'）
   ├─ 2. Gemini ── 成功→終了
   └─ 3. FAST_KEYWORD_MAP（Gemini が使えないときだけ。店名は部分一致で取り違えやすいため後回し）
 
-Gemini: @google/genai 経由、既定モデル gemini-3.5-flash-lite（GEMINI_MODEL で差し替え可、geminiClient.ts）
+Gemini: @google/genai 経由、Flash-Lite 系だけを使う（Flash 系は無料枠外のため。geminiClient.ts）
+  ・メイン = モデル一覧 API で見つかった一番新しい Flash-Lite の安定版（24h キャッシュ。現在 gemini-3.5-flash-lite）
+  ・予備 = 次に新しい Flash-Lite（現在 gemini-3.1-flash-lite）。メインが終了・提供停止なら自動で切り替え
+  ・GEMINI_MODEL でメインを固定可（Flash-Lite 以外は無視）
   ・思考 MINIMAL・8s タイムアウト・構造化出力（category をカテゴリ一覧の enum に限定）
   ・候補のカテゴリ一覧は Firestore から読み 30分キャッシュ
   └─ 出力を categoryNormalization で正準19カテゴリに正規化
