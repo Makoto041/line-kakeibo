@@ -143,6 +143,9 @@ function AttachPageContent() {
 
     if (!ALLOWED_RECEIPT_TYPES.includes(file.type)) {
       setError("JPEG / PNG / WebP / HEIC 形式の画像を選択してください。");
+      // 前に選んだ画像が残ったままだと、拒否した選択の代わりにそれを上げてしまう
+      setSelectedFile(null);
+      setPreviewDataUrl(null);
       return;
     }
 
