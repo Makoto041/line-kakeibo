@@ -80,7 +80,10 @@ function AttachPageContent() {
     let cancelled = false;
     const fetchExpense = async () => {
       if (!expenseId || !isValidDocId(expenseId)) {
-        setError("支出IDが指定されていません。LINEの通知メッセージのボタンからアクセスしてください。");
+        setError(
+          (expenseId ? "支出IDが正しくありません。" : "支出IDが指定されていません。") +
+            "LINEの通知メッセージのボタンからアクセスしてください。"
+        );
         setLoading(false);
         return;
       }
@@ -209,7 +212,7 @@ function AttachPageContent() {
           if (mountedRef.current) {
             setError(
               errorCode(err) === "storage/unauthorized"
-                ? "アップロードする権限がありません。世帯のメンバーのLINEアカウントで開いてください。"
+                ? "アップロードが許可されませんでした。世帯のメンバーのLINEアカウントで開いているか確認してください。(storage/unauthorized)"
                 : "アップロードに失敗しました。" +
                     (err instanceof Error ? ` (${err.message})` : "")
             );

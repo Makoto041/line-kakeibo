@@ -15,6 +15,21 @@ let initPromise: Promise<void> | null = null;
 // 遷移が起きなかった場合に、完了を待つ呼び出し元（waitForLineAuth）を待たせ続けないため。
 const LOGIN_REDIRECT_WAIT_MS = 10_000;
 
+// LINE ログインから戻ったときに付くパラメータ。LIFF はこれを URL から消さないため、
+// 次のログインの戻り先にそのまま渡すと二重に付き、トークン交換が失敗してログインできなくなる。
+const LIFF_RETURN_PARAMS = ['code', 'state', 'liffClientId', 'liffRedirectUri', 'error', 'error_description'];
+
+/** ログイン後の戻り先（今のページから LIFF の戻りパラメータを除いた URL） */
+function loginRedirectUri(): string {
+  const url = new URL(window.location.href);
+  for (const key of Array.from(url.searchParams.keys())) {
+    if (LIFF_RETURN_PARAMS.includes(key) || key.startsWith('liff.')) {
+      url.searchParams.delete(key);
+    }
+  }
+  return url.toString();
+}
+
 /**
  * サインイン状態を確立する。
  * - NEXT_PUBLIC_LIFF_ID あり: LIFF で LINE ログイン → ID トークンを
@@ -69,7 +84,7 @@ export function initLineAuth(): Promise<void> {
         // /expenses?edit=… の行き先が失われるため、今のページへ戻す。
         // すぐに解決すると、完了を待つ呼び出し元が未ログインのまま読み取りに進み、
         // 遷移までの間に権限エラーを表示してしまうため、ページが離れるまで待つ。
-        liff.login({ redirectUri: window.location.href });
+        liff.login({ redirectUri: loginRedirectUri() });
         await new Promise((resolve) => setTimeout(resolve, LOGIN_REDIRECT_WAIT_MS));
         return;
       }
@@ -77,6 +92,8 @@ export function initLineAuth(): Promise<void> {
       const idToken = liff.getIDToken();
       if (!idToken) {
         console.error('LIFF ID token is missing; falling back to anonymous');
+        // 次の読み込みで LINE ログインからやり直せるよう、LIFF のログイン状態を消す
+        liff.logout();
         await signInAnonymously(auth);
         return;
       }
@@ -98,6 +115,10 @@ export function initLineAuth(): Promise<void> {
 
       if (!resp.ok) {
         console.error('Auth endpoint returned HTTP', resp.status);
+        // 401 は ID トークンの期限切れ・無効。LIFF はトークンの期限を見ずに isLoggedIn() を
+        // 返し続けるため、ログイン状態を消さないと再読み込みしても同じトークンで失敗し続ける。
+        // 消しておけば次の読み込みで LINE ログインからやり直す（この読み込み内では再試行しない）
+        if (resp.status === 401) liff.logout();
         await signInAnonymously(auth);
         return;
       }
