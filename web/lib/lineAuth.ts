@@ -15,15 +15,17 @@ let initPromise: Promise<void> | null = null;
 // 遷移が起きなかった場合に、完了を待つ呼び出し元（waitForLineAuth）を待たせ続けないため。
 const LOGIN_REDIRECT_WAIT_MS = 10_000;
 
-// LINE ログインから戻ったときに付くパラメータ。LIFF はこれを URL から消さないため、
-// 次のログインの戻り先にそのまま渡すと二重に付き、トークン交換が失敗してログインできなくなる。
-const LIFF_RETURN_PARAMS = ['code', 'state', 'liffClientId', 'liffRedirectUri', 'error', 'error_description'];
+// LINE ログインから戻ったときに付くパラメータ（これと liff で始まるもの: liffClientId /
+// liffRedirectUri / liff.state など）。LIFF はこれを URL から消さないため、次のログインの
+// 戻り先にそのまま渡すと二重に付き、トークン交換が失敗してログインできなくなる。
+// アプリのパラメータ（expenseId / edit / filter / token / lineId）とは重ならない。
+const LIFF_RETURN_PARAMS = ['code', 'state', 'error', 'error_description'];
 
 /** ログイン後の戻り先（今のページから LIFF の戻りパラメータを除いた URL） */
 function loginRedirectUri(): string {
   const url = new URL(window.location.href);
   for (const key of Array.from(url.searchParams.keys())) {
-    if (LIFF_RETURN_PARAMS.includes(key) || key.startsWith('liff.')) {
+    if (LIFF_RETURN_PARAMS.includes(key) || key.startsWith('liff')) {
       url.searchParams.delete(key);
     }
   }
