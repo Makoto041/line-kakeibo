@@ -11,6 +11,27 @@ import { auth, ensureFirebaseInitialized } from './firebase';
 // 二重実行や再マウントでも初回の Promise を使い回す。
 let initPromise: Promise<void> | null = null;
 
+// liff.login() でログイン画面へ移る間、ページが離れるのを待つ上限。
+// 遷移が起きなかった場合に、完了を待つ呼び出し元（waitForLineAuth）を待たせ続けないため。
+const LOGIN_REDIRECT_WAIT_MS = 10_000;
+
+// LINE ログインから戻ったときに付くパラメータ（これと liff で始まるもの: liffClientId /
+// liffRedirectUri / liff.state など）。LIFF はこれを URL から消さないため、次のログインの
+// 戻り先にそのまま渡すと二重に付き、トークン交換が失敗してログインできなくなる。
+// アプリのパラメータ（expenseId / edit / filter / token / lineId）とは重ならない。
+const LIFF_RETURN_PARAMS = ['code', 'state', 'error', 'error_description'];
+
+/** ログイン後の戻り先（今のページから LIFF の戻りパラメータを除いた URL） */
+function loginRedirectUri(): string {
+  const url = new URL(window.location.href);
+  for (const key of Array.from(url.searchParams.keys())) {
+    if (LIFF_RETURN_PARAMS.includes(key) || key.startsWith('liff')) {
+      url.searchParams.delete(key);
+    }
+  }
+  return url.toString();
+}
+
 /**
  * サインイン状態を確立する。
  * - NEXT_PUBLIC_LIFF_ID あり: LIFF で LINE ログイン → ID トークンを
@@ -60,14 +81,21 @@ export function initLineAuth(): Promise<void> {
       await liff.init({ liffId });
 
       if (!liff.isLoggedIn()) {
-        // LINE ログイン画面へリダイレクト（この後の処理は戻ってきてから再実行される）
-        liff.login();
+        // LINE ログイン画面へリダイレクト（この後の処理は戻ってきてから再実行される）。
+        // 戻り先の既定はエンドポイント URL（トップ）で、/attach?expenseId=… や
+        // /expenses?edit=… の行き先が失われるため、今のページへ戻す。
+        // すぐに解決すると、完了を待つ呼び出し元が未ログインのまま読み取りに進み、
+        // 遷移までの間に権限エラーを表示してしまうため、ページが離れるまで待つ。
+        liff.login({ redirectUri: loginRedirectUri() });
+        await new Promise((resolve) => setTimeout(resolve, LOGIN_REDIRECT_WAIT_MS));
         return;
       }
 
       const idToken = liff.getIDToken();
       if (!idToken) {
         console.error('LIFF ID token is missing; falling back to anonymous');
+        // 次の読み込みで LINE ログインからやり直せるよう、LIFF のログイン状態を消す
+        liff.logout();
         await signInAnonymously(auth);
         return;
       }
@@ -89,6 +117,10 @@ export function initLineAuth(): Promise<void> {
 
       if (!resp.ok) {
         console.error('Auth endpoint returned HTTP', resp.status);
+        // 401 は ID トークンの期限切れ・無効。LIFF はトークンの期限を見ずに isLoggedIn() を
+        // 返し続けるため、ログイン状態を消さないと再読み込みしても同じトークンで失敗し続ける。
+        // 消しておけば次の読み込みで LINE ログインからやり直す（この読み込み内では再試行しない）
+        if (resp.status === 401) liff.logout();
         await signInAnonymously(auth);
         return;
       }
@@ -114,6 +146,18 @@ export function initLineAuth(): Promise<void> {
   // 呼び出し側は結果を待たないので、ここで拒否を受け止めて unhandledrejection にしない
   initPromise.catch((e) => console.error('LINE auth init failed:', e));
   return initPromise;
+}
+
+/**
+ * 起動時サインインの完了を待ち、検証済み LINE userId を返す（LINE で認証できなければ null）。
+ *
+ * Firestore / Storage のルールは lineId クレームを要求するため、サインインの完了前に
+ * 読み書きすると権限エラーになる。LINE のボタンから直接開くページ（/attach）のように、
+ * useLineAuth を通さずに読み取るページは、読み取りの前にこれを待つこと。
+ */
+export async function waitForLineAuth(): Promise<string | null> {
+  await initLineAuth();
+  return getLineIdClaim(auth?.currentUser ?? null);
 }
 
 /**

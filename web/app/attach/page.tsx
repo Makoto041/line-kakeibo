@@ -9,7 +9,18 @@ import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
 import { isSafeImageUrl } from "../../lib/imageUrl";
 import { compressImage } from "../../lib/imageCompress";
 import { yen } from "../../lib/money";
+import { waitForLineAuth } from "../../lib/lineAuth";
+import { isValidDocId } from "../../lib/householdContract";
 import dayjs from "dayjs";
+
+// storage.rules と揃える（SVG・GIF は不可、上限 5MB）
+const ALLOWED_RECEIPT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
+const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
+
+function errorCode(err: unknown): string | undefined {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
+}
 
 // Suspense boundary for useSearchParams（ビルドエラー防止）
 export default function AttachPage() {
@@ -60,11 +71,19 @@ function AttachPageContent() {
     };
   }, []);
 
-  // 支出データの取得
+  // 支出データの取得。
+  // このページは LINE のカードのボタンから直接開かれるため、起動時サインイン
+  // （LIFF → カスタムトークン）の完了を待ってから読む。待たずに読むと、サインイン前
+  // （未認証・匿名）の読み取りとしてルールに拒否され、LINE から開いたときに
+  // 「支出データの取得に失敗しました」になる（Web 内の遷移ではサインイン済みのため起きない）。
   useEffect(() => {
+    let cancelled = false;
     const fetchExpense = async () => {
-      if (!expenseId) {
-        setError("支出IDが指定されていません。LINEの通知メッセージのボタンからアクセスしてください。");
+      if (!expenseId || !isValidDocId(expenseId)) {
+        setError(
+          (expenseId ? "支出IDが正しくありません。" : "支出IDが指定されていません。") +
+            "LINEの通知メッセージのボタンからアクセスしてください。"
+        );
         setLoading(false);
         return;
       }
@@ -73,14 +92,20 @@ function AttachPageContent() {
         ensureFirebaseInitialized();
         if (!db) {
           setError("データベースに接続できませんでした。時間をおいて再度お試しください。");
-          setLoading(false);
+          return;
+        }
+
+        const lineId = await waitForLineAuth();
+        if (cancelled) return;
+        if (!lineId) {
+          setError("LINEのログインを確認できませんでした。LINEのトーク画面のボタンからもう一度開いてください。");
           return;
         }
 
         const snap = await getDoc(doc(db, "expenses", expenseId));
+        if (cancelled) return;
         if (!snap.exists()) {
           setError("指定された支出が見つかりませんでした。");
-          setLoading(false);
           return;
         }
 
@@ -93,14 +118,22 @@ function AttachPageContent() {
           receiptUrl: data.receiptUrl,
         });
       } catch (err) {
+        if (cancelled) return;
         console.error("Failed to fetch expense:", err);
-        setError("支出データの取得に失敗しました。");
+        setError(
+          errorCode(err) === "permission-denied"
+            ? "この支出を表示する権限がありません。世帯のメンバーのLINEアカウントで開いてください。"
+            : "支出データの取得に失敗しました。時間をおいて再度お試しください。"
+        );
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchExpense();
+    return () => {
+      cancelled = true;
+    };
   }, [expenseId]);
 
   // ファイル選択時の処理
@@ -108,8 +141,11 @@ function AttachPageContent() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      setError("画像ファイルを選択してください。");
+    if (!ALLOWED_RECEIPT_TYPES.includes(file.type)) {
+      setError("JPEG / PNG / WebP / HEIC 形式の画像を選択してください。");
+      // 前に選んだ画像が残ったままだと、拒否した選択の代わりにそれを上げてしまう
+      setSelectedFile(null);
+      setPreviewDataUrl(null);
       return;
     }
 
@@ -151,6 +187,11 @@ function AttachPageContent() {
         );
       }
 
+      // Storage ルールと同じ上限（圧縮後のサイズで判定する）
+      if (uploadFile.size > MAX_RECEIPT_BYTES) {
+        throw new Error("画像が大きすぎます（5MB まで）。");
+      }
+
       // パス: receipts/{expenseId}/{timestamp}_{filename}
       const timestamp = Date.now();
       const safeName = uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -173,8 +214,10 @@ function AttachPageContent() {
           console.error("Upload failed:", err);
           if (mountedRef.current) {
             setError(
-              "アップロードに失敗しました。" +
-                (err instanceof Error ? ` (${err.message})` : "")
+              errorCode(err) === "storage/unauthorized"
+                ? "アップロードが許可されませんでした。世帯のメンバーのLINEアカウントで開いているか確認してください。(storage/unauthorized)"
+                : "アップロードに失敗しました。" +
+                    (err instanceof Error ? ` (${err.message})` : "")
             );
             setUploading(false);
           }
@@ -237,6 +280,18 @@ function AttachPageContent() {
           <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.06] p-4">
             <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
           </div>
+        )}
+
+        {/* 支出を読めなかったとき（ログインの完了待ち・通信の失敗など）にやり直せるようにする */}
+        {error && !expense && isValidDocId(expenseId) && (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-line bg-card px-4 py-3 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
+          >
+            <RefreshCw className="h-4 w-4" />
+            再読み込み
+          </button>
         )}
 
         {expense && (
