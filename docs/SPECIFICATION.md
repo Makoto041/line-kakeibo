@@ -196,7 +196,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | `/expenses` | **支出一覧**。セグメント（全て / 要確認 / 立替）、絞り込み（説明・カテゴリの文字検索、集計対象/対象外、カテゴリ、日付/金額ソート。`lib/expenseState.ts`）、支払者別集計、インライン編集ドロワー、削除、集計対象トグル、レシートプレビュー、要確認の支出の「確認」ボタン（§5.4 の confirm API。LINE の OK と同じ判定）。`?edit=<id>` で編集を自動オープン（LINE の「修正」ボタン連携）、`?filter=pending\|advance` で初期セグメント指定 |
 | `/settlement` | **精算**。(1) **期間の精算（折半）**（`PeriodSplitCard`）: 表示期間内の世帯の支出（合計に含むもの。立替精算済みは除く）を 2 人で折半し、「集金するメンバー」（`groups.splitSettings`、§5.4 の split-settings API で保存）の支払い分を引いた集金額を表示。(2) **未精算の立替の精算**: `GET /household/settlement` の内容（関係者・立替合計・精算額・明細）を表示し、`POST /household/settlement/settle` で精算を記録 |
 | `/settings` | **設定**。予算タブ（月次予算・アラート閾値・カテゴリ別予算）、期間タブ（月次/開始日カスタム/期間指定）、固定費タブ（`RecurringExpensesPanel`。§3.3 の項目の追加・編集・停止・削除） |
-| `/attach` | **レシート添付**。`?expenseId=` の支出にカメラ/アルバムから画像を選択→クライアント側で圧縮（リサイズ＋JPEG 再エンコード）→ Firebase Storage `receipts/{expenseId}/{timestamp}_{name}` へレジューマブルアップロード→ `receiptUrl` を書き戻し。アンマウント後もバックグラウンド継続 |
+| `/attach` | **レシート添付**。LINE のカードから直接開かれるため、LINE サインインの完了（`waitForLineAuth`）を待ってから支出を読む。`?expenseId=` の支出にカメラ/アルバムから画像を選択→クライアント側で圧縮（リサイズ＋JPEG 再エンコード）→ Firebase Storage `receipts/{expenseId}/{timestamp}_{name}` へレジューマブルアップロード→ `receiptUrl` を書き戻し。アンマウント後もバックグラウンド継続 |
 | `/link` | アカウント連携確認画面（`token` + `lineId` クエリの存在チェックのみ。認証には関与しない） |
 | `/dashboard` | `/` へのリダイレクト（レガシー） |
 | `/terms` `/privacy` | 静的な規約・プライバシーページ |
@@ -272,7 +272,7 @@ Storage: `receipts/{expenseId}/{fileName}` — cross-service rules で支出を�
 
 ## 7. 認証・認可モデル
 
-- **Web**: LIFF ログイン。`web/lib/lineAuth.ts` が LIFF の ID トークンを bot の `POST /auth/line` へ送り、LINE の verify API で検証（`aud` = `LINE_LIFF_CHANNEL_ID`）した `sub` を `lineId` クレームに持つ **Firebase カスタムトークン**（`uid` = `appUid`）でサインインする。**URL の `?lineId=` は識別に使わない**（LINE のリンクに付いていても無視される）。LIFF 未設定（ローカル・プレビュー）や失敗時は匿名サインインへフォールバックし、`lineId` クレームが無いためルール上は何も読めない（ゲスト表示）
+- **Web**: LIFF ログイン。`web/lib/lineAuth.ts` が LIFF の ID トークンを bot の `POST /auth/line` へ送り、LINE の verify API で検証（`aud` = `LINE_LIFF_CHANNEL_ID`）した `sub` を `lineId` クレームに持つ **Firebase カスタムトークン**（`uid` = `appUid`）でサインインする。**URL の `?lineId=` は識別に使わない**（LINE のリンクに付いていても無視される）。未ログインなら LINE ログインへ移り、ログイン後は元のページ（`/attach?expenseId=…` など）へ戻る。LIFF 未設定（ローカル・プレビュー）や失敗時は匿名サインインへフォールバックし、`lineId` クレームが無いためルール上は何も読めない（ゲスト表示）
 - **Bot**: LINE webhook 署名検証（`LINE_CHANNEL_SECRET`）。`appUid` は Firebase Auth 匿名ユーザーとして裏で発行。Firestore は Admin SDK で操作しルールをバイパスする
 - **Firestore ルール**（`firestore.rules`）: `request.auth.token.lineId` と各文書の `lineId`、および `groupMembers/{groupId}_{lineId}.isActive` で判定。`expenses` は所有者と世帯メンバーが読め、create / update / delete はフィールド許可リストと値の検証付き（`status` / `advanceBy` / `inputSource` / `groupId` などはクライアント不変、精算済みは金額・日付・支払者の変更と削除不可）。`groups` / `groupMembers` / `userLinks` / `linkTokens` はクライアント書込不可、`userSettings` / `budgetSettings` は本人のみ、未定義パスは既定拒否。要点は `docs/SECURITY_OPERATIONS.md` §3
 - **Storage ルール**（`storage.rules`）: §6 の記載どおり。cross-service rules の IAM 前提は `docs/SECURITY_OPERATIONS.md` §4

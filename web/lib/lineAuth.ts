@@ -11,6 +11,10 @@ import { auth, ensureFirebaseInitialized } from './firebase';
 // 二重実行や再マウントでも初回の Promise を使い回す。
 let initPromise: Promise<void> | null = null;
 
+// liff.login() でログイン画面へ移る間、ページが離れるのを待つ上限。
+// 遷移が起きなかった場合に、完了を待つ呼び出し元（waitForLineAuth）を待たせ続けないため。
+const LOGIN_REDIRECT_WAIT_MS = 10_000;
+
 /**
  * サインイン状態を確立する。
  * - NEXT_PUBLIC_LIFF_ID あり: LIFF で LINE ログイン → ID トークンを
@@ -60,8 +64,13 @@ export function initLineAuth(): Promise<void> {
       await liff.init({ liffId });
 
       if (!liff.isLoggedIn()) {
-        // LINE ログイン画面へリダイレクト（この後の処理は戻ってきてから再実行される）
-        liff.login();
+        // LINE ログイン画面へリダイレクト（この後の処理は戻ってきてから再実行される）。
+        // 戻り先の既定はエンドポイント URL（トップ）で、/attach?expenseId=… や
+        // /expenses?edit=… の行き先が失われるため、今のページへ戻す。
+        // すぐに解決すると、完了を待つ呼び出し元が未ログインのまま読み取りに進み、
+        // 遷移までの間に権限エラーを表示してしまうため、ページが離れるまで待つ。
+        liff.login({ redirectUri: window.location.href });
+        await new Promise((resolve) => setTimeout(resolve, LOGIN_REDIRECT_WAIT_MS));
         return;
       }
 
@@ -114,6 +123,18 @@ export function initLineAuth(): Promise<void> {
   // 呼び出し側は結果を待たないので、ここで拒否を受け止めて unhandledrejection にしない
   initPromise.catch((e) => console.error('LINE auth init failed:', e));
   return initPromise;
+}
+
+/**
+ * 起動時サインインの完了を待ち、検証済み LINE userId を返す（LINE で認証できなければ null）。
+ *
+ * Firestore / Storage のルールは lineId クレームを要求するため、サインインの完了前に
+ * 読み書きすると権限エラーになる。LINE のボタンから直接開くページ（/attach）のように、
+ * useLineAuth を通さずに読み取るページは、読み取りの前にこれを待つこと。
+ */
+export async function waitForLineAuth(): Promise<string | null> {
+  await initLineAuth();
+  return getLineIdClaim(auth?.currentUser ?? null);
 }
 
 /**
