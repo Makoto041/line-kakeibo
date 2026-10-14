@@ -15,19 +15,63 @@ let initPromise: Promise<void> | null = null;
 // 遷移が起きなかった場合に、完了を待つ呼び出し元（waitForLineAuth）を待たせ続けないため。
 const LOGIN_REDIRECT_WAIT_MS = 10_000;
 
+// waitForLineAuth() で待つ上限。LIFF の初期化・bot の /auth/line（コールドスタートを含む）・
+// Firebase へのサインインはどれもタイムアウトを持たないため、通信が止まると読み込み中のまま
+// 終わらなくなる。上限を過ぎたら呼び出し元にエラーを返し、再読み込みできるようにする。
+const LINE_AUTH_WAIT_MS = 20_000;
+
+// LINE ログイン画面へ送った時刻（localStorage）。ログインから戻ってきたのに（URL に
+// LIFF の戻りパラメータがある）ログインできていない（トークン交換の失敗など）ときに、
+// すぐまたログイン画面へ送ると往復が止まらず読み込み中のように見えるため、この間は
+// 送り直さず匿名にフォールバックする。カードのボタンから開き直したとき（戻りパラメータなし）は
+// 止めない。
+const LOGIN_ATTEMPT_KEY = 'lineLoginAttemptAt';
+const LOGIN_RETRY_COOLDOWN_MS = 30_000;
+
+function recentlyTriedLogin(): boolean {
+  try {
+    const elapsed = Date.now() - Number(localStorage.getItem(LOGIN_ATTEMPT_KEY));
+    // 端末の時計が戻された（未来の時刻が残っている）場合は期限切れとして扱う
+    return elapsed >= 0 && elapsed < LOGIN_RETRY_COOLDOWN_MS;
+  } catch {
+    return false;
+  }
+}
+
+function setLoginAttempt(at: number | null): void {
+  try {
+    if (at === null) localStorage.removeItem(LOGIN_ATTEMPT_KEY);
+    else localStorage.setItem(LOGIN_ATTEMPT_KEY, String(at));
+  } catch {
+    // 保存できない環境では往復の抑止をあきらめる（ログイン自体は続ける）
+  }
+}
+
+/** waitForLineAuth() が上限までに終わらなかったときのエラーコード */
+export const LINE_AUTH_TIMEOUT = 'line-auth/timeout';
+
 // LINE ログインから戻ったときに付くパラメータ（これと liff で始まるもの: liffClientId /
 // liffRedirectUri / liff.state など）。LIFF はこれを URL から消さないため、次のログインの
 // 戻り先にそのまま渡すと二重に付き、トークン交換が失敗してログインできなくなる。
 // アプリのパラメータ（expenseId / edit / filter / token / lineId）とは重ならない。
 const LIFF_RETURN_PARAMS = ['code', 'state', 'error', 'error_description'];
 
-/** ログイン後の戻り先（今のページから LIFF の戻りパラメータを除いた URL） */
-function loginRedirectUri(): string {
+function isLiffReturnParam(key: string): boolean {
+  return LIFF_RETURN_PARAMS.includes(key) || key.startsWith('liff');
+}
+
+function hasLiffReturnParams(): boolean {
+  return Array.from(new URLSearchParams(window.location.search).keys()).some(isLiffReturnParam);
+}
+
+/**
+ * 今のページから LIFF の戻りパラメータを除いた URL。ログイン後の戻り先と、再読み込みに使う
+ * （残ったまま読み込み直すと、使用済みのコードや error で同じ失敗を繰り返す）。
+ */
+export function urlWithoutLiffReturnParams(): string {
   const url = new URL(window.location.href);
   for (const key of Array.from(url.searchParams.keys())) {
-    if (LIFF_RETURN_PARAMS.includes(key) || key.startsWith('liff')) {
-      url.searchParams.delete(key);
-    }
+    if (isLiffReturnParam(key)) url.searchParams.delete(key);
   }
   return url.toString();
 }
@@ -81,12 +125,18 @@ export function initLineAuth(): Promise<void> {
       await liff.init({ liffId });
 
       if (!liff.isLoggedIn()) {
+        if (recentlyTriedLogin() && hasLiffReturnParams()) {
+          console.warn('LINE login did not complete after the redirect; falling back to anonymous');
+          await signInAnonymously(auth);
+          return;
+        }
+        setLoginAttempt(Date.now());
         // LINE ログイン画面へリダイレクト（この後の処理は戻ってきてから再実行される）。
         // 戻り先の既定はエンドポイント URL（トップ）で、/attach?expenseId=… や
         // /expenses?edit=… の行き先が失われるため、今のページへ戻す。
         // すぐに解決すると、完了を待つ呼び出し元が未ログインのまま読み取りに進み、
         // 遷移までの間に権限エラーを表示してしまうため、ページが離れるまで待つ。
-        liff.login({ redirectUri: loginRedirectUri() });
+        liff.login({ redirectUri: urlWithoutLiffReturnParams() });
         await new Promise((resolve) => setTimeout(resolve, LOGIN_REDIRECT_WAIT_MS));
         return;
       }
@@ -133,6 +183,7 @@ export function initLineAuth(): Promise<void> {
       }
 
       await signInWithCustomToken(auth, data.customToken);
+      setLoginAttempt(null);
     } catch (e) {
       console.error('LINE auth flow failed; falling back to anonymous:', e);
       try {
@@ -156,8 +207,21 @@ export function initLineAuth(): Promise<void> {
  * useLineAuth を通さずに読み取るページは、読み取りの前にこれを待つこと。
  */
 export async function waitForLineAuth(): Promise<string | null> {
-  await initLineAuth();
-  return getLineIdClaim(auth?.currentUser ?? null);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(Object.assign(new Error('LINE auth timed out'), { code: LINE_AUTH_TIMEOUT })),
+      LINE_AUTH_WAIT_MS
+    );
+  });
+  try {
+    return await Promise.race([
+      initLineAuth().then(() => getLineIdClaim(auth?.currentUser ?? null)),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
