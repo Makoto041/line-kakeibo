@@ -15,6 +15,38 @@ let initPromise: Promise<void> | null = null;
 // 遷移が起きなかった場合に、完了を待つ呼び出し元（waitForLineAuth）を待たせ続けないため。
 const LOGIN_REDIRECT_WAIT_MS = 10_000;
 
+// waitForLineAuth() で待つ上限。LIFF の初期化・bot の /auth/line（コールドスタートを含む）・
+// Firebase へのサインインはどれもタイムアウトを持たないため、通信が止まると読み込み中のまま
+// 終わらなくなる。上限を過ぎたら呼び出し元にエラーを返し、再読み込みできるようにする。
+const LINE_AUTH_WAIT_MS = 20_000;
+
+// LINE ログイン画面へ送った時刻（localStorage）。戻ってきてもログインできていない
+// （LIFF のログイン状態が保存されない環境など）ときに、すぐまたログイン画面へ送ると
+// 往復が止まらず読み込み中のように見えるため、この間は送り直さず匿名にフォールバックする。
+const LOGIN_ATTEMPT_KEY = 'lineLoginAttemptAt';
+const LOGIN_RETRY_COOLDOWN_MS = 30_000;
+
+function recentlyTriedLogin(): boolean {
+  try {
+    const at = Number(localStorage.getItem(LOGIN_ATTEMPT_KEY));
+    return at > 0 && Date.now() - at < LOGIN_RETRY_COOLDOWN_MS;
+  } catch {
+    return false;
+  }
+}
+
+function setLoginAttempt(at: number | null): void {
+  try {
+    if (at === null) localStorage.removeItem(LOGIN_ATTEMPT_KEY);
+    else localStorage.setItem(LOGIN_ATTEMPT_KEY, String(at));
+  } catch {
+    // 保存できない環境では往復の抑止をあきらめる（ログイン自体は続ける）
+  }
+}
+
+/** waitForLineAuth() が上限までに終わらなかったときのエラーコード */
+export const LINE_AUTH_TIMEOUT = 'line-auth/timeout';
+
 // LINE ログインから戻ったときに付くパラメータ（これと liff で始まるもの: liffClientId /
 // liffRedirectUri / liff.state など）。LIFF はこれを URL から消さないため、次のログインの
 // 戻り先にそのまま渡すと二重に付き、トークン交換が失敗してログインできなくなる。
@@ -81,6 +113,12 @@ export function initLineAuth(): Promise<void> {
       await liff.init({ liffId });
 
       if (!liff.isLoggedIn()) {
+        if (recentlyTriedLogin()) {
+          console.error('LINE login did not complete after the redirect; falling back to anonymous');
+          await signInAnonymously(auth);
+          return;
+        }
+        setLoginAttempt(Date.now());
         // LINE ログイン画面へリダイレクト（この後の処理は戻ってきてから再実行される）。
         // 戻り先の既定はエンドポイント URL（トップ）で、/attach?expenseId=… や
         // /expenses?edit=… の行き先が失われるため、今のページへ戻す。
@@ -133,6 +171,7 @@ export function initLineAuth(): Promise<void> {
       }
 
       await signInWithCustomToken(auth, data.customToken);
+      setLoginAttempt(null);
     } catch (e) {
       console.error('LINE auth flow failed; falling back to anonymous:', e);
       try {
@@ -156,8 +195,21 @@ export function initLineAuth(): Promise<void> {
  * useLineAuth を通さずに読み取るページは、読み取りの前にこれを待つこと。
  */
 export async function waitForLineAuth(): Promise<string | null> {
-  await initLineAuth();
-  return getLineIdClaim(auth?.currentUser ?? null);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(Object.assign(new Error('LINE auth timed out'), { code: LINE_AUTH_TIMEOUT })),
+      LINE_AUTH_WAIT_MS
+    );
+  });
+  try {
+    return await Promise.race([
+      initLineAuth().then(() => getLineIdClaim(auth?.currentUser ?? null)),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

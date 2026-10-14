@@ -9,7 +9,7 @@ import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
 import { isSafeImageUrl } from "../../lib/imageUrl";
 import { compressImage } from "../../lib/imageCompress";
 import { yen } from "../../lib/money";
-import { waitForLineAuth } from "../../lib/lineAuth";
+import { waitForLineAuth, LINE_AUTH_TIMEOUT } from "../../lib/lineAuth";
 import { isValidDocId } from "../../lib/householdContract";
 import dayjs from "dayjs";
 
@@ -120,10 +120,13 @@ function AttachPageContent() {
       } catch (err) {
         if (cancelled) return;
         console.error("Failed to fetch expense:", err);
+        const code = errorCode(err);
         setError(
-          errorCode(err) === "permission-denied"
+          code === "permission-denied"
             ? "この支出を表示する権限がありません。世帯のメンバーのLINEアカウントで開いてください。"
-            : "支出データの取得に失敗しました。時間をおいて再度お試しください。"
+            : code === LINE_AUTH_TIMEOUT
+              ? "LINEのログインの確認に時間がかかっています。通信状況を確認して再読み込みしてください。"
+              : "支出データの取得に失敗しました。時間をおいて再度お試しください。"
         );
       } finally {
         if (!cancelled) setLoading(false);
