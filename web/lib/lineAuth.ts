@@ -20,16 +20,19 @@ const LOGIN_REDIRECT_WAIT_MS = 10_000;
 // 終わらなくなる。上限を過ぎたら呼び出し元にエラーを返し、再読み込みできるようにする。
 const LINE_AUTH_WAIT_MS = 20_000;
 
-// LINE ログイン画面へ送った時刻（localStorage）。戻ってきてもログインできていない
-// （LIFF のログイン状態が保存されない環境など）ときに、すぐまたログイン画面へ送ると
-// 往復が止まらず読み込み中のように見えるため、この間は送り直さず匿名にフォールバックする。
+// LINE ログイン画面へ送った時刻（localStorage）。ログインから戻ってきたのに（URL に
+// LIFF の戻りパラメータがある）ログインできていない（トークン交換の失敗など）ときに、
+// すぐまたログイン画面へ送ると往復が止まらず読み込み中のように見えるため、この間は
+// 送り直さず匿名にフォールバックする。カードのボタンから開き直したとき（戻りパラメータなし）は
+// 止めない。
 const LOGIN_ATTEMPT_KEY = 'lineLoginAttemptAt';
 const LOGIN_RETRY_COOLDOWN_MS = 30_000;
 
 function recentlyTriedLogin(): boolean {
   try {
-    const at = Number(localStorage.getItem(LOGIN_ATTEMPT_KEY));
-    return at > 0 && Date.now() - at < LOGIN_RETRY_COOLDOWN_MS;
+    const elapsed = Date.now() - Number(localStorage.getItem(LOGIN_ATTEMPT_KEY));
+    // 端末の時計が戻された（未来の時刻が残っている）場合は期限切れとして扱う
+    return elapsed >= 0 && elapsed < LOGIN_RETRY_COOLDOWN_MS;
   } catch {
     return false;
   }
@@ -53,13 +56,22 @@ export const LINE_AUTH_TIMEOUT = 'line-auth/timeout';
 // アプリのパラメータ（expenseId / edit / filter / token / lineId）とは重ならない。
 const LIFF_RETURN_PARAMS = ['code', 'state', 'error', 'error_description'];
 
-/** ログイン後の戻り先（今のページから LIFF の戻りパラメータを除いた URL） */
-function loginRedirectUri(): string {
+function isLiffReturnParam(key: string): boolean {
+  return LIFF_RETURN_PARAMS.includes(key) || key.startsWith('liff');
+}
+
+function hasLiffReturnParams(): boolean {
+  return Array.from(new URLSearchParams(window.location.search).keys()).some(isLiffReturnParam);
+}
+
+/**
+ * 今のページから LIFF の戻りパラメータを除いた URL。ログイン後の戻り先と、再読み込みに使う
+ * （残ったまま読み込み直すと、使用済みのコードや error で同じ失敗を繰り返す）。
+ */
+export function urlWithoutLiffReturnParams(): string {
   const url = new URL(window.location.href);
   for (const key of Array.from(url.searchParams.keys())) {
-    if (LIFF_RETURN_PARAMS.includes(key) || key.startsWith('liff')) {
-      url.searchParams.delete(key);
-    }
+    if (isLiffReturnParam(key)) url.searchParams.delete(key);
   }
   return url.toString();
 }
@@ -113,8 +125,8 @@ export function initLineAuth(): Promise<void> {
       await liff.init({ liffId });
 
       if (!liff.isLoggedIn()) {
-        if (recentlyTriedLogin()) {
-          console.error('LINE login did not complete after the redirect; falling back to anonymous');
+        if (recentlyTriedLogin() && hasLiffReturnParams()) {
+          console.warn('LINE login did not complete after the redirect; falling back to anonymous');
           await signInAnonymously(auth);
           return;
         }
@@ -124,7 +136,7 @@ export function initLineAuth(): Promise<void> {
         // /expenses?edit=… の行き先が失われるため、今のページへ戻す。
         // すぐに解決すると、完了を待つ呼び出し元が未ログインのまま読み取りに進み、
         // 遷移までの間に権限エラーを表示してしまうため、ページが離れるまで待つ。
-        liff.login({ redirectUri: loginRedirectUri() });
+        liff.login({ redirectUri: urlWithoutLiffReturnParams() });
         await new Promise((resolve) => setTimeout(resolve, LOGIN_REDIRECT_WAIT_MS));
         return;
       }
