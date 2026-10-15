@@ -14,22 +14,32 @@ export const DEFAULT_SETTINGS: DateRangeSettings = {
   customStartDay: 1
 };
 
-// Get settings from Firestore for a specific user
+/**
+ * 期間設定を読む。読めなかった（通信の失敗など）ときは例外を投げる。
+ * キャッシュに入れる呼び出し元はこちらを使う（失敗したときに既定の期間でキャッシュを上書きしない）
+ */
+export async function fetchDateRangeSettings(userId: string): Promise<DateRangeSettings> {
+  if (!db) throw new Error('Firestore is not available');
+  const settingsDoc = await getDoc(doc(db, 'userSettings', userId));
+  if (settingsDoc.exists()) {
+    const data = settingsDoc.data();
+    return { ...DEFAULT_SETTINGS, ...data.dateSettings };
+  }
+  return DEFAULT_SETTINGS;
+}
+
+// Get settings from Firestore for a specific user（読めなかったときは既定の期間）
 export async function getDateRangeSettings(userId: string | null): Promise<DateRangeSettings> {
   if (!userId || !db || userId === 'guest') {
     return DEFAULT_SETTINGS;
   }
-  
+
   try {
-    const settingsDoc = await getDoc(doc(db, 'userSettings', userId));
-    if (settingsDoc.exists()) {
-      const data = settingsDoc.data();
-      return { ...DEFAULT_SETTINGS, ...data.dateSettings };
-    }
+    return await fetchDateRangeSettings(userId);
   } catch (error) {
     console.error('Failed to fetch date settings from Firestore:', error);
   }
-  
+
   return DEFAULT_SETTINGS;
 }
 

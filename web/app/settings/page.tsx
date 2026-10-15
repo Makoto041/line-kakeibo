@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { Wallet, CalendarRange, Repeat } from 'lucide-react';
 import RecurringExpensesPanel from '../../components/RecurringExpensesPanel';
 import { useLineAuth, DEFAULT_BUDGET_CONFIG, type BudgetConfig } from '../../lib/hooks';
-import { getDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, DEFAULT_SETTINGS, type DateRangeSettings } from '../../lib/dateSettings';
+import { fetchDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, DEFAULT_SETTINGS, type DateRangeSettings } from '../../lib/dateSettings';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { getCategoryVisual } from '../../lib/categoryVisuals';
@@ -99,7 +99,8 @@ export default function Settings() {
         // 期間設定と予算設定は並べて読む
         const firestore = db;
         const [loadedDateSettings, budgetSnap] = await Promise.all([
-          migrateLocalToFirestore(lineId).then(() => getDateRangeSettings(lineId)),
+          // 読めなかったときは例外になり、下の catch でキャッシュを既定の期間で上書きしない
+          migrateLocalToFirestore(lineId).then(() => fetchDateRangeSettings(lineId)),
           firestore ? getDoc(doc(firestore, 'budgetSettings', lineId)) : Promise.resolve(null),
         ]);
         setCached(`dateSettings:${lineId}`, loadedDateSettings);
