@@ -18,6 +18,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
+import BodyPortal from '../BodyPortal';
 import { getCategoryVisual } from '../../lib/categoryVisuals';
 import { yen } from '../../lib/money';
 import { splitChip } from '../../lib/expenseState';
@@ -148,66 +149,70 @@ export default function DrillSheet({ initial, items, range, prevCategoryTotals, 
   const push = (next: DrillView) => setStack((s) => [...s, next]);
   const goTo = (index: number) => setStack((s) => s.slice(0, index + 1));
 
+  // 精算のカード（.glass）の中から開いても画面全体を覆うよう、body 直下に描く
   return (
-    <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-labelledby="drill-title">
-      {/* 背景のタップで閉じる（キーボードでは右上の閉じるボタンを使う） */}
-      <button type="button" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-      <div ref={panelRef} className="glass-strong relative z-10 ml-auto flex w-full animate-fade-up flex-col shadow-glass-lg max-sm:mt-auto max-sm:max-h-[88vh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl">
-        <div className="flex items-center gap-1 border-b border-line px-2 py-2">
-          <button
-            type="button"
-            onClick={() => goTo(depth - 1)}
-            aria-label="戻る"
-            className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-fg/5 hover:text-fg ${depth > 0 ? '' : 'invisible'}`}
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </button>
-          <nav ref={crumbsRef} aria-label="内訳の階層" className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto whitespace-nowrap text-xs">
-            {stack.map((s, i) => (
-              <React.Fragment key={i}>
-                {i > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-muted" />}
-                <button
-                  type="button"
-                  onClick={() => goTo(i)}
-                  aria-current={i === depth ? 'page' : undefined}
-                  className={`rounded-md px-1.5 py-1 ${i === depth ? 'font-semibold text-fg' : 'text-muted hover:bg-fg/5'}`}
-                >
-                  {s.kind === 'item' ? '明細' : s.title}
-                </button>
-              </React.Fragment>
-            ))}
-          </nav>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            aria-label="閉じる"
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-fg/5 hover:text-fg"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div ref={bodyRef} className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-4">
-          {view.kind === 'item' ? (
-            <ItemView item={items.find((i) => i.id === view.id)} editHref={editHref} colorOf={colorOf} />
-          ) : (
-            <SetView
-              view={view}
-              items={items}
-              range={range}
-              prevCategoryTotals={prevCategoryTotals}
-              dim={dims[depth]}
-              onDim={(d) => setDims((m) => ({ ...m, [depth]: d }))}
-              sort={sort}
-              onSort={setSort}
-              onPush={push}
-              listHref={listHref}
-              colorOf={colorOf}
-            />
-          )}
+    <BodyPortal>
+      <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-labelledby="drill-title">
+        {/* 背景のタップで閉じる（キーボードでは右上の閉じるボタンを使う） */}
+        <button type="button" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+        {/* 透けると背面が重なって読みにくいので不透明にする。高さは iOS のツールバーを除いた dvh で測る */}
+        <div ref={panelRef} className="relative z-10 ml-auto flex w-full animate-fade-up flex-col border border-line/60 bg-card shadow-glass-lg max-sm:mt-auto max-sm:max-h-[88dvh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl">
+          <div className="flex items-center gap-1 border-b border-line px-2 py-2">
+            <button
+              type="button"
+              onClick={() => goTo(depth - 1)}
+              aria-label="戻る"
+              className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-fg/5 hover:text-fg ${depth > 0 ? '' : 'invisible'}`}
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <nav ref={crumbsRef} aria-label="内訳の階層" className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto whitespace-nowrap text-xs">
+              {stack.map((s, i) => (
+                <React.Fragment key={i}>
+                  {i > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-muted" />}
+                  <button
+                    type="button"
+                    onClick={() => goTo(i)}
+                    aria-current={i === depth ? 'page' : undefined}
+                    className={`rounded-md px-1.5 py-1 ${i === depth ? 'font-semibold text-fg' : 'text-muted hover:bg-fg/5'}`}
+                  >
+                    {s.kind === 'item' ? '明細' : s.title}
+                  </button>
+                </React.Fragment>
+              ))}
+            </nav>
+            <button
+              ref={closeRef}
+              type="button"
+              onClick={onClose}
+              aria-label="閉じる"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-fg/5 hover:text-fg"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div ref={bodyRef} className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-4">
+            {view.kind === 'item' ? (
+              <ItemView item={items.find((i) => i.id === view.id)} editHref={editHref} colorOf={colorOf} />
+            ) : (
+              <SetView
+                view={view}
+                items={items}
+                range={range}
+                prevCategoryTotals={prevCategoryTotals}
+                dim={dims[depth]}
+                onDim={(d) => setDims((m) => ({ ...m, [depth]: d }))}
+                sort={sort}
+                onSort={setSort}
+                onPush={push}
+                listHref={listHref}
+                colorOf={colorOf}
+              />
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </BodyPortal>
   );
 }
 
