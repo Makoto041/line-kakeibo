@@ -75,26 +75,39 @@ export default function Settings() {
         return;
       }
 
-      // キャッシュがあれば即表示し、裏で再取得（スピナーを出さない）
-      const hadCache = !!(getCached(`dateSettings:${lineId}`) && getCached(`settingsBudget:${lineId}`));
+      // キャッシュがあれば即表示し、裏で再取得（スピナーを出さない）。開き直したとき（LINE から開く）は
+      // 初回の描画では lineId が分からずキャッシュを読めないため、ここで当てはめる
+      const cachedDs = getCached<DateRangeSettings>(`dateSettings:${lineId}`);
+      const cachedSb = getCached<BudgetConfig>(`settingsBudget:${lineId}`);
+      const hadCache = !!(cachedDs && cachedSb);
+      const applyDateSettings = (settings: DateRangeSettings) => {
+        setDateSettings(settings);
+        setTempStartDate(settings.startDate || '');
+        setTempEndDate(settings.endDate || '');
+        setTempStartDay(settings.customStartDay || 1);
+      };
       try {
-        if (!hadCache) setLoading(true);
+        if (hadCache) {
+          applyDateSettings(cachedDs);
+          setBudgetConfig(cachedSb);
+          setBudgetHasLoaded(true);
+          setLoading(false);
+        } else {
+          setLoading(true);
+        }
 
-        // 期間設定の読み込み
-        await migrateLocalToFirestore(lineId);
-        const loadedDateSettings = await getDateRangeSettings(lineId);
+        // 期間設定と予算設定は並べて読む
+        const firestore = db;
+        const [loadedDateSettings, budgetSnap] = await Promise.all([
+          migrateLocalToFirestore(lineId).then(() => getDateRangeSettings(lineId)),
+          firestore ? getDoc(doc(firestore, 'budgetSettings', lineId)) : Promise.resolve(null),
+        ]);
         setCached(`dateSettings:${lineId}`, loadedDateSettings);
-        setDateSettings(loadedDateSettings);
-        setTempStartDate(loadedDateSettings.startDate || '');
-        setTempEndDate(loadedDateSettings.endDate || '');
-        setTempStartDay(loadedDateSettings.customStartDay || 1);
+        applyDateSettings(loadedDateSettings);
 
-        // 予算設定の読み込み
-        if (db) {
-          const docRef = doc(db, 'budgetSettings', lineId);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            const normalizedConfig = normalizeBudgetConfig(docSnap.data());
+        if (budgetSnap) {
+          if (budgetSnap.exists()) {
+            const normalizedConfig = normalizeBudgetConfig(budgetSnap.data());
             setCached(`settingsBudget:${lineId}`, normalizedConfig);
             setBudgetConfig(normalizedConfig);
           }

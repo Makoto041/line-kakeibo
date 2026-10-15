@@ -40,6 +40,7 @@ import dayjs from "dayjs";
 import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
 import { db, ensureFirebaseInitialized } from "../../lib/firebase";
+import { getCached, setCached } from "../../lib/swrCache";
 
 // Suspense boundary for useSearchParams
 export default function ExpensesPage() {
@@ -62,13 +63,15 @@ function ExpensesPageContent() {
   const { lineId, loading: authLoading } = useLineAuth();
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
   const [currentMonth, setCurrentMonth] = useState(dayjs());
-  // Initialize dateRange synchronously to avoid undefined→value transition causing double fetch
-  const [dateRange, setDateRange] = useState<{startDate: string; endDate: string}>(() => {
-    const range = getEffectiveDateRange(dayjs(), DEFAULT_SETTINGS);
+  // 期間は設定と表示中の月から同じ描画で決める（state + effect だと、設定が届いた直後の描画で
+  // 前の期間のまま取得が始まり、取り直しになる）
+  const dateRange = useMemo(() => {
+    const range = getEffectiveDateRange(currentMonth, dateSettings);
     return { startDate: range.startDate, endDate: range.endDate };
-  });
-  // Track whether date settings have been loaded (to avoid fetching before edit expense month is resolved)
-  const [dateSettingsLoaded, setDateSettingsLoaded] = useState(false);
+  }, [currentMonth, dateSettings]);
+  // 期間の設定を読み終えた相手（lineId。未ログインは ''）。読み終えるまで支出を取りに行かない
+  // （既定の 1 日起算で一度取ってから取り直さないように）
+  const [settingsLoadedFor, setSettingsLoadedFor] = useState<string | null>(null);
   // Track whether we've resolved the edit expense's month
   const [editMonthResolved, setEditMonthResolved] = useState(false);
   // Track whether the month was set for edit expense (used to defer editMonthResolved until dateRange updates)
@@ -92,16 +95,30 @@ function ExpensesPageContent() {
   // ゲスト（プレビュー）モード判定: 検証済み lineId がない場合
   const isGuest = !lineId;
 
-  // Load date settings from Firestore on mount
+  // 期間の設定（ホーム・精算と同じキャッシュを先に使い、裏で読み直す）
+  const dateSettingsLoaded = settingsLoadedFor === (effectiveUserId ?? '');
   useEffect(() => {
-    const loadSettings = async () => {
-      if (effectiveUserId && effectiveUserId !== 'guest') {
-        const settings = await getDateRangeSettings(effectiveUserId);
-        setDateSettings(settings);
-      }
-      setDateSettingsLoaded(true);
+    const userKey = effectiveUserId ?? '';
+    if (!effectiveUserId || effectiveUserId === 'guest') {
+      setSettingsLoadedFor(userKey);
+      return;
+    }
+    let cancelled = false;
+    const cacheKey = `dateSettings:${effectiveUserId}`;
+    const cached = getCached<DateRangeSettings>(cacheKey);
+    if (cached) {
+      setDateSettings(cached);
+      setSettingsLoadedFor(userKey);
+    }
+    getDateRangeSettings(effectiveUserId).then((settings) => {
+      if (cancelled) return;
+      setCached(cacheKey, settings);
+      setDateSettings(settings);
+      setSettingsLoadedFor(userKey);
+    });
+    return () => {
+      cancelled = true;
     };
-    loadSettings();
   }, [effectiveUserId]);
 
   // When edit param is present, fetch the expense by ID and navigate to its month
@@ -141,12 +158,6 @@ function ExpensesPageContent() {
     resolveEditExpenseMonth();
   }, [editExpenseId, dateSettingsLoaded, editMonthResolved, editMonthSet]);
 
-  // Calculate effective date range when settings or currentMonth changes
-  useEffect(() => {
-    const range = getEffectiveDateRange(currentMonth, dateSettings);
-    setDateRange({ startDate: range.startDate, endDate: range.endDate });
-  }, [currentMonth, dateSettings]);
-
   // Mark edit month as resolved AFTER dateRange has been updated
   // This ensures we fetch with the correct date range, preventing double-fetch
   useEffect(() => {
@@ -156,9 +167,11 @@ function ExpensesPageContent() {
   }, [dateRange, editMonthSet, editMonthResolved]);
 
   // Don't start fetching expenses until we've resolved the edit expense's month (if applicable)
-  const shouldFetch = editExpenseId ? editMonthResolved : true;
-  const { expenses, loading, error, updateExpense, deleteExpense, patchLocal } =
+  const shouldFetch = dateSettingsLoaded && (editExpenseId ? editMonthResolved : true);
+  const { expenses, loading: expensesLoading, error, updateExpense, deleteExpense, patchLocal } =
     useExpenses(shouldFetch ? effectiveUserId : null, 0, 500, dateRange.startDate);
+  // 期間の設定を待っている間も読み込み中として出す（空の一覧を一瞬出さない）
+  const loading = expensesLoading || (!!effectiveUserId && !shouldFetch);
   // 書き込み可否（所属の読み込み中は null = 許可扱い。最終判断はルール・サーバー）
   const { activeGroupIds } = useHousehold(effectiveUserId);
   const apiAvailable = isHouseholdApiConfigured();

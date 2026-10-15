@@ -127,9 +127,13 @@ Web を開く（LINE の「家計簿一覧を見る」/「修正」リンク、�
   → initLineAuth()（lib/lineAuth.ts）: LIFF 初期化 → 未ログインなら LINE ログインへ
   → LIFF の ID トークンを POST /auth/line（api 関数）へ → LINE の verify API で検証
   → Firebase カスタムトークン（uid=appUid, claim lineId）で signInWithCustomToken
-  → useLineAuth: lineId は ID トークンのクレームからのみ取得（URL の ?lineId= は使わない）
-  → useExpenses: 個人分(where lineId==) ＋ groupMembers(isActive) から解決した groupId の世帯分をマージ
-  → メモリSWRキャッシュ＋framer-motionでSPA風遷移
+  → useLineAuth: lineId は ID トークンのクレームからのみ取得（URL の ?lineId= は使わない。前回確かめた
+     uid→lineId を localStorage に覚え、開き直したときは先に使って裏でクレームを確かめる）
+  → useExpenses: 個人分(where lineId==) と groupMembers(isActive) から解決した groupId の世帯分を並べて取り、マージ
+     （所属グループの問い合わせは 5 分使い回す）
+  → SWRキャッシュ（lib/swrCache.ts。支出・集計・世帯・精算・設定は localStorage にも保存し、開き直したときも
+     前回の内容を即表示して裏で取り直す。14 日で破棄、別の人に切り替わったら消す）＋framer-motionでSPA風遷移
+  → 精算ページは精算 API（コールドスタートあり）を待たずに描き、立替のカードだけ中で読み込む
   → 編集/削除/レシート添付はクライアントSDKでFirestore/Storageへ直書き（ルールで許可された範囲のみ）
   → 確認（要確認→共同費）・立替の精算・固定費・折半設定は ID トークン付きで api 関数の /household/* を呼ぶ
 ```

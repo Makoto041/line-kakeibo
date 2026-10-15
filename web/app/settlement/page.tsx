@@ -55,13 +55,14 @@ export default function SettlementPage() {
   const [settling, setSettling] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
-  const loading = authLoading || householdState.loading || settlementState.loading;
-  const failed = !!householdState.error || !!settlementState.error;
-
-  const retry = () => {
-    if (householdState.error) householdState.refetch();
-    if (settlementState.error) settlementState.refetch();
-  };
+  // 世帯が分かった時点で描く。立替の精算（bot の API。コールドスタートで数秒かかることがある）は
+  // カードの中で読み込み中を出し、期間の精算（Firestore から読む）を待たせない
+  const loading = authLoading || householdState.loading;
+  const householdFailed = !!householdState.error && !household;
+  const settlementLoading = settlementState.loading;
+  const settlementFailed = !!settlementState.error && !data;
+  // 前回の内容（キャッシュ）を出したまま、取り直しに失敗した
+  const settlementStale = !!settlementState.error && !!data;
 
   const record = async () => {
     if (!groupId || !data || settling || !vm.canSettle) return;
@@ -95,7 +96,7 @@ export default function SettlementPage() {
     }
   };
 
-  if (loading && !data) {
+  if (loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
@@ -137,12 +138,12 @@ export default function SettlementPage() {
           <h2 className="text-base font-semibold text-fg">ふたりの精算</h2>
           <p className="mt-1.5 text-sm text-muted">LINEボットから届くリンクで開くと、立替の精算額を確認・記録できます。</p>
         </div>
-      ) : failed && !data ? (
+      ) : householdFailed ? (
         <div className="glass rounded-2xl p-6 text-center shadow-glass">
           <p className="text-sm text-muted">精算の情報を読み込めませんでした</p>
           <button
             type="button"
-            onClick={retry}
+            onClick={householdState.refetch}
             className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-line bg-card px-4 py-2 text-sm font-medium text-fg hover:bg-fg/5"
           >
             <RefreshCw className="h-4 w-4" />
@@ -184,10 +185,37 @@ export default function SettlementPage() {
                 <HandCoins className="h-4 w-4 text-accent" />
                 未精算の立替の精算
               </h2>
-              <span className="text-xs text-muted">{vm.count}件</span>
+              {data && <span className="text-xs text-muted">{vm.count}件</span>}
             </div>
+            {settlementStale && (
+              <button
+                type="button"
+                onClick={settlementState.refetch}
+                className="mt-2 inline-flex items-center gap-1 text-xs text-amber-700 hover:underline dark:text-amber-300"
+              >
+                <RefreshCw className="h-3 w-3" />
+                最新の内容を読み込めませんでした（前回の内容を表示中）。再読み込み
+              </button>
+            )}
 
-            {vm.undeterminable ? (
+            {settlementLoading ? (
+              <div className="py-10 text-center">
+                <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted" />
+                <p className="mt-2 text-xs text-muted">立替を読み込み中...</p>
+              </div>
+            ) : settlementFailed ? (
+              <div className="py-6 text-center">
+                <p className="text-sm text-muted">立替の情報を読み込めませんでした</p>
+                <button
+                  type="button"
+                  onClick={settlementState.refetch}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-line bg-card px-4 py-2 text-sm font-medium text-fg hover:bg-fg/5"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  再読み込み
+                </button>
+              </div>
+            ) : vm.undeterminable ? (
               <p className="mt-4 rounded-xl bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
                 世帯のメンバーが2人そろっていないため、精算額を計算できません
               </p>
