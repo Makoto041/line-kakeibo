@@ -76,7 +76,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.3.0 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.3.3 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
@@ -155,7 +155,7 @@ flowchart LR
             <li>Gmail の新着を Pub/Sub で受信</li>
             <li>本文から金額・店名・利用日時を抽出</li>
             <li>日付+金額 → 店名の類似 → 時刻 ±1 分で重複を除外</li>
-            <li>保存して LINE グループに通知</li>
+            <li>共同費として保存（確認不要）して LINE グループに通知</li>
           </ol>
           <span class="src">bot/src/gmail/</span>
         </div>

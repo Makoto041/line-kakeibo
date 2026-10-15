@@ -13,8 +13,17 @@ export const RECURRING_SYSTEM_LINE_ID = 'recurring-system';
 
 // ---- 状態 ------------------------------------------------------------------
 
-/** 要確認: status が無い / pending で、確認済みフラグが立っていない（bot の OK と同じ判定） */
-export function isPending(e: Pick<ExpenseFields, 'status' | 'confirmed'>): boolean {
+/** 自動で入った支出（Gmail のカード取込・固定費の自動計上）。確認を求めない */
+export function isAutoInput(e: Pick<ExpenseFields, 'inputSource'>): boolean {
+  return e.inputSource === 'gmail_auto' || e.inputSource === 'recurring';
+}
+
+/**
+ * 要確認: 手入力の支出で、status が無い / pending のまま確認済みフラグが立っていない（bot の OK と同じ判定）。
+ * 自動で入った支出は確認不要（以前に pending で入ったカード取込も含む。集計にはもとから入っている）
+ */
+export function isPending(e: Pick<ExpenseFields, 'status' | 'confirmed' | 'inputSource'>): boolean {
+  if (isAutoInput(e)) return false;
   return (e.status == null || e.status === 'pending') && e.confirmed !== true;
 }
 
@@ -42,7 +51,7 @@ export function splitChip(e: Pick<ExpenseFields, 'status'>): SplitChip {
   }
 }
 
-export function countPending(list: ReadonlyArray<Pick<ExpenseFields, 'status' | 'confirmed'>>): number {
+export function countPending(list: ReadonlyArray<Pick<ExpenseFields, 'status' | 'confirmed' | 'inputSource'>>): number {
   let n = 0;
   for (const e of list) if (isPending(e)) n += 1;
   return n;
@@ -57,7 +66,7 @@ export function parseSegment(value: string | null | undefined): Segment {
 }
 
 export function matchesSegment(
-  e: Pick<ExpenseFields, 'status' | 'confirmed'>,
+  e: Pick<ExpenseFields, 'status' | 'confirmed' | 'inputSource'>,
   segment: Segment
 ): boolean {
   if (segment === 'pending') return isPending(e);

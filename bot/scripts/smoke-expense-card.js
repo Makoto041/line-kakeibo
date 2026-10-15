@@ -153,7 +153,8 @@ function common(name, msg) {
     categoryEmoji: '🍽',
     date: '8/11',
     remainingBudget: 120000,
-    status: 'pending',
+    // Gmail 取込は共同費として確定で保存する（handler.ts と同じ値）
+    status: 'shared',
     includeInTotal: true,
   });
   common('カード利用通知（Gmail）', msg);
@@ -161,8 +162,8 @@ function common(name, msg) {
   const rows = settingsRows(msg);
   check('現在の設定は3行', rows.length === 3, `got ${rows.length}`);
   check(
-    '支出区分は共同費（未確認）＋usersアイコン',
-    rowText(rows[0]) === '支出区分：共同費（未確認）' &&
+    '支出区分は共同費（未確認なし）＋usersアイコン',
+    rowText(rows[0]) === '支出区分：共同費' &&
       rows[0].contents[0].url.endsWith('/users.png'),
     `${rowText(rows[0])} / ${rows[0].contents[0].url}`
   );
@@ -231,6 +232,14 @@ function common(name, msg) {
       rowText(row) === expectText && row.contents[0].url.endsWith(expectIcon),
       `${rowText(row)} / ${row.contents[0].url}`
     );
+  }
+
+  // 要確認は手入力の支出だけ: 以前に pending で入った Gmail 取込は共同費として出す
+  for (const status of [undefined, 'pending']) {
+    const gmail = settingsRows(buildExpenseCardFromRecord('e', { category: '食費', status, inputSource: 'gmail_auto' }))[0];
+    check(`Gmail 取込の ${status ?? '未指定'} → 支出区分：共同費`, rowText(gmail) === '支出区分：共同費', rowText(gmail));
+    const manual = settingsRows(buildExpenseCardFromRecord('e', { category: '食費', status, inputSource: 'line_text' }))[0];
+    check(`手入力の ${status ?? '未指定'} → 支出区分：共同費（未確認）`, rowText(manual) === '支出区分：共同費（未確認）', rowText(manual));
   }
 
   // 立替のラベル

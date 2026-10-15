@@ -266,7 +266,8 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       description: parsed.merchant,
       date: toJSTDateString(parsed.usedAt),
       category,
-      confirmed: false, // 未確認状態
+      // カード会社の通知から自動で入るので確認を求めない（要確認は手入力の支出だけ）
+      confirmed: true,
       includeInTotal: true, // Gmail自動取得は基本的に会計に含める
       payerId: GMAIL_SYSTEM_LINE_ID,
       // グループ関連（ダッシュボード集計・立替精算に必要）
@@ -276,7 +277,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       inputSource: 'gmail_auto' as const,
       gmailMessageId: messageId,
       usedAt: parsed.usedAt, // カード利用日時（重複チェック用）
-      status: 'pending' as const,
+      status: 'shared' as const,
     };
 
     // アトミックに重複チェック＋保存（並行処理での二重登録を防止）
@@ -296,8 +297,8 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
         category,
         categoryEmoji: getCategoryEmoji(category),
         date: formatJST(parsed.usedAt, 'M/D'),
-        // 保存時の値と揃える（Gmail自動取得は未確認でも集計に入る）
-        status: 'pending',
+        // 保存時の値と揃える（Gmail自動取得は共同費として確定で入る）
+        status: 'shared',
         includeInTotal: true,
       });
       console.log(`LINE notification sent for expense: ${expenseId}`);
@@ -375,7 +376,7 @@ export async function processLatestEmail(): Promise<{
         description: parsed.merchant,
         date: toJSTDateString(parsed.usedAt),
         category: categoryResult.category || 'その他',
-        confirmed: false,
+        confirmed: true, // 自動で入るので確認を求めない（要確認は手入力の支出だけ）
         includeInTotal: true, // Gmail自動取得は基本的に会計に含める
         payerId: GMAIL_SYSTEM_LINE_ID,
         // グループ関連（ダッシュボード集計・立替精算に必要）
@@ -384,7 +385,7 @@ export async function processLatestEmail(): Promise<{
         inputSource: 'gmail_auto' as const,
         gmailMessageId: msg.id,
         usedAt: parsed.usedAt, // カード利用日時（重複チェック用）
-        status: 'pending' as const,
+        status: 'shared' as const,
       };
 
       // アトミックに重複チェック＋保存
@@ -489,7 +490,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
       description: parsed.merchant,
       date: toJSTDateString(parsed.usedAt),
       category,
-      confirmed: false,
+      confirmed: true, // 自動で入るので確認を求めない（要確認は手入力の支出だけ）
       includeInTotal: true, // Gmail自動取得は基本的に会計に含める
       payerId: GMAIL_SYSTEM_LINE_ID,
       groupId,
@@ -497,7 +498,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
       inputSource: 'gmail_auto' as const,
       gmailMessageId: messageId,
       usedAt: parsed.usedAt, // カード利用日時（重複チェック用）
-      status: 'pending' as const,
+      status: 'shared' as const,
     };
 
     // アトミックに重複チェック＋保存
@@ -522,8 +523,8 @@ export async function forceProcessMessage(messageId: string): Promise<{
         category,
         categoryEmoji: getCategoryEmoji(category),
         date: formatJST(parsed.usedAt, 'M/D'),
-        // 保存時の値と揃える（Gmail自動取得は未確認でも集計に入る）
-        status: 'pending',
+        // 保存時の値と揃える（Gmail自動取得は共同費として確定で入る）
+        status: 'shared',
         includeInTotal: true,
       });
       console.log(`LINE notification sent for expense: ${expenseId}`);
