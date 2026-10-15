@@ -126,6 +126,10 @@ export default function ExpenseControls({
               {categories.map((category) => (
                 <option key={category} value={category}>{category}</option>
               ))}
+              {/* 内訳から開いたカテゴリがこの期間に無いときも、絞り込み中であることを出す */}
+              {filter !== "all" && filter !== "included" && filter !== "excluded" && !categories.includes(filter) && (
+                <option value={filter}>{filter}</option>
+              )}
             </select>
             <select
               value={sortBy}

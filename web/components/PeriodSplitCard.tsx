@@ -250,12 +250,12 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
                     }
                     className="min-w-0 rounded-xl border border-line bg-fg/[0.02] p-3 text-center transition-colors hover:bg-fg/5"
                   >
-                    <p className="truncate text-xs text-muted">{split.target.displayName || 'メンバー'}の支払い</p>
-                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{yen(split.targetPaid, 'ja-JP')}</p>
-                    <p className="mt-0.5 inline-flex items-center text-[11px] font-medium text-accent">
+                    <span className="block truncate text-xs text-muted">{split.target.displayName || 'メンバー'}の支払い</span>
+                    <span className="mt-0.5 block text-lg font-bold tabular-nums text-fg">{yen(split.targetPaid, 'ja-JP')}</span>
+                    <span className="mt-0.5 inline-flex items-center text-[11px] font-medium text-accent">
                       {targetCount}件の内訳
                       <ChevronRight className="h-3 w-3" />
-                    </p>
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -271,14 +271,14 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
                     }
                     className="min-w-0 rounded-xl border border-line bg-fg/[0.02] p-3 text-center transition-colors hover:bg-fg/5"
                   >
-                    <p className="truncate text-xs text-muted">
+                    <span className="block truncate text-xs text-muted">
                       {split.counterpart.displayName || 'メンバー'}・カード・共通口座
-                    </p>
-                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{yen(split.total - split.targetPaid, 'ja-JP')}</p>
-                    <p className="mt-0.5 inline-flex items-center text-[11px] font-medium text-accent">
+                    </span>
+                    <span className="mt-0.5 block text-lg font-bold tabular-nums text-fg">{yen(split.total - split.targetPaid, 'ja-JP')}</span>
+                    <span className="mt-0.5 inline-flex items-center text-[11px] font-medium text-accent">
                       {counted.length - targetCount}件の内訳
                       <ChevronRight className="h-3 w-3" />
-                    </p>
+                    </span>
                   </button>
                 </div>
               )}

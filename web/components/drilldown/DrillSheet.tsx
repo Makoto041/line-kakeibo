@@ -79,20 +79,44 @@ export default function DrillSheet({ initial, items, range, prevCategoryTotals, 
   const [dims, setDims] = useState<Record<number, DrillDim>>({});
   const [sort, setSort] = useState<DrillSort>('date');
   const closeRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const crumbsRef = useRef<HTMLDivElement>(null);
+  // 呼び出し側が毎回新しい関数を渡しても、開いたときの処理（フォーカスの移動など）をやり直さない
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   const depth = stack.length - 1;
   const view = stack[depth];
 
-  // 開いている間は背面をスクロールさせない。Esc で閉じ、閉じたら元の場所へフォーカスを戻す
+  // 開いている間は背面をスクロールさせない。Esc で閉じ、Tab はシートの中だけを回り、閉じたら元の場所へフォーカスを戻す
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     closeRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !panelRef.current) return;
+      const focusable = Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])')
+      ).filter((el) => el.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !panelRef.current.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !panelRef.current.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', onKey);
     return () => {
@@ -100,7 +124,7 @@ export default function DrillSheet({ initial, items, range, prevCategoryTotals, 
       document.removeEventListener('keydown', onKey);
       previous?.focus?.();
     };
-  }, [onClose]);
+  }, []);
 
   // 階層を移ったら先頭から見せる
   useEffect(() => {
@@ -126,8 +150,9 @@ export default function DrillSheet({ initial, items, range, prevCategoryTotals, 
 
   return (
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-labelledby="drill-title">
-      <button type="button" aria-label="閉じる" onClick={onClose} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-      <div className="glass-strong relative z-10 ml-auto flex w-full animate-fade-up flex-col shadow-glass-lg max-sm:mt-auto max-sm:max-h-[88vh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl">
+      {/* 背景のタップで閉じる（キーボードでは右上の閉じるボタンを使う） */}
+      <button type="button" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div ref={panelRef} className="glass-strong relative z-10 ml-auto flex w-full animate-fade-up flex-col shadow-glass-lg max-sm:mt-auto max-sm:max-h-[88vh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl">
         <div className="flex items-center gap-1 border-b border-line px-2 py-2">
           <button
             type="button"

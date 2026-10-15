@@ -123,7 +123,8 @@ export default function Dashboard() {
   const drillItems = useMemo(() => {
     const users = collectHistoricalUsers(drillSource);
     return toDrillItems(drillSource, {
-      range: effectiveRange,
+      // ゲストのサンプルは期間によらず同じ（上の合計カードと揃える）
+      range: lineId ? effectiveRange : undefined,
       included: (e) => !!e.includeInTotal,
       payer: (e) => {
         const name = resolvePayerName(e, users);
@@ -133,7 +134,12 @@ export default function Dashboard() {
     });
     // effectiveRange は描画ごとに作り直されるので、両端の日付で比べる
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drillSource, effectiveRange.startDate, effectiveRange.endDate]);
+  }, [drillSource, lineId, effectiveRange.startDate, effectiveRange.endDate]);
+  // 明細の取得は開始日から 1 か月・500 件までなので、それより長い固定期間や件数の多い期間は一部だけで数える
+  const drillPartial =
+    !!lineId &&
+    (effectiveRange.endDate > dayjs(effectiveRange.startDate).add(1, 'month').subtract(1, 'day').format('YYYY-MM-DD') ||
+      periodExpenses.length >= 500);
   // 前の期間のカテゴリ別合計（前期比）。固定期間では前の期間が同じになるので出さない
   const prevCategoryTotals = useMemo(() => {
     if (!lineId || !prevStats || dateSettings.mode === 'custom') return null;
@@ -342,6 +348,7 @@ export default function Dashboard() {
                     items={drillItems}
                     prevCategoryTotals={prevCategoryTotals}
                     loading={!!lineId && periodLoading}
+                    partial={drillPartial}
                     onOpen={setDrill}
                   />
                   <GlassCard className="p-5">
@@ -381,10 +388,13 @@ export default function Dashboard() {
           items={drillItems}
           range={effectiveRange}
           prevCategoryTotals={prevCategoryTotals}
-          listHref={(f) =>
-            f.payers
-              ? null
-              : `/expenses?from=${effectiveRange.startDate}${f.category !== undefined ? `&category=${encodeURIComponent(f.category)}` : ''}`
+          listHref={
+            lineId
+              ? (f) =>
+                  f.payers
+                    ? null
+                    : `/expenses?from=${effectiveRange.startDate}${f.category !== undefined ? `&category=${encodeURIComponent(f.category)}` : ''}`
+              : undefined
           }
           editHref={lineId ? (id) => `/expenses?edit=${encodeURIComponent(id)}` : undefined}
           onClose={closeDrill}

@@ -26,12 +26,15 @@ export function CategoryBreakdownCard({
   items,
   prevCategoryTotals,
   loading,
+  partial = false,
   onOpen,
 }: {
   items: readonly DrillItem[];
   /** 前の期間のカテゴリ別合計（前期比） */
   prevCategoryTotals: Record<string, number> | null;
   loading: boolean;
+  /** 期間の明細の一部だけで数えている（長い固定期間・件数が多い） */
+  partial?: boolean;
   onOpen: (views: DrillView[]) => void;
 }) {
   const [dim, setDim] = useState<DrillDim>('category');
@@ -133,6 +136,11 @@ export function CategoryBreakdownCard({
               );
             })}
           </ul>
+          {partial && (
+            <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+              期間が長いか件数が多いため、一部の支出だけで集計しています（上の合計と合わないことがあります）
+            </p>
+          )}
           {groups.length > TOP && (
             <button
               type="button"
