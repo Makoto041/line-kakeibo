@@ -76,7 +76,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.3.3 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.4.0 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
@@ -98,6 +98,7 @@ flowchart LR
   LINE["LINE アプリ"] -->|webhook| WH["webhook 関数<br/>asia-northeast1"]
   Gmail["Gmail"] -->|Pub/Sub| GM["gmailPubSubHandler"]
   Sched["Cloud Scheduler"] --> JOBS["postRecurringExpenses<br/>renewGmailWatch"]
+  JOBS -->|精算サマリー| LINE
   Browser["ブラウザ / LIFF"] --> WEB["Next.js（Vercel）"]
   WEB -->|/auth/line・/household/*| API["api 関数<br/>us-central1"]
   WEB -->|読み取り（ルールで制限）| FS[("Firestore")]
@@ -124,7 +125,7 @@ flowchart LR
             <tr><td class="name">webhook</td><td>HTTPS</td><td class="region">asia-northeast1</td><td>LINE の受信。署名が無いものは 401。<code>/health</code> も同居</td></tr>
             <tr><td class="name">api</td><td>HTTPS</td><td class="region us">us-central1</td><td>LIFF ログイン <code>/auth/line</code>、Web 向け <code>/household/*</code>、Gmail 管理 <code>/gmail/*</code></td></tr>
             <tr><td class="name">gmailPubSubHandler</td><td>Pub/Sub</td><td class="region">asia-northeast1</td><td>カード利用通知メールの取込</td></tr>
-            <tr><td class="name">postRecurringExpenses</td><td>毎日 06:10 JST</td><td class="region">asia-northeast1</td><td>引き落とし日を迎えた固定費を支出に計上（同じ月に 2 回は入らない）</td></tr>
+            <tr><td class="name">postRecurringExpenses</td><td>毎日 09:10 JST</td><td class="region">asia-northeast1</td><td>毎日のバッチ。引き落とし日を迎えた固定費を支出に計上（同じ月に 2 回は入らない）。期間の起算日には精算サマリーを LINE グループへメンション付きで送る（スケジュールの無料枠を使い切っているため相乗り）</td></tr>
             <tr><td class="name">renewGmailWatch</td><td>6 日ごと 03:00 JST</td><td class="region">asia-northeast1</td><td>Gmail watch（7 日で失効）の更新</td></tr>
             <tr><td class="name">importMoneyForward</td><td>毎日 05:00 JST</td><td class="region">asia-northeast1</td><td>廃止。旧 MoneyForward CSV 取込（一度も機能していなかった）。消すと CI の非対話デプロイが止まるため、何もしない関数として名前だけ残置</td></tr>
             <tr><td class="name">syncUserLinks</td><td>Firestore onCreate</td><td class="region">asia-northeast1</td><td>何もしない。消すと CI の非対話デプロイが止まるため残置</td></tr>
@@ -188,6 +189,16 @@ flowchart LR
           </ol>
           <span class="src">web/lib/periodSplit.ts</span>
         </div>
+        <div class="flow">
+          <h3>精算サマリー（月 1 回）</h3>
+          <ol>
+            <li>毎朝のバッチで、今日が期間の起算日（例: 15 日）かを判定</li>
+            <li>締まった期間を Web の期間の折半と同じ式で計算</li>
+            <li>送金する人と受け取る人をメンションしたテキストと、内訳・カテゴリ別・要確認・未精算の立替の Flex を 1 回の push で送る</li>
+            <li>送った印を <code>system/</code> に残し、同じ期間は 2 回送らない</li>
+          </ol>
+          <span class="src">bot/src/settlementSummary.ts</span>
+        </div>
       </div>
     </div>
   </section>
@@ -237,6 +248,7 @@ flowchart LR
             <tr><td class="name">bot/src/householdApi.ts</td><td><code>/household/*</code>（確認・精算・固定費・折半設定）</td></tr>
             <tr><td class="name">bot/src/gmail/</td><td>Gmail 取込と管理 API（<code>adminRouter.ts</code>）</td></tr>
             <tr><td class="name">bot/src/recurringExpenses.ts</td><td>固定費の計上ロジック</td></tr>
+            <tr><td class="name">bot/src/settlementSummary.ts · line/settlementSummaryMessage.ts</td><td>期間の精算サマリー（送る日の判定・集計・冪等な送信と、メンション付きテキスト・Flex）</td></tr>
             <tr><td class="name">web/app/ · components/ · lib/</td><td>画面・部品・ロジック（lib は純関数でテストあり）</td></tr>
             <tr><td class="name">firestore.rules · storage.rules</td><td>アクセス制御（CI がデプロイ、エミュレータでテスト）</td></tr>
           </tbody>

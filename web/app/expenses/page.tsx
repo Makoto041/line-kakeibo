@@ -37,7 +37,7 @@ import EditDrawer from "../../components/expenses/EditDrawer";
 import ReceiptModal from "../../components/expenses/ReceiptModal";
 import { CANONICAL_CATEGORIES } from "../../lib/categoryNormalization";
 import dayjs from "dayjs";
-import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
+import { fetchDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
 import { db, ensureFirebaseInitialized } from "../../lib/firebase";
 import { getCached, setCached } from "../../lib/swrCache";
@@ -110,12 +110,19 @@ function ExpensesPageContent() {
       setDateSettings(cached);
       setSettingsLoadedFor(userKey);
     }
-    getDateRangeSettings(effectiveUserId).then((settings) => {
-      if (cancelled) return;
-      setCached(cacheKey, settings);
-      setDateSettings(settings);
-      setSettingsLoadedFor(userKey);
-    });
+    fetchDateRangeSettings(effectiveUserId).then(
+      (settings) => {
+        if (cancelled) return;
+        setCached(cacheKey, settings);
+        setDateSettings(settings);
+        setSettingsLoadedFor(userKey);
+      },
+      (error: unknown) => {
+        // 読めなかった: キャッシュがあればそのまま、無ければ既定の期間で続ける（キャッシュは上書きしない）
+        console.error('Failed to load date settings:', error);
+        if (!cancelled) setSettingsLoadedFor(userKey);
+      }
+    );
     return () => {
       cancelled = true;
     };

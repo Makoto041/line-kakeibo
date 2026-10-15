@@ -19,7 +19,7 @@ import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses } from '../l
 import { countPending } from '../lib/expenseState';
 import Link from 'next/link';
 import { CategoryPieChart, DailyLineChart } from '../components/Charts';
-import { getDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
+import { fetchDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
 import PreviewModeBanner from '../components/PreviewModeBanner';
 import GuestGuide from '../components/GuestGuide';
 import { getSampleStats } from '../lib/sampleData';
@@ -69,7 +69,8 @@ export default function Dashboard() {
         setSettingsLoading(true);
       }
       try {
-        const fresh = await getDateRangeSettings(lineId);
+        // 読めなかったときは例外になり、下の catch でキャッシュを既定の期間で上書きしない
+        const fresh = await fetchDateRangeSettings(lineId);
         setCached(key, fresh);
         setDateSettings(fresh);
       } catch (e) {

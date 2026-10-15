@@ -21,7 +21,7 @@ flowchart LR
             gmailHandler["gmailPubSubHandler"]
             renewWatch["renewGmailWatch<br/>(cron: 6日ごと 3:00 JST)"]
             mfImport["importMoneyForward<br/>(廃止・何もしない)"]
-            recurring["postRecurringExpenses<br/>(cron: 毎日 6:10 JST)"]
+            recurring["postRecurringExpenses<br/>(cron: 毎日 9:10 JST。固定費・精算サマリー)"]
             syncLinks["syncUserLinks<br/>(Firestoreトリガー・無効化済み)"]
             gmailApi["api (us-central1)<br/>/gmail/* /auth/line /household/*"]
         end
@@ -90,7 +90,7 @@ flowchart LR
 | `gmailPubSubHandler` | Pub/Sub `gmail-notifications` | asia-northeast1 | SMBC カード利用メールの取込 |
 | `renewGmailWatch` | cron `0 3 */6 * *` JST | asia-northeast1 | Gmail watch（7日失効）の更新 |
 | `importMoneyForward` | cron `0 5 * * *` JST | asia-northeast1 | **廃止（何もしない）**。旧 MoneyForward CSV 取込。送信先 `/api/mf/import` が存在せず機能していなかったため処理を削除。`syncUserLinks` と同じ理由で関数名だけ残置。削除は手動 `firebase functions:delete importMoneyForward --region asia-northeast1` |
-| `postRecurringExpenses` | cron `10 6 * * *` JST | asia-northeast1 | 固定費（`recurringExpenses`）のうち引き落とし日を迎えた項目を `expenses` に計上（`recurringExpenses.ts`。同じ月に 2 回は入らない。LINE 通知なし） |
+| `postRecurringExpenses` | cron `10 9 * * *` JST | asia-northeast1 | 毎日のバッチ。固定費（`recurringExpenses`）のうち引き落とし日を迎えた項目を `expenses` に計上（`recurringExpenses.ts`。同じ月に 2 回は入らない。LINE 通知なし）。期間の起算日には、締まった期間の精算サマリーを LINE グループへメンション付きで送る（`settlementSummary.ts`。同じ期間は 1 回）。Secret: `LINE_CHANNEL_TOKEN` / `LINE_CHANNEL_SECRET` |
 | `syncUserLinks` | Firestore `expenses/{id}` onCreate | asia-northeast1 | **無効化済み（何もしない）**。export から外すと CI の非対話デプロイが関数削除の確認で失敗するため残置。削除は手動 `firebase functions:delete syncUserLinks` |
 | `api` | HTTPS（Express） | **us-central1** | Gmail OAuth / watch 管理 `/gmail/*`（`ADMIN_SECRET` 認証）、LIFF ログイン `/auth/line`、Web の確認・精算・固定費・折半設定 `/household/*`（Firebase ID トークン認証。SPECIFICATION.md §5.4） |
 
@@ -151,7 +151,7 @@ Web を開く（LINE の「家計簿一覧を見る」/「修正」リンク、�
 ### 4.5 固定費（毎月の自動計上）
 
 - 項目は `recurringExpenses/{id}`（世帯 `groupId` 単位、上限 30 件）。クライアントからは読み書きできず、Web の設定 > 固定費タブ（`components/RecurringExpensesPanel.tsx`）が `/household/recurring` の CRUD を通して Admin SDK で扱う
-- `postRecurringExpenses` が毎朝 6:10 JST に、引き落とし日（`dayOfMonth`。月の日数を超える日は末日）を迎えた有効な項目を `expenses` に計上する。文書 ID を `recurring_{項目ID}_{YYYYMM}` に固定して create するため冪等
+- `postRecurringExpenses` が毎朝 9:10 JST に、引き落とし日（`dayOfMonth`。月の日数を超える日は末日）を迎えた有効な項目を `expenses` に計上する。文書 ID を `recurring_{項目ID}_{YYYYMM}` に固定して create するため冪等
 - 支払い元 `shared`（共通のカード・口座）は `lineId`/`payerId` = `recurring-system`・`status: 'shared'`、`advance`（メンバーの個人口座）はその人の立替（`advance_pending`）として計上する。いずれも `inputSource: 'recurring'`・`confirmed: true`・`includeInTotal: true`
 
 ## 5. カテゴリ分類パイプライン（コスト最適化）
@@ -226,6 +226,8 @@ line-kakeibo/
 │  │  ├─ householdApi.ts     # Web 向け /household ルーター（ID トークン認証・メンバー確認・CORS・レート制限・固定費 CRUD・折半設定）
 │  │  ├─ householdSettlement.ts # 精算額の決め方（LINE の立替一覧/精算と Web で共用）
 │  │  ├─ recurringExpenses.ts # 固定費の検証・計上ロジック（postRecurringExpenses）
+│  │  ├─ settlementSummary.ts # 期間の精算サマリー（起算日の判定・集計・冪等な送信）。periodSplit.ts は Web と同じ折半の式
+│  │  ├─ line/settlementSummaryMessage.ts # 精算サマリーのメンション付きテキストと Flex
 │  │  ├─ webOrigins.ts       # Web オリジンの許可リスト（/auth/line と /household で共用）
 │  │  ├─ adminAuth.ts        # ADMIN_SECRET の定数時間比較
 │  │  ├─ logSafe.ts / time.ts # ログのマスク・JST 日付

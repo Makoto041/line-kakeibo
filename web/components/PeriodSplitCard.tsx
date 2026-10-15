@@ -9,7 +9,7 @@ import { useExpenses, type HouseholdMember } from '../lib/hooks';
 import { saveSplitCollectFrom } from '../lib/householdApi';
 import {
   DEFAULT_SETTINGS,
-  getDateRangeSettings,
+  fetchDateRangeSettings,
   getDisplayTitle,
   getEffectiveDateRange,
   type DateRangeSettings,
@@ -42,12 +42,19 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
   const [currentMonth, setCurrentMonth] = useState(() => dayjs().subtract(1, 'month'));
   useEffect(() => {
     let cancelled = false;
-    getDateRangeSettings(lineId).then((s) => {
-      if (cancelled) return;
-      setCached(`dateSettings:${lineId}`, s);
-      setDateSettings(s);
-      setSettingsLoaded(true);
-    });
+    fetchDateRangeSettings(lineId).then(
+      (s) => {
+        if (cancelled) return;
+        setCached(`dateSettings:${lineId}`, s);
+        setDateSettings(s);
+        setSettingsLoaded(true);
+      },
+      (error: unknown) => {
+        // 読めなかった: キャッシュがあればそのまま、無ければ既定の期間で続ける（キャッシュは上書きしない）
+        console.error('Failed to load date settings:', error);
+        if (!cancelled) setSettingsLoaded(true);
+      }
+    );
     return () => {
       cancelled = true;
     };

@@ -134,6 +134,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 - Gmail カード利用通知（`sendCardUsageNotification`, `flexMessage.ts`）… グループ宛の非同期プッシュのため reply トークンが無い
 - メンバー参加時の案内（`handleMemberJoined`）
+- 期間の精算サマリー（§3.4。月 1 回。メンション付きテキストと Flex を 1 回の push で送る）
 
 これは push 枠を消費する。固定費の自動計上（§3.3）は LINE へ通知しない。Flex メッセージのアイコンは `line-kakeibo.vercel.app/icons` から PNG 配信（lucide 風）。
 
@@ -157,12 +158,26 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 ### 3.3 固定費の自動計上（`bot/src/recurringExpenses.ts`）
 
 - 項目は Web の設定 > 固定費タブで登録し、`recurringExpenses/{id}` に世帯（`groupId`）ごとに保存する（1 世帯 30 件まで。名前 40 文字・金額 1〜10,000,000 円・引き落とし日 1〜31・正準カテゴリ）。クライアントからは読み書きできず、`/household/recurring` の CRUD（§5.4）を通す
-- `postRecurringExpenses`（cron: 毎日 6:10 JST）が、有効（`active`）な項目のうち当月の引き落とし日（`dayOfMonth`。月の日数を超える日はその月の末日）を迎えたものを `expenses` に計上する。文書 ID を `recurring_{項目ID}_{YYYYMM}` に固定して create するため、同じ月に 2 回は入らない。`lastPostedMonth` に計上した月を記録し、作成日（`startDate`）より前の引き落とし日の分と、停止→再開時に当月の引き落とし日を過ぎていた分は遡らない
+- `postRecurringExpenses`（cron: 毎日 9:10 JST。§3.4 の精算サマリーと同じ実行）が、有効（`active`）な項目のうち当月の引き落とし日（`dayOfMonth`。月の日数を超える日はその月の末日）を迎えたものを `expenses` に計上する。文書 ID を `recurring_{項目ID}_{YYYYMM}` に固定して create するため、同じ月に 2 回は入らない。`lastPostedMonth` に計上した月を記録し、作成日（`startDate`）より前の引き落とし日の分と、停止→再開時に当月の引き落とし日を過ぎていた分は遡らない
 - 計上する明細: `inputSource: 'recurring'`, `recurringId`, `confirmed: true`, `includeInTotal: true`, `groupId`（＋世帯の `lineGroupId`）、金額は設定した見込み額（請求確定後は明細側を直す）
   - 支払い元 `shared`（共通のカード・口座）: `lineId`/`payerId` = `recurring-system`、`status: 'shared'`
   - 支払い元 `advance`（メンバーの個人口座）: `lineId`/`payerId`/`advanceBy` = その人、`status: 'advance_pending'`（立替として精算対象になる）
 - LINE への通知は送らない。カード利用通知メールで自動登録される支出を固定費に登録すると二重になる（画面で案内）
 - テスト: 純関数は `bot/scripts/smoke-recurring.js`（`npm -w bot test`）、API と計上は `bot/scripts/emulator-recurring.js`（`npm -w bot run test:emulator`）
+
+### 3.4 期間の精算サマリー（`bot/src/settlementSummary.ts` / `line/settlementSummaryMessage.ts`）
+
+毎月、期間が締まった翌日（期間の起算日）に、Web の「期間の精算（折半）」と同じ内容を LINE グループへ送る。
+
+- **いつ**: 毎日の `postRecurringExpenses`（9:10 JST）の中で判定し、今日が起算日なら送る。起算日は集金するメンバーの期間設定（`userSettings/{lineId}.dateSettings.customStartDay`。無ければ相手の設定、どちらも無ければ 1 日）。例: 15日起算なら 10/15 に 9/15〜10/14 の分。固定期間（`mode: 'custom'`）では送らない。Cloud Scheduler の無料枠（3 ジョブ）を使い切っているため、スケジュールは増やさない
+- **対象**: `groups` のうち `lineGroupId` があり、集金するメンバー（`splitSettings.collectFromLineId`）が決まっていて、有効メンバーがちょうど 2 人の世帯
+- **計算**: `bot/src/periodSplit.ts`（Web の `web/lib/periodSplit.ts` と同じ式。`smoke-settlement-summary.js` が同じ入力で両方の結果を突き合わせる）
+- **メッセージ**（1 回の push に 2 通。LINE の通数は受け取る人数で数えるので、2 人の世帯で月 2 通）
+  1. テキスト（`textV2`）: 送金する人と受け取る人をメンション（「9/15〜10/14 の精算（折半）です。@光麦 から @誠 へ ¥159,794 の送金をお願いします。」）。送金なしのときは 2 人をメンションして「今回は送金なし」
+  2. Flex: 送金額、内訳（合計・1 人あたり・集金するメンバーの支払い・相手とカード・共通口座の支払い）、カテゴリ別の上位 5 つ（割合のバー。残りは「ほか」）、要確認の件数（手入力で未確認。合計に入っていない）、未精算の立替（件数と精算額）、「精算を開く」「支出を見る」ボタン
+- **冪等**: 送る前に `system/settlementSummary_{groupId}_{期間末日}` を create（同じ期間は 2 回送らない）。送信に失敗したら消して、関数のリトライ（`retryCount: 1`）で送り直す。push には `X-Line-Retry-Key`（世帯と期間から決まる UUID）も付け、LINE が 409（送信済み）を返したら送れたものとして扱う。印があって `sentAt` が無い（前の実行が送信の途中で止まった）ときは、同じキーで送り直す
+- **注意**: 起算日が 29〜31 日でその日が無い月には送らず、次の回でその分も含める（31日起算なら 3/31 に 1/31〜3/30）。起算日の 9:10 より後に届いたカード利用通知のうち、利用日が締まった期間内のものはサマリーに入らない（Web の期間の精算には入る）
+- テスト: 純関数とメッセージは `bot/scripts/smoke-settlement-summary.js`、送る日の判定・冪等・失敗時の送り直しは `bot/scripts/emulator-settlement-summary.js`
 
 ---
 
@@ -264,6 +279,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | `userCustomCategories` | `lineId`, `name`, `icon?`, `keywords?[]` | Bot 専用 |
 | `categoryFeedback` | `originalCategory`, `correctedCategory`, `description` | 分類改善用ログ。Bot 専用 |
 | `system/{gmailToken,gmailState,oauthState,gmailFailures}` | Gmail OAuth トークン・historyId / watch 期限・CSRF state・処理失敗の記録 | Bot 専用 |
+| `system/settlementSummary_{groupId}_{YYYY-MM-DD}` | `groupId`, `endDate`, `createdAt`, `sentAt` | 期間の精算サマリーを送った印（§3.4。同じ期間は 1 回）。Bot 専用 |
 
 複合インデックス: `expenses` の `lineId/groupId/lineGroupId × createdAt/date/status` 組合せ、`groupMembers` の `lineId+isActive` / `groupId+isActive`（`firestore.indexes.json`）。
 
