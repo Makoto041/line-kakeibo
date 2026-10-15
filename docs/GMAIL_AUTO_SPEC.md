@@ -187,7 +187,7 @@ Flex Message 通知（line/flexMessage.ts）
 | inputSource | string | 入力元: `line_text` / `gmail_auto` / `recurring`（`line_ocr` は既存データのみのレガシー値） |
 | gmailMessageId | string | Gmail メッセージ ID（重複チェック用） |
 | usedAt | Timestamp | カード利用日時（重複チェック・表示用） |
-| status | string | `pending` / `shared` / `personal` / `advance_pending` / `advance_settled` |
+| status | string | `shared`（取込時）/ `personal` / `advance_pending` / `advance_settled`。`pending` は以前の取込にだけ残るレガシー値（Web・LINE とも共同費として扱う） |
 | advanceBy | string | 立替者（立替時のみ） |
 | includeInTotal | boolean | 合計金額に含めるか |
 

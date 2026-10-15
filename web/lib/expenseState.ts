@@ -13,7 +13,11 @@ export const RECURRING_SYSTEM_LINE_ID = 'recurring-system';
 
 // ---- 状態 ------------------------------------------------------------------
 
-/** 自動で入った支出（Gmail のカード取込・固定費の自動計上）。確認を求めない */
+/**
+ * 自動で入った支出（Gmail のカード取込・固定費の自動計上）。確認を求めない。
+ * 固定費は登録時から確認済みなので、実際に効くのは以前に pending で入ったカード取込
+ * （LINE のカード再表示 bot/src/line/flexMessage.ts の buildExpenseCardFromRecord も同じ扱い）
+ */
 export function isAutoInput(e: Pick<ExpenseFields, 'inputSource'>): boolean {
   return e.inputSource === 'gmail_auto' || e.inputSource === 'recurring';
 }
