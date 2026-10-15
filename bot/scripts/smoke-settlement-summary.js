@@ -71,6 +71,12 @@ const e = (amount, payerId, extra = {}) => ({
     assert.deepEqual(closedPeriodFor('2026-03-01', 1), { startDate: '2026-02-01', endDate: '2026-02-28' });
     assert.deepEqual(closedPeriodFor('2026-01-15', 15), { startDate: '2025-12-15', endDate: '2026-01-14' });
     assert.equal(closedPeriodFor('2026-10-15', null), null);
+    // 起算日が無い月（2 月の 31 日）の分は次の回に含める
+    assert.deepEqual(closedPeriodFor('2026-03-31', 31), { startDate: '2026-01-31', endDate: '2026-03-30' });
+    assert.deepEqual(closedPeriodFor('2026-01-31', 31), { startDate: '2025-12-31', endDate: '2026-01-30' });
+    assert.deepEqual(closedPeriodFor('2026-03-30', 30), { startDate: '2026-01-30', endDate: '2026-03-29' });
+    assert.deepEqual(closedPeriodFor('2028-03-29', 29), { startDate: '2028-02-29', endDate: '2028-03-28' });
+    assert.equal(closedPeriodFor('2026-02-28', 31), null);
   });
   await test('期間の表記（年をまたぐときは年も）', () => {
     assert.equal(periodLabel(RANGE), '9/15〜10/14');

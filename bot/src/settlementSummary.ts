@@ -12,7 +12,7 @@
  *   送信に失敗したら消して、次の実行（関数のリトライ）で送り直す。LINE の X-Line-Retry-Key も付ける。
  *   印はあるのに送った時刻（sentAt）が無い（前の実行が送信の途中で止まった・印を消せなかった）ときは、
  *   同じ X-Line-Retry-Key で送り直す（LINE が受け付け済みなら 409 が返り、二重には届かない）。
- * - 起算日が 29〜31 日で、その日が無い月には送らない（Web の期間も同じ日付の扱い）。
+ * - 起算日が 29〜31 日で、その日が無い月には送らず、次の回でその分も含める（closedPeriodFor）。
  */
 
 import { createHash } from 'node:crypto';
@@ -50,17 +50,21 @@ export function periodStartDay(settings: DateSettingsLike | null | undefined): n
 }
 
 /**
- * 今日が起算日なら、締まった期間（前の月の起算日〜昨日）。それ以外の日は null
+ * 今日が起算日なら、締まった期間（前回の起算日〜昨日）。それ以外の日は null
  *
- * 例: 15日起算で 10/15 → 9/15〜10/14、1日起算で 10/1 → 9/1〜9/30（Web の期間と同じ。起算日 29〜31 は
- * その日が無い月には送らない）
+ * 例: 15日起算で 10/15 → 9/15〜10/14、1日起算で 10/1 → 9/1〜9/30（Web の期間と同じ）。
+ * 起算日 29〜31 は、その日が無い月には送らず、次の回でその分も含める
+ * （31日起算なら 3/31 → 1/31〜3/30。2 月には 31 日が無いため）
  */
 export function closedPeriodFor(today: string, startDay: number | null): { startDate: string; endDate: string } | null {
   if (startDay === null) return null;
   const d = dayjs.tz(today, 'YYYY-MM-DD', JST);
   if (!d.isValid() || d.date() !== startDay) return null;
+  // 前回の起算日: 起算日がある月までさかのぼる（29〜31 日でなければ前の月）
+  let month = d.startOf('month').subtract(1, 'month');
+  while (month.daysInMonth() < startDay) month = month.subtract(1, 'month');
   return {
-    startDate: d.subtract(1, 'month').format('YYYY-MM-DD'),
+    startDate: month.date(startDay).format('YYYY-MM-DD'),
     endDate: d.subtract(1, 'day').format('YYYY-MM-DD'),
   };
 }
