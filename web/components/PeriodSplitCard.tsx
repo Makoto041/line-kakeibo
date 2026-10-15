@@ -2,9 +2,13 @@
 
 // 期間の折半精算: 期間内の世帯の支出を 2 人で折半し、指定したメンバーから集金する額を出す。
 // 集金するメンバーは世帯ごとの設定（groups.splitSettings）。計算は lib/periodSplit.ts。
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 import { ArrowLeftRight, ArrowRight, ChevronLeft, ChevronRight, Loader2, Scale } from 'lucide-react';
+import DrillSheet, { type DrillView } from './drilldown/DrillSheet';
+import { CARD_PAYER_NAME, SHARED_PAYER_NAME, toDrillItems } from '../lib/drilldown';
+import { GMAIL_SYSTEM_LINE_ID, RECURRING_SYSTEM_LINE_ID, isPending, resolvePayerName } from '../lib/expenseState';
+import { collectHistoricalUsers } from '../lib/expenseEdit';
 import { useExpenses, type HouseholdMember } from '../lib/hooks';
 import { saveSplitCollectFrom } from '../lib/householdApi';
 import {
@@ -80,6 +84,34 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
     [expenses, groupId, members, target, range]
   );
   const nameOf = (id: string | undefined) => members.find((m) => m.lineId === id)?.displayName || 'メンバー';
+
+  // 内訳シート: 折半の計算と同じ明細（世帯・期間内。合計に含み、立替精算済みでないもの）を、支払い者（payerId）で分ける
+  const [drill, setDrill] = useState<DrillView[] | null>(null);
+  const closeDrill = useCallback(() => setDrill(null), []);
+  const drillItems = useMemo(() => {
+    const users = collectHistoricalUsers(expenses);
+    const names = new Map(members.map((m) => [m.lineId, m.displayName || 'メンバー']));
+    return toDrillItems(
+      expenses.filter((e) => e.groupId === groupId),
+      {
+        range,
+        included: (e) => !!e.includeInTotal && e.status !== 'advance_settled',
+        payer: (e) => {
+          const key = e.payerId || e.lineId;
+          const name =
+            names.get(key) ??
+            (key === GMAIL_SYSTEM_LINE_ID ? CARD_PAYER_NAME : key === RECURRING_SYSTEM_LINE_ID ? SHARED_PAYER_NAME : resolvePayerName(e, users));
+          return { key, name };
+        },
+        pending: isPending,
+      }
+    );
+  }, [expenses, groupId, members, range]);
+  const targetKey = split.target?.lineId ?? null;
+  const counted = drillItems.filter((i) => i.included);
+  const targetCount = counted.filter((i) => i.payerKey === targetKey).length;
+  const otherPayers = Array.from(new Set(counted.filter((i) => i.payerKey !== targetKey).map((i) => i.payerKey)));
+  const totalView: DrillView = { kind: 'set', title: '期間の合計', filter: {} };
 
   const choose = async (id: string) => {
     if (saving || id === target) return;
@@ -208,19 +240,46 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
               })()}
               {error && <p className="mt-2 text-center text-xs text-rose-600 dark:text-rose-400">{error}</p>}
 
-              {/* 内訳: 2 人の支払いと、1 人あたりの負担 */}
+              {/* 内訳: 2 人の支払いと、1 人あたりの負担。タップすると明細まで潜れる */}
               {split.target && split.counterpart && (
                 <div className="mt-5 grid grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-line bg-fg/[0.02] p-3 text-center">
-                    <p className="truncate text-xs text-muted">{split.target.displayName || 'メンバー'}の支払い</p>
-                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{yen(split.targetPaid, 'ja-JP')}</p>
-                  </div>
-                  <div className="rounded-xl border border-line bg-fg/[0.02] p-3 text-center">
-                    <p className="truncate text-xs text-muted">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDrill([{ kind: 'set', title: `${split.target!.displayName || 'メンバー'}の支払い`, filter: { payers: [split.target!.lineId] } }])
+                    }
+                    className="min-w-0 rounded-xl border border-line bg-fg/[0.02] p-3 text-center transition-colors hover:bg-fg/5"
+                  >
+                    <span className="block truncate text-xs text-muted">{split.target.displayName || 'メンバー'}の支払い</span>
+                    <span className="mt-0.5 block text-lg font-bold tabular-nums text-fg">{yen(split.targetPaid, 'ja-JP')}</span>
+                    <span className="mt-0.5 inline-flex items-center text-[11px] font-medium text-accent">
+                      {targetCount}件の内訳
+                      <ChevronRight className="h-3 w-3" />
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDrill([
+                        {
+                          kind: 'set',
+                          title: `${split.counterpart!.displayName || 'メンバー'}・カード・共通口座`,
+                          filter: { payers: otherPayers },
+                          dim: 'payer',
+                        },
+                      ])
+                    }
+                    className="min-w-0 rounded-xl border border-line bg-fg/[0.02] p-3 text-center transition-colors hover:bg-fg/5"
+                  >
+                    <span className="block truncate text-xs text-muted">
                       {split.counterpart.displayName || 'メンバー'}・カード・共通口座
-                    </p>
-                    <p className="mt-0.5 text-lg font-bold tabular-nums text-fg">{yen(split.total - split.targetPaid, 'ja-JP')}</p>
-                  </div>
+                    </span>
+                    <span className="mt-0.5 block text-lg font-bold tabular-nums text-fg">{yen(split.total - split.targetPaid, 'ja-JP')}</span>
+                    <span className="mt-0.5 inline-flex items-center text-[11px] font-medium text-accent">
+                      {counted.length - targetCount}件の内訳
+                      <ChevronRight className="h-3 w-3" />
+                    </span>
+                  </button>
                 </div>
               )}
 
@@ -244,12 +303,36 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
                 )}
               </dl>
 
+              {split.count > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setDrill([totalView])}
+                  className="mt-2 inline-flex w-full items-center justify-center gap-0.5 rounded-xl py-2 text-xs font-medium text-accent hover:bg-fg/5"
+                >
+                  カテゴリ別の内訳を見る
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              )}
+
               {expenses.length >= FETCH_LIMIT && (
                 <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">件数が多いため、一部を数えられていない可能性があります</p>
               )}
             </>
           )}
         </>
+      )}
+
+      {drill && (
+        <DrillSheet
+          initial={drill}
+          items={drillItems}
+          range={range}
+          listHref={(f) =>
+            f.payers ? null : `/expenses?from=${range.startDate}${f.category !== undefined ? `&category=${encodeURIComponent(f.category)}` : ''}`
+          }
+          editHref={(id) => `/expenses?edit=${encodeURIComponent(id)}`}
+          onClose={closeDrill}
+        />
       )}
     </div>
   );
