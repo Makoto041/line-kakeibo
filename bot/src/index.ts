@@ -19,8 +19,10 @@ import { gmailRouter } from "./gmail/adminRouter";
 import { handleGmailPubSub, renewWatch } from "./gmail";
 import { authRouter } from "./auth/lineAuth";
 import { householdRouter, householdErrorHandler } from "./householdApi";
-// Money Forward Me Import
 import { postDueRecurringExpenses } from "./recurringExpenses";
+import { sendDueSettlementSummaries } from "./settlementSummary";
+import { buildSettlementSummaryMessages } from "./line/settlementSummaryMessage";
+import { getLineClient } from "./line/client";
 
 dotenv.config();
 
@@ -144,26 +146,50 @@ export const renewGmailWatch = onSchedule(
 );
 
 /**
- * 固定費（家賃・光熱費など）の自動計上
+ * 毎日のバッチ（固定費の自動計上・期間の精算サマリー）
  *
- * 毎朝 6:10（JST）に、引き落とし日を迎えた固定費を明細に入れる（recurringExpenses.ts）。
- * 同じ月に 2 回は入らない。LINE への通知は送らない（無料枠の push 数を使わない）。
+ * - 毎朝 9:10（JST）に、引き落とし日を迎えた固定費を明細に入れる（recurringExpenses.ts）。
+ *   同じ月に 2 回は入らない。LINE への通知は送らない（無料枠の push 数を使わない）。
+ * - 期間の起算日（例: 15日起算なら毎月 15 日）には、締まった期間の精算サマリーを LINE グループへ
+ *   メンション付きで送る（settlementSummary.ts。同じ期間は 1 回だけ）。
+ * Cloud Scheduler の無料枠（3 ジョブ）を使い切っているため、スケジュールは増やさずここにまとめる。
+ * 関数名を変えると CI のデプロイが本番関数の削除確認で失敗するため、名前は postRecurringExpenses のまま。
  */
 export const postRecurringExpenses = onSchedule(
   {
-    schedule: "10 6 * * *",
+    // 精算サマリーのメンション通知が早朝に鳴らないよう 9 時台にする（固定費の計上はいつでもよい）
+    schedule: "10 9 * * *",
     timeZone: "Asia/Tokyo",
     region: "asia-northeast1",
     timeoutSeconds: 120,
     memory: "256MiB",
     maxInstances: 1,
     retryCount: 1,
+    // 精算サマリーの送信（line/client.ts は両方そろっていないとクライアントを作らない）
+    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET"],
   },
   async () => {
-    const summary = await postDueRecurringExpenses(getFirestore());
+    const db = getFirestore();
+    const summary = await postDueRecurringExpenses(db);
     console.log("Recurring expenses", summary);
-    if (summary.failed > 0) {
-      throw new Error(`recurring: ${summary.failed} item(s) failed`);
+
+    // 固定費の計上に失敗しても、精算サマリーは判定する（どちらも冪等なのでリトライで重複しない）
+    const settlement = await sendDueSettlementSummaries(db, {
+      build: buildSettlementSummaryMessages,
+      push: async (to, messages, retryKey) => {
+        try {
+          await getLineClient().pushMessage({ to, messages }, retryKey);
+        } catch (error) {
+          // 409: 同じ X-Line-Retry-Key で送信済み（前回の実行で届いている）
+          if ((error as { status?: unknown }).status === 409) return;
+          throw error;
+        }
+      },
+    });
+    console.log("Settlement summaries", settlement);
+
+    if (summary.failed > 0 || settlement.failed > 0) {
+      throw new Error(`daily batch: recurring ${summary.failed} / settlement summary ${settlement.failed} failed`);
     }
   }
 );
