@@ -208,9 +208,9 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 | ルート | 内容 |
 |---|---|
-| `/` | **ホーム（ダッシュボード）**。期間ナビ、合計/件数/日平均カード、予算プログレス、カテゴリ円グラフ＋日別推移（Recharts）、前月比インサイト、残り日数ペース。要確認の支出（LINE で手入力して未確認のもの。`lib/expenseState.ts` の `isPending`。Gmail 取込・固定費は対象外）があれば件数バナー（→ `/expenses?filter=pending`）。LINE 未ログイン（`lineId` クレーム無し）はゲストモード（サンプルデータ＋ガイド） |
-| `/expenses` | **支出一覧**。セグメント（全て / 要確認 / 立替）、絞り込み（説明・カテゴリの文字検索、集計対象/対象外、カテゴリ、日付/金額ソート。`lib/expenseState.ts`）、支払者別集計、インライン編集ドロワー、削除、集計対象トグル、レシートプレビュー、要確認の支出の「確認」ボタン（§5.4 の confirm API。LINE の OK と同じ判定）。`?edit=<id>` で編集を自動オープン（LINE の「修正」ボタン連携）、`?filter=pending\|advance` で初期セグメント指定 |
-| `/settlement` | **精算**。(1) **期間の精算（折半）**（`PeriodSplitCard`）: 表示期間内の世帯の支出（合計に含むもの。立替精算済みは除く）を 2 人で折半し、「集金するメンバー」（`groups.splitSettings`、§5.4 の split-settings API で保存）の支払い分を引いた集金額を表示。(2) **未精算の立替の精算**: `GET /household/settlement` の内容（関係者・立替合計・精算額・明細）を表示し、`POST /household/settlement/settle` で精算を記録 |
+| `/` | **ホーム（ダッシュボード）**。期間ナビ、合計/件数/日平均カード、予算プログレス、**カテゴリ別 / 支払い者別カード**（`components/home/CategoryBreakdownCard.tsx`。割合の帯と行ごとの金額・件数・前期比。行や「内訳を見る」から内訳シートを開く）＋日別推移（Recharts）、前月比インサイト、残り日数ペース。要確認の支出（LINE で手入力して未確認のもの。`lib/expenseState.ts` の `isPending`。Gmail 取込・固定費は対象外）があれば件数バナー（→ `/expenses?filter=pending`）。LINE 未ログイン（`lineId` クレーム無し）はゲストモード（サンプルデータ＋ガイド） |
+| `/expenses` | **支出一覧**。セグメント（全て / 要確認 / 立替）、絞り込み（説明・カテゴリの文字検索、集計対象/対象外、カテゴリ、日付/金額ソート。`lib/expenseState.ts`）、支払者別集計、インライン編集ドロワー、削除、集計対象トグル、レシートプレビュー、要確認の支出の「確認」ボタン（§5.4 の confirm API。LINE の OK と同じ判定）。`?edit=<id>` で編集を自動オープン（LINE の「修正」ボタン連携）、`?filter=pending\|advance` で初期セグメント指定、`?from=YYYY-MM-DD` でその日を含む期間、`?category=` でカテゴリの絞り込み（内訳シートから開くとき） |
+| `/settlement` | **精算**。(1) **期間の精算（折半）**（`PeriodSplitCard`）: 表示期間内の世帯の支出（合計に含むもの。立替精算済みは除く）を 2 人で折半し、「集金するメンバー」（`groups.splitSettings`、§5.4 の split-settings API で保存）の支払い分を引いた集金額を表示。2 人の支払いのタイルと「カテゴリ別の内訳を見る」から内訳シートを開く（集金するメンバーの支払い / 相手・カード・共通口座の支払い / 期間の合計）。(2) **未精算の立替の精算**: `GET /household/settlement` の内容（関係者・立替合計・精算額・明細）を表示し、`POST /household/settlement/settle` で精算を記録 |
 | `/settings` | **設定**。予算タブ（月次予算・アラート閾値・カテゴリ別予算）、期間タブ（月次/開始日カスタム/期間指定）、固定費タブ（`RecurringExpensesPanel`。§3.3 の項目の追加・編集・停止・削除） |
 | `/attach` | **レシート添付**。LINE のカードから直接開かれるため、LINE サインインの完了（`waitForLineAuth`）を待ってから支出を読む。`?expenseId=` の支出にカメラ/アルバムから画像を選択→クライアント側で圧縮（リサイズ＋JPEG 再エンコード）→ Firebase Storage `receipts/{expenseId}/{timestamp}_{name}` へレジューマブルアップロード→ `receiptUrl` を書き戻し。アンマウント後もバックグラウンド継続 |
 | `/link` | アカウント連携確認画面（`token` + `lineId` クエリの存在チェックのみ。認証には関与しない） |
@@ -218,6 +218,8 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | `/terms` `/privacy` | 静的な規約・プライバシーページ |
 
 ### 5.2 UI/UX
+
+- **内訳シート**（`components/drilldown/DrillSheet.tsx`、計算は `lib/drilldown.ts`）: 合計 → カテゴリ / 支払い者 → 明細と潜っていく（モバイルは下からのシート、デスクトップは右のドロワー。パンくずで戻れる）。各階層に金額・件数・合計に占める割合・1 件平均（カテゴリはホームでは前期比と週ごとの棒）、内訳の行、明細（日付順 / 金額順）。明細から編集（`/expenses?edit=<id>`）、カテゴリの階層から支出一覧（`?from=&category=`）へ。読み込み済みの明細から計算し、Firestore を追加で読まない
 
 - Tailwind CSS v4（CSS 変数トークン、ライト/ダーク/システム切替）
 - framer-motion による SPA 風ページ遷移アニメーション＋ SWR キャッシュ（`lib/swrCache.ts`）で再読込感を排除。支出・集計・世帯・精算・設定のキャッシュは localStorage にも保存し（14 日で破棄。別の LINE アカウントに切り替わったら消す）、LINE から開き直したときも前回の内容をすぐ出して裏で取り直す

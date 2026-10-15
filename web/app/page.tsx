@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -8,7 +8,6 @@ import {
   Receipt,
   TrendingUp,
   TrendingDown,
-  PieChart as PieChartIcon,
   LineChart as LineChartIcon,
   Sparkles,
   Inbox,
@@ -16,13 +15,18 @@ import {
   Clock,
 } from 'lucide-react';
 import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses } from '../lib/hooks';
-import { countPending } from '../lib/expenseState';
+import { countPending, isPending, resolvePayerName } from '../lib/expenseState';
+import { collectHistoricalUsers } from '../lib/expenseEdit';
+import { toDrillItems } from '../lib/drilldown';
+import { normalizeCategoryName } from '../lib/categoryNormalization';
+import DrillSheet, { type DrillView } from '../components/drilldown/DrillSheet';
+import { CategoryBreakdownCard } from '../components/home/CategoryBreakdownCard';
 import Link from 'next/link';
-import { CategoryPieChart, DailyLineChart } from '../components/Charts';
+import { DailyLineChart } from '../components/Charts';
 import { fetchDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
 import PreviewModeBanner from '../components/PreviewModeBanner';
 import GuestGuide from '../components/GuestGuide';
-import { getSampleStats } from '../lib/sampleData';
+import { getSampleExpenses, getSampleStats } from '../lib/sampleData';
 import { yen } from '../lib/money';
 import { computePeriodInsights } from '../lib/budgetAnalytics';
 import { GlassCard } from '../components/home/GlassCard';
@@ -109,8 +113,39 @@ export default function Dashboard() {
 
   // 要確認の件数（支出一覧と同じ取得条件なので、一覧を開いたときはキャッシュが使われる）
   // 期間の設定を読み終えてから取得する（既定の期間で一度取ってから取り直さないように）
-  const { expenses: periodExpenses } = useExpenses(settingsLoading ? null : lineId, 0, 500, effectiveRange.startDate);
+  const { expenses: periodExpenses, loading: periodLoading } = useExpenses(settingsLoading ? null : lineId, 0, 500, effectiveRange.startDate);
   const pendingCount = countPending(periodExpenses);
+
+  // カテゴリ別カードと内訳シート（読み込み済みの明細から計算する。ゲストはサンプル）
+  const [drill, setDrill] = useState<DrillView[] | null>(null);
+  const sampleExpenses = useMemo(() => getSampleExpenses(), []);
+  const drillSource = lineId ? periodExpenses : sampleExpenses;
+  const drillItems = useMemo(() => {
+    const users = collectHistoricalUsers(drillSource);
+    return toDrillItems(drillSource, {
+      range: effectiveRange,
+      included: (e) => !!e.includeInTotal,
+      payer: (e) => {
+        const name = resolvePayerName(e, users);
+        return { key: name, name };
+      },
+      pending: isPending,
+    });
+    // effectiveRange は描画ごとに作り直されるので、両端の日付で比べる
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drillSource, effectiveRange.startDate, effectiveRange.endDate]);
+  // 前の期間のカテゴリ別合計（前期比）。固定期間では前の期間が同じになるので出さない
+  const prevCategoryTotals = useMemo(() => {
+    if (!lineId || !prevStats || dateSettings.mode === 'custom') return null;
+    const totals: Record<string, number> = {};
+    for (const [category, amount] of Object.entries(prevStats.categoryTotals)) {
+      const key = normalizeCategoryName(category);
+      totals[key] = (totals[key] ?? 0) + amount;
+    }
+    return totals;
+  }, [lineId, prevStats, dateSettings.mode]);
+
+  const closeDrill = useCallback(() => setDrill(null), []);
 
   const navigateMonth = (dir: 'prev' | 'next') => {
     if (dateSettings.mode === 'custom') return;
@@ -303,13 +338,12 @@ export default function Dashboard() {
             <div className="space-y-4 lg:col-span-2 lg:col-start-1 lg:row-start-1">
               {displayStats && displayStats.totalAmount > 0 ? (
                 <>
-                  <GlassCard className="p-5">
-                    <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-fg">
-                      <PieChartIcon className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
-                      カテゴリ別支出
-                    </h2>
-                    <CategoryPieChart data={displayStats.categoryTotals} />
-                  </GlassCard>
+                  <CategoryBreakdownCard
+                    items={drillItems}
+                    prevCategoryTotals={prevCategoryTotals}
+                    loading={!!lineId && periodLoading}
+                    onOpen={setDrill}
+                  />
                   <GlassCard className="p-5">
                     <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-fg">
                       <LineChartIcon className="h-[18px] w-[18px] text-accent" strokeWidth={2.2} />
@@ -339,6 +373,22 @@ export default function Dashboard() {
 
           {isGuest && <GuestGuide />}
         </div>
+      )}
+
+      {drill && (
+        <DrillSheet
+          initial={drill}
+          items={drillItems}
+          range={effectiveRange}
+          prevCategoryTotals={prevCategoryTotals}
+          listHref={(f) =>
+            f.payers
+              ? null
+              : `/expenses?from=${effectiveRange.startDate}${f.category !== undefined ? `&category=${encodeURIComponent(f.category)}` : ''}`
+          }
+          editHref={lineId ? (id) => `/expenses?edit=${encodeURIComponent(id)}` : undefined}
+          onClose={closeDrill}
+        />
       )}
     </div>
   );

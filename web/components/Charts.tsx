@@ -2,15 +2,11 @@
 
 import * as Recharts from 'recharts';
 import dayjs from 'dayjs';
-import { getCategoryVisual } from '../lib/categoryVisuals';
 import { yen } from '../lib/money';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // recharts + React 19 の JSX 型不整合(TS2786)を回避するためのキャスト。
 const {
-  PieChart,
-  Pie,
-  Cell,
   ResponsiveContainer,
   Tooltip,
   AreaChart,
@@ -20,74 +16,6 @@ const {
   CartesianGrid,
 } = Recharts as unknown as Record<string, any>;
 /* eslint-enable @typescript-eslint/no-explicit-any */
-
-/* ----------------------------- Category donut ---------------------------- */
-interface CategoryPieChartProps {
-  data: Record<string, number>;
-}
-
-export function CategoryPieChart({ data }: CategoryPieChartProps) {
-  const rows = Object.entries(data)
-    .filter(([, v]) => v > 0)
-    .map(([name, value]) => ({ name, value, color: getCategoryVisual(name).hex }))
-    .sort((a, b) => b.value - a.value);
-
-  const total = rows.reduce((s, r) => s + r.value, 0);
-
-  if (rows.length === 0) {
-    return <p className="py-10 text-center text-sm text-muted">データがありません</p>;
-  }
-
-  return (
-    <div>
-      <div className="h-56">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={rows}
-              dataKey="value"
-              nameKey="name"
-              cx="50%"
-              cy="50%"
-              innerRadius={56}
-              outerRadius={84}
-              paddingAngle={2}
-              stroke="none"
-            >
-              {rows.map((r) => (
-                <Cell key={r.name} fill={r.color} />
-              ))}
-            </Pie>
-            <Tooltip
-              formatter={(value: number, name: string) => [yen(value), name]}
-              contentStyle={{
-                borderRadius: 12,
-                border: '1px solid rgb(var(--border))',
-                background: 'rgb(var(--card))',
-                color: 'rgb(var(--fg))',
-                fontSize: 12,
-              }}
-            />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-
-      <ul className="mt-3 space-y-1.5">
-        {rows.slice(0, 6).map((r) => {
-          const pct = total > 0 ? Math.round((r.value / total) * 100) : 0;
-          return (
-            <li key={r.name} className="flex items-center gap-2 text-sm">
-              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.color }} />
-              <span className="truncate text-fg">{r.name}</span>
-              <span className="ml-auto tabular-nums text-muted">{yen(r.value)}</span>
-              <span className="w-9 text-right tabular-nums text-xs text-muted">{pct}%</span>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
 
 /* ------------------------------ Daily trend ------------------------------ */
 interface DailyLineChartProps {

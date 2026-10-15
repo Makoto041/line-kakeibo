@@ -61,8 +61,16 @@ function ExpensesPageLoading() {
 
 function ExpensesPageContent() {
   const { lineId, loading: authLoading } = useLineAuth();
+  // URLからパラメータを取得（useSearchParamsでハイドレーション安全に取得）
+  // edit / expenseId はドキュメントIDであり、認証（本人特定）には使わない。
+  // 本人特定は検証済みクレームの lineId のみで行う（URL の lineId は信用しない）。
+  const searchParams = useSearchParams();
   const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
-  const [currentMonth, setCurrentMonth] = useState(dayjs());
+  // ?from=YYYY-MM-DD（ホーム・精算の内訳から開いたとき）: その日を含む期間を開く
+  const [currentMonth, setCurrentMonth] = useState(() => {
+    const from = searchParams.get('from');
+    return from && /^\d{4}-\d{2}-\d{2}$/.test(from) && dayjs(from).isValid() ? dayjs(from) : dayjs();
+  });
   // 期間は設定と表示中の月から同じ描画で決める（state + effect だと、設定が届いた直後の描画で
   // 前の期間のまま取得が始まり、取り直しになる）
   const dateRange = useMemo(() => {
@@ -77,10 +85,6 @@ function ExpensesPageContent() {
   // Track whether the month was set for edit expense (used to defer editMonthResolved until dateRange updates)
   const [editMonthSet, setEditMonthSet] = useState(false);
 
-  // URLからパラメータを取得（useSearchParamsでハイドレーション安全に取得）
-  // edit / expenseId はドキュメントIDであり、認証（本人特定）には使わない。
-  // 本人特定は検証済みクレームの lineId のみで行う（URL の lineId は信用しない）。
-  const searchParams = useSearchParams();
   const editExpenseId = searchParams.get('edit');
   // ?filter=pending / advance（ホームの「要確認」から開いたとき）
   const [segment, setSegment] = useState<Segment>(() => parseSegment(searchParams.get('filter')));
@@ -182,7 +186,11 @@ function ExpensesPageContent() {
   // 書き込み可否（所属の読み込み中は null = 許可扱い。最終判断はルール・サーバー）
   const { activeGroupIds } = useHousehold(effectiveUserId);
   const apiAvailable = isHouseholdApiConfigured();
-  const [filter, setFilter] = useState("all");
+  // ?category=（内訳から開いたとき）: そのカテゴリで絞り込む
+  const [filter, setFilter] = useState(() => {
+    const category = searchParams.get('category');
+    return category && category !== 'included' && category !== 'excluded' ? category : 'all';
+  });
   const [sortBy, setSortBy] = useState<SortKey>("date");
   const [editingExpense, setEditingExpense] = useState<string | null>(null);
   // レシートのインラインプレビュー（新規タブで開かずモーダル表示）
