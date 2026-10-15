@@ -205,7 +205,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 ### 5.2 UI/UX
 
 - Tailwind CSS v4（CSS 変数トークン、ライト/ダーク/システム切替）
-- framer-motion による SPA 風ページ遷移アニメーション＋メモリ内 SWR キャッシュ（`lib/swrCache.ts`）で再読込感を排除
+- framer-motion による SPA 風ページ遷移アニメーション＋ SWR キャッシュ（`lib/swrCache.ts`）で再読込感を排除。支出・集計・世帯・精算・設定のキャッシュは localStorage にも保存し（14 日で破棄。別の LINE アカウントに切り替わったら消す）、LINE から開き直したときも前回の内容をすぐ出して裏で取り直す
 - レスポンシブ: デスクトップはサイドバー、モバイルはボトムタブ。タブは **ホーム / 支出 / 精算 / 設定** の 4 つ（`components/layout/nav.ts`）
 - `/attach` `/link` はナビ chrome なし（`components/layout/AppShell.tsx` の BARE_ROUTES）
 - セキュリティヘッダー（`next.config.ts`）: CSP は Report-Only、`X-Frame-Options: DENY`、`X-Robots-Tag: noindex`
