@@ -114,7 +114,8 @@ LINEテキスト → webhook(署名検証)
 ```text
 SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
   → history API差分取得 → SMBCフィルタ → 利用先/金額/利用日時パース
-  → カテゴリ分類（店名なので Gemini を優先。使えないときだけキーワードマップ）→ Firestoreトランザクションでアトミック保存
+  → カテゴリ分類（店名なので Gemini を優先。使えないときだけキーワードマップ）
+  → Firestoreトランザクションでアトミック保存（status: 'shared'・confirmed: true。自動で入るので要確認にしない）
      （gmailMessageId ＋ date+amount+店舗名の類似+usedAt±1分 の二重チェックで重複排除）
   → LINEグループへFlex通知（テキスト入力と同じ登録・編集カード）
 ```

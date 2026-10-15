@@ -119,7 +119,9 @@ async function seed(db) {
   // 確認の対象
   set('expenses/e_line_manual', { ...base, lineId: 'Ualice', payerId: 'Ualice', groupId: 'g1', lineGroupId: 'C_line1', amount: 2480, description: 'スーパー', includeInTotal: false });
   set('expenses/e_line_manual_postback', { ...base, lineId: 'Ualice', payerId: 'Ualice', groupId: 'g1', lineGroupId: 'C_line1', amount: 2480, description: 'スーパー', includeInTotal: false });
+  // 以前の Gmail 取込（pending・未確認で保存されていた）と、現在の Gmail 取込（shared・確認済み）
   set('expenses/e_gmail', { ...base, lineId: 'gmail-auto-system', payerId: 'gmail-auto-system', groupId: 'g1', amount: 720, description: '交通費', status: 'pending', includeInTotal: true, inputSource: 'gmail_auto' });
+  set('expenses/e_gmail_shared', { ...base, lineId: 'gmail-auto-system', payerId: 'gmail-auto-system', groupId: 'g1', amount: 980, description: 'コンビニ', status: 'shared', confirmed: true, includeInTotal: true, inputSource: 'gmail_auto' });
   set('expenses/e_personal', { ...base, lineId: 'Ualice', payerId: 'Ualice', amount: 500, description: 'コーヒー', includeInTotal: false });
   set('expenses/e_legacy', { ...base, lineId: 'Ualice', payerId: 'Ualice', lineGroupId: 'C_line1', amount: 900, description: '旧形式', includeInTotal: false });
   set('expenses/e_settled', { ...base, lineId: 'Ubob', payerId: 'Ubob', groupId: 'g1', lineGroupId: 'C_line1', amount: 3000, description: '旅行', status: 'advance_settled', advanceBy: 'Ubob', includeInTotal: true, confirmed: true });
@@ -360,7 +362,9 @@ async function main() {
       check('確認済みをもう一度確認しても 200（冪等）', again.status === 200 && again.body.expense.status === 'shared');
 
       const gmail = await call('POST', '/household/expenses/e_gmail/actions', { token: tokens.alice, body: { action: 'confirm' } });
-      check('Gmail 取込（pending）→ shared', gmail.status === 200 && gmail.body.expense.status === 'shared' && gmail.body.expense.includeInTotal === true);
+      check('以前の Gmail 取込（pending）→ shared', gmail.status === 200 && gmail.body.expense.status === 'shared' && gmail.body.expense.includeInTotal === true);
+      const gmailShared = await call('POST', '/household/expenses/e_gmail_shared/actions', { token: tokens.alice, body: { action: 'confirm' } });
+      check('現在の Gmail 取込（shared・確認済み）は 200 で変えない', gmailShared.status === 200 && gmailShared.body.expense.status === 'shared' && gmailShared.body.expense.includeInTotal === true && gmailShared.body.expense.confirmed === true, gmailShared.body);
 
       const settled = await call('POST', '/household/expenses/e_settled/actions', { token: tokens.alice, body: { action: 'confirm' } });
       check('精算済みは 200 で status を変えない', settled.status === 200 && settled.body.expense.status === 'advance_settled' && settled.body.expense.advanceBy === 'Ubob', settled.body);

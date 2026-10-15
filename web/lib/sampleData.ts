@@ -51,7 +51,7 @@ function buildSampleExpense(
 }
 
 /**
- * サンプル支出データ（要確認 2 件を含む。1 件はカード取込の未確認、1 件は手入力の未確認）。
+ * サンプル支出データ（要確認 2 件を含む。どちらも手入力の未確認で、1 件は集計に含め、1 件は含めない）。
  * 未精算の立替 3 件と精算済み 1 件も含む。
  */
 export function getSampleExpenses(): Expense[] {

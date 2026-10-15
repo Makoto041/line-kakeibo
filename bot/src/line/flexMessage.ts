@@ -191,9 +191,10 @@ export interface DerivedExpenseSettings {
  * - 支出区分: 共同費なら［除外］、除外なら［戻す］
  * - 立替: なしなら［自分が立替］（押した人が立替者として記録される）、ありなら［取り消す］
  *
- * pending（未確認）は Gmail 取込（includeInTotal: true）と LINE 手入力
- * （includeInTotal: false）で集計状態が異なるが、どちらも OK やカテゴリ選択で
- * 共同費として確定する流れのため、表示は「共同費（未確認）」に揃える。
+ * pending（未確認）は LINE 手入力（status なし・includeInTotal: false）で、OK や
+ * カテゴリ選択で共同費として確定する流れのため、表示は「共同費（未確認）」にする。
+ * Gmail 取込は共同費（shared）として確定で入る（以前に pending で入った分の扱いは
+ * buildExpenseCardFromRecord を参照）。
  */
 export function deriveExpenseSettings(status?: ExpenseStatusType): DerivedExpenseSettings {
   const shared = {
@@ -601,9 +602,9 @@ export interface CardUsageInfo {
   categoryEmoji: string;
   date: string;
   remainingBudget?: number;
-  /** 現在の支出ステータス（未指定は pending 相当） */
+  /** 現在の支出ステータス（Gmail 取込は shared で保存する。未指定は pending 相当） */
   status?: ExpenseStatusType;
-  /** 集計に含めるか。カードの表示には使わない（pending は常に「共同費（未確認）」） */
+  /** 集計に含めるか。カードの表示には使わない */
   includeInTotal?: boolean;
 }
 
@@ -771,6 +772,10 @@ export function buildExpenseCardFromRecord(
   } = {}
 ): FlexMessage {
   const source: ExpenseCardSource = record.inputSource === 'gmail_auto' ? 'gmail' : 'text';
+  // Gmail 取込は確認不要（要確認は手入力の支出だけ）。以前に pending で入った分も共同費として出す
+  // （集計にはもとから入っている。OK を押せば decideConfirm が shared に揃える）
+  const status: ExpenseStatusType | undefined =
+    source === 'gmail' && (!record.status || record.status === 'pending') ? 'shared' : record.status;
 
   // 支払い方法・支払い者はテキスト入力フローのカードだけが持つ情報。
   // Firestoreには 'cash' | 'paypay' | 'card' | 'unknown' の生値が入っているため、
@@ -801,7 +806,7 @@ export function buildExpenseCardFromRecord(
     date: record.date ?? '',
     category: record.category || 'その他',
     source,
-    status: record.status,
+    status,
     detailRows: detailRows as unknown as FlexComponent[],
     editUrl: opts.editUrl,
   });

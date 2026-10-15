@@ -78,9 +78,15 @@ function expense(overrides = {}) {
 
 // ---- 要確認・区分 ---------------------------------------------------------------
 
-test('isPending: status なし / pending で confirmed !== true のものだけ', () => {
+test('isPending: 手入力で status なし / pending かつ confirmed !== true のものだけ', () => {
   assert.equal(isPending({}), true); // LINE 手入力（status なし）
-  assert.equal(isPending({ status: 'pending', confirmed: false }), true); // Gmail 取込
+  assert.equal(isPending({ inputSource: 'line_text', confirmed: false }), true);
+  assert.equal(isPending({ status: 'pending', confirmed: false }), true);
+  // 自動で入った支出は確認不要（以前に pending で入ったカード取込も）
+  assert.equal(isPending({ inputSource: 'gmail_auto', status: 'pending', confirmed: false }), false);
+  assert.equal(isPending({ inputSource: 'gmail_auto', status: 'shared', confirmed: true }), false);
+  assert.equal(isPending({ inputSource: 'recurring', confirmed: false }), false);
+  assert.equal(isPending({ inputSource: 'line_ocr', confirmed: false }), true); // 旧 OCR は手入力扱い
   assert.equal(isPending({ status: undefined, confirmed: true }), false); // 旧データの確認済み
   assert.equal(isPending({ status: 'pending', confirmed: true }), false);
   assert.equal(isPending({ status: 'shared' }), false);
@@ -88,6 +94,7 @@ test('isPending: status なし / pending で confirmed !== true のものだけ'
   assert.equal(isPending({ status: 'advance_pending' }), false);
   assert.equal(isPending({ status: 'advance_settled' }), false);
   assert.equal(countPending([{}, { status: 'shared' }, { status: 'pending' }, { confirmed: true }]), 2);
+  assert.equal(countPending([{}, { inputSource: 'gmail_auto', status: 'pending', confirmed: false }]), 1);
 });
 
 test('splitChip と状態の判定（bot の deriveExpenseSettings と同じ分け方）', () => {
@@ -111,6 +118,7 @@ test('セグメントと検索', () => {
   assert.equal(parseSegment(null), 'all');
   assert.equal(matchesSegment({ status: 'shared' }, 'all'), true);
   assert.equal(matchesSegment({}, 'pending'), true);
+  assert.equal(matchesSegment({ inputSource: 'gmail_auto', status: 'pending' }, 'pending'), false);
   assert.equal(matchesSegment({ status: 'shared' }, 'pending'), false);
   assert.equal(matchesSegment({ status: 'advance_settled' }, 'advance'), true);
   assert.equal(matchesSegment({ status: 'pending' }, 'advance'), false);

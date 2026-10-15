@@ -90,14 +90,15 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 **「修正」は押す人が分かっていれば URI ボタンで Web 編集画面へ直接飛ぶ**（テキスト入力の登録カード、および postback 応答で返す再構築カード）。Gmail のカード利用通知はグループ宛の push で送信時点では押下者が不明なため、`edit` postback で押した人の `lineId` を含む URL を返す方式を残す。なおグループではカードが全員に届くため、URI ボタンのリンクは組み立てた時点の本人の `lineId` で固定される（`家計簿一覧を見る` の直リンクと同じ性質）。URL の `lineId` は Web 側では**識別に使わない**（§7。編集対象の特定は `?edit=<id>` のみ）。
 
-支出区分と立替は単一の `status` フィールドに排他的に入るため、表示上の 2 行は `status` から導出する（`deriveExpenseSettings()`）。`pending` のときだけ、実際の集計挙動（`includeInTotal`）に合わせて表示を変える。
+支出区分と立替は単一の `status` フィールドに排他的に入るため、表示上の 2 行は `status` から導出する（`deriveExpenseSettings()`）。
 
-| `status` | `includeInTotal` | 支出区分 | 立替 |
+**要確認（未確認）は LINE で手入力した支出だけ**。Gmail のカード取込と固定費の自動計上は、取込元で内容が決まっているので確認を求めない（`status: 'shared'`・`confirmed: true` で保存する）。以前に `pending` で入った Gmail 取込も、カードの再表示（`buildExpenseCardFromRecord`）と Web では共同費として扱う（集計にはもとから入っている）。
+
+| `status` | 入力元 | 支出区分 | 立替 |
 |---|---|---|---|
-| `pending` | `true`（Gmail 自動取得） | 共同費（未確認） | なし |
-| `pending` | `false`（LINE 手入力） | 未設定 | なし |
-| `shared` | — | 共同費 | なし |
-| `personal` | — | 個人費 | なし |
+| なし / `pending` | LINE 手入力（`includeInTotal: false`） | 共同費（未確認） | なし |
+| `shared` | Gmail 取込・確認後の手入力 | 共同費 | なし |
+| `personal` | — | 除外 | なし |
 | `advance_pending` | — | 共同費 | あり（精算待ち） |
 | `advance_settled` | — | 共同費 | 精算済み |
 
@@ -144,7 +145,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 - Gmail API（`gmail.readonly` スコープのみ）＋ **Pub/Sub push 通知**（topic: `gmail-notifications`）
 - フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → Gemini でカテゴリ分類 → **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 3 行＋[変更] ボタン）
-- 保存フィールド: `lineId`/`payerId` はシステムユーザー `gmail-auto-system`、`inputSource: 'gmail_auto'`, `status: 'pending'`, `includeInTotal: true`, `usedAt`（カード利用日時）、`groupId`（`DEFAULT_GROUP_ID`）/ `lineGroupId`（`LINE_GROUP_ID`）
+- 保存フィールド: `lineId`/`payerId` はシステムユーザー `gmail-auto-system`、`inputSource: 'gmail_auto'`, `status: 'shared'`, `confirmed: true`（自動で入るので要確認にしない）, `includeInTotal: true`, `usedAt`（カード利用日時）、`groupId`（`DEFAULT_GROUP_ID`）/ `lineGroupId`（`LINE_GROUP_ID`）
 - watch は7日で失効するため、**6日ごとの cron**（`renewGmailWatch`）で更新
 - 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。認証は `ADMIN_SECRET` を **`Authorization: Bearer` ヘッダーでのみ**受け付け、定数時間で比較する（`requireAdminAuth`）＋レートリミット（OAuth callback のみ CSRF state 検証）。`?adminSecret=` クエリ渡しはアクセスログ等に秘密値が残るため廃止した。詳細は [GMAIL_AUTO_SPEC.md](./GMAIL_AUTO_SPEC.md)
 
@@ -192,7 +193,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 | ルート | 内容 |
 |---|---|
-| `/` | **ホーム（ダッシュボード）**。期間ナビ、合計/件数/日平均カード、予算プログレス、カテゴリ円グラフ＋日別推移（Recharts）、前月比インサイト、残り日数ペース。要確認（`pending`）の支出があれば件数バナー（→ `/expenses?filter=pending`）。LINE 未ログイン（`lineId` クレーム無し）はゲストモード（サンプルデータ＋ガイド） |
+| `/` | **ホーム（ダッシュボード）**。期間ナビ、合計/件数/日平均カード、予算プログレス、カテゴリ円グラフ＋日別推移（Recharts）、前月比インサイト、残り日数ペース。要確認の支出（LINE で手入力して未確認のもの。`lib/expenseState.ts` の `isPending`。Gmail 取込・固定費は対象外）があれば件数バナー（→ `/expenses?filter=pending`）。LINE 未ログイン（`lineId` クレーム無し）はゲストモード（サンプルデータ＋ガイド） |
 | `/expenses` | **支出一覧**。セグメント（全て / 要確認 / 立替）、絞り込み（説明・カテゴリの文字検索、集計対象/対象外、カテゴリ、日付/金額ソート。`lib/expenseState.ts`）、支払者別集計、インライン編集ドロワー、削除、集計対象トグル、レシートプレビュー、要確認の支出の「確認」ボタン（§5.4 の confirm API。LINE の OK と同じ判定）。`?edit=<id>` で編集を自動オープン（LINE の「修正」ボタン連携）、`?filter=pending\|advance` で初期セグメント指定 |
 | `/settlement` | **精算**。(1) **期間の精算（折半）**（`PeriodSplitCard`）: 表示期間内の世帯の支出（合計に含むもの。立替精算済みは除く）を 2 人で折半し、「集金するメンバー」（`groups.splitSettings`、§5.4 の split-settings API で保存）の支払い分を引いた集金額を表示。(2) **未精算の立替の精算**: `GET /household/settlement` の内容（関係者・立替合計・精算額・明細）を表示し、`POST /household/settlement/settle` で精算を記録 |
 | `/settings` | **設定**。予算タブ（月次予算・アラート閾値・カテゴリ別予算）、期間タブ（月次/開始日カスタム/期間指定）、固定費タブ（`RecurringExpensesPanel`。§3.3 の項目の追加・編集・停止・削除） |

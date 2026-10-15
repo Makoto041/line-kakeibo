@@ -151,8 +151,8 @@ Flex Message 通知（line/flexMessage.ts）
 | 支出区分 [変更] | shared ⇔ personal | `includeInTotal` を連動。立替は解除 |
 | 立替 [変更] | advance_pending ⇔ shared | 立替ありは押下者を `advanceBy` に記録。精算に含める |
 | カテゴリ [変更] | （status 不変） | 選択カルーセルを表示して確定 |
-| OK | pending のみ shared へ昇格 | 設定済みの支出は `confirmed` だけ立てる |
-| （無反応） | pending のまま | 自動確定は行わない。`includeInTotal: true` なので集計には入る |
+| OK | （shared のまま） | `confirmed` を立てるだけ。以前に `pending` で入った分は shared へ揃う |
+| （無反応） | shared のまま | 取込時点で共同費として確定（`confirmed: true`）。要確認にはしない（要確認は LINE 手入力の支出だけ） |
 
 ---
 
@@ -187,7 +187,7 @@ Flex Message 通知（line/flexMessage.ts）
 | inputSource | string | 入力元: `line_text` / `gmail_auto` / `recurring`（`line_ocr` は既存データのみのレガシー値） |
 | gmailMessageId | string | Gmail メッセージ ID（重複チェック用） |
 | usedAt | Timestamp | カード利用日時（重複チェック・表示用） |
-| status | string | `pending` / `shared` / `personal` / `advance_pending` / `advance_settled` |
+| status | string | `shared`（取込時）/ `personal` / `advance_pending` / `advance_settled`。`pending` は以前の取込にだけ残るレガシー値（Web・LINE とも共同費として扱う） |
 | advanceBy | string | 立替者（立替時のみ） |
 | includeInTotal | boolean | 合計金額に含めるか |
 
@@ -197,7 +197,7 @@ Flex Message 通知（line/flexMessage.ts）
 
 | 入力元 | includeInTotal 初期値 | 理由 |
 |--------|---------------------|------|
-| `gmail_auto` | `true` | 共用カードからの取得なので、初期状態で会計に含める |
+| `gmail_auto` | `true` | 共用カードからの取得なので、初期状態で会計に含める（`status: 'shared'`・`confirmed: true` で確定扱い） |
 | `line_text` | `false` | 確認ボタン（OK / 共同費 / 立替）を押すまで含めない |
 | `recurring` | `true` | 固定費は登録時点で確定扱い（`confirmed: true`） |
 

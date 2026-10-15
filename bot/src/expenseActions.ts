@@ -41,7 +41,8 @@ export const SETTLED_REJECTION = '精算済みのため変更できません';
 /**
  * 未確認の支出か（status が無い、または pending）
  *
- * LINE 手入力は status 無し、Gmail 取込は pending で保存される。
+ * LINE 手入力は status 無しで保存される。Gmail 取込は shared・確認済みで保存する（以前の取込は
+ * pending のまま残っており、OK を押すとここで shared に揃う）。
  */
 export function isPendingStatus(status: unknown): boolean {
   const s = status as ExpenseStatusType | undefined | null;
