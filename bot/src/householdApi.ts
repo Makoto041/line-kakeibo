@@ -578,11 +578,13 @@ householdRouter.get(
     }
 
     const db = getFirestore();
-    if (!(await isActiveMember(db, groupId, lineId))) {
+    // メンバー判定とグループの読み取りは並べて行い、Firestore への往復を 1 回減らす
+    // （画面はこの応答を待っている）。グループの内容はメンバーと分かるまで使わない
+    const [member, scope] = await Promise.all([isActiveMember(db, groupId, lineId), resolveScope(db, groupId)]);
+    if (!member) {
       sendError(res, 403, 'forbidden');
       return;
     }
-    const scope = await resolveScope(db, groupId);
     if (!scope) {
       sendError(res, 404, 'not_found');
       return;

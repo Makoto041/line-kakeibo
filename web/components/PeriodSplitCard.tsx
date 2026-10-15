@@ -16,6 +16,7 @@ import {
 } from '../lib/dateSettings';
 import { computePeriodSplit, formatYenExact } from '../lib/periodSplit';
 import { yen } from '../lib/money';
+import { getCached, hasCached, setCached } from '../lib/swrCache';
 
 // useExpenses の世帯クエリの上限。これに届いたら取りこぼしがありうる
 const FETCH_LIMIT = 500;
@@ -31,14 +32,19 @@ interface Props {
 }
 
 export default function PeriodSplitCard({ lineId, groupId, members, collectFrom, onSaved, canSave }: Props) {
-  const [dateSettings, setDateSettings] = useState<DateRangeSettings>(DEFAULT_SETTINGS);
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  // 期間の設定はホーム・設定と同じキャッシュを使い、あればすぐ計算を出す（裏で読み直す）
+  const settingsKey = `dateSettings:${lineId}`;
+  const [dateSettings, setDateSettings] = useState<DateRangeSettings>(
+    () => getCached<DateRangeSettings>(settingsKey) ?? DEFAULT_SETTINGS
+  );
+  const [settingsLoaded, setSettingsLoaded] = useState(() => hasCached(settingsKey));
   // 締まった直後の期間から見る（期間が終わってから精算する）
   const [currentMonth, setCurrentMonth] = useState(() => dayjs().subtract(1, 'month'));
   useEffect(() => {
     let cancelled = false;
     getDateRangeSettings(lineId).then((s) => {
       if (cancelled) return;
+      setCached(`dateSettings:${lineId}`, s);
       setDateSettings(s);
       setSettingsLoaded(true);
     });

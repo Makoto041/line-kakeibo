@@ -83,8 +83,10 @@ export default function Dashboard() {
   }, [lineId]);
 
   const effectiveRange = getEffectiveDateRange(currentDate, dateSettings);
+  // 期間の設定を読み終えてから取得する（既定の期間で一度取ってから取り直さないように）
+  const statsUserId = settingsLoading ? null : lineId;
   const { stats, loading: statsLoading } = useMonthlyStats(
-    lineId,
+    statsUserId,
     currentDate.year(),
     currentDate.month() + 1,
     dateSettings.customStartDay || 1,
@@ -96,7 +98,7 @@ export default function Dashboard() {
   const prevDate = currentDate.subtract(1, 'month');
   const prevRange = getEffectiveDateRange(prevDate, dateSettings);
   const { stats: prevStats } = useMonthlyStats(
-    lineId,
+    statsUserId,
     prevDate.year(),
     prevDate.month() + 1,
     dateSettings.customStartDay || 1,

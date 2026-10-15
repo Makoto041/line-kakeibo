@@ -13,9 +13,9 @@ import {
   deleteDoc,
   FirestoreError
 } from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, type User } from 'firebase/auth';
 import { db, auth, getFirebaseStatus, ensureFirebaseInitialized } from './firebase';
-import { initLineAuth, getLineIdClaim } from './lineAuth';
+import { initLineAuth } from './lineAuth';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
 import { getCached, setCached, hasCached, clearCached, updateCachedByPrefix } from './swrCache';
@@ -218,6 +218,52 @@ interface LineAuthState {
 
 let cachedLineAuth: LineAuthState | null = null;
 
+// サインイン済みの Firebase ユーザー（uid = appUid）と LINE userId の対応（localStorage）。
+// uid には常に同じ lineId のクレームが付く（bot の /auth/line は lineId から appUid を決めて発行する）ので、
+// 開き直したときは ID トークンの読み直し（1 時間で期限が切れ、切れていれば通信が要る）を待たずに使い、
+// 裏でクレームを確かめる。lineId はキャッシュのキーと表示に使うだけで、読み書きの可否はルールが判定する。
+const LINE_ID_BY_UID_KEY = 'kakeibo:lineIdByUid';
+
+function readKnownLineId(uid: string): string | null {
+  try {
+    const raw = localStorage.getItem(LINE_ID_BY_UID_KEY);
+    const map = raw ? (JSON.parse(raw) as Record<string, unknown> | null) : null;
+    const value = map && typeof map === 'object' ? map[uid] : null;
+    return typeof value === 'string' && value ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 確かめた lineId を覚える。前に覚えていた人と違う人（別の LINE アカウントでログインし直した）なら、
+ * 前の人のキャッシュ（localStorage に残る支出など）を消す
+ */
+function rememberLineId(uid: string, lineId: string | null): void {
+  try {
+    const raw = localStorage.getItem(LINE_ID_BY_UID_KEY);
+    const previous = raw ? (JSON.parse(raw) as Record<string, unknown> | null) : null;
+    const previousLineIds = previous && typeof previous === 'object' ? Object.values(previous) : [];
+    if (previousLineIds.some((id) => id !== lineId)) clearCached();
+    if (lineId) localStorage.setItem(LINE_ID_BY_UID_KEY, JSON.stringify({ [uid]: lineId }));
+    else localStorage.removeItem(LINE_ID_BY_UID_KEY);
+  } catch {
+    // 保存できない環境では毎回クレームを読む
+  }
+}
+
+/** ID トークンの lineId クレーム。読めなかった（通信の失敗など）ときは undefined、クレームが無ければ null */
+async function readLineIdClaim(user: User): Promise<string | null | undefined> {
+  try {
+    const result = await user.getIdTokenResult();
+    const lineId = result.claims.lineId;
+    return typeof lineId === 'string' && lineId ? lineId : null;
+  } catch (e) {
+    console.error('Failed to read lineId claim:', e);
+    return undefined;
+  }
+}
+
 export function useLineAuth() {
   const [state, setState] = useState<LineAuthState | null>(() => cachedLineAuth);
   const [loading, setLoading] = useState(() => cachedLineAuth === null);
@@ -240,17 +286,36 @@ export function useLineAuth() {
         return;
       }
 
-      // lineId は検証済みクレームからのみ取得（匿名ユーザーは null）
-      const lineId = await getLineIdClaim(fbUser);
-      const resolved: LineAuthState = {
-        uid: fbUser.uid,
-        lineId,
-        isAnonymous: fbUser.isAnonymous || !lineId,
+      const apply = (lineId: string | null) => {
+        const resolved: LineAuthState = {
+          uid: fbUser.uid,
+          lineId,
+          isAnonymous: fbUser.isAnonymous || !lineId,
+        };
+        cachedLineAuth = resolved;
+        setState(resolved);
+        setLoading(false);
       };
 
-      cachedLineAuth = resolved;
-      setState(resolved);
-      setLoading(false);
+      // 匿名（LIFF が使えないときのフォールバック）は lineId を持たない。覚えている対応には触れない
+      // （一度の失敗で、次に開いたときの近道を消さない）
+      if (fbUser.isAnonymous) {
+        apply(null);
+        return;
+      }
+
+      // 前回この uid で確かめた lineId があれば先に使う（上のコメント参照）
+      const known = readKnownLineId(fbUser.uid);
+      if (known) apply(known);
+
+      // lineId は検証済みクレームから取得。読めなかった（通信の失敗など）ときは、覚えていた値のまま続ける
+      const lineId = await readLineIdClaim(fbUser);
+      if (lineId === undefined) {
+        if (!known) apply(null);
+        return;
+      }
+      rememberLineId(fbUser.uid, lineId);
+      if (lineId !== known) apply(lineId);
     });
 
     return () => unsubscribe();
@@ -280,7 +345,23 @@ export function useLineAuth() {
  * このクエリ形（where lineId == 自分）はルールの「自分のメンバーシップは読める」
  * 条項で許可される。
  */
-async function fetchMyActiveGroupIds(lineId: string): Promise<string[]> {
+// 所属グループはほぼ変わらない（世帯は 2 名固定）ので、同じ lineId の問い合わせは同時に走らせず
+// しばらく使い回す（ホームは支出・今期・前期の集計で 3 回引いていた）。失敗したら捨てて次に引き直す
+const GROUP_IDS_TTL_MS = 5 * 60 * 1000;
+const groupIdsCache = new Map<string, { at: number; promise: Promise<string[]> }>();
+
+function fetchMyActiveGroupIds(lineId: string): Promise<string[]> {
+  const hit = groupIdsCache.get(lineId);
+  if (hit && Date.now() - hit.at < GROUP_IDS_TTL_MS) return hit.promise;
+  const promise = queryMyActiveGroupIds(lineId);
+  groupIdsCache.set(lineId, { at: Date.now(), promise });
+  promise.catch(() => {
+    if (groupIdsCache.get(lineId)?.promise === promise) groupIdsCache.delete(lineId);
+  });
+  return promise;
+}
+
+async function queryMyActiveGroupIds(lineId: string): Promise<string[]> {
   if (!db) return [];
   const snapshot = await getDocs(
     query(
@@ -367,128 +448,68 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
         }
         
         // NOTE: 一般的なグループ機能は廃止、LINEグループのみを使用
-        
-        // Get user's personal expenses
-        let personalQuery;
+
+        // 期間（条件は従来どおり。クエリの形はルールの許可条件に合わせてある）
+        let range: { startDate: string; endDate: string } | null = null;
         if (customStartDate) {
-          const startDate = customStartDate;
-          const endDate = dayjs(customStartDate).add(1, 'month').subtract(1, 'day').format('YYYY-MM-DD');
-          personalQuery = query(
-            collection(db, 'expenses'),
-            where('lineId', '==', userId),
-            where('date', '>=', startDate),
-            where('date', '<=', endDate),
-            limit(limitCount)
-          );
+          range = {
+            startDate: customStartDate,
+            endDate: dayjs(customStartDate).add(1, 'month').subtract(1, 'day').format('YYYY-MM-DD'),
+          };
         } else if (periodDays > 0) {
-          const endDate = dayjs().format('YYYY-MM-DD');
-          const startDate = dayjs().subtract(periodDays, 'day').format('YYYY-MM-DD');
-          personalQuery = query(
-            collection(db, 'expenses'),
-            where('lineId', '==', userId),
-            where('date', '>=', startDate),
-            where('date', '<=', endDate),
-            limit(limitCount)
-          );
-        } else {
-          personalQuery = query(
-            collection(db, 'expenses'),
-            where('lineId', '==', userId),
-            limit(limitCount)
-          );
+          range = {
+            startDate: dayjs().subtract(periodDays, 'day').format('YYYY-MM-DD'),
+            endDate: dayjs().format('YYYY-MM-DD'),
+          };
         }
-        
-        const personalSnapshot = await getDocs(personalQuery);
-        const personalExpenses = personalSnapshot.docs.map(doc => {
-          const data = doc.data() as FirestoreExpenseData;
-          return {
-            id: doc.id,
-            ...data,
-            category: normalizeCategoryName(data.category)
-          } as Expense;
-        });
-        
-        // Get LINE group expenses where this user participates
-        let lineGroupExpenses: Expense[] = [];
-        
-        try {
-          // 所属グループは groupMembers を正として引く（支出の走査はしない）
-          const userGroupIds = await fetchMyActiveGroupIds(userId);
-          
-          // Get expenses from each group
-          for (const groupId of userGroupIds) {
-            
-            let lineGroupQuery;
-            let startDate, endDate;
-            
-            if (customStartDate) {
-              startDate = customStartDate;
-              endDate = dayjs(customStartDate).add(1, 'month').subtract(1, 'day').format('YYYY-MM-DD');
-              lineGroupQuery = query(
-                collection(db, 'expenses'),
-                where('groupId', '==', groupId),
-                where('date', '>=', startDate),
-                where('date', '<=', endDate),
-                limit(Math.max(limitCount, 500)) // Ensure we get enough data
-              );
-            } else if (periodDays > 0) {
-              endDate = dayjs().format('YYYY-MM-DD');
-              startDate = dayjs().subtract(periodDays, 'day').format('YYYY-MM-DD');
-              lineGroupQuery = query(
-                collection(db, 'expenses'),
-                where('groupId', '==', groupId),
-                where('date', '>=', startDate),
-                where('date', '<=', endDate),
-                limit(Math.max(limitCount, 500)) // Ensure we get enough data
-              );
-            } else {
-              lineGroupQuery = query(
-                collection(db, 'expenses'),
-                where('groupId', '==', groupId),
-                limit(Math.max(limitCount, 500)) // Ensure we get enough data
-              );
-            }
-            
-            const lineGroupSnapshot = await getDocs(lineGroupQuery);
-            
-            const lineGroupExpenseList = lineGroupSnapshot.docs.map(doc => {
-              const data = doc.data() as FirestoreExpenseData;
-              return {
-                id: doc.id,
-                ...data,
-                category: normalizeCategoryName(data.category)
-              } as Expense;
-            });
-            
-            lineGroupExpenses = [...lineGroupExpenses, ...lineGroupExpenseList];
+        const firestore = db;
+        const buildQuery = (field: 'lineId' | 'groupId', value: string, max: number) =>
+          range
+            ? query(
+                collection(firestore, 'expenses'),
+                where(field, '==', value),
+                where('date', '>=', range.startDate),
+                where('date', '<=', range.endDate),
+                limit(max)
+              )
+            : query(collection(firestore, 'expenses'), where(field, '==', value), limit(max));
+        const toExpense = (snap: { id: string; data: () => unknown }) => {
+          const data = snap.data() as FirestoreExpenseData;
+          return { id: snap.id, ...data, category: normalizeCategoryName(data.category) } as Expense;
+        };
+
+        // 所属グループの支出（groupMembers を正として引く。支出の走査はしない）。
+        // 取れなくても自分の支出は出す
+        const loadGroupExpenses = async (): Promise<Expense[]> => {
+          try {
+            const userGroupIds = await fetchMyActiveGroupIds(userId);
+            const snapshots = await Promise.all(
+              userGroupIds.map((groupId) => getDocs(buildQuery('groupId', groupId, Math.max(limitCount, 500))))
+            );
+            return snapshots.flatMap((snapshot) => snapshot.docs.map(toExpense));
+          } catch (groupError) {
+            console.error("LINEグループ支出取得エラー:", groupError);
+            return [];
           }
-          
-        } catch (groupError) {
-          console.error("LINEグループ支出取得エラー:", groupError);
-          // LINEグループの取得が失敗しても個人支出は表示
-        }
-        
+        };
+
+        // 自分の支出と所属グループの支出は並べて取る（以前は 3 往復を順に待っていた）
+        const [personalSnapshot, lineGroupExpenses] = await Promise.all([
+          getDocs(buildQuery('lineId', userId, limitCount)),
+          loadGroupExpenses(),
+        ]);
+        const personalExpenses = personalSnapshot.docs.map(toExpense);
+
         // Combine all expenses and remove duplicates
         const allExpensesMap = new Map<string, Expense>();
-        
         [...personalExpenses, ...lineGroupExpenses].forEach(expense => {
           allExpensesMap.set(expense.id, expense);
         });
-        
-        const allExpenses = Array.from(allExpensesMap.values());
-        
-        // Sort in memory to avoid index requirement
-        const sortedExpenses = allExpenses.sort((a, b) => {
-          const aTime = a.createdAt ? 
-            (typeof a.createdAt === 'object' && 'seconds' in a.createdAt ? 
-              a.createdAt.seconds * 1000 : 
-              (a.createdAt as Date).getTime()) : 0;
-          const bTime = b.createdAt ? 
-            (typeof b.createdAt === 'object' && 'seconds' in b.createdAt ? 
-              b.createdAt.seconds * 1000 : 
-              (b.createdAt as Date).getTime()) : 0;
-          return bTime - aTime; // desc order
-        });
+
+        // 登録の新しい順（並べ替えはメモリで行い、複合インデックスを要らなくする）
+        const sortedExpenses = Array.from(allExpensesMap.values()).sort(
+          (a, b) => timestampToMillis(b.createdAt) - timestampToMillis(a.createdAt)
+        );
         
         if (gen !== expensesWriteGen) {
           superseded = true;
@@ -687,49 +708,35 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
         }
         
         // NOTE: 一般的なグループ機能は廃止、LINEグループのみを使用
-        
-        // Get personal expenses for monthly stats
-        const personalQuery = query(
-          collection(db, 'expenses'),
-          where('lineId', '==', userId),
-          where('date', '>=', startDate),
-          where('date', '<=', endDate)
-        );
-        
-        const personalSnapshot = await getDocs(personalQuery);
-        const personalExpenses = personalSnapshot.docs.map(doc => ({ 
-          id: doc.id, 
-          ...doc.data() 
-        } as Expense));
-        
-        // Get LINE group expenses for monthly stats
-        let lineGroupExpenses: Expense[] = [];
-        
-        try {
-          // 所属グループは groupMembers を正として引く（支出の走査はしない）
-          const userGroupIds = await fetchMyActiveGroupIds(userId);
+        const firestore = db;
+        const buildQuery = (field: 'lineId' | 'groupId', value: string) =>
+          query(
+            collection(firestore, 'expenses'),
+            where(field, '==', value),
+            where('date', '>=', startDate),
+            where('date', '<=', endDate)
+          );
+        const toExpense = (snap: { id: string; data: () => unknown }) =>
+          ({ id: snap.id, ...(snap.data() as FirestoreExpenseData) } as Expense);
 
-          // Get expenses from groups for the specified period
-          for (const groupId of userGroupIds) {
-            const lineGroupQuery = query(
-              collection(db, 'expenses'),
-              where('groupId', '==', groupId),
-              where('date', '>=', startDate),
-              where('date', '<=', endDate)
-            );
-            
-            const lineGroupSnapshot = await getDocs(lineGroupQuery);
-            const lineGroupExpenseList = lineGroupSnapshot.docs.map(doc => ({ 
-              id: doc.id, 
-              ...doc.data() 
-            } as Expense));
-            
-            lineGroupExpenses = [...lineGroupExpenses, ...lineGroupExpenseList];
+        // 所属グループの支出（groupMembers を正として引く。支出の走査はしない）
+        const loadGroupExpenses = async (): Promise<Expense[]> => {
+          try {
+            const userGroupIds = await fetchMyActiveGroupIds(userId);
+            const snapshots = await Promise.all(userGroupIds.map((groupId) => getDocs(buildQuery('groupId', groupId))));
+            return snapshots.flatMap((snapshot) => snapshot.docs.map(toExpense));
+          } catch (groupError) {
+            console.error("月次統計 - LINEグループ支出取得エラー:", groupError);
+            return [];
           }
-          
-        } catch (groupError) {
-          console.error("月次統計 - LINEグループ支出取得エラー:", groupError);
-        }
+        };
+
+        // 自分の支出と所属グループの支出は並べて取る
+        const [personalSnapshot, lineGroupExpenses] = await Promise.all([
+          getDocs(buildQuery('lineId', userId)),
+          loadGroupExpenses(),
+        ]);
+        const personalExpenses = personalSnapshot.docs.map(toExpense);
         
         // Combine all expenses and remove duplicates
         const allExpensesMap = new Map<string, Expense>();
@@ -1129,6 +1136,8 @@ async function loadHousehold(lineId: string): Promise<HouseholdInfo> {
     .filter((r): r is MembershipRow => r !== null)
     .sort(byJoinedAt);
   const activeGroupIds = Array.from(new Set(myRows.map((r) => r.groupId)));
+  // 支出の取得（fetchMyActiveGroupIds）と同じクエリなので、結果を使い回させる
+  groupIdsCache.set(lineId, { at: Date.now(), promise: Promise.resolve(activeGroupIds) });
   if (activeGroupIds.length === 0) return { activeGroupIds, household: null };
 
   const groupId = myRows[0].groupId;
