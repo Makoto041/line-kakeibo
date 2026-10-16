@@ -33,7 +33,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <>
         <div className="app-bg-blob" aria-hidden />
-        <div className="pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">{children}</div>
+        <div className="pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">{children}</div>
       </>
     );
   }
