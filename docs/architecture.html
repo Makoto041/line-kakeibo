@@ -76,11 +76,11 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.4.0 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.6.0 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
-      <span class="chip">Web: Next.js 16 on Vercel</span>
+      <span class="chip">Web: Next.js 16 on Vercel（PWA）</span>
       <span class="chip">Bot: Firebase Functions gen2 / Node 22</span>
       <span class="chip">Data: Firestore + Cloud Storage</span>
       <span class="chip">AI: Gemini 3.5 Flash-Lite</span>
@@ -99,7 +99,7 @@ flowchart LR
   Gmail["Gmail"] -->|Pub/Sub| GM["gmailPubSubHandler"]
   Sched["Cloud Scheduler"] --> JOBS["postRecurringExpenses<br/>renewGmailWatch"]
   JOBS -->|精算サマリー| LINE
-  Browser["ブラウザ / LIFF"] --> WEB["Next.js（Vercel）"]
+  Browser["ブラウザ / LIFF<br/>ホーム画面のアプリ"] --> WEB["Next.js（Vercel）"]
   WEB -->|/auth/line・/household/*| API["api 関数<br/>us-central1"]
   WEB -->|読み取り（ルールで制限）| FS[("Firestore")]
   WEB -->|レシート| ST[("Cloud Storage")]
@@ -199,6 +199,16 @@ flowchart LR
           </ol>
           <span class="src">bot/src/settlementSummary.ts</span>
         </div>
+        <div class="flow">
+          <h3>PWA（ホーム画面に追加）</h3>
+          <ol>
+            <li>設定のカードで追加を案内（iPhone は手順、LINE の中は Safari / ブラウザで開き直し、Chrome・Edge はボタン）</li>
+            <li>ホーム画面のアイコン「ぶちこむ」から全画面で開く</li>
+            <li>Service Worker は画面をキャッシュせず、つながらないときだけオフライン画面を出す</li>
+            <li>iPhone は Safari と保存領域が別なので、初回だけ LINE ログインが出る</li>
+          </ol>
+          <span class="src">web/app/manifest.ts · public/sw.js · lib/installApp.ts</span>
+        </div>
       </div>
     </div>
   </section>
@@ -250,6 +260,7 @@ flowchart LR
             <tr><td class="name">bot/src/recurringExpenses.ts</td><td>固定費の計上ロジック</td></tr>
             <tr><td class="name">bot/src/settlementSummary.ts · line/settlementSummaryMessage.ts</td><td>期間の精算サマリー（送る日の判定・集計・冪等な送信と、メンション付きテキスト・Flex）</td></tr>
             <tr><td class="name">web/app/ · components/ · lib/</td><td>画面・部品・ロジック（lib は純関数でテストあり）</td></tr>
+            <tr><td class="name">web/app/manifest.ts · public/sw.js · lib/installApp.ts</td><td>PWA の manifest、Service Worker（オフライン画面と <code>/_next/static</code> のキャッシュ）、追加の案内の出し分け。アイコンは <code>scripts/gen-app-icons.mjs</code> で生成</td></tr>
             <tr><td class="name">firestore.rules · storage.rules</td><td>アクセス制御（CI がデプロイ、エミュレータでテスト）</td></tr>
           </tbody>
         </table>

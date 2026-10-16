@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Wallet, CalendarRange, Repeat } from 'lucide-react';
 import RecurringExpensesPanel from '../../components/RecurringExpensesPanel';
+import InstallAppCard from '../../components/settings/InstallAppCard';
 import { useLineAuth, DEFAULT_BUDGET_CONFIG, type BudgetConfig } from '../../lib/hooks';
 import { fetchDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, DEFAULT_SETTINGS, type DateRangeSettings } from '../../lib/dateSettings';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -237,6 +238,9 @@ export default function Settings() {
             {message.text}
           </motion.div>
         )}
+
+        {/* ホーム画面への追加の案内（追加済み・追加できない環境では出ない） */}
+        <InstallAppCard className="mb-5" />
 
         {/* Tab Navigation */}
         <div className="glass mb-5 flex gap-1 rounded-2xl p-1 shadow-glass">

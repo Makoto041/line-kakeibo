@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -17,11 +17,33 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "ぶちこむ家計簿アプリ",
   description: "LINEから入力されたレシートを自動的に家計簿に保存するアプリ",
+  applicationName: "ぶちこむ家計簿",
   // 個人の家計簿なので検索エンジンにインデックスさせない
   robots: {
     index: false,
     follow: false,
   },
+  // iPhone でホーム画面に追加したときの名前と表示（manifest は app/manifest.ts）
+  appleWebApp: {
+    capable: true,
+    title: "ぶちこむ",
+    statusBarStyle: "default",
+  },
+  // Next は標準の mobile-web-app-capable だけを出すため、古い iOS 向けに Apple 独自の名前も出す
+  other: {
+    "apple-mobile-web-app-capable": "yes",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // ノッチ・ホームバーの下まで描き、env(safe-area-inset-*) で避ける（下のタブ・シートの余白）
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f8fafc" },
+    { media: "(prefers-color-scheme: dark)", color: "#020617" },
+  ],
 };
 
 export default function RootLayout({

@@ -13,7 +13,7 @@ interface SidebarProps {
 /** Desktop-only left rail (md+). */
 export function Sidebar({ pathname, hrefFor }: SidebarProps) {
   return (
-    <aside className="hidden md:fixed md:inset-y-0 md:left-0 md:z-30 md:flex md:w-60 md:flex-col glass-bar border-r border-line/60">
+    <aside className="hidden md:fixed md:inset-y-0 md:left-[env(safe-area-inset-left)] md:z-30 md:flex md:w-60 md:flex-col glass-bar border-r border-line/60">
       <div className="flex items-center gap-2.5 px-5 h-16">
         <span className="grid h-9 w-9 place-items-center rounded-2xl bg-accent text-accent-fg shadow-sm">
           <Wallet className="h-5 w-5" strokeWidth={2.2} />

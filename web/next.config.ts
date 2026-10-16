@@ -92,6 +92,9 @@ const cspDirectives: Record<string, string[]> = {
     "https://liff-subwindow.line.me",
     ...(isVercelPreview ? ["https://vercel.live"] : []),
   ],
+  // PWA: Service Worker（public/sw.js）と manifest（app/manifest.ts）はどちらも同じ origin
+  "worker-src": ["'self'"],
+  "manifest-src": ["'self'"],
   "object-src": ["'none'"],
   "base-uri": ["'self'"],
   "form-action": ["'self'"],
@@ -137,6 +140,16 @@ const nextConfig: NextConfig = {
       {
         source: "/:path*",
         headers: securityHeaders,
+      },
+      // Service Worker は毎回取り直し、更新をすぐ反映する（キャッシュされると古い sw.js が残り続ける）
+      {
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+          // Service Worker 自体は同じ origin にしか通信しない（ページの CSP とは別に、こちらは強制する）
+          { key: "Content-Security-Policy", value: "default-src 'self'; script-src 'self'" },
+        ],
       },
     ];
   },

@@ -18,6 +18,7 @@ npm -w web run dev | build | lint | test      # web。test は node --test __tes
 npm -w bot run dev | build | lint | test      # bot。test = build + scripts/smoke-*.js、lint は ESLint（パッケージはルートの devDependencies）
 npm -w bot run test:emulator                  # /household API・固定費の統合テスト（Firestore/Auth エミュレータ、Java 21）
 npm run gen:icons                             # LINE カード用アイコンを web/public/icons に生成
+npm run gen:app-icons                         # PWA のアイコン（web/public/pwa・app/apple-icon.png・favicon.ico）を生成
 ```
 
 型チェックは `npx tsc --noEmit -p web` / `npx tsc --noEmit -p bot`。ルールのテストの実行方法は `docs/SETUP.md §6`。

@@ -13,7 +13,7 @@ export function BottomTabBar({ pathname, hrefFor }: BottomTabBarProps) {
   return (
     <nav
       aria-label="メインナビゲーション"
-      className="md:hidden fixed inset-x-0 bottom-0 z-40 glass-bar border-t border-line/60 pb-safe"
+      className="md:hidden fixed inset-x-0 bottom-0 z-40 glass-bar border-t border-line/60 pb-safe pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
     >
       <ul className="grid grid-cols-4">
         {NAV_ITEMS.map(({ path, label, Icon }) => {
