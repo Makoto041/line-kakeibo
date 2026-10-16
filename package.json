@@ -13,7 +13,8 @@
   "scripts": {
     "build": "npm -w bot run build && npm -w web run build",
     "test": "npm -w web test && npm -w bot test",
-    "gen:icons": "node scripts/gen-line-icons.mjs"
+    "gen:icons": "node scripts/gen-line-icons.mjs",
+    "gen:app-icons": "node scripts/gen-app-icons.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

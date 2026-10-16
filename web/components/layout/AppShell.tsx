@@ -7,6 +7,7 @@ import { Sidebar } from './Sidebar';
 import { BottomTabBar } from './BottomTabBar';
 import { TopBar } from './TopBar';
 import { initLineAuth } from '@/lib/lineAuth';
+import { startPwa } from '@/lib/installApp';
 
 // Routes that should render without the app navigation chrome
 // (single-purpose / standalone screens opened from outside the app).
@@ -20,6 +21,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // 認証は Firebase に永続化されるため、遷移ごとに URL へ lineId を引き回す必要はない。
   useEffect(() => {
     initLineAuth();
+    // PWA: Service Worker（オフライン画面）の登録と、インストールの合図の受け取り
+    startPwa();
   }, []);
 
   const hrefFor = (path: string) => path;
@@ -45,7 +48,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Pages own their inner container/padding; shell adds offset for the
             fixed bottom tab on mobile so content never hides behind it.
             SPA らしい遷移のため、ルート切替を軽いフェード＋スライドで繋ぐ。 */}
-        <main className="pb-24 md:pb-0">
+        <main className="pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-0">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={pathname}

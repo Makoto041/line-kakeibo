@@ -138,6 +138,22 @@ Web を開く（LINE の「家計簿一覧を見る」/「修正」リンク、�
   → 確認（要確認→共同費）・立替の精算・固定費・折半設定は ID トークン付きで api 関数の /household/* を呼ぶ
 ```
 
+### 4.3.1 PWA（ホーム画面に追加）
+
+```text
+manifest: app/manifest.ts → /manifest.webmanifest（名前「ぶちこむ」、display: standalone、アイコンは web/public/pwa/）
+  iPhone 用は app/apple-icon.png と metadata.appleWebApp（app/layout.tsx）。アイコンは scripts/gen-app-icons.mjs で生成
+Service Worker: web/public/sw.js（本番だけ lib/installApp.ts の startPwa() が AppShell の起動時に登録）
+  → 画面遷移（navigate）はネット優先。つながらないときだけ /offline.html を返す（HTML はキャッシュしない）
+  → /_next/static/*（ハッシュ付きで不変）はキャッシュ優先、最大 200 件
+  → 別 origin（Firestore・bot の API・LINE）と GET 以外は扱わない。/sw.js は no-cache で配信し、更新はすぐ反映
+案内: 設定ページの InstallAppCard（components/settings/）。iPhone の Safari は手順、LINE の中は
+  openExternalBrowser=1 で Safari / ブラウザに開き直すボタン、Chrome・Edge は beforeinstallprompt のボタン。
+  ホーム画面から開いているとき・閉じたあと（localStorage）は出さない
+注意: iPhone のホーム画面のアプリは Safari と保存領域が別のため、初回だけ LINE ログインが出る
+  （止めたいときは sw.js を「登録を解除するだけ」の内容に差し替えて配信する）
+```
+
 ### 4.4 立替・精算（グループ）
 
 - 支出を `status: 'advance_pending'` + `advanceBy` でマーク
@@ -242,13 +258,18 @@ line-kakeibo/
 │  └─ .env.example
 ├─ web/                      # Next.js 16 (Vercel)
 │  ├─ app/                   # / , /expenses , /settlement , /settings , /attach , /link , /dashboard , /terms , /privacy
-│  ├─ components/            # Charts, PeriodSplitCard, RecurringExpensesPanel, GuestGuide, layout/(AppShell, Sidebar, BottomTabBar, TopBar, nav), theme/
+│  ├─ app/manifest.ts        # PWA の manifest（apple-icon.png / favicon.ico も app/ に置く）
+│  ├─ components/            # Charts, PeriodSplitCard, RecurringExpensesPanel, GuestGuide, layout/(AppShell, Sidebar, BottomTabBar, TopBar, nav), theme/,
+│  │                         # settings/InstallAppCard（ホーム画面への追加の案内）
 │  ├─ lib/                   # firebase.ts, lineAuth.ts, hooks.ts, householdApi.ts, householdContract.ts, recurringApi.ts,
-│  │                         # periodSplit.ts, settlementView.ts, expenseState.ts, dateSettings.ts, swrCache.ts, categoryNormalization.ts ほか
-│  ├─ __tests__/             # renewal-logic.test.mjs / periodSplit.test.mjs（node --test）
+│  │                         # periodSplit.ts, settlementView.ts, expenseState.ts, dateSettings.ts, swrCache.ts, categoryNormalization.ts,
+│  │                         # installApp.ts（PWA の案内の出し分け・Service Worker の登録）ほか
+│  ├─ __tests__/             # renewal-logic / periodSplit / drilldown / swrCache / installApp（node --test）
 │  ├─ public/icons/          # Flex メッセージ用アイコン PNG（scripts/gen-line-icons.mjs で生成）
+│  ├─ public/pwa/            # PWA のアイコン（scripts/gen-app-icons.mjs で生成）
+│  ├─ public/sw.js / offline.html # Service Worker とオフライン画面（公開されるのでコメントを書かない）
 │  └─ .env.example
-├─ scripts/                  # manage-group-members.mjs（世帯メンバー管理）/ gen-line-icons.mjs（LINE カードのアイコン生成）
+├─ scripts/                  # manage-group-members.mjs（世帯メンバー管理）/ gen-line-icons.mjs（LINE カードのアイコン生成）/ gen-app-icons.mjs（PWA のアイコン生成）
 ├─ test/                     # firestore.rules.test.mjs / storage.rules.test.mjs（エミュレータ）
 ├─ firestore.rules / firestore.indexes.json / storage.rules
 ├─ firebase.json / .firebaserc / vercel.json
