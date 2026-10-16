@@ -147,6 +147,8 @@ Service Worker: web/public/sw.js（本番だけ lib/installApp.ts の startPwa()
   → 画面遷移（navigate）はネット優先。つながらないときだけ /offline.html を返す（HTML はキャッシュしない）
   → /_next/static/*（ハッシュ付きで不変）はキャッシュ優先、最大 200 件
   → 別 origin（Firestore・bot の API・LINE）と GET 以外は扱わない。/sw.js は no-cache で配信し、更新はすぐ反映
+  → offline.html はインストール時にだけ取り込むので、offline.html を変えたら sw.js の VERSION も上げる
+viewport-fit=cover: ノッチ・ホームバーは env(safe-area-inset-*) で避ける（AppShell の左右・下のタブ・シートの下・Sidebar の左）
 案内: 設定ページの InstallAppCard（components/settings/）。iPhone の Safari は手順、LINE の中は
   openExternalBrowser=1 で Safari / ブラウザに開き直すボタン、Chrome・Edge は beforeinstallprompt のボタン。
   ホーム画面から開いているとき・閉じたあと（localStorage）は出さない

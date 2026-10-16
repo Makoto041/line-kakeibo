@@ -33,13 +33,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <>
         <div className="app-bg-blob" aria-hidden />
-        {children}
+        <div className="pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">{children}</div>
       </>
     );
   }
 
   return (
-    <div className="min-h-dvh">
+    // viewport-fit=cover（app/layout.tsx）のため、横向きのノッチ・角丸は左右の safe-area で避ける
+    <div className="min-h-dvh pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
       <div className="app-bg-blob" aria-hidden />
       <Sidebar pathname={pathname} hrefFor={hrefFor} />
 

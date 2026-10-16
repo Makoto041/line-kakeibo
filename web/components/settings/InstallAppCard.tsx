@@ -17,6 +17,7 @@ import {
   subscribeInstall,
   wasInstalled,
 } from '../../lib/installApp';
+import { urlWithoutLiffReturnParams } from '../../lib/lineAuth';
 
 const DISMISS_KEY = 'installAppCardDismissed';
 const noopSubscribe = () => () => {};
@@ -37,7 +38,7 @@ function writeDismissed(): void {
   }
 }
 
-const LOGIN_NOTE = '追加したアプリを初めて開いたときだけ、LINE ログインが出ます';
+const LOGIN_NOTE = '追加したアプリを初めて開くと、LINE ログインが出ます';
 
 function Note({ children }: { children: React.ReactNode }) {
   return (
@@ -51,7 +52,7 @@ function Note({ children }: { children: React.ReactNode }) {
 function Step({ n, children }: { n: number; children: React.ReactNode }) {
   return (
     <li className="flex items-start gap-2.5 text-[13.5px] leading-relaxed text-fg">
-      <span className="mt-px grid h-[22px] w-[22px] shrink-0 place-items-center rounded-full bg-accent/12 text-xs font-bold text-emerald-700 dark:text-emerald-300">
+      <span aria-hidden="true" className="mt-px grid h-[22px] w-[22px] shrink-0 place-items-center rounded-full bg-accent/12 text-xs font-bold text-emerald-700 dark:text-emerald-300">
         {n}
       </span>
       <span>{children}</span>
@@ -127,7 +128,7 @@ export default function InstallAppCard({ className = '' }: { className?: string 
             <Step n={2}>
               「<SquarePlus className="inline h-4 w-4 align-[-3px]" aria-hidden="true" /> ホーム画面に追加」を選ぶ
             </Step>
-            <Step n={3}>「Web アプリとして開く」はオンのまま、右上の「追加」をタップ</Step>
+            <Step n={3}>右上の「追加」をタップ（「Web アプリとして開く」が出たらオンのまま）</Step>
           </ol>
           <Note>{LOGIN_NOTE}</Note>
         </>
@@ -140,7 +141,8 @@ export default function InstallAppCard({ className = '' }: { className?: string 
             {variant === 'line-ios' ? 'Safari ' : 'ブラウザ'}で開いてから、この画面でもう一度追加してください。
           </p>
           <a
-            href={externalBrowserUrl(window.location.href)}
+            // LINE ログインの戻りパラメータ（code / state）を残すと、Safari 側のログインが使用済みのコードで失敗する
+            href={externalBrowserUrl(urlWithoutLiffReturnParams())}
             className="flex h-[46px] items-center justify-center gap-2 rounded-xl bg-accent text-sm font-semibold text-accent-fg transition-opacity hover:opacity-90"
           >
             <ExternalLink className="h-4 w-4" strokeWidth={2.2} />

@@ -152,7 +152,7 @@ export default function DrillSheet({ initial, items, range, prevCategoryTotals, 
   // 精算のカード（.glass）の中から開いても画面全体を覆うよう、body 直下に描く
   return (
     <BodyPortal>
-      <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-labelledby="drill-title">
+      <div className="fixed inset-0 z-50 flex pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]" role="dialog" aria-modal="true" aria-labelledby="drill-title">
         {/* 背景のタップで閉じる（キーボードでは右上の閉じるボタンを使う） */}
         <button type="button" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
         {/* 透けると背面が重なって読みにくいので不透明にする。高さは iOS のツールバーを除いた dvh で測る */}

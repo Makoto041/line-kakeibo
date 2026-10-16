@@ -37,7 +37,7 @@ export default function EditDrawer({
 }: Props) {
   return (
     <BodyPortal>
-      <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="支出の編集">
+      <div className="fixed inset-0 z-50 flex pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]" role="dialog" aria-modal="true" aria-label="支出の編集">
         <button
           type="button"
           aria-label="閉じる"
@@ -47,7 +47,7 @@ export default function EditDrawer({
         <div
           ref={panelRef}
           tabIndex={-1}
-          className="relative z-10 ml-auto flex w-full animate-fade-up flex-col overflow-y-auto border border-line/60 bg-card p-5 shadow-glass-lg outline-hidden max-sm:mt-auto max-sm:max-h-[88dvh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl"
+          className="relative z-10 ml-auto flex w-full animate-fade-up flex-col overflow-y-auto border border-line/60 bg-card p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-glass-lg outline-hidden max-sm:mt-auto max-sm:max-h-[88dvh] max-sm:rounded-t-2xl sm:h-full sm:max-w-md sm:rounded-l-2xl"
         >
           <div className="space-y-5">
             <div className="flex items-center justify-between border-b border-line pb-3">

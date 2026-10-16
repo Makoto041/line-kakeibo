@@ -48,7 +48,7 @@ async function cacheFirst(event) {
   if (cached) return cached;
   const response = await fetch(event.request);
   if (response.ok && response.type === 'basic') {
-    event.waitUntil(cache.put(event.request, response.clone()).then(() => trim(cache)));
+    event.waitUntil(cache.put(event.request, response.clone()).then(() => trim(cache)).catch(() => {}));
   }
   return response;
 }
