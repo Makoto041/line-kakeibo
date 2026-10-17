@@ -87,9 +87,9 @@ LINE グループでの発言を `groupId` も `lineGroupId` も持たない個�
   `groupId` を付けずに `lineGroupId` だけを持つ支出は作れない。LINE の集計にだけ入る支出を注入できないようにするため。
 - `expenses` の更新: web が実際に編集するフィールドだけを変更できる（許可リスト）。
   `amount` / `description` / `date` / `category` / `includeInTotal` / `payerId` / `payerDisplayName` / `receiptUrl` / `updatedAt`。
-  それ以外（`lineId` / `groupId` / `lineGroupId` / `createdAt` / `inputSource` / `status` / `advanceBy` など）は不変。
+  それ以外（`lineId` / `groupId` / `lineGroupId` / `createdAt` / `inputSource` / `status` / `advanceBy` / `advanceFull` など）は不変。
   変更は bot（Admin SDK）だけが行う。`receiptUrl` は `https://firebasestorage.googleapis.com/` から始まる URL に限る。
-- 精算済み（`status == 'advance_settled'`。以前の立替の精算で記録したもので、今は新しく作られない）の支出は、
+- 精算済み（`status == 'advance_settled'`。以前の立替の精算か、全額にする前の立替を Web の精算タブで精算済みにしたもの）の支出は、
   金額・日付・支払者（`payerId` / `payerDisplayName`）の変更と削除ができない。
   web の編集ドロワーは、精算済みの支出ではこれらを送らない。
 - グループ支出の更新・削除は有効なメンバーに限る。
@@ -207,10 +207,10 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
   `firebase functions:delete syncUserLinks importMoneyForward --region asia-northeast1` を実行したあと、`bot/src/index.ts` の export を消す。
 - レシートはトークン付きのダウンロード URL を `receiptUrl` に保存している。この URL は Storage ルールを経由しない（REC-SEC-2）。
   パスを保存する方式への移行は、別の PR で扱う。
-- LINE の postback のうち区分の変更（と以前のカードの立替の［取り消す］）では、押した人のメンバーシップを確認していない（SET-18）。
-  クライアントからは status / advanceBy を変えられないので、残る経路は LINE グループに居る非メンバーがカードのボタンを押すこと。
-  後続で `groupMembers/{groupId}_{event.source.userId}` を引き、`isActive` を要求してから status / advanceBy を変更する。
-  支払った人の変更（［自分が払った］、以前のカードの［自分が立替］）は期間の精算（折半）の金額が変わるため、すでに
+- LINE の postback のうち区分の変更（［除外］［戻す］）では、押した人のメンバーシップを確認していない（SET-18）。
+  クライアントからは status / advanceBy / advanceFull を変えられないので、残る経路は LINE グループに居る非メンバーがカードのボタンを押すこと。
+  後続で `groupMembers/{groupId}_{event.source.userId}` を引き、`isActive` を要求してから status を変更する。
+  支払った人・立替の変更（［自分が払った］［自分が立替］［取り消す］）は期間の精算（折半）の金額が変わるため、すでに
   トランザクション内で `groupMembers/{groupId}_{lineId}` の `isActive` を確かめている（`groupId` の無い個人の支出は
   登録した本人だけ、`lineGroupId` だけを持つ旧形式は不可）。
 - 脱退済み（`isActive:false`）の元メンバーも、自分が登録したグループ支出の **読み取り**（とそのレシートの取得）だけはできる。
