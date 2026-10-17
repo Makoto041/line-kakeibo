@@ -61,7 +61,7 @@ interface Props {
   onClose: () => void;
 }
 
-const SPLIT_LABEL = { shared: '共同費', personal: '個人（除外）', advance: '立替（精算待ち）', settled: '立替（精算済み）' };
+const SPLIT_LABEL = { shared: '共同費', personal: '個人（除外）', advance: '共同費（立替の印あり）', settled: '立替（精算済み）' };
 
 /** 描画のたびに選ぶアイコン（変数に入れたコンポーネントをそのまま描かない） */
 function IconOf({ icon: Icon, className }: { icon: LucideIcon; className?: string }) {

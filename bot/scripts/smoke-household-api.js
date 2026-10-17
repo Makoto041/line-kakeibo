@@ -1,5 +1,5 @@
 /**
- * /household API と精算額の共有関数のスモークテスト（Firestore には接続しない）
+ * /household API と、LINE の postback と共有する判定のスモークテスト（Firestore には接続しない）
  *
  *   node bot/scripts/smoke-household-api.js
  *
@@ -7,27 +7,25 @@
  * （bot/scripts/emulator-household-api.js）で行う。
  */
 const assert = require('assert');
-const { decideConfirm, isPendingStatus, SETTLED_REJECTION } = require('../dist/expenseActions');
 const {
-  computeHouseholdSettlement,
-  computeLineGroupSettlement,
-  fillPartnerName,
-  sortActiveMembers,
-  isSettlementComputable,
-} = require('../dist/householdSettlement');
-const { calculateSettlement } = require('../dist/firestore');
+  decideClearAdvance,
+  decideConfirm,
+  decideSetPayer,
+  isPendingStatus,
+  SETTLED_REJECTION,
+} = require('../dist/expenseActions');
+const { sortActiveMembers, readActiveMember } = require('../dist/householdMembers');
 const {
   isValidDocId,
   isPlainObject,
   parseExpectedExpenseIds,
   sameIdSet,
-  parseExpectedSettlement,
-  sameSettlement,
+  parseSummaryPeriod,
   authorizeExpenseWrite,
   householdErrorHandler,
   clientIpKey,
   parseCollectFromLineId,
-  MAX_SETTLE_IDS,
+  MAX_CLEAR_IDS,
 } = require('../dist/householdApi');
 const { isAllowedWebOrigin } = require('../dist/webOrigins');
 
@@ -99,117 +97,38 @@ check('isPendingStatus: shared は確認済み', !isPendingStatus('shared') && !
 check('SETTLED_REJECTION の文言は従来どおり', SETTLED_REJECTION === '精算済みのため変更できません');
 
 // ------------------------------------------------------------
-console.log('\ncomputeHouseholdSettlement（精算額・Q15/Q17）');
-
-const summary = (userId, total, name = userId.toUpperCase()) => ({
-  userId,
-  userDisplayName: name,
-  totalAdvanced: total,
-  expenses: [],
-});
-const member = (lineId, displayName = `${lineId}さん`) => ({ lineId, displayName });
-const ts = (ms) => ({ toMillis: () => ms });
-/** groupMembers の文書（[lineId, displayName] の順に joinedAt を振る）を sortActiveMembers に通す */
-const activeMembers = (pairs, createdBy) =>
-  sortActiveMembers(
-    pairs.map(([lineId, displayName], i) => ({ groupId: 'g', lineId, displayName, joinedAt: ts(1000 * (i + 1)), isActive: true })),
-    createdBy
+console.log('\ndecideSetPayer（LINE の［自分が払った］）');
+{
+  const payer = { lineId: 'U1', displayName: 'まこと' };
+  const isFieldDelete = (v) => v && typeof v === 'object' && v.constructor && v.constructor.name.includes('Transform');
+  const pending = decideSetPayer(payer)({});
+  check(
+    '未確認 → 支払った人を変え、共同費・計上・確認済み',
+    pending.update.payerId === 'U1' && pending.update.payerDisplayName === 'まこと' &&
+      pending.update.status === 'shared' && pending.update.includeInTotal === true && pending.update.confirmed === true,
+    JSON.stringify(pending.update)
   );
+  const advance = decideSetPayer(payer)({ status: 'advance_pending', advanceBy: 'U2' });
+  check('立替の印が残っていれば外す（共同費・advanceBy を消す）', advance.update.status === 'shared' && isFieldDelete(advance.update.advanceBy) && advance.cardPatch.advanceBy === undefined, JSON.stringify(advance.update));
+  const personal = decideSetPayer(payer)({ status: 'personal', includeInTotal: false });
+  check('除外は除外のまま（支払った人だけ変える）', personal.update.status === undefined && personal.update.includeInTotal === undefined && personal.update.payerId === 'U1');
+  const shared = decideSetPayer(payer)({ status: 'shared' });
+  check('共同費は status を変えない・advanceBy に触れない', shared.update.status === undefined && !('advanceBy' in shared.update));
+  check('立替で精算済みは拒否', deepEqual(decideSetPayer(payer)({ status: 'advance_settled' }), { reject: SETTLED_REJECTION }));
+  check('カードの組み直し用に名前を返す', pending.cardPatch.payerId === 'U1' && pending.cardPatch.payerDisplayName === 'まこと');
+}
 
+// ------------------------------------------------------------
+console.log('\ndecideClearAdvance（立替の印を外す）');
 {
-  const r = computeHouseholdSettlement([], [member('a'), member('b')]);
-  check('立替なし → none・金額なし', r.basis === 'none' && r.settlement === null && r.reason === null);
-  check('立替なしでもメンバーは 0 円で並ぶ', deepEqual(r.participants.map((p) => [p.userId, p.totalAdvanced]), [['a', 0], ['b', 0]]));
+  const d = decideClearAdvance()({ status: 'advance_pending', advanceBy: 'U2', payerId: 'U3' });
+  check('advance_pending → 共同費（支払った人・金額は変えない）', d.update.status === 'shared' && !('payerId' in d.update) && !('amount' in d.update) && d.update.confirmed === true);
+  check('立替で精算済みは拒否', deepEqual(decideClearAdvance()({ status: 'advance_settled' }), { reject: SETTLED_REJECTION }));
+  const noop = decideClearAdvance()({ status: 'shared' });
+  check('印が無ければ何も変えない（更新時刻だけ）', deepEqual(Object.keys(noop.update), ['updatedAt']) && deepEqual(noop.cardPatch, {}));
 }
-{
-  const r = computeHouseholdSettlement([summary('a', 12400), summary('b', 4000)], [member('a'), member('b')]);
-  check('2人とも立替 → pair', r.basis === 'pair');
-  check('少ない方 → 多い方へ差額の半分（b → a ¥4,200）', r.settlement && r.settlement.fromUserId === 'b' && r.settlement.toUserId === 'a' && r.settlement.amount === 4200, JSON.stringify(r.settlement));
-  check('pair は既存の calculateSettlement と同じ結果', deepEqual(r.settlement, calculateSettlement([summary('a', 12400), summary('b', 4000)])));
-  check('名前はメンバーの表示名を優先', r.participants[0].displayName === 'aさん');
-}
-{
-  const r = computeHouseholdSettlement([summary('a', 5000), summary('b', 5000)], [member('a'), member('b')]);
-  check('差額 0 → pair・settlement は null（精算不要）', r.basis === 'pair' && r.settlement === null);
-}
-{
-  const r = computeHouseholdSettlement([summary('a', 1001), summary('b', 900)], [member('a'), member('b')]);
-  check('奇数の差額は Math.round（101/2 → 51）', r.settlement && r.settlement.amount === 51, JSON.stringify(r.settlement));
-}
-{
-  const r = computeHouseholdSettlement([summary('a', 10000)], [member('a'), member('b', 'ゆい')]);
-  check('1人だけ立替・メンバー2人 → single_advancer（Q15）', r.basis === 'single_advancer' && r.reason === null);
-  check('相手を 0 円で補う（b → a ¥5,000）', r.settlement && r.settlement.fromUserId === 'b' && r.settlement.toUserId === 'a' && r.settlement.amount === 5000, JSON.stringify(r.settlement));
-  check('補った相手の名前はメンバーの表示名', r.settlement && r.settlement.fromUserName === 'ゆい');
-  check('LINE でも金額を出す（isSettlementComputable）', isSettlementComputable(r.basis));
-}
-{
-  const r = computeHouseholdSettlement([summary('a', 10000)], [member('a')]);
-  check('1人だけ立替・メンバーは本人だけ → undeterminable / partner_unknown（Q17）', r.basis === 'undeterminable' && r.reason === 'partner_unknown' && r.settlement === null);
-  check('計算できないときは金額を出さない', !isSettlementComputable(r.basis));
-}
-{
-  const r = computeHouseholdSettlement([summary('a', 10000)], []);
-  check('1人だけ立替・メンバー0人 → partner_unknown', r.basis === 'undeterminable' && r.reason === 'partner_unknown');
-}
-{
-  const r = computeHouseholdSettlement([summary('x', 10000)], [member('a'), member('b')]);
-  check('立替者がメンバー外（メンバー2人）→ more_than_two', r.basis === 'undeterminable' && r.reason === 'more_than_two' && r.settlement === null);
-  check('メンバー外の立替者は isMember:false で末尾', deepEqual(r.participants.map((p) => [p.userId, p.isMember]), [['a', true], ['b', true], ['x', false]]));
-}
-{
-  // 脱退した・登録していない相手だけが立て替えている（関係者は 2 人だが、有効メンバーは 1 人）
-  const r = computeHouseholdSettlement([summary('left', 3000)], [member('a')]);
-  check('メンバー1人・メンバー外の1人だけが立替 → partner_unknown（相手を補わない）', r.basis === 'undeterminable' && r.reason === 'partner_unknown' && r.settlement === null, JSON.stringify(r));
-  const line = computeHouseholdSettlement([summary('left', 3000)], [member('a')], { legacyPair: true });
-  check('同上（LINE）も金額なし（従来どおり）', line.basis === 'undeterminable' && line.settlement === null);
-}
-{
-  const r = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [member('a'), member('b'), member('c')]);
-  check('メンバー3人・2人が立替 → Web は more_than_two（金額なし。Q17）', r.basis === 'undeterminable' && r.reason === 'more_than_two');
-  const line = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [member('a'), member('b'), member('c')], { legacyPair: true });
-  check('同上（LINE）は pair（従来どおり b → a ¥1,000）', line.basis === 'pair' && line.settlement && line.settlement.fromUserId === 'b' && line.settlement.amount === 1000, JSON.stringify(line.settlement));
-}
-{
-  const r = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000), summary('c', 500)], []);
-  check('立替者3人 → more_than_two', r.basis === 'undeterminable' && r.reason === 'more_than_two');
-  const line = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000), summary('c', 500)], [member('a'), member('b')], { legacyPair: true });
-  check('立替者3人（LINE）も金額なし（従来どおり）', line.basis === 'undeterminable' && line.settlement === null);
-}
-{
-  // LINE でパートナーがボタンだけ押していて groupMembers に居ない / 脱退済み / groups 文書が無い場合
-  const r = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [member('a')]);
-  check('2人とも立替・メンバー登録が1人 → Web は partner_unknown', r.basis === 'undeterminable' && r.reason === 'partner_unknown');
-  const r0 = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], []);
-  check('2人とも立替・メンバー0人 → Web は partner_unknown', r0.basis === 'undeterminable' && r0.reason === 'partner_unknown');
-  const line = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [member('a')], { legacyPair: true });
-  check('2人とも立替・メンバー登録が1人（LINE）は pair（従来どおり）', line.basis === 'pair' && line.settlement && line.settlement.amount === 1000);
-  const line0 = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [], { legacyPair: true });
-  check('2人とも立替・メンバー0人（LINE。読み込み失敗・groups 無し）は pair', line0.basis === 'pair' && line0.settlement && line0.settlement.amount === 1000);
-  check('LINE の pair は既存の calculateSettlement と同じ', deepEqual(line0.settlement, calculateSettlement([summary('a', 3000), summary('b', 1000)])));
-}
-{
-  // LINE でも Q15 は Web と同じ条件
-  const line = computeHouseholdSettlement([summary('a', 10000)], [member('a'), member('b', 'ゆい')], { legacyPair: true });
-  check('1人だけ立替・メンバー2人（LINE）→ single_advancer（Q15）', line.basis === 'single_advancer' && line.settlement && line.settlement.amount === 5000 && line.settlement.fromUserName === 'ゆい');
-  const lineOut = computeHouseholdSettlement([summary('x', 10000)], [member('a'), member('b')], { legacyPair: true });
-  check('立替者がメンバー外（LINE）は金額なし', lineOut.basis === 'undeterminable' && lineOut.settlement === null);
-  const line1 = computeHouseholdSettlement([summary('a', 10000)], [member('a')], { legacyPair: true });
-  check('1人だけ立替・メンバー1人（LINE）は金額なし（従来どおり）', line1.basis === 'undeterminable' && line1.settlement === null);
-}
-{
-  const r = computeHouseholdSettlement([summary('a', 100)], [member('a'), member('a', '重複'), member('b')]);
-  check('メンバーの lineId 重複は 1 人として数える', r.basis === 'single_advancer' && r.participants.length === 2);
-}
-{
-  // 世帯作成時に作成者の文書へ入る仮名「作成者」（firestore.ts の createGroup）は名前として扱わない
-  const r = computeHouseholdSettlement([summary('a', 10000)], activeMembers([['a', 'aさん'], ['b', '作成者']], 'b'));
-  check('補った相手（作成者）の仮名「作成者」は空文字（Web が補う）', r.basis === 'single_advancer' && r.participants[1].displayName === '' && r.settlement && r.settlement.fromUserName === '', JSON.stringify(r));
-  const own = computeHouseholdSettlement([summary('a', 3000, 'あきら'), summary('b', 1000)], activeMembers([['a', '作成者'], ['b', 'bさん']], 'a'));
-  check('作成者に立替があれば立替の名前を使う', own.participants[0].displayName === 'あきら');
-  const real = computeHouseholdSettlement([summary('a', 10000)], activeMembers([['a', 'aさん'], ['b', '作成者']], 'a'));
-  check('作成者でないメンバーの表示名「作成者」はそのまま使う', real.participants[1].displayName === '作成者' && real.settlement && real.settlement.fromUserName === '作成者', JSON.stringify(real.participants));
-}
+
+const ts = (ms) => ({ toMillis: () => ms });
 
 // ------------------------------------------------------------
 console.log('\nsortActiveMembers');
@@ -255,19 +174,14 @@ check('expectedExpenseIds: 空配列は可', deepEqual(parseExpectedExpenseIds([
 check('expectedExpenseIds: 配列以外は不可', parseExpectedExpenseIds('a') === null && parseExpectedExpenseIds(undefined) === null);
 check('expectedExpenseIds: 文字列以外の要素は不可', parseExpectedExpenseIds(['a', 1]) === null);
 check('expectedExpenseIds: 不正な ID は不可', parseExpectedExpenseIds(['a/b']) === null && parseExpectedExpenseIds(['..']) === null);
-check(`expectedExpenseIds: ${MAX_SETTLE_IDS} 件までは可`, parseExpectedExpenseIds(Array.from({ length: MAX_SETTLE_IDS }, (_, i) => `e${i}`)).length === MAX_SETTLE_IDS);
-check(`expectedExpenseIds: ${MAX_SETTLE_IDS + 1} 件は too_many（400 にせず 409 で返す）`, parseExpectedExpenseIds(Array.from({ length: MAX_SETTLE_IDS + 1 }, (_, i) => `e${i}`)) === 'too_many');
-check('expectedExpenseIds: 重複を除いて 500 件以下なら可', parseExpectedExpenseIds([...Array.from({ length: MAX_SETTLE_IDS }, (_, i) => `e${i}`), 'e0']).length === MAX_SETTLE_IDS);
-check('expectedExpenseIds: 件数が多くても不正な要素があれば不可', parseExpectedExpenseIds([...Array.from({ length: MAX_SETTLE_IDS + 1 }, (_, i) => `e${i}`), 'a/b']) === null);
+check(`expectedExpenseIds: ${MAX_CLEAR_IDS} 件までは可`, parseExpectedExpenseIds(Array.from({ length: MAX_CLEAR_IDS }, (_, i) => `e${i}`)).length === MAX_CLEAR_IDS);
+check(`expectedExpenseIds: ${MAX_CLEAR_IDS + 1} 件は too_many（400 にせず 409 で返す）`, parseExpectedExpenseIds(Array.from({ length: MAX_CLEAR_IDS + 1 }, (_, i) => `e${i}`)) === 'too_many');
+check('expectedExpenseIds: 重複を除いて 500 件以下なら可', parseExpectedExpenseIds([...Array.from({ length: MAX_CLEAR_IDS }, (_, i) => `e${i}`), 'e0']).length === MAX_CLEAR_IDS);
+check('expectedExpenseIds: 件数が多くても不正な要素があれば不可', parseExpectedExpenseIds([...Array.from({ length: MAX_CLEAR_IDS + 1 }, (_, i) => `e${i}`), 'a/b']) === null);
 check('sameIdSet: 順序は無視', sameIdSet(['a', 'b'], ['b', 'a']));
 check('sameIdSet: 過不足は不一致', !sameIdSet(['a', 'b'], ['a']) && !sameIdSet(['a'], ['a', 'c']) && !sameIdSet(['a', 'b'], ['a', 'c']));
-check('expectedSettlement: null は可（精算額なし）', parseExpectedSettlement(null) === null);
-check('expectedSettlement: 正しい形は可', deepEqual(parseExpectedSettlement({ fromUserId: 'b', toUserId: 'a', amount: 4200, extra: 1 }), { fromUserId: 'b', toUserId: 'a', amount: 4200 }));
-check('expectedSettlement: 金額が文字列・負・小数は不可', ['4200', -1, 1.5, NaN, Infinity].every((amount) => parseExpectedSettlement({ fromUserId: 'b', toUserId: 'a', amount }) === 'invalid'));
-check('expectedSettlement: ID が不正・欠けていれば不可', parseExpectedSettlement({ fromUserId: 'a/b', toUserId: 'a', amount: 1 }) === 'invalid' && parseExpectedSettlement({ toUserId: 'a', amount: 1 }) === 'invalid');
-check('expectedSettlement: 配列・文字列は不可', parseExpectedSettlement([]) === 'invalid' && parseExpectedSettlement('x') === 'invalid');
-check('sameSettlement: null 同士は一致・片方だけ null は不一致', sameSettlement(null, null) && !sameSettlement(null, { fromUserId: 'b', toUserId: 'a', amount: 1 }));
-check('sameSettlement: 向き・金額が違えば不一致', !sameSettlement({ fromUserId: 'b', toUserId: 'a', amount: 1 }, { fromUserId: 'a', toUserId: 'b', amount: 1 }) && !sameSettlement({ fromUserId: 'b', toUserId: 'a', amount: 1 }, { fromUserId: 'b', toUserId: 'a', amount: 2 }));
+check('送る期間: closed / current だけ可', parseSummaryPeriod('closed') === 'closed' && parseSummaryPeriod('current') === 'current');
+check('送る期間: それ以外は不可', [undefined, null, '', 'CLOSED', 'all', 1].every((v) => parseSummaryPeriod(v) === null));
 
 // ------------------------------------------------------------
 console.log('\nclientIpKey（認証前のレート制限のキー）');
@@ -320,75 +234,22 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
   check('不正な groupId は読まずに不可', (await authorizeExpenseWrite(fakeTx, fakeDb, { groupId: 'a/b', lineId: 'me' }, 'me')) === false && !reads.some((p) => p.includes('a/b')));
 
   // ------------------------------------------------------------
-  console.log('\nfillPartnerName（LINE で補った相手の表示名）');
+  console.log('\nreadActiveMember（［自分が払った］の表示名）');
   {
-    // 相手 b は世帯の作成者（仮名「作成者」は sortActiveMembers で空になる）
-    const single = (partnerName) => computeHouseholdSettlement([summary('a', 10000, 'あきら')], activeMembers([['a', 'aさん'], ['b', partnerName]], 'b'), { legacyPair: true });
-    const calls = [];
-    const resolver = async (id) => {
-      calls.push(id);
-      return 'ゆい（LINE）';
+    const docs = {
+      g1_me: { groupId: 'g1', lineId: 'me', isActive: true, displayName: 'まこと' },
+      g1_maker: { groupId: 'g1', lineId: 'maker', isActive: true, displayName: '作成者' },
+      g1_left: { groupId: 'g1', lineId: 'left', isActive: false, displayName: 'いない人' },
     };
-
-    const named = await fillPartnerName(single('ゆい'), [summary('a', 10000, 'あきら')], resolver);
-    check('メンバー名があればそのまま（プロフィールを引かない）', named.settlement.fromUserName === 'ゆい' && calls.length === 0);
-
-    const resolved = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], resolver);
-    check('仮名「作成者」なら LINE のプロフィールで補う', resolved.settlement.fromUserName === 'ゆい（LINE）' && resolved.settlement.toUserName === 'あきら' && deepEqual(calls, ['b']), JSON.stringify(resolved.settlement));
-    check('participants の名前も補う', resolved.participants[1].displayName === 'ゆい（LINE）');
-    check('金額・向きは変えない', resolved.settlement.fromUserId === 'b' && resolved.settlement.toUserId === 'a' && resolved.settlement.amount === 5000);
-
-    const empty = await fillPartnerName(single(''), [summary('a', 10000, 'あきら')]);
-    check('空で resolveName も無ければ User_xxxxxx', empty.settlement.fromUserName === 'User_b');
-
-    const origWarn = console.warn;
-    const warned = [];
-    console.warn = (...args) => warned.push(args.join(' '));
-    let failedLookup;
-    try {
-      failedLookup = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], async () => {
-        throw new Error('404');
-      });
-    } finally {
-      console.warn = origWarn;
-    }
-    check('プロフィール取得に失敗したら User_xxxxxx（警告だけ出す）', failedLookup.settlement.fromUserName === 'User_b' && warned.length === 1);
-
-    const blank = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], async () => '  ');
-    const noProfile = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], async () => undefined);
-    check('プロフィールが空・取れなければ User_xxxxxx', blank.settlement.fromUserName === 'User_b' && noProfile.settlement.fromUserName === 'User_b');
-    check('仮名のまま出る結果が無い', ![resolved, empty, failedLookup, blank, noProfile].some((x) => JSON.stringify(x).includes('作成者')));
-    const realName = await fillPartnerName(single('作成者'), [summary('a', 10000, 'あきら')], async () => '作成者');
-    check('LINE のプロフィール名はそのまま使う（本人の名前が「作成者」でも）', realName.settlement.fromUserName === '作成者');
-
-    const pair = computeHouseholdSettlement([summary('a', 3000), summary('b', 1000)], [], { legacyPair: true });
-    check('pair はそのまま返す', (await fillPartnerName(pair, [summary('a', 3000), summary('b', 1000)], resolver)) === pair);
-  }
-
-  // ------------------------------------------------------------
-  console.log('\ncomputeLineGroupSettlement（メンバーを読むのは立替者 1 人のときだけ）');
-  {
-    // このスモークでは Firebase を初期化しないので、メンバーを読もうとすると失敗してログが出る
-    const origWarn = console.warn;
-    const origError = console.error;
-    const logs = [];
-    console.warn = (...args) => logs.push(args.join(' '));
-    console.error = (...args) => logs.push(args.join(' '));
-    let pair, many, none, single;
-    let logsAfterUnchanged;
-    try {
-      pair = await computeLineGroupSettlement('C1', [summary('a', 3000), summary('b', 1000)]);
-      many = await computeLineGroupSettlement('C1', [summary('a', 3000), summary('b', 1000), summary('c', 500)]);
-      none = await computeLineGroupSettlement('C1', []);
-      logsAfterUnchanged = logs.length;
-      single = await computeLineGroupSettlement('C1', [summary('a', 3000)]);
-    } finally {
-      console.warn = origWarn;
-      console.error = origError;
-    }
-    check('立替者 2 人は Firestore を読まずに従来どおり pair', logsAfterUnchanged === 0 && pair.basis === 'pair' && deepEqual(pair.settlement, calculateSettlement([summary('a', 3000), summary('b', 1000)])));
-    check('立替者 3 人・0 人も読まない（金額なし / none）', many.basis === 'undeterminable' && many.settlement === null && none.basis === 'none');
-    check('立替者 1 人だけメンバーを読む（読めなければ従来どおり金額なし）', logs.length > logsAfterUnchanged && single.basis === 'undeterminable' && single.settlement === null);
+    const tx = {
+      get: async (ref) => {
+        const d = docs[ref.id];
+        return { exists: !!d, get: (f) => (d ? d[f] : undefined) };
+      },
+    };
+    check('有効メンバーは表示名を返す', deepEqual(await readActiveMember(fakeDb, 'g1', 'me', tx), { displayName: 'まこと' }));
+    check('仮名「作成者」は空文字（呼び出し側で補う）', deepEqual(await readActiveMember(fakeDb, 'g1', 'maker', tx), { displayName: '' }));
+    check('脱退者・メンバー外は null', (await readActiveMember(fakeDb, 'g1', 'left', tx)) === null && (await readActiveMember(fakeDb, 'g1', 'nobody', tx)) === null);
   }
 
   // ------------------------------------------------------------

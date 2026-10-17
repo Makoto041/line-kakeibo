@@ -172,7 +172,7 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
             </div>
           ) : (
             <>
-              {/* 図: 送金する人 → 受け取る人（立替の精算と同じ見せ方）。アイコンをタップすると「送金する人」を切り替える */}
+              {/* 図: 送金する人 → 受け取る人。アイコンをタップすると「送金する人」を切り替える */}
               {(() => {
                 // 未設定のときは 2 人を並べるだけ（どちらかをタップして送金する人を選ぶ）
                 const from = split.transfer ? split.transfer.fromLineId : target;

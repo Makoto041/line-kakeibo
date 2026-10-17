@@ -30,8 +30,7 @@ const STEPS: Array<{
 const COMMANDS: Array<{ command: string; description: string }> = [
   { command: '家計簿', description: '今月の集計と専用リンクを表示' },
   { command: 'カテゴリー', description: 'カテゴリ一覧の確認' },
-  { command: '立替', description: '立替中の支出を一覧表示' },
-  { command: '精算', description: '立替の精算を実行' },
+  { command: '精算', description: '期間の精算（折半）の案内を表示' },
 ];
 
 /**

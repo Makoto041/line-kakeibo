@@ -1,9 +1,10 @@
 /**
- * 期間の精算（折半）サマリーの LINE メッセージ（settlementSummary.ts が毎月の起算日に送る）
+ * 期間の精算（折半）サマリーの LINE メッセージ（settlementSummary.ts が毎月の起算日に送る。Web の設定から手動でも送れる）
  *
  * 1 回の push に 2 通を入れる（LINE の通数は 1 回の送信で数えるので増えない）:
  * 1. 送金する人と受け取る人をメンションしたテキスト（Flex ではメンションできないため textV2）
- * 2. 内訳・カテゴリ別・要確認・未精算の立替をまとめた Flex
+ * 2. 内訳・カテゴリ別・要確認をまとめた Flex
+ * 今の期間の途中経過（summary.interim）は、期間に「（途中経過）」を付け、送金の依頼ではなく見込みとして書く。
  * 見た目は登録・編集カード（flexMessage.ts）と揃える（緑のヘッダー、同じアイコン）。
  */
 
@@ -25,8 +26,6 @@ const COLOR = {
   track: '#E2E8F0',
   warnBg: '#FEF3C7',
   warnText: '#92400E',
-  advanceBg: '#EDE9FE',
-  advanceText: '#5B21B6',
 };
 
 const LINE_USER_ID = /^U[0-9a-f]{32}$/;
@@ -42,6 +41,12 @@ export function periodLabel(range: { startDate: string; endDate: string }): stri
   const [sy, sm, sd] = range.startDate.split('-').map(Number);
   const [ey, em, ed] = range.endDate.split('-').map(Number);
   return sy === ey ? `${sm}/${sd}〜${em}/${ed}` : `${sy}/${sm}/${sd}〜${ey}/${em}/${ed}`;
+}
+
+/** 見出しの期間（途中経過なら「10/15〜10/17（途中経過）」） */
+function summaryLabel(summary: SettlementSummary): string {
+  const label = periodLabel(summary.range);
+  return summary.interim ? `${label}（途中経過）` : label;
 }
 
 function nameOf(summary: SettlementSummary, lineId: string | undefined): string {
@@ -162,7 +167,7 @@ function linkButton(label: string, uri: string, primary: boolean): FlexComponent
 
 export function buildSettlementSummaryFlex(summary: SettlementSummary): messagingApi.FlexMessage {
   const { split } = summary;
-  const label = periodLabel(summary.range);
+  const label = summaryLabel(summary);
   const transfer = split.transfer;
   const fromName = nameOf(summary, transfer?.fromLineId);
   const toName = nameOf(summary, transfer?.toLineId);
@@ -191,7 +196,13 @@ export function buildSettlementSummaryFlex(summary: SettlementSummary): messagin
         { type: 'text', text: yen(transfer?.amount ?? 0), size: '3xl', weight: 'bold', color: COLOR.text, align: 'center', margin: 'sm' },
         {
           type: 'text',
-          text: transfer ? `${fromName}が${toName}に送金` : '今回は送金なし',
+          text: transfer
+            ? summary.interim
+              ? `今日までの分で、${fromName}が${toName}に送金する見込み`
+              : `${fromName}が${toName}に送金`
+            : summary.interim
+            ? '今日までの分では送金なし'
+            : '今回は送金なし',
           size: 'xs',
           color: COLOR.muted,
           align: 'center',
@@ -245,20 +256,6 @@ export function buildSettlementSummaryFlex(summary: SettlementSummary): messagin
     );
   }
 
-  const advances = summary.advances;
-  if (advances && advances.count > 0) {
-    const t = advances.transfer;
-    body.push(
-      notice(
-        t
-          ? `未精算の立替が ${advances.count}件あります（${nameOf(summary, t.fromLineId)}→${nameOf(summary, t.toLineId)} ${yen(t.amount)}）。精算画面で記録できます`
-          : `未精算の立替が ${advances.count}件（${yen(advances.total)}）あります。精算画面で確認できます`,
-        COLOR.advanceBg,
-        COLOR.advanceText
-      )
-    );
-  }
-
   return {
     type: 'flex',
     altText: transfer
@@ -302,6 +299,13 @@ export function buildSettlementSummaryMessages(summary: SettlementSummary): mess
   const label = periodLabel(summary.range);
   const transfer = summary.split.transfer;
   const [a, b] = summary.members;
+  if (summary.interim) {
+    // 途中経過は送金の依頼ではないので、メンションせずに見込みだけを伝える
+    const text = transfer
+      ? `${label} の精算（折半）の途中経過です。\n今日までの分では、${nameOf(summary, transfer.fromLineId)} から ${nameOf(summary, transfer.toLineId)} へ ${yen(transfer.amount)} の見込みです。`
+      : `${label} の精算（折半）の途中経過です。\n今日までの分では送金なしの見込みです。`;
+    return [{ type: 'text', text }, buildSettlementSummaryFlex(summary)];
+  }
   const text = transfer
     ? mentionText(summary, `${label} の精算（折半）です。\n{u1} から {u2} へ ${yen(transfer.amount)} の送金をお願いします。`, {
         u1: transfer.fromLineId,

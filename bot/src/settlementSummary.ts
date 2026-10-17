@@ -5,7 +5,7 @@
  *   新しいスケジュールは増やさず、毎日の固定費の計上（index.ts の postRecurringExpenses）と同じ実行で判定する
  *   （Cloud Scheduler の無料枠のジョブ数を使い切っているため）。
  * - 何を: Web の「期間の精算（折半）」と同じ計算（periodSplit.ts）の結果。送金する人と受け取る人をメンションした
- *   テキストと、内訳・カテゴリ別・要確認・未精算の立替をまとめた Flex を 1 回の push で送る。
+ *   テキストと、内訳・カテゴリ別・要確認をまとめた Flex を 1 回の push で送る。
  * - 対象: LINE グループに紐づき、集金するメンバー（groups.splitSettings.collectFromLineId）が決まっていて、
  *   有効メンバーがちょうど 2 人の世帯。
  * - 冪等: 送る前に system/settlementSummary_{groupId}_{期間末日} を create する（同じ期間は 2 回送らない）。
@@ -13,14 +13,17 @@
  *   印はあるのに送った時刻（sentAt）が無い（前の実行が送信の途中で止まった・印を消せなかった）ときは、
  *   同じ X-Line-Retry-Key で送り直す（LINE が受け付け済みなら 409 が返り、二重には届かない）。
  * - 起算日が 29〜31 日で、その日が無い月には送らず、次の回でその分も含める（closedPeriodFor）。
+ * - 手動: Web の設定から、締まった期間（自動と同じ内容）か今の期間の途中経過を、日付に関係なく送れる
+ *   （sendSettlementSummaryNow。/household/settlement-summary/send）。締まった期間を送ったら印も付け、
+ *   起算日の自動の通知と二重にならないようにする。
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { messagingApi } from '@line/bot-sdk';
 import type { DocumentReference, Firestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
-import { getAdvanceSummaryByUser, type GroupMember } from './firestore';
-import { computeHouseholdSettlement, sortActiveMembers, type SettlementMember } from './householdSettlement';
+import type { GroupMember } from './firestore';
+import { sortActiveMembers, type HouseholdMember } from './householdMembers';
 import { errorMessage, maskId } from './logSafe';
 import { amountOf, computePeriodSplit, periodPool, type PeriodSplit, type SplitExpense } from './periodSplit';
 import { dayjs, JST } from './time';
@@ -69,6 +72,35 @@ export function closedPeriodFor(today: string, startDay: number | null): { start
   };
 }
 
+/** d 以前で、日付が startDay の最も近い日（その日が無い月は飛ばす。closedPeriodFor と同じ数え方） */
+function startOnOrBefore(d: dayjs.Dayjs, startDay: number): dayjs.Dayjs {
+  let month = d.startOf('month');
+  if (d.date() < startDay || month.daysInMonth() < startDay) month = month.subtract(1, 'month');
+  while (month.daysInMonth() < startDay) month = month.subtract(1, 'month');
+  return month.date(startDay);
+}
+
+/**
+ * 今日から見た、締まった期間と今の期間（手動の送信用。どの日でも決まる）
+ *
+ * 締まった期間は、直近の起算日に自動で送る期間（closedPeriodFor）と同じ。今の期間は直近の起算日〜今日。
+ * 固定期間（startDay が null）は締めが無いので null。
+ */
+export function latestPeriods(
+  today: string,
+  startDay: number | null
+): { closed: { startDate: string; endDate: string }; current: { startDate: string; endDate: string } } | null {
+  if (startDay === null) return null;
+  const d = dayjs.tz(today, 'YYYY-MM-DD', JST);
+  if (!d.isValid()) return null;
+  const currentStart = startOnOrBefore(d, startDay);
+  const closedStart = startOnOrBefore(currentStart.subtract(1, 'day'), startDay);
+  return {
+    closed: { startDate: closedStart.format('YYYY-MM-DD'), endDate: currentStart.subtract(1, 'day').format('YYYY-MM-DD') },
+    current: { startDate: currentStart.format('YYYY-MM-DD'), endDate: d.format('YYYY-MM-DD') },
+  };
+}
+
 // ============================================
 // サマリーの中身（純関数）
 // ============================================
@@ -86,16 +118,12 @@ export interface CategoryTotal {
   percentage: number;
 }
 
-export interface AdvanceDigest {
-  count: number;
-  total: number;
-  transfer: { fromLineId: string; toLineId: string; amount: number } | null;
-}
-
 export interface SettlementSummary {
   groupId: string;
   range: { startDate: string; endDate: string };
-  members: SettlementMember[];
+  /** 今の期間の途中経過（手動の送信）。締まった期間なら false */
+  interim: boolean;
+  members: HouseholdMember[];
   split: PeriodSplit;
   /** 集金するメンバー以外の支払い（相手・カード・共通口座）の合計 */
   othersPaid: number;
@@ -104,7 +132,6 @@ export interface SettlementSummary {
   otherCategories: { count: number; amount: number };
   /** 要確認（LINE で手入力して未確認。合計に入っていない） */
   pending: { count: number; amount: number };
-  advances: AdvanceDigest | null;
 }
 
 /** 要確認（Web の isPending と同じ。自動で入った支出は確認不要） */
@@ -116,10 +143,10 @@ export function isPendingManual(e: Pick<SummaryExpense, 'inputSource' | 'status'
 export function buildSettlementSummary(input: {
   groupId: string;
   range: { startDate: string; endDate: string };
-  members: SettlementMember[];
+  interim?: boolean;
+  members: HouseholdMember[];
   collectFrom: string;
   expenses: readonly SummaryExpense[];
-  advances: AdvanceDigest | null;
 }): SettlementSummary {
   const split = computePeriodSplit({
     expenses: input.expenses,
@@ -147,13 +174,13 @@ export function buildSettlementSummary(input: {
   return {
     groupId: input.groupId,
     range: input.range,
+    interim: input.interim === true,
     members: input.members,
     split,
     othersPaid: split.total - split.targetPaid,
     categories: sorted.slice(0, SUMMARY_TOP_CATEGORIES),
     otherCategories: { count: rest.length, amount: rest.reduce((sum, c) => sum + c.amount, 0) },
     pending: { count: pending.length, amount: pending.reduce((sum, e) => sum + amountOf(e), 0) },
-    advances: input.advances,
   };
 }
 
@@ -182,29 +209,43 @@ interface HouseholdTarget {
   groupId: string;
   lineGroupId: string;
   collectFrom: string;
-  members: SettlementMember[];
+  members: HouseholdMember[];
+}
+
+/** 送れない理由。no_line_group: LINE グループに紐づいていない / no_collect_from: 集金するメンバーが未指定（脱退も含む）/ not_two_members: 有効メンバーが 2 人でない */
+export type SummaryUnavailableReason = 'no_line_group' | 'no_collect_from' | 'not_two_members';
+
+/** groups の文書から送り先を決める */
+async function targetFromGroup(
+  db: Firestore,
+  group: FirebaseFirestore.DocumentSnapshot
+): Promise<{ target: HouseholdTarget } | { reason: SummaryUnavailableReason }> {
+  const lineGroupId = group.get('lineGroupId');
+  if (typeof lineGroupId !== 'string' || !lineGroupId) return { reason: 'no_line_group' };
+  const collectFrom = group.get('splitSettings.collectFromLineId');
+  if (typeof collectFrom !== 'string' || !collectFrom) return { reason: 'no_collect_from' };
+  const memberDocs = await db
+    .collection('groupMembers')
+    .where('groupId', '==', group.id)
+    .where('isActive', '==', true)
+    .get();
+  const createdBy = group.get('createdBy');
+  const members = sortActiveMembers(
+    memberDocs.docs.map((d) => d.data() as GroupMember),
+    typeof createdBy === 'string' ? createdBy : null
+  );
+  // 精算は 2 人で折半する。集金するメンバーが脱退していたら送らない（Web も未指定として扱う）
+  if (members.length !== 2) return { reason: 'not_two_members' };
+  if (!members.some((m) => m.lineId === collectFrom)) return { reason: 'no_collect_from' };
+  return { target: { groupId: group.id, lineGroupId, collectFrom, members } };
 }
 
 async function loadTargets(db: Firestore): Promise<HouseholdTarget[]> {
   const groups = await db.collection('groups').get();
   const targets: HouseholdTarget[] = [];
   for (const group of groups.docs) {
-    const lineGroupId = group.get('lineGroupId');
-    const collectFrom = group.get('splitSettings.collectFromLineId');
-    if (typeof lineGroupId !== 'string' || !lineGroupId || typeof collectFrom !== 'string' || !collectFrom) continue;
-    const memberDocs = await db
-      .collection('groupMembers')
-      .where('groupId', '==', group.id)
-      .where('isActive', '==', true)
-      .get();
-    const createdBy = group.get('createdBy');
-    const members = sortActiveMembers(
-      memberDocs.docs.map((d) => d.data() as GroupMember),
-      typeof createdBy === 'string' ? createdBy : null
-    );
-    // 精算は 2 人で折半する。集金するメンバーが脱退していたら送らない（Web も未指定として扱う）
-    if (members.length !== 2 || !members.some((m) => m.lineId === collectFrom)) continue;
-    targets.push({ groupId: group.id, lineGroupId, collectFrom, members });
+    const result = await targetFromGroup(db, group);
+    if ('target' in result) targets.push(result.target);
   }
   return targets;
 }
@@ -220,24 +261,31 @@ async function loadStartDay(db: Firestore, target: HouseholdTarget): Promise<num
   return periodStartDay(null);
 }
 
-/** 未精算の立替（LINE の「立替一覧」・Web の精算と同じ集計）。読めなくてもサマリーは送る */
-async function loadAdvanceDigest(target: HouseholdTarget): Promise<AdvanceDigest | null> {
-  try {
-    const summaries = await getAdvanceSummaryByUser(target.lineGroupId, true);
-    const count = summaries.reduce((sum, s) => sum + s.expenses.length, 0);
-    if (count === 0) return { count: 0, total: 0, transfer: null };
-    const result = computeHouseholdSettlement(summaries, target.members);
-    return {
-      count,
-      total: summaries.reduce((sum, s) => sum + s.totalAdvanced, 0),
-      transfer: result.settlement
-        ? { fromLineId: result.settlement.fromUserId, toLineId: result.settlement.toUserId, amount: result.settlement.amount }
-        : null,
-    };
-  } catch (error) {
-    console.warn('settlement summary: failed to load advances', { group: maskId(target.groupId), error: errorMessage(error) });
-    return null;
-  }
+function markerRef(db: Firestore, groupId: string, endDate: string): DocumentReference {
+  return db.collection('system').doc(`${SETTLEMENT_SUMMARY_MARKER_PREFIX}${groupId}_${endDate}`);
+}
+
+/** 世帯・期間のサマリーを組み立てる（期間内の世帯の支出を読む） */
+async function buildFor(
+  db: Firestore,
+  target: HouseholdTarget,
+  range: { startDate: string; endDate: string },
+  interim: boolean
+): Promise<SettlementSummary> {
+  const snapshot = await db
+    .collection('expenses')
+    .where('groupId', '==', target.groupId)
+    .where('date', '>=', range.startDate)
+    .where('date', '<=', range.endDate)
+    .get();
+  return buildSettlementSummary({
+    groupId: target.groupId,
+    range,
+    interim,
+    members: target.members,
+    collectFrom: target.collectFrom,
+    expenses: snapshot.docs.map((d) => d.data() as SummaryExpense),
+  });
 }
 
 /**
@@ -258,31 +306,17 @@ export async function sendDueSettlementSummaries(
   const result: SummaryRunResult = { checked: targets.length, sent: 0, skipped: 0, failed: 0 };
 
   for (const target of targets) {
-    let markerRef: DocumentReference | null = null;
+    let pendingMarker: DocumentReference | null = null;
     try {
       const range = closedPeriodFor(today, await loadStartDay(db, target));
       if (!range) {
         result.skipped += 1;
         continue;
       }
-      const snapshot = await db
-        .collection('expenses')
-        .where('groupId', '==', target.groupId)
-        .where('date', '>=', range.startDate)
-        .where('date', '<=', range.endDate)
-        .get();
-      const summary = buildSettlementSummary({
-        groupId: target.groupId,
-        range,
-        members: target.members,
-        collectFrom: target.collectFrom,
-        expenses: snapshot.docs.map((d) => d.data() as SummaryExpense),
-        advances: await loadAdvanceDigest(target),
-      });
-      const messages = deps.build(summary);
+      const messages = deps.build(await buildFor(db, target, range, false));
 
       // 同じ期間は 1 回だけ（create は既にあれば失敗する）
-      const ref = db.collection('system').doc(`${SETTLEMENT_SUMMARY_MARKER_PREFIX}${target.groupId}_${range.endDate}`);
+      const ref = markerRef(db, target.groupId, range.endDate);
       try {
         await ref.create({ groupId: target.groupId, endDate: range.endDate, createdAt: FieldValue.serverTimestamp() });
       } catch (error) {
@@ -296,9 +330,9 @@ export async function sendDueSettlementSummaries(
         // 前の実行が送信の途中で止まった。同じ X-Line-Retry-Key で送り直す（届いていれば 409 で送信済み扱い）
         console.warn('settlement summary: resuming an unfinished send', { group: maskId(target.groupId), endDate: range.endDate });
       }
-      markerRef = ref;
+      pendingMarker = ref;
       await deps.push(target.lineGroupId, messages, summaryRetryKey(target.groupId, range.endDate));
-      markerRef = null;
+      pendingMarker = null;
       result.sent += 1;
       console.log('settlement summary: sent', { group: maskId(target.groupId), endDate: range.endDate });
       await ref.update({ sentAt: FieldValue.serverTimestamp() }).catch((error: unknown) => {
@@ -308,8 +342,106 @@ export async function sendDueSettlementSummaries(
       result.failed += 1;
       console.error('settlement summary: failed', { group: maskId(target.groupId), error: errorMessage(error) });
       // 送れなかった印を残さない（次の実行で送り直す）
-      if (markerRef) await markerRef.delete().catch(() => undefined);
+      if (pendingMarker) await pendingMarker.delete().catch(() => undefined);
     }
   }
   return result;
+}
+
+// ============================================
+// 手動の送信（Web の設定から）
+// ============================================
+
+export type SummaryPeriodKind = 'closed' | 'current';
+
+export interface SummaryStatus {
+  /** 送れないときの理由（送れるなら null） */
+  reason: SummaryUnavailableReason | 'fixed_period' | null;
+  /** 期間の起算日（固定期間なら null） */
+  startDay: number | null;
+  closed: { startDate: string; endDate: string } | null;
+  current: { startDate: string; endDate: string } | null;
+  /** 締まった期間を送った時刻（自動・手動のどちらでも。ISO 8601）。まだなら null */
+  closedSentAt: string | null;
+}
+
+async function loadTargetFor(
+  db: Firestore,
+  groupId: string
+): Promise<{ target: HouseholdTarget } | { reason: SummaryUnavailableReason } | null> {
+  const group = await db.collection('groups').doc(groupId).get();
+  if (!group.exists) return null;
+  return targetFromGroup(db, group);
+}
+
+function timestampIso(value: unknown): string | null {
+  const ts = value as { toDate?: () => Date } | null | undefined;
+  return typeof ts?.toDate === 'function' ? ts.toDate().toISOString() : null;
+}
+
+/** 設定画面に出す状態（送れるか・どの期間を送るか・締まった期間を送ったか）。世帯が無ければ null */
+export async function settlementSummaryStatus(db: Firestore, groupId: string, now: Date = new Date()): Promise<SummaryStatus | null> {
+  const loaded = await loadTargetFor(db, groupId);
+  if (!loaded) return null;
+  if ('reason' in loaded) {
+    return { reason: loaded.reason, startDay: null, closed: null, current: null, closedSentAt: null };
+  }
+  const startDay = await loadStartDay(db, loaded.target);
+  const periods = latestPeriods(dayjs(now).tz(JST).format('YYYY-MM-DD'), startDay);
+  if (!periods) return { reason: 'fixed_period', startDay, closed: null, current: null, closedSentAt: null };
+  const marker = await markerRef(db, groupId, periods.closed.endDate).get();
+  return {
+    reason: null,
+    startDay,
+    closed: periods.closed,
+    current: periods.current,
+    closedSentAt: marker.exists ? timestampIso(marker.get('sentAt')) : null,
+  };
+}
+
+export type ManualSendResult =
+  | { ok: true; range: { startDate: string; endDate: string }; interim: boolean }
+  | { ok: false; reason: SummaryUnavailableReason | 'fixed_period' };
+
+/**
+ * 精算サマリーを今すぐ LINE グループへ送る（日付・送信済みの印に関係なく送る）
+ *
+ * 締まった期間を送ったら印（sentAt 付き）を残し、起算日の自動の通知が同じ期間をもう一度送らないようにする。
+ * 今の期間（途中経過）は印を付けない（締まったら自動で確定の分が届く）。X-Line-Retry-Key は毎回新しくする
+ * （同じ期間を送り直したいときにも送れるように）。世帯が無ければ null。
+ */
+export async function sendSettlementSummaryNow(
+  db: Firestore,
+  groupId: string,
+  period: SummaryPeriodKind,
+  deps: {
+    push: PushFn;
+    build: (summary: SettlementSummary) => messagingApi.Message[];
+    now?: Date;
+  }
+): Promise<ManualSendResult | null> {
+  const loaded = await loadTargetFor(db, groupId);
+  if (!loaded) return null;
+  if ('reason' in loaded) return { ok: false, reason: loaded.reason };
+  const { target } = loaded;
+  const periods = latestPeriods(dayjs(deps.now ?? new Date()).tz(JST).format('YYYY-MM-DD'), await loadStartDay(db, target));
+  if (!periods) return { ok: false, reason: 'fixed_period' };
+
+  const interim = period === 'current';
+  const range = interim ? periods.current : periods.closed;
+  const messages = deps.build(await buildFor(db, target, range, interim));
+  await deps.push(target.lineGroupId, messages, randomUUID());
+  console.log('settlement summary: sent manually', { group: maskId(groupId), endDate: range.endDate, interim });
+
+  if (!interim) {
+    await markerRef(db, groupId, range.endDate)
+      .set(
+        { groupId, endDate: range.endDate, sentAt: FieldValue.serverTimestamp(), manualSentAt: FieldValue.serverTimestamp() },
+        { merge: true }
+      )
+      .catch((error: unknown) => {
+        console.warn('settlement summary: failed to record a manual send', { group: maskId(groupId), error: errorMessage(error) });
+      });
+  }
+  return { ok: true, range, interim };
 }

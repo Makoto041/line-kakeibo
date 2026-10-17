@@ -47,17 +47,14 @@ import { yen } from '../lib/money.ts';
 import {
   deriveApiBase,
   isValidDocId,
-  parseSettlementResponse,
+  parseAdvancesResponse,
+  parseClearAdvancesResult,
   parseConfirmResponse,
-  parseSettleResult,
+  parseSummaryStatus,
+  parseSummarySendResult,
   classifyHouseholdFailure,
 } from '../lib/householdContract.ts';
-import {
-  initialsFor,
-  buildSettlementViewModel,
-  groupSettlementItems,
-  clearedSettlement,
-} from '../lib/settlementView.ts';
+import { advanceDateSpan, advanceItemMeta } from '../lib/leftoverAdvances.ts';
 
 const ME = 'U-me';
 const PARTNER = 'U-partner';
@@ -430,45 +427,76 @@ test('isValidDocId', () => {
   assert.equal(isValidDocId(['a']), false);
 });
 
-const sampleResponse = {
+const advancesResponse = {
   groupId: 'g1',
-  scope: 'line_group',
-  members: [
-    { lineId: 'U-a', displayName: 'aoi' },
-    { lineId: 'U-b', displayName: 'Ben' },
-  ],
-  totals: { 'U-a': 9000, 'U-b': 3000 },
-  basis: 'pair',
-  settlement: { fromUserId: 'U-b', toUserId: 'U-a', amount: 3000 },
   items: [
-    { id: 'e1', date: '2026-09-12', description: 'スーパー', amount: 9000, category: '食費', advanceBy: 'U-a' },
-    { id: 'e2', date: '2026-09-10', description: 'カフェ', amount: 3000, category: '食費', advanceBy: 'U-b' },
+    { id: 'e1', date: '2026-08-15', description: 'ゆで太郎', amount: 2610, category: '食費', advanceBy: 'U-a', advanceByName: '岩渕 誠' },
+    { id: 'e2', date: '2026-03-27', description: 'NIKUNOHANAMASA', amount: 2231, category: 'その他', advanceBy: 'U-a', advanceByName: '' },
   ],
   expenseIds: ['e1', 'e2'],
-  asOf: '2026-09-24T07:00:00.000Z',
+  asOf: '2026-10-17T01:00:00.000Z',
 };
 
-test('parseSettlementResponse: 形を検証して揃える', () => {
-  const parsed = parseSettlementResponse(sampleResponse);
-  assert.equal(parsed.basis, 'pair');
-  assert.deepEqual(parsed.settlement, { fromUserId: 'U-b', toUserId: 'U-a', amount: 3000 });
+test('parseAdvancesResponse: 形を検証して揃える', () => {
+  const parsed = parseAdvancesResponse(advancesResponse);
   assert.equal(parsed.items.length, 2);
-  assert.equal(parseSettlementResponse(null), null);
-  assert.equal(parseSettlementResponse({ ...sampleResponse, basis: 'weird' }), null);
-  assert.equal(parseSettlementResponse({ ...sampleResponse, members: 'x' }), null);
-  // totals の欠けは 0 で埋め、メンバーの重複は除く
-  const loose = parseSettlementResponse({
-    ...sampleResponse,
-    members: [...sampleResponse.members, { lineId: 'U-a', displayName: 'dup' }],
-    totals: undefined,
-    settlement: null,
-  });
-  assert.deepEqual(loose.totals, { 'U-a': 0, 'U-b': 0 });
-  assert.equal(loose.members.length, 2);
-  assert.equal(loose.settlement, null);
+  assert.deepEqual(parsed.expenseIds, ['e1', 'e2']);
+  assert.equal(parsed.items[0].advanceByName, '岩渕 誠');
+  assert.equal(parseAdvancesResponse(null), null);
+  assert.equal(parseAdvancesResponse({ ...advancesResponse, items: 'x' }), null);
+  assert.equal(parseAdvancesResponse({ ...advancesResponse, expenseIds: undefined }), null);
+  // 欠けた値は空・0 で埋め、ID の無い行は捨てる
+  const loose = parseAdvancesResponse({ items: [{ id: 'e3', amount: 'x' }, { description: 'no id' }, 'junk'], expenseIds: ['e3', 4] });
+  assert.deepEqual(loose.items, [{ id: 'e3', date: '', description: '', amount: 0, category: '', advanceBy: null, advanceByName: '' }]);
+  assert.deepEqual(loose.expenseIds, ['e3']);
+  assert.deepEqual(parseClearAdvancesResult({ ok: true, cleared: 2, skipped: 1 }), { cleared: 2, skipped: 1 });
+  assert.equal(parseClearAdvancesResult({ error: 'stale' }), null);
 });
 
-test('parseConfirmResponse / parseSettleResult', () => {
+test('parseSummaryStatus / parseSummarySendResult（設定の「LINEへの精算の通知」）', () => {
+  const ok = {
+    reason: null,
+    startDay: 15,
+    closed: { startDate: '2026-09-15', endDate: '2026-10-14' },
+    current: { startDate: '2026-10-15', endDate: '2026-10-17' },
+    closedSentAt: '2026-10-15T00:10:00.000Z',
+  };
+  assert.deepEqual(parseSummaryStatus(ok), ok);
+  assert.equal(parseSummaryStatus({ ...ok, closedSentAt: 'not a date' }).closedSentAt, null);
+  assert.equal(parseSummaryStatus({ ...ok, startDay: 40 }).startDay, null);
+  // 送れるのに期間が欠けていれば不正
+  assert.equal(parseSummaryStatus({ ...ok, current: null }), null);
+  assert.equal(parseSummaryStatus({ ...ok, closed: { startDate: '9/15', endDate: '10/14' } }), null);
+  assert.equal(parseSummaryStatus({ ...ok, reason: 'weird' }), null);
+  assert.deepEqual(parseSummaryStatus({ reason: 'no_line_group', startDay: null, closed: null, current: null, closedSentAt: null }), {
+    reason: 'no_line_group',
+    startDay: null,
+    closed: null,
+    current: null,
+    closedSentAt: null,
+  });
+  assert.deepEqual(parseSummarySendResult({ ok: true, range: { startDate: '2026-10-15', endDate: '2026-10-17' }, interim: true }), {
+    range: { startDate: '2026-10-15', endDate: '2026-10-17' },
+    interim: true,
+  });
+  assert.equal(parseSummarySendResult({ ok: true, range: null }), null);
+  assert.equal(parseSummarySendResult({ error: 'line_failed' }), null);
+});
+
+test('残っている立替のお知らせ: 日付の範囲と各行の補足', () => {
+  assert.equal(advanceDateSpan(advancesResponse.items, 2026), '3月27日〜8月15日');
+  assert.equal(advanceDateSpan([advancesResponse.items[0]], 2026), '8月15日');
+  assert.equal(advanceDateSpan([{ date: '2025-12-30' }, { date: '2026-01-02' }], 2026), '2025年12月30日〜2026年1月2日');
+  assert.equal(advanceDateSpan([{ date: '' }], 2026), '');
+  const names = { 'U-a': '誠' };
+  assert.equal(advanceItemMeta(advancesResponse.items[0], names, 2026), '8月15日・誠が立替');
+  assert.equal(advanceItemMeta(advancesResponse.items[0], {}, 2026), '8月15日・岩渕 誠が立替');
+  assert.equal(advanceItemMeta(advancesResponse.items[1], {}, 2026), '3月27日');
+  assert.equal(advanceItemMeta({ ...advancesResponse.items[0], advanceBy: 'constructor', advanceByName: '' }, {}, 2026), '8月15日');
+  assert.equal(advanceItemMeta(advancesResponse.items[0], names, 2027), '2026年8月15日・誠が立替');
+});
+
+test('parseConfirmResponse', () => {
   assert.deepEqual(
     parseConfirmResponse({
       ok: true,
@@ -478,18 +506,16 @@ test('parseConfirmResponse / parseSettleResult', () => {
   );
   assert.equal(parseConfirmResponse({ ok: true }), null);
   assert.equal(parseConfirmResponse({ ok: true, expense: { id: 'e1', status: 'hacked' } }).status, undefined);
-  assert.deepEqual(parseSettleResult({ ok: true, settled: 2, skipped: 0, basis: 'pair', settlement: null }), {
-    settled: 2,
-    skipped: 0,
-    basis: 'pair',
-    settlement: null,
-  });
-  assert.equal(parseSettleResult({ error: 'x' }), null);
 });
 
 test('エラーの分類（K5-1）', () => {
   assert.equal(classifyHouseholdFailure(409, { error: 'settled', message: '精算済みのため変更できません' }), 'settled');
-  assert.equal(classifyHouseholdFailure(409, { error: 'stale' }), 'failed');
+  assert.equal(classifyHouseholdFailure(409, { error: 'stale' }), 'stale');
+  assert.equal(classifyHouseholdFailure(409, { error: 'nothing_to_clear' }), 'nothing_to_clear');
+  assert.equal(classifyHouseholdFailure(409, { error: 'unavailable', reason: 'no_line_group' }), 'unavailable');
+  assert.equal(classifyHouseholdFailure(502, { error: 'line_limit' }), 'line_limit');
+  assert.equal(classifyHouseholdFailure(502, { error: 'line_failed' }), 'line_failed');
+  assert.equal(classifyHouseholdFailure(409, { error: 'nothing_to_settle' }), 'failed');
   assert.equal(classifyHouseholdFailure(403, {}), 'forbidden');
   assert.equal(classifyHouseholdFailure(404, '<html>'), 'not_found');
   assert.equal(classifyHouseholdFailure(429, null), 'rate_limited');
@@ -497,95 +523,6 @@ test('エラーの分類（K5-1）', () => {
   assert.equal(classifyHouseholdFailure(401, null), 'unauthenticated');
   assert.equal(classifyHouseholdFailure(418, { error: '__proto__' }), 'failed');
 });
-
-// ---- 精算 ---------------------------------------------------------------------
-
-test('initialsFor: 先頭 1 文字・英字は大文字・重なれば 2 文字', () => {
-  assert.deepEqual(initialsFor(['aoi', 'ben']), ['A', 'B']);
-  assert.deepEqual(initialsFor(['あおい', 'べん']), ['あ', 'べ']);
-  assert.deepEqual(initialsFor(['aoi', 'ami']), ['Ao', 'Am']);
-  assert.deepEqual(initialsFor(['  まこと', '']), ['ま', '?']);
-  assert.deepEqual(initialsFor(['😀smile', 'x']), ['😀', 'X']);
-});
-
-test('buildSettlementViewModel: 左＝払う人・右＝受け取る人、無効状態', () => {
-  const resp = parseSettlementResponse(sampleResponse);
-  const vm = buildSettlementViewModel(resp, { apiAvailable: true, guest: false });
-  assert.equal(vm.left.lineId, 'U-b');
-  assert.equal(vm.left.tone, 'b');
-  assert.equal(vm.right.lineId, 'U-a');
-  assert.equal(vm.right.initial, 'A');
-  assert.equal(vm.amount, 3000);
-  assert.equal(vm.idle, false);
-  assert.deepEqual(vm.rows, [
-    { lineId: 'U-a', initial: 'A', total: 9000 },
-    { lineId: 'U-b', initial: 'B', total: 3000 },
-  ]);
-  assert.equal(vm.count, 2);
-  assert.equal(vm.canSettle, true);
-  assert.equal(vm.canOpenBreakdown, true);
-
-  // API 未設定・ゲストでは精算できない
-  assert.equal(buildSettlementViewModel(resp, { apiAvailable: false, guest: false }).canSettle, false);
-  assert.equal(buildSettlementViewModel(resp, { apiAvailable: true, guest: true }).canSettle, false);
-
-  // 差額 0 でも未精算があれば精算できる（矢印は薄く）
-  const even = buildSettlementViewModel({ ...resp, settlement: null }, { apiAvailable: true, guest: false });
-  assert.equal(even.amount, 0);
-  assert.equal(even.idle, true);
-  assert.equal(even.left.lineId, 'U-a');
-  assert.equal(even.right.lineId, 'U-b');
-  assert.equal(even.canSettle, true);
-
-  // 未精算 0 件
-  const none = buildSettlementViewModel(
-    { ...resp, basis: 'none', settlement: null, items: [], expenseIds: [], totals: { 'U-a': 0, 'U-b': 0 } },
-    { apiAvailable: true, guest: false }
-  );
-  assert.equal(none.canSettle, false);
-  assert.equal(none.canOpenBreakdown, false);
-  assert.equal(none.amount, 0);
-
-  // 計算できない（3 人以上など）: 金額は null、メンバー行なし、精算不可
-  const three = buildSettlementViewModel(
-    {
-      ...resp,
-      basis: 'undeterminable',
-      settlement: null,
-      members: [...resp.members, { lineId: 'U-c', displayName: 'Cat' }],
-    },
-    { apiAvailable: true, guest: false }
-  );
-  assert.equal(three.amount, null);
-  assert.deepEqual(three.rows, []);
-  assert.equal(three.canSettle, false);
-
-  // 世帯なし・未取得
-  const empty = buildSettlementViewModel(null, { apiAvailable: true, guest: false });
-  assert.equal(empty.amount, 0);
-  assert.equal(empty.left, null);
-  assert.equal(empty.canSettle, false);
-});
-
-test('groupSettlementItems: 立替者ごとに合計', () => {
-  const resp = parseSettlementResponse({
-    ...sampleResponse,
-    items: [
-      ...sampleResponse.items,
-      { id: 'e3', date: '2026-09-01', description: '旧', amount: 500, category: 'その他', advanceBy: 'U-x' },
-    ],
-  });
-  const groups = groupSettlementItems(resp);
-  assert.deepEqual(
-    groups.map((g) => [g.lineId, g.name, g.total, g.items.length]),
-    [
-      ['U-a', 'aoi', 9000, 1],
-      ['U-b', 'Ben', 3000, 1],
-      ['U-x', '', 500, 1],
-    ]
-  );
-});
-
 
 // ---- 絞り込み・集計（フィルター・合計カード） -------------------------------------------
 
@@ -678,46 +615,3 @@ test('ゲスト用サンプル: 要確認 2 件・集計は計上するものだ
   for (const e of list) assert.equal(referenceAmounts.includes(e.amount), false, `${e.description} ${e.amount}`);
   assert.equal(referenceAmounts.includes(stats.totalAmount), false);
 });
-
-test('parseSettlementResponse: bot の participants・reason を読む', () => {
-  const parsed = parseSettlementResponse({
-    groupId: 'g1',
-    scope: 'line_group',
-    participants: [
-      { lineId: 'U-a', displayName: 'aoi', isMember: true },
-      { lineId: 'U-b', displayName: '', isMember: true },
-      { lineId: 'U-x', displayName: 'old', isMember: false },
-    ],
-    totals: { 'U-a': 100, 'U-b': 0, 'U-x': 50 },
-    basis: 'undeterminable',
-    reason: 'more_than_two',
-    settlement: null,
-    items: [],
-    expenseIds: ['e1'],
-    asOf: 'now',
-  });
-  assert.equal(parsed.members.length, 3);
-  assert.equal(parsed.members[2].isMember, false);
-  assert.equal(parsed.reason, 'more_than_two');
-  // 計算できないときはメンバーの行を出さず、金額は —（null）、ボタンは無効
-  const vm = buildSettlementViewModel(parsed, { apiAvailable: true, guest: false, fallbackNames: { 'U-b': 'ben' } });
-  assert.equal(vm.amount, null);
-  assert.deepEqual(vm.rows, []);
-  assert.equal(vm.canSettle, false);
-  assert.equal(vm.right.initial, 'B'); // 空の名前は世帯のメンバー名で補う
-  // reason は undeterminable のときだけ
-  assert.equal(parseSettlementResponse({ ...sampleResponse, reason: 'more_than_two' }).reason, null);
-});
-
-test('clearedSettlement: 精算後は未精算なし・¥0・ボタン無効', () => {
-  const cleared = clearedSettlement(parseSettlementResponse(sampleResponse));
-  assert.equal(cleared.basis, 'none');
-  assert.deepEqual(cleared.expenseIds, []);
-  assert.deepEqual(cleared.totals, { 'U-a': 0, 'U-b': 0 });
-  const vm = buildSettlementViewModel(cleared, { apiAvailable: true, guest: false });
-  assert.equal(vm.amount, 0);
-  assert.equal(vm.idle, true);
-  assert.equal(vm.canSettle, false);
-  assert.equal(vm.canOpenBreakdown, false);
-});
-

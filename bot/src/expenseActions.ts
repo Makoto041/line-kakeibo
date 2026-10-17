@@ -6,7 +6,7 @@
  * LINE の返信や HTTP の応答はここでは扱わない。
  */
 
-import { getFirestore, type DocumentData, type Transaction } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore, type DocumentData, type Transaction } from 'firebase-admin/firestore';
 import type { ExpenseStatusType } from './firestore';
 
 /**
@@ -66,6 +66,55 @@ export function decideConfirm(): ExpenseDecider {
           update: { confirmed: true, updatedAt: new Date() },
           cardPatch: {},
         };
+}
+
+/**
+ * 支払った人を変える（LINE の［自分が払った］）
+ *
+ * 期間の折半は支払った人（payerId）で数えるので、ここを変えれば精算に反映される。あわせて確認済みにし、
+ * 未確認なら共同費へ昇格させる（ほかのボタンと同じ）。立替の印（advance_pending）が残っていれば外す
+ * （立替の精算は折半にまとめた）。除外（personal）は除外のまま。立替で精算済みの支出は変えられない
+ * （支払った人は精算の記録の一部。Firestore ルールも同じ）。
+ */
+export function decideSetPayer(payer: { lineId: string; displayName: string }): ExpenseDecider {
+  return (data) => {
+    if (data.status === 'advance_settled') return { reject: SETTLED_REJECTION };
+    const toShared = isPendingStatus(data.status) || data.status === 'advance_pending';
+    const statusPatch = toShared ? { status: 'shared', includeInTotal: true } : {};
+    return {
+      update: {
+        payerId: payer.lineId,
+        payerDisplayName: payer.displayName,
+        ...statusPatch,
+        ...(data.status === 'advance_pending' ? { advanceBy: FieldValue.delete() } : {}),
+        confirmed: true,
+        updatedAt: new Date(),
+      },
+      cardPatch: {
+        payerId: payer.lineId,
+        payerDisplayName: payer.displayName,
+        ...statusPatch,
+        advanceBy: undefined,
+      },
+    };
+  };
+}
+
+/**
+ * 立替の印を外す（以前の「自分が立替」の取り消し）
+ *
+ * 共同費に戻すだけで、支払った人（payerId）・金額は変えない（期間の折半にはもとから支払った人の分として入っている）。
+ * 立替で精算済みの支出は変えられない。
+ */
+export function decideClearAdvance(): ExpenseDecider {
+  return (data) => {
+    if (data.status === 'advance_settled') return { reject: SETTLED_REJECTION };
+    if (data.status !== 'advance_pending') return { update: { updatedAt: new Date() }, cardPatch: {} };
+    return {
+      update: { status: 'shared', includeInTotal: true, confirmed: true, advanceBy: FieldValue.delete(), updatedAt: new Date() },
+      cardPatch: { status: 'shared', includeInTotal: true, advanceBy: undefined },
+    };
+  };
 }
 
 /** `applyExpenseChange` の結果（支出が見つからなければ null） */

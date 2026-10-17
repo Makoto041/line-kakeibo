@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { Wallet, CalendarRange, Repeat } from 'lucide-react';
 import RecurringExpensesPanel from '../../components/RecurringExpensesPanel';
 import InstallAppCard from '../../components/settings/InstallAppCard';
+import SettlementNotifyCard from '../../components/settings/SettlementNotifyCard';
 import { useLineAuth, DEFAULT_BUDGET_CONFIG, type BudgetConfig } from '../../lib/hooks';
 import { fetchDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, DEFAULT_SETTINGS, type DateRangeSettings } from '../../lib/dateSettings';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -487,6 +488,9 @@ export default function Settings() {
           </button>
         </motion.div>
         )}
+
+        {/* LINE への精算の通知（送る日は期間の起算日で決まる。保存ボタンとは別に、その場で送る） */}
+        {activeTab === 'period' && <SettlementNotifyCard lineId={lineId} className="mt-5" />}
       </main>
     </div>
   );

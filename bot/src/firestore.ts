@@ -738,32 +738,14 @@ export async function getAllUserCategories(lineId: string): Promise<Array<Catego
 }
 
 // ============================================
-// 立替機能
+// 立替（以前の機能の残り）
 // ============================================
 
 /**
- * 立替情報のサマリー
- */
-export interface AdvanceSummary {
-  userId: string;
-  userDisplayName: string;
-  totalAdvanced: number;
-  expenses: Expense[];
-}
-
-/**
- * 精算結果
- */
-export interface SettlementResult {
-  fromUserId: string;
-  fromUserName: string;
-  toUserId: string;
-  toUserName: string;
-  amount: number;
-}
-
-/**
- * グループの未精算立替一覧を取得
+ * グループの、立替の印が残っている支出（status: advance_pending）
+ *
+ * 立替の精算は期間の折半にまとめた。新しくは作られないが、以前に「自分が立替」にした支出が残っているので、
+ * Web の精算タブで一覧を出し、印を外せるようにする（householdApi.ts の /household/advances）。
  */
 export async function getPendingAdvances(groupIdOrLineGroupId: string, isLineGroupId: boolean = false): Promise<Expense[]> {
   try {
@@ -783,158 +765,6 @@ export async function getPendingAdvances(groupIdOrLineGroupId: string, isLineGro
     });
   } catch (error) {
     console.error('Error getting pending advances:', error);
-    throw error;
-  }
-}
-
-/**
- * ユーザー別の立替サマリーを取得
- */
-export async function getAdvanceSummaryByUser(
-  groupIdOrLineGroupId: string,
-  isLineGroupId: boolean = false
-): Promise<AdvanceSummary[]> {
-  const expenses = await getPendingAdvances(groupIdOrLineGroupId, isLineGroupId);
-
-  // ユーザー別に集計
-  const userMap = new Map<string, AdvanceSummary>();
-
-  for (const expense of expenses) {
-    const userId = expense.advanceBy || expense.payerId;
-    // Use userDisplayName when advanceBy is set (the person who advanced),
-    // otherwise use payerDisplayName (the person who paid)
-    const userName = expense.advanceBy
-      ? (expense.userDisplayName || expense.payerDisplayName || 'Unknown')
-      : (expense.payerDisplayName || 'Unknown');
-
-    if (!userMap.has(userId)) {
-      userMap.set(userId, {
-        userId,
-        userDisplayName: userName,
-        totalAdvanced: 0,
-        expenses: []
-      });
-    }
-
-    const summary = userMap.get(userId)!;
-    summary.totalAdvanced += expense.amount;
-    summary.expenses.push(expense);
-  }
-
-  return Array.from(userMap.values());
-}
-
-/**
- * 精算額を計算
- *
- * 2人のユーザー間で、誰が誰にいくら払うべきかを計算
- */
-export function calculateSettlement(summaries: AdvanceSummary[]): SettlementResult | null {
-  if (summaries.length !== 2) {
-    console.warn('Settlement calculation requires exactly 2 users');
-    return null;
-  }
-
-  const [user1, user2] = summaries;
-  const diff = user1.totalAdvanced - user2.totalAdvanced;
-
-  if (diff === 0) {
-    return null; // 精算不要
-  }
-
-  if (diff > 0) {
-    // user2 → user1 に diff/2 円支払う
-    return {
-      fromUserId: user2.userId,
-      fromUserName: user2.userDisplayName,
-      toUserId: user1.userId,
-      toUserName: user1.userDisplayName,
-      amount: Math.round(diff / 2)
-    };
-  } else {
-    // user1 → user2 に |diff|/2 円支払う
-    return {
-      fromUserId: user1.userId,
-      fromUserName: user1.userDisplayName,
-      toUserId: user2.userId,
-      toUserName: user2.userDisplayName,
-      amount: Math.round(Math.abs(diff) / 2)
-    };
-  }
-}
-
-/**
- * 立替を精算済みにする
- *
- * セキュリティ:
- * - 各expenseを取得して存在確認
- * - groupId/lineGroupIdが呼び出し元のグループと一致するか検証
- * - statusが'advance_pending'であることを検証
- *
- * @param expenseIds - 精算対象のexpense IDリスト
- * @param groupIdOrLineGroupId - 検証用のグループID
- * @param isLineGroupId - trueの場合lineGroupIdで検証、falseの場合groupIdで検証
- */
-export async function settleAdvances(
-  expenseIds: string[],
-  groupIdOrLineGroupId: string,
-  isLineGroupId: boolean = false
-): Promise<{ settled: number; skipped: number; errors: string[] }> {
-  const result = { settled: 0, skipped: 0, errors: [] as string[] };
-
-  try {
-    const now = Timestamp.now();
-    const batch = getDb().batch();
-    const field = isLineGroupId ? 'lineGroupId' : 'groupId';
-
-    for (const id of expenseIds) {
-      const ref = getDb().collection('expenses').doc(id);
-      const doc = await ref.get();
-
-      // 存在確認
-      if (!doc.exists) {
-        result.errors.push(`Expense ${id} not found`);
-        result.skipped++;
-        continue;
-      }
-
-      const data = doc.data();
-
-      // グループ所有権の検証
-      if (data?.[field] !== groupIdOrLineGroupId) {
-        result.errors.push(`Expense ${id} does not belong to this group`);
-        result.skipped++;
-        continue;
-      }
-
-      // ステータスの検証
-      if (data?.status !== 'advance_pending') {
-        result.errors.push(`Expense ${id} is not in advance_pending status (current: ${data?.status})`);
-        result.skipped++;
-        continue;
-      }
-
-      // 検証通過 - バッチに追加
-      batch.update(ref, {
-        status: 'advance_settled',
-        advanceSettledAt: now,
-        updatedAt: now
-      });
-      result.settled++;
-    }
-
-    if (result.settled > 0) {
-      await batch.commit();
-    }
-
-    console.log(`Settled ${result.settled} advance expenses, skipped ${result.skipped}`);
-    if (result.errors.length > 0) {
-      console.warn('Settle warnings:', result.errors);
-    }
-
-    return result;
-  } catch (error) {
-    console.error('Error settling advances:', error);
     throw error;
   }
 }

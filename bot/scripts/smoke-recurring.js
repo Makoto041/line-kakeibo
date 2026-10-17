@@ -86,7 +86,7 @@ test('日は 1〜31 の整数', () => {
   assert.equal(parseRecurringInput({ ...valid, dayOfMonth: 0 }, false), null);
   assert.equal(parseRecurringInput({ ...valid, dayOfMonth: 32 }, false), null);
 });
-test('advance は立替者が必須、shared は立替者なし', () => {
+test('advance は引き落とされるメンバーが必須、shared はなし', () => {
   assert.equal(parseRecurringInput({ ...valid, payerLineId: null }, false), null);
   assert.equal(parseRecurringInput({ ...valid, payment: 'shared' }, false), null);
   assert.deepEqual(parseRecurringInput({ ...valid, payment: 'shared', payerLineId: null }, false).payment, 'shared');
@@ -99,10 +99,10 @@ test('部分更新でも不正な値は不可', () => assert.equal(parseRecurrin
 console.log('recurring: buildRecurringExpense');
 const now = new Date('2026-09-26T21:10:00Z');
 const group = { lineGroupId: 'Cgroup', names: new Map([['Uaaa', 'まこと']]) };
-test('立替（個人口座）は立替者の未精算の立替になる', () => {
+test('個人口座はそのメンバーが支払った共同費になる（立替にはしない）', () => {
   const e = buildRecurringExpense(baseItem, '2026-09-27', group, now);
-  assert.equal(e.status, 'advance_pending');
-  assert.equal(e.advanceBy, 'Uaaa');
+  assert.equal(e.status, 'shared');
+  assert.equal('advanceBy' in e, false);
   assert.equal(e.lineId, 'Uaaa');
   assert.equal(e.payerId, 'Uaaa');
   assert.equal(e.payerDisplayName, 'まこと');
@@ -123,7 +123,7 @@ test('共通のカード・口座は共同費になる（立替ではない）',
   assert.equal(e.userDisplayName, undefined);
   assert.equal(e.payerDisplayName, undefined);
 });
-test('立替者の表示名が分からないときは代わりの名前', () => {
+test('メンバーの表示名が分からないときは代わりの名前', () => {
   const e = buildRecurringExpense(baseItem, '2026-09-27', { lineGroupId: null, names: new Map([['Uaaa', '']]) }, now);
   assert.equal(e.payerDisplayName, 'User_Uaaa');
 });

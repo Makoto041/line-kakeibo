@@ -11,6 +11,7 @@ const { pathToFileURL } = require('node:url');
 const {
   periodStartDay,
   closedPeriodFor,
+  latestPeriods,
   buildSettlementSummary,
   isPendingManual,
   summaryRetryKey,
@@ -78,6 +79,40 @@ const e = (amount, payerId, extra = {}) => ({
     assert.deepEqual(closedPeriodFor('2028-03-29', 29), { startDate: '2028-02-29', endDate: '2028-03-28' });
     assert.equal(closedPeriodFor('2026-02-28', 31), null);
   });
+  await test('手動の送信: どの日でも締まった期間と今の期間が決まる', () => {
+    assert.deepEqual(latestPeriods('2026-10-17', 15), {
+      closed: RANGE,
+      current: { startDate: '2026-10-15', endDate: '2026-10-17' },
+    });
+    // 起算日の当日は、締まった期間が自動の通知と同じ
+    assert.deepEqual(latestPeriods('2026-10-15', 15).closed, closedPeriodFor('2026-10-15', 15));
+    assert.deepEqual(latestPeriods('2026-10-15', 15).current, { startDate: '2026-10-15', endDate: '2026-10-15' });
+    // 起算日の前日はまだ前の期間の途中
+    assert.deepEqual(latestPeriods('2026-10-14', 15), {
+      closed: { startDate: '2026-08-15', endDate: '2026-09-14' },
+      current: { startDate: '2026-09-15', endDate: '2026-10-14' },
+    });
+    assert.deepEqual(latestPeriods('2026-01-05', 15).closed, { startDate: '2025-11-15', endDate: '2025-12-14' });
+    assert.deepEqual(latestPeriods('2026-10-01', 1), {
+      closed: { startDate: '2026-09-01', endDate: '2026-09-30' },
+      current: { startDate: '2026-10-01', endDate: '2026-10-01' },
+    });
+    // 起算日が無い月は飛ばす（closedPeriodFor と同じ数え方）
+    assert.deepEqual(latestPeriods('2026-03-15', 31), {
+      closed: { startDate: '2025-12-31', endDate: '2026-01-30' },
+      current: { startDate: '2026-01-31', endDate: '2026-03-15' },
+    });
+    assert.deepEqual(latestPeriods('2026-03-31', 31).closed, closedPeriodFor('2026-03-31', 31));
+    assert.equal(latestPeriods('2026-10-17', null), null);
+    // 毎日の起算日の当日は、どの起算日でも自動の通知と一致する
+    for (let day = 1; day <= 31; day++) {
+      for (const month of ['2026-01', '2026-02', '2026-03', '2026-12', '2028-02']) {
+        const today = `${month}-${String(day).padStart(2, '0')}`;
+        const auto = closedPeriodFor(today, day);
+        if (auto) assert.deepEqual(latestPeriods(today, day).closed, auto, today);
+      }
+    }
+  });
   await test('期間の表記（年をまたぐときは年も）', () => {
     assert.equal(periodLabel(RANGE), '9/15〜10/14');
     assert.equal(periodLabel({ startDate: '2025-12-15', endDate: '2026-01-14' }), '2025/12/15〜2026/1/14');
@@ -134,7 +169,6 @@ const e = (amount, payerId, extra = {}) => ({
     members: MEMBERS,
     collectFrom: A,
     expenses,
-    advances: { count: 2, total: 6000, transfer: { fromLineId: B, toLineId: A, amount: 1000 } },
   });
   await test('合計・集金額は Web の式どおり（光麦が払う）', () => {
     assert.equal(summary.split.total, 170100);
@@ -164,12 +198,14 @@ const e = (amount, payerId, extra = {}) => ({
     assert.deepEqual(text.substitution.u2, { type: 'mention', mentionee: { type: 'user', userId: B } });
   });
   const json = JSON.stringify(flex);
-  await test('2 通目: Flex に送金額・内訳・カテゴリ・要確認・立替・精算へのリンク', () => {
+  await test('2 通目: Flex に送金額・内訳・カテゴリ・要確認・精算へのリンク', () => {
     assert.equal(flex.type, 'flex');
     assert.equal(flex.altText, '9/15〜10/14 の精算: 光麦→岩渕 誠 ¥80,150');
-    for (const s of ['¥80,150', '光麦  →  岩渕 誠', '合計（9件・除外1件）', '¥170,100', '¥85,050', '− 光麦の支払い', '岩渕 誠・カード・共通口座の支払い', '住居費', '70.5%', 'ほか 3カテゴリ ¥3,500', '要確認が 1件（¥2,180）', '未精算の立替が 2件あります（岩渕 誠→光麦 ¥1,000）', SETTLEMENT_URL]) {
+    for (const s of ['¥80,150', '光麦  →  岩渕 誠', '合計（9件・除外1件）', '¥170,100', '¥85,050', '− 光麦の支払い', '岩渕 誠・カード・共通口座の支払い', '住居費', '70.5%', 'ほか 3カテゴリ ¥3,500', '要確認が 1件（¥2,180）', SETTLEMENT_URL]) {
       assert.ok(json.includes(s), `Flex に「${s}」が無い`);
     }
+    assert.ok(!json.includes('立替が'), '立替の精算は折半にまとめたので出さない');
+    assert.ok(!json.includes('途中経過'), '締まった期間は途中経過と書かない');
     assert.ok(json.includes('/icons/cat-housing.png'), 'カテゴリのアイコン');
     // LINE の Flex の上限（1 メッセージ 30KB）に十分収まる
     assert.ok(json.length < 9000, `Flex が大きすぎる: ${json.length}`);
@@ -181,13 +217,11 @@ const e = (amount, payerId, extra = {}) => ({
       members: MEMBERS,
       collectFrom: A,
       expenses: [e(5000, A), e(5000, B)],
-      advances: { count: 0, total: 0, transfer: null },
     });
     const [t, f] = buildSettlementSummaryMessages(even);
     assert.equal(t.type, 'textV2');
     assert.ok(t.text.includes('{u1} {u2}') && t.text.includes('今回は送金なし'));
     assert.equal(f.altText, '9/15〜10/14 の精算: 送金なし');
-    assert.ok(!JSON.stringify(f).includes('未精算の立替'), '立替 0 件なら出さない');
     assert.ok(!JSON.stringify(f).includes('要確認'), '要確認 0 件なら出さない');
   });
   await test('LINE の userId でないメンバーはメンションせず名前を書く', () => {
@@ -197,12 +231,39 @@ const e = (amount, payerId, extra = {}) => ({
       members: [{ lineId: 'legacy-a', displayName: 'あ' }, { lineId: B, displayName: '誠' }],
       collectFrom: 'legacy-a',
       expenses: [e(10000, B)],
-      advances: null,
     });
     const [t] = buildSettlementSummaryMessages(odd);
     assert.equal(t.type, 'textV2');
     assert.ok(t.text.includes('あ から {u2} へ ¥5,000'), t.text);
     assert.equal(t.substitution.u1, undefined);
+  });
+  await test('途中経過（手動の送信）: メンションせず見込みとして書き、期間に（途中経過）を付ける', () => {
+    const interim = buildSettlementSummary({
+      groupId: G,
+      range: { startDate: '2026-10-15', endDate: '2026-10-17' },
+      interim: true,
+      members: MEMBERS,
+      collectFrom: A,
+      expenses: [e(10000, B, { date: '2026-10-16' })],
+    });
+    assert.equal(interim.interim, true);
+    const [t, f] = buildSettlementSummaryMessages(interim);
+    assert.equal(t.type, 'text');
+    assert.equal(t.text, '10/15〜10/17 の精算（折半）の途中経過です。\n今日までの分では、光麦 から 岩渕 誠 へ ¥5,000 の見込みです。');
+    assert.equal(f.altText, '10/15〜10/17（途中経過） の精算: 光麦→岩渕 誠 ¥5,000');
+    assert.ok(JSON.stringify(f).includes('今日までの分で、光麦が岩渕 誠に送金する見込み'));
+    const none = buildSettlementSummary({
+      groupId: G,
+      range: { startDate: '2026-10-15', endDate: '2026-10-17' },
+      interim: true,
+      members: MEMBERS,
+      collectFrom: A,
+      expenses: [],
+    });
+    const [nt, nf] = buildSettlementSummaryMessages(none);
+    assert.ok(nt.text.includes('今日までの分では送金なしの見込み'), nt.text);
+    assert.ok(JSON.stringify(nf).includes('今日までの分では送金なし'));
+    assert.equal(summary.interim, false, '指定しなければ締まった期間');
   });
 
   console.log('\n[重複送信の防止]');

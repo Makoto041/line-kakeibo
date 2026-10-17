@@ -21,11 +21,11 @@ import { normalizeCategoryName } from './categoryNormalization';
 import { getCached, setCached, hasCached, clearCached, updateCachedByPrefix } from './swrCache';
 import { timestampToMillis } from './expenseState';
 import {
-  fetchSettlement,
+  fetchAdvances,
   householdErrorCode,
   isHouseholdApiConfigured,
+  type AdvancesResponse,
   type HouseholdErrorCode,
-  type SettlementResponse,
 } from './householdApi';
 
 // Firestore document data shape for expenses (avoids explicit any)
@@ -1236,16 +1236,16 @@ export function useHousehold(lineId: string | null) {
 }
 
 // ---------------------------------------------------------------------------
-// 世帯の精算（bot の /household/settlement）
+// 立替の印が残っている支出（bot の /household/advances）
 // ---------------------------------------------------------------------------
 
 /**
- * 未精算の立替と精算額。キャッシュを先に出して裏で取り直す（コールドスタートの待ちを隠す）。
- * API が未設定のときは取得しない（available=false。画面は ¥0 とボタン無効）。
+ * 以前の「自分が立替」で印が残っている支出。キャッシュを先に出して裏で取り直す（コールドスタートの待ちを隠す）。
+ * API が未設定のときは取得しない（available=false。精算タブはお知らせを出さない）。
  */
-export function useSettlement(groupId: string | null) {
+export function useAdvances(groupId: string | null) {
   const available = isHouseholdApiConfigured();
-  const key = groupId && available ? `settlement:${groupId}` : '';
+  const key = groupId && available ? `advances:${groupId}` : '';
   const [nonce, setNonce] = useState(0);
   const [status, setStatus] = useState<FetchStatus<HouseholdErrorCode> | null>(null);
   // setData で差し替えたときに描き直すためのカウンタ（値は swrCache）
@@ -1254,7 +1254,7 @@ export function useSettlement(groupId: string | null) {
   useEffect(() => {
     if (!key || !groupId) return;
     let cancelled = false;
-    fetchSettlement(groupId).then(
+    fetchAdvances(groupId).then(
       (value) => {
         if (cancelled) return;
         setCached(key, value);
@@ -1270,9 +1270,9 @@ export function useSettlement(groupId: string | null) {
     };
   }, [key, groupId, nonce]);
 
-  /** 最新の内容で差し替える（精算を記録したときの 409 stale など） */
+  /** 最新の内容で差し替える（印を外したとき・409 stale など） */
   const setData = useCallback(
-    (value: SettlementResponse) => {
+    (value: AdvancesResponse) => {
       if (!key) return;
       setCached(key, value);
       setVersion((v) => v + 1);
@@ -1284,7 +1284,7 @@ export function useSettlement(groupId: string | null) {
   if (!key) {
     return { data: null, loading: false, error: null, available, setData, refetch };
   }
-  const data = getCached<SettlementResponse>(key) ?? null;
+  const data = getCached<AdvancesResponse>(key) ?? null;
   const current = status && status.key === key ? status : null;
   const done = !!current && current.nonce === nonce;
   return {

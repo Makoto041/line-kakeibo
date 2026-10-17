@@ -116,10 +116,11 @@ function common(name, msg) {
     rows[0].contents[0].url
   );
   check(
-    '立替はwalletアイコン',
-    rows[1].contents[0].url.endsWith('/wallet.png'),
-    rows[1].contents[0].url
+    '支払った人は登録者の名前＋walletアイコン',
+    rowText(rows[1]) === '支払った人：まこと' && rows[1].contents[0].url.endsWith('/wallet.png'),
+    `${rowText(rows[1])} / ${rows[1].contents[0].url}`
   );
+  check('支払った人は詳細行に重ねて出さない', !JSON.stringify(msg.contents.body.contents.slice(0, -1)).includes('まこと'));
   check(
     'カテゴリは食費アイコン',
     rowText(rows[2]) === 'カテゴリ：食費' && rows[2].contents[0].url.endsWith('/cat-food.png'),
@@ -199,7 +200,8 @@ function common(name, msg) {
   const rows = settingsRows(msg);
   check('現在の設定は3行', rows.length === 3, `got ${rows.length}`);
   check('支出区分にボタンが出ない', !rows[0].contents.some((c) => c.action));
-  check('立替にボタンが出ない', !rows[1].contents.some((c) => c.action));
+  check('支払った人にボタンが出ない', !rows[1].contents.some((c) => c.action));
+  check('支出区分は立替で精算済み', rowText(rows[0]) === '支出区分：共同費（立替で精算済み）', rowText(rows[0]));
   check('カテゴリは変更できる', rows[2].contents.some((c) => c.action));
   check(
     'paymentMethod の生値が漏れない',
@@ -214,7 +216,7 @@ function common(name, msg) {
     ['personal', '支出区分：除外', '/user.png'],
     ['shared', '支出区分：共同費', '/users.png'],
     ['advance_pending', '支出区分：共同費', '/users.png'],
-    ['advance_settled', '支出区分：共同費', '/users.png'],
+    ['advance_settled', '支出区分：共同費（立替で精算済み）', '/users.png'],
   ];
   for (const [status, expectText, expectIcon] of cases) {
     const msg = buildExpenseCardFromRecord('exp_' + status, {
@@ -242,18 +244,22 @@ function common(name, msg) {
     check(`手入力の ${status ?? '未指定'} → 支出区分：共同費（未確認）`, rowText(manual) === '支出区分：共同費（未確認）', rowText(manual));
   }
 
-  // 立替のラベル
-  const settled = buildExpenseCardFromRecord('e', {
-    category: '食費', status: 'advance_settled', inputSource: 'line_text',
-  });
-  check('advance_settled の立替は精算済み', rowText(settingsRows(settled)[1]) === '立替：精算済み');
-  const pendingAdv = buildExpenseCardFromRecord('e', {
-    category: '食費', status: 'advance_pending', inputSource: 'line_text',
-  });
-  check(
-    'advance_pending の立替はあり（精算待ち）',
-    rowText(settingsRows(pendingAdv)[1]) === '立替：あり（精算待ち）'
-  );
+  // 支払った人のラベル（Web の resolvePayerName と同じ分け方）
+  const payerCases = [
+    [{ inputSource: 'gmail_auto', lineId: 'gmail-auto-system', payerId: 'gmail-auto-system' }, 'カード', '/credit-card.png'],
+    [{ inputSource: 'recurring', lineId: 'recurring-system', payerId: 'recurring-system' }, '共通口座', '/wallet.png'],
+    [{ inputSource: 'line_text', lineId: 'U1', payerId: 'U2', payerDisplayName: 'ひかり', userDisplayName: 'まこと' }, 'ひかり', '/wallet.png'],
+    [{ inputSource: 'line_text', lineId: 'U1', userDisplayName: 'まこと' }, 'まこと', '/wallet.png'],
+    [{ inputSource: 'line_text', lineId: 'U1' }, 'メンバー', '/wallet.png'],
+  ];
+  for (const [record, name, icon] of payerCases) {
+    const row = settingsRows(buildExpenseCardFromRecord('e', { category: '食費', status: 'shared', ...record }))[1];
+    check(`支払った人：${name}`, rowText(row) === `支払った人：${name}` && row.contents[0].url.endsWith(icon), `${rowText(row)} / ${row.contents[0].url}`);
+  }
+  const card = settingsRows(
+    buildCardUsageFlexMessage({ expenseId: 'g1', merchant: 'SHOP', amount: 100, category: '食費', categoryEmoji: '', date: '8/1', status: 'shared' })
+  )[1];
+  check('カード利用通知の支払った人はカード', rowText(card) === '支払った人：カード', rowText(card));
 }
 
 // ------------------------------------------- 操作ボタンの表記・色・postback
@@ -267,20 +273,20 @@ function common(name, msg) {
     if (!b) return null;
     return { label: b.contents[0].text, color: b.contents[0].color, data: JSON.parse(b.action.data) };
   }
-  // [status, 支出区分ボタン, 色, to, 立替ボタン, 色, to]
+  // [status, 支出区分ボタン, 色, to]。支払った人はどの状態でも［自分が払った］（青・set_payer）
   const cases = [
-    [undefined, '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
-    ['pending', '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
-    ['shared', '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
-    ['personal', '戻す', BLUE, 'shared', '自分が立替', BLUE, 'on'],
-    ['advance_pending', '除外', RED, 'personal', '取り消す', RED, 'off'],
+    [undefined, '除外', RED, 'personal'],
+    ['pending', '除外', RED, 'personal'],
+    ['shared', '除外', RED, 'personal'],
+    ['personal', '戻す', BLUE, 'shared'],
+    ['advance_pending', '除外', RED, 'personal'],
   ];
-  for (const [status, splitLabel, splitColor, splitTo, advLabel, advColor, advTo] of cases) {
+  for (const [status, splitLabel, splitColor, splitTo] of cases) {
     const rows = settingsRows(
       buildExpenseCardFromRecord('exp_b', { category: '食費', status, inputSource: 'gmail_auto' })
     );
     const split = button(rows[0]);
-    const adv = button(rows[1]);
+    const payer = button(rows[1]);
     const cat = button(rows[2]);
     check(
       `${status ?? '未指定'} → 支出区分[${splitLabel}]`,
@@ -290,10 +296,10 @@ function common(name, msg) {
       JSON.stringify(split)
     );
     check(
-      `${status ?? '未指定'} → 立替[${advLabel}]`,
-      adv && adv.label === advLabel && adv.color === advColor &&
-        adv.data.action === 'set_advance' && adv.data.to === advTo,
-      JSON.stringify(adv)
+      `${status ?? '未指定'} → 支払った人[自分が払った]`,
+      payer && payer.label === '自分が払った' && payer.color === BLUE &&
+        payer.data.action === 'set_payer' && payer.data.expenseId === 'exp_b' && payer.data.source === 'gmail',
+      JSON.stringify(payer)
     );
     check(`${status ?? '未指定'} → カテゴリ[変更]は青`, cat && cat.label === '変更' && cat.color === BLUE);
   }

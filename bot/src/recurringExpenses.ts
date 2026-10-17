@@ -10,14 +10,15 @@
  * - カード利用通知メールで自動登録される支出（Gmail 自動取得）は、ここに登録すると二重になる（画面で案内する）。
  * - 支払い元
  *   - shared: 共通のカード・口座から引き落とし（Gmail 自動取得の共同費と同じ扱い）
- *   - advance: メンバーの個人口座から引き落とし（その人の立替。精算で相手が半分を払う）
+ *   - advance: メンバーの個人口座から引き落とし（支払った人がその人の共同費。期間の折半でその人の支払いとして数える。
+ *     値の名前は以前の「立替」のなごり）
  */
 
 import type { DocumentData, Firestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import { CANONICAL_CATEGORIES } from './categoryNormalization';
 import { errorMessage, maskId } from './logSafe';
-import { CREATOR_PLACEHOLDER_NAME, fallbackDisplayName } from './householdSettlement';
+import { CREATOR_PLACEHOLDER_NAME, fallbackDisplayName } from './householdMembers';
 import { dayjs, JST } from './time';
 
 export const RECURRING_COLLECTION = 'recurringExpenses';
@@ -39,7 +40,7 @@ export interface RecurringItem {
   /** 引き落とし日（1〜31。月の日数を超える日はその月の末日） */
   dayOfMonth: number;
   payment: RecurringPayment;
-  /** advance のときの立替者（shared では null） */
+  /** advance のときの引き落とされるメンバー（shared では null） */
   payerLineId: string | null;
   active: boolean;
   /** 最後に計上した月（YYYY-MM）。未計上は null */
@@ -137,12 +138,12 @@ export function parseRecurringInput(body: unknown, partial: boolean): Partial<Re
     }
   }
 
-  // 支払い元と立替者の組み合わせ（完全な形でだけ確かめる。更新では保存済みの値と合わせてから確かめる）
+  // 支払い元と引き落とされるメンバーの組み合わせ（完全な形でだけ確かめる。更新では保存済みの値と合わせてから確かめる）
   if (!partial && !isConsistentPayment(out as RecurringInput)) return null;
   return out;
 }
 
-/** advance は立替者が必須、shared は立替者なし */
+/** advance は引き落とされるメンバーが必須、shared はなし */
 export function isConsistentPayment(item: Pick<RecurringInput, 'payment' | 'payerLineId'>): boolean {
   return item.payment === 'advance' ? typeof item.payerLineId === 'string' : item.payerLineId === null;
 }
@@ -255,7 +256,7 @@ export function buildRecurringExpense(item: RecurringItem, date: string, group: 
     updatedAt: now,
   };
   if (item.payment === 'advance' && item.payerLineId) {
-    // 表示名が分からない（仮名「作成者」のまま等）ときは LINE の立替一覧と同じ代わりの名前
+    // 表示名が分からない（仮名「作成者」のまま等）ときは LINE の登録と同じ代わりの名前
     const name = group.names.get(item.payerLineId) || fallbackDisplayName(item.payerLineId);
     return {
       ...base,
@@ -263,8 +264,7 @@ export function buildRecurringExpense(item: RecurringItem, date: string, group: 
       payerId: item.payerLineId,
       userDisplayName: name,
       payerDisplayName: name,
-      status: 'advance_pending' as const,
-      advanceBy: item.payerLineId,
+      status: 'shared' as const,
     };
   }
   // Gmail 自動取得と同じく表示名は持たせない（Web の支払い者の候補に「人」として混ざらないように）
@@ -339,7 +339,7 @@ export async function postDueRecurringExpenses(db: Firestore, now: Date = new Da
         summary.skipped += 1;
         continue;
       }
-      // 立替者が世帯を抜けていたら計上しない（相手が分からない立替を作らない）
+      // 引き落とされるメンバーが世帯を抜けていたら計上しない（折半で誰の支払いか分からなくなる）
       if (item.payment === 'advance' && (!item.payerLineId || !group.names.has(item.payerLineId))) {
         console.warn('recurring: payer is not an active member', { item: maskId(item.id) });
         summary.skipped += 1;
