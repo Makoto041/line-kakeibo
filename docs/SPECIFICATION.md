@@ -244,7 +244,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - **API Route は無し**。読み取りと通常の編集は**クライアントから Firestore/Storage SDK 直アクセス**（セキュリティルールで許可された範囲。§7）
 - 例外: 支出の確認（`status` / `confirmed` の変更）、以前の立替を精算済みにする操作、固定費の CRUD、折半設定の保存、精算の通知の状態の取得と手動の送信は、bot の `api` 関数の認証付き API（§5.4）を経由する（Firestore ルールではクライアントから書けないため。通知は LINE へ送るため）
 - `lib/lineAuth.ts`: 起動時に LIFF でログインし、ID トークンを `POST /auth/line` へ送って Firebase カスタムトークンでサインインする。`lib/hooks.ts` の `useLineAuth` は `lineId` を **ID トークンのカスタムクレームからのみ**取得する（URL の `?lineId=` は使わない）
-- `useExpenses`: 個人分（`where lineId == 自分`）＋ `groupMembers`（`isActive == true`）から解決した `groupId` の世帯分（`where groupId == …`）をマージ。`useHousehold` が世帯（`groups` 文書・有効メンバー・`splitSettings`）を、`useAdvances` が残っている立替（`GET /household/advances`）の応答を保持する
+- `useExpenses`: 個人分（`where lineId == 自分`）＋ `groupMembers`（`isActive == true`）から解決した `groupId` の世帯分（`where groupId == …`）をマージ。`useHousehold` が世帯（`groups` 文書・有効メンバー・`splitSettings`）を、`useLegacyAdvances` が全額にする前の立替（`GET /household/legacy-advances`）の応答を保持する。支払い者の表示（`lib/expenseState.ts` の `resolvePayerName` / `isCardSource`）では、LINE で支払った人をメンバーに変えたカード取込はその人の支払いとして出す
 
 ### 5.4 Web 向け API（bot の `api` 関数 `/household`、`bot/src/householdApi.ts`）
 
@@ -254,7 +254,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - **認可**: `groupMembers/{groupId}_{lineId}` が `isActive: true`。支出は `groupId` あり → その世帯の有効メンバー / 個人支出 → 所有者 / `lineGroupId` だけの旧形式 → 不可。Firestore ルールより厳しい（`groupId` のある支出は所有者であっても、その世帯の有効メンバーでなければ 403。旧形式は所有者でも 403）。判定はトランザクション内で読む
 - **入力検証**: ID（`:expenseId`・`groupId`・`expectedExpenseIds[]`・`:id`）は 1〜128 文字の文字列で、`/` を含まず `.` `..` `__…__` でないこと。body は JSON オブジェクト。違反は 400
 - **CORS**: 許可オリジンは `/auth/line` と同じ（`WEB_ORIGINS` / 本番 Vercel・localhost・`line-kakeibo*.vercel.app`）。`Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS`、`Allow-Headers: Content-Type, Authorization`、Cookie は使わない。JSON の解析エラーやレート制限の応答にも付ける。**防御線はトークンとメンバー確認**で、CORS ではない
-- **レート制限**: 認証前は接続元 IP 単位 300 回/分（Bearer トークンの無い要求は数えない）。`/auth/line` の挙動を変えないため `trust proxy` は設定せず、Google のフロントエンドが `X-Forwarded-For` の末尾に足す接続元の IP をキーにする（クライアントが送った値はその前に並ぶだけなので詐称できない。IP として読めなければ `req.ip`、IPv6 は /56 単位）。前段が増えて末尾が共通のアドレスになると、インスタンス全体の上限として働く（その場合は 1 つの接続元の連打で全員が 429 になりうるため、上限は大きめにしてある）。認証後は lineId 単位で全ルート合わせて 60 回/分（失敗した応答も数える）、加えて立替の印を外す操作は成功したものだけを数えて 5 回/分、精算の通知の手動送信は成功したものだけを数えて 10 分に 3 回（LINE の push の無料枠を連打で使い切らないように）。いずれの上限もインスタンス内メモリで数えるため、複数インスタンスでは最大その倍数まで通る（`api` は maxInstances: 5）
+- **レート制限**: 認証前は接続元 IP 単位 300 回/分（Bearer トークンの無い要求は数えない）。`/auth/line` の挙動を変えないため `trust proxy` は設定せず、Google のフロントエンドが `X-Forwarded-For` の末尾に足す接続元の IP をキーにする（クライアントが送った値はその前に並ぶだけなので詐称できない。IP として読めなければ `req.ip`、IPv6 は /56 単位）。前段が増えて末尾が共通のアドレスになると、インスタンス全体の上限として働く（その場合は 1 つの接続元の連打で全員が 429 になりうるため、上限は大きめにしてある）。認証後は lineId 単位で全ルート合わせて 60 回/分（失敗した応答も数える）、加えて以前の立替を精算済みにする操作は成功したものだけを数えて 5 回/分、精算の通知の手動送信は成功したものだけを数えて 10 分に 3 回（LINE の push の無料枠を連打で使い切らないように）。いずれの上限もインスタンス内メモリで数えるため、複数インスタンスでは最大その倍数まで通る（`api` は maxInstances: 5）
 - 全応答 `Cache-Control: no-store`・`X-Content-Type-Options: nosniff`。エラーは `{ "error": "<code>" }`（`invalid_request` / `unauthenticated` / `forbidden` / `not_found` / `rate_limited` / `internal` ほか下表）
 
 | メソッド・パス | リクエスト | 成功時 | 主なエラー |
