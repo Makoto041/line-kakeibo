@@ -36,7 +36,7 @@ if (!projectId.startsWith('demo-')) {
 initializeApp({ projectId });
 
 const { householdRouter, householdErrorHandler } = require('../dist/householdApi');
-const { applyExpenseChange, decideConfirm, decideSetPayer } = require('../dist/expenseActions');
+const { applyExpenseChange, decideConfirm, decideSetAdvance, decideSetPayer } = require('../dist/expenseActions');
 const { readActiveMember } = require('../dist/householdMembers');
 
 const ORIGIN = 'https://line-kakeibo.vercel.app';
@@ -129,6 +129,8 @@ async function seed(db) {
   set('expenses/adv_a1', { ...base, lineId: 'Ualice', payerId: 'Ualice', groupId: 'g1', lineGroupId: 'C_line1', amount: 10000, description: '家具', status: 'advance_pending', advanceBy: 'Ualice', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-10T01:00:00Z') });
   set('expenses/adv_a2', { ...base, lineId: 'Ualice', payerId: 'Ualice', groupId: 'g1', lineGroupId: 'C_line1', amount: 2400, description: '日用品', status: 'advance_pending', advanceBy: 'Ualice', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-11T01:00:00Z') });
   set('expenses/adv_b1', { ...base, lineId: 'Ubob', payerId: 'Ubob', groupId: 'g1', lineGroupId: 'C_line1', amount: 4000, description: '外食', status: 'advance_pending', advanceBy: 'Ubob', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-12T01:00:00Z') });
+  // 全額で返す立替（advanceFull）は期間の精算で返すので、以前の立替の一覧に入らない
+  set('expenses/adv_full', { ...base, lineId: 'Ubob', payerId: 'Ubob', groupId: 'g1', lineGroupId: 'C_line1', amount: 2610, description: 'ゆで太郎', status: 'advance_pending', advanceBy: 'Ubob', advanceFull: true, includeInTotal: true, confirmed: true });
   // 個人チャットで登録した立替（groupId だけ）は LINE グループ基準の一覧に入らない（以前の LINE の「精算」と同じ）
   set('expenses/adv_private', { ...base, lineId: 'Ubob', payerId: 'Ubob', groupId: 'g1', amount: 777, description: '個人チャット', status: 'advance_pending', advanceBy: 'Ubob', includeInTotal: true, confirmed: true });
 
@@ -236,7 +238,7 @@ async function main() {
     // ---------------- CORS ----------------
     console.log('CORS');
     {
-      const r = await call('OPTIONS', '/household/advances?groupId=g1', { headers: { 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' } });
+      const r = await call('OPTIONS', '/household/legacy-advances?groupId=g1', { headers: { 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' } });
       check('プリフライトは 204', r.status === 204);
       check('許可オリジンに ACAO', acao(r) === ORIGIN);
       check('Vary: Origin', r.headers.get('vary') === 'Origin');
@@ -244,54 +246,54 @@ async function main() {
       check('GET, POST, PATCH, DELETE, OPTIONS を許可', r.headers.get('access-control-allow-methods') === 'GET, POST, PATCH, DELETE, OPTIONS');
       check('Allow-Credentials は付けない', r.headers.get('access-control-allow-credentials') === null);
       check('X-Content-Type-Options: nosniff', r.headers.get('x-content-type-options') === 'nosniff');
-      const evil = await call('OPTIONS', '/household/advances?groupId=g1', { origin: EVIL_ORIGIN });
+      const evil = await call('OPTIONS', '/household/legacy-advances?groupId=g1', { origin: EVIL_ORIGIN });
       check('許可外のオリジンは ACAO なし', evil.status === 204 && acao(evil) === null);
     }
 
     // ---------------- 認証 ----------------
     console.log('\n認証');
     {
-      const r = await call('GET', '/household/advances?groupId=g1');
+      const r = await call('GET', '/household/legacy-advances?groupId=g1');
       check('トークン無しは 401 unauthenticated', r.status === 401 && r.body && r.body.error === 'unauthenticated', r.body);
       check('401 にも CORS ヘッダー', acao(r) === ORIGIN);
       check('Cache-Control: no-store', r.headers.get('cache-control') === 'no-store');
       check('401 にも X-Content-Type-Options: nosniff', r.headers.get('x-content-type-options') === 'nosniff');
-      const bad = await call('GET', '/household/advances?groupId=g1', { token: 'not-a-jwt' });
+      const bad = await call('GET', '/household/legacy-advances?groupId=g1', { token: 'not-a-jwt' });
       check('不正なトークンは 401', bad.status === 401 && bad.body.error === 'unauthenticated');
-      const basic = await call('GET', '/household/advances?groupId=g1', { headers: { Authorization: `Basic ${tokens.alice}` } });
+      const basic = await call('GET', '/household/legacy-advances?groupId=g1', { headers: { Authorization: `Basic ${tokens.alice}` } });
       check('Bearer 以外は 401', basic.status === 401);
-      const anon = await call('GET', '/household/advances?groupId=g1', { token: tokens.anonymous });
+      const anon = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.anonymous });
       check('匿名ユーザーは 403', anon.status === 403 && anon.body.error === 'forbidden', anon.body);
-      const noLine = await call('GET', '/household/advances?groupId=g1', { token: tokens.noLineId });
+      const noLine = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.noLineId });
       check('lineId クレームの無いカスタムトークンは 403', noLine.status === 403, noLine.body);
     }
 
     // ---------------- 精算の表示 ----------------
-    console.log('\nGET /household/advances');
+    console.log('\nGET /household/legacy-advances');
     {
-      const stranger = await call('GET', '/household/advances?groupId=g1', { token: tokens.stranger });
+      const stranger = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.stranger });
       check('メンバー外は 403', stranger.status === 403 && stranger.body.error === 'forbidden' && acao(stranger) === ORIGIN);
-      const left = await call('GET', '/household/advances?groupId=g1', { token: tokens.left });
+      const left = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.left });
       check('脱退者（isActive:false）は 403', left.status === 403);
-      const other = await call('GET', '/household/advances?groupId=g1', { token: tokens.carol });
+      const other = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.carol });
       check('他の世帯のメンバーは 403', other.status === 403);
-      const collider = await call('GET', '/household/advances?groupId=g1', { token: tokens.collider });
+      const collider = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.collider });
       check('文書 ID が一致しても中身の groupId・lineId が違えば 403', collider.status === 403 && collider.body.error === 'forbidden', collider.body);
-      const missing = await call('GET', '/household/advances?groupId=nope', { token: tokens.alice });
+      const missing = await call('GET', '/household/legacy-advances?groupId=nope', { token: tokens.alice });
       check('存在しない世帯（メンバーでもない）は 403', missing.status === 403);
-      const arr = await call('GET', '/household/advances?groupId=g1&groupId=g2', { token: tokens.alice });
+      const arr = await call('GET', '/household/legacy-advances?groupId=g1&groupId=g2', { token: tokens.alice });
       check('groupId が配列なら 400', arr.status === 400 && arr.body.error === 'invalid_request', arr.body);
-      const none = await call('GET', '/household/advances', { token: tokens.alice });
+      const none = await call('GET', '/household/legacy-advances', { token: tokens.alice });
       check('groupId が無ければ 400', none.status === 400);
-      const reserved = await call('GET', '/household/advances?groupId=__x__', { token: tokens.alice });
+      const reserved = await call('GET', '/household/legacy-advances?groupId=__x__', { token: tokens.alice });
       check('予約 ID（__x__）は 400', reserved.status === 400);
-      const long = await call('GET', `/household/advances?groupId=${'a'.repeat(129)}`, { token: tokens.alice });
+      const long = await call('GET', `/household/legacy-advances?groupId=${'a'.repeat(129)}`, { token: tokens.alice });
       check('129 文字の groupId は 400', long.status === 400);
 
-      const r = await call('GET', '/household/advances?groupId=g1', { token: tokens.alice });
+      const r = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.alice });
       const v = r.body;
       check('メンバーは 200', r.status === 200, v);
-      check('対象は LINE グループの 3 件（個人チャット分・精算済みは含まない）', sameMembers(v.expenseIds, ['adv_a1', 'adv_a2', 'adv_b1']), v.expenseIds);
+      check('対象は LINE グループの以前の立替 3 件（全額の立替・個人チャット分・精算済みは含まない）', sameMembers(v.expenseIds, ['adv_a1', 'adv_a2', 'adv_b1']), v.expenseIds);
       check('items は createdAt 降順', v.items.map((i) => i.id).join(',') === 'adv_b1,adv_a2,adv_a1', v.items.map((i) => i.id));
       check('items のフィールドは必要なものだけ', JSON.stringify(Object.keys(v.items[0]).sort()) === JSON.stringify(['advanceBy', 'advanceByName', 'amount', 'category', 'date', 'description', 'id']), Object.keys(v.items[0]));
       check('立替にした人と金額', v.items[0].advanceBy === 'Ubob' && v.items[0].amount === 4000 && v.items[2].advanceBy === 'Ualice', v.items);
@@ -387,73 +389,84 @@ async function main() {
       check('メンバー外・脱退者は forbidden で書かない', byStranger && byStranger.forbidden === true && byLeft && byLeft.forbidden === true && (await db.doc('expenses/pay_card').get()).get('payerId') === 'Ubob');
       const onAdvance = await setPayer('adv_private', 'Ualice');
       const advDoc = (await db.doc('expenses/adv_private').get()).data();
-      check('立替の印が残っていれば外す（共同費・advanceBy なし）', onAdvance && onAdvance.record && advDoc.status === 'shared' && advDoc.advanceBy === undefined && advDoc.payerId === 'Ualice', advDoc);
+      check('立替なら立て替えた人も押した人にする（立替のまま）', onAdvance && onAdvance.record && advDoc.status === 'advance_pending' && advDoc.advanceBy === 'Ualice' && advDoc.payerId === 'Ualice', advDoc);
+
+      // ［自分が立替］（postback と同じ applyExpenseChange + decideSetAdvance + メンバー確認）
+      const setAdvance = async (expenseId, userId) =>
+        applyExpenseChange(expenseId, (data) => decideSetAdvance({ lineId: userId, displayName: 'Bob' })(data), {
+          authorize: async (data, tx) => (await readActiveMember(db, data.groupId, userId, tx)) !== null,
+        });
+      const advanced = await setAdvance('pay_card', 'Ubob');
+      const fullDoc = (await db.doc('expenses/pay_card').get()).data();
+      check('［自分が立替］で全額の立替になる（押した人が立替・支払い）', advanced && advanced.record && fullDoc.status === 'advance_pending' && fullDoc.advanceFull === true && fullDoc.advanceBy === 'Ubob' && fullDoc.payerId === 'Ubob', fullDoc);
+      const strangerAdvance = await setAdvance('pay_card', 'Ustranger');
+      check('メンバー外は立替にできない', strangerAdvance && strangerAdvance.forbidden === true);
       const onSettled = await setPayer('e_settled', 'Ualice');
       check('立替で精算済みは変えない', onSettled && onSettled.reject && (await db.doc('expenses/e_settled').get()).get('payerId') === 'Ubob', onSettled);
     }
 
-    // ---------------- 立替の印を外す ----------------
-    console.log('\nPOST /household/advances/clear');
+    // ---------------- 以前の立替を精算済みにする ----------------
+    console.log('\nPOST /household/legacy-advances/settle');
     {
-      const noTok = await call('POST', '/household/advances/clear', { body: { groupId: 'g1', expectedExpenseIds: [] } });
+      const noTok = await call('POST', '/household/legacy-advances/settle', { body: { groupId: 'g1', expectedExpenseIds: [] } });
       check('トークン無しは 401', noTok.status === 401);
       // 入力検証（400）は認可より前。上限（成功 5 回/分・lineId 単位）とは関係なく left で送る
-      const badIds = await call('POST', '/household/advances/clear', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: 'adv_a1' } });
+      const badIds = await call('POST', '/household/legacy-advances/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: 'adv_a1' } });
       check('expectedExpenseIds が配列でなければ 400', badIds.status === 400);
-      const badElem = await call('POST', '/household/advances/clear', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 42] } });
+      const badElem = await call('POST', '/household/legacy-advances/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 42] } });
       check('文字列以外の要素は 400', badElem.status === 400);
-      const tooLongBad = await call('POST', '/household/advances/clear', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: [...Array.from({ length: 501 }, (_, i) => `x${i}`), 'a/b'] } });
+      const tooLongBad = await call('POST', '/household/legacy-advances/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: [...Array.from({ length: 501 }, (_, i) => `x${i}`), 'a/b'] } });
       check('件数が多くても不正な要素があれば 400', tooLongBad.status === 400);
-      const tooLongLeft = await call('POST', '/household/advances/clear', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: Array.from({ length: 501 }, (_, i) => `x${i}`) } });
+      const tooLongLeft = await call('POST', '/household/legacy-advances/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: Array.from({ length: 501 }, (_, i) => `x${i}`) } });
       check('501 件の expectedExpenseIds でもメンバー確認を先に行う（脱退者は 403）', tooLongLeft.status === 403, tooLongLeft.body);
-      const badGroup = await call('POST', '/household/advances/clear', { token: tokens.left, body: { groupId: ['g1'], expectedExpenseIds: [] } });
+      const badGroup = await call('POST', '/household/legacy-advances/settle', { token: tokens.left, body: { groupId: ['g1'], expectedExpenseIds: [] } });
       check('groupId が文字列でなければ 400', badGroup.status === 400);
-      const stranger = await call('POST', '/household/advances/clear', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1'] } });
+      const stranger = await call('POST', '/household/legacy-advances/settle', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1'] } });
       check('メンバー外は 403', stranger.status === 403);
 
-      const stale = await call('POST', '/household/advances/clear', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2'] } });
+      const stale = await call('POST', '/household/legacy-advances/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2'] } });
       check('表示と対象がずれていれば 409 stale', stale.status === 409 && stale.body.error === 'stale', stale.body && stale.body.error);
       check('stale には最新の一覧が付く', stale.body.current && sameMembers(stale.body.current.expenseIds, ['adv_a1', 'adv_a2', 'adv_b1']));
       check('409 にも CORS ヘッダー', acao(stale) === ORIGIN);
-      const staleExtra = await call('POST', '/household/advances/clear', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1', 'adv_private'] } });
+      const staleExtra = await call('POST', '/household/legacy-advances/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1', 'adv_private'] } });
       check('余分な ID があっても 409 stale', staleExtra.status === 409 && staleExtra.body.error === 'stale');
       check('stale のときは書き込まない', (await db.doc('expenses/adv_a1').get()).get('status') === 'advance_pending');
 
-      const ok = await call('POST', '/household/advances/clear', { token: tokens.bob, body: { groupId: 'g1', expectedExpenseIds: ['adv_b1', 'adv_a1', 'adv_a2', 'adv_a1'] } });
-      check('一致すれば 200（重複 ID は除く）', ok.status === 200 && ok.body.ok === true && ok.body.cleared === 3 && ok.body.skipped === 0, ok.body);
-      const cleared = await Promise.all(['adv_a1', 'adv_a2', 'adv_b1'].map(async (id) => (await db.doc(`expenses/${id}`).get()).data()));
-      check('対象は共同費に戻り advanceBy を消す', cleared.every((d) => d.status === 'shared' && d.advanceBy === undefined && d.includeInTotal === true && d.confirmed === true), cleared);
-      check('支払った人・金額は変えない（期間の折半の金額は変わらない）', cleared[0].payerId === 'Ualice' && cleared[0].amount === 10000 && cleared[2].payerId === 'Ubob' && cleared[2].amount === 4000);
-      check('立替で精算済みの支出には触れない', (await db.doc('expenses/e_settled').get()).get('status') === 'advance_settled');
+      const ok = await call('POST', '/household/legacy-advances/settle', { token: tokens.bob, body: { groupId: 'g1', expectedExpenseIds: ['adv_b1', 'adv_a1', 'adv_a2', 'adv_a1'] } });
+      check('一致すれば 200（重複 ID は除く）', ok.status === 200 && ok.body.ok === true && ok.body.settled === 3 && ok.body.skipped === 0, ok.body);
+      const settledDocs = await Promise.all(['adv_a1', 'adv_a2', 'adv_b1'].map(async (id) => (await db.doc(`expenses/${id}`).get()).data()));
+      check('対象は advance_settled・精算日時付き', settledDocs.every((d) => d.status === 'advance_settled' && d.advanceSettledAt), settledDocs);
+      check('支払った人・金額は変えない', settledDocs[0].payerId === 'Ualice' && settledDocs[0].amount === 10000 && settledDocs[2].payerId === 'Ubob');
+      check('全額の立替には触れない（期間の精算で返す）', (await db.doc('expenses/adv_full').get()).get('status') === 'advance_pending');
 
-      const staleEmpty = await call('POST', '/household/advances/clear', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1'] } });
-      check('外したあとの画面から送ると 409 stale（current は 0 件）', staleEmpty.status === 409 && staleEmpty.body.error === 'stale' && staleEmpty.body.current && staleEmpty.body.current.expenseIds.length === 0, staleEmpty.body);
-      const nothing = await call('POST', '/household/advances/clear', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: [] } });
-      check('印が無く画面も 0 件なら 409 nothing_to_clear', nothing.status === 409 && nothing.body.error === 'nothing_to_clear', nothing.body);
-      const after = await call('GET', '/household/advances?groupId=g1', { token: tokens.alice });
-      check('外したあとの一覧は 0 件', after.status === 200 && after.body.items.length === 0, after.body);
+      const staleEmpty = await call('POST', '/household/legacy-advances/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1'] } });
+      check('精算済みにしたあとの画面から送ると 409 stale（current は 0 件）', staleEmpty.status === 409 && staleEmpty.body.error === 'stale' && staleEmpty.body.current && staleEmpty.body.current.expenseIds.length === 0, staleEmpty.body);
+      const nothing = await call('POST', '/household/legacy-advances/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: [] } });
+      check('以前の立替が無く画面も 0 件なら 409 nothing_to_settle', nothing.status === 409 && nothing.body.error === 'nothing_to_settle', nothing.body);
+      const after = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.alice });
+      check('精算済みにしたあとの一覧は 0 件', after.status === 200 && after.body.items.length === 0, after.body);
 
-      // LINE グループの無い世帯は groupId 基準（1 人だけの世帯でも外せる）
-      const solo = await call('GET', '/household/advances?groupId=g2', { token: tokens.carol });
+      // LINE グループの無い世帯は groupId 基準（1 人だけの世帯でも精算済みにできる）
+      const solo = await call('GET', '/household/legacy-advances?groupId=g2', { token: tokens.carol });
       check('groupId 基準の一覧', solo.status === 200 && sameMembers(solo.body.expenseIds, ['adv_c1']), solo.body);
-      const soloClear = await call('POST', '/household/advances/clear', { token: tokens.carol, body: { groupId: 'g2', expectedExpenseIds: ['adv_c1'] } });
-      check('1 人だけの世帯でも外せる', soloClear.status === 200 && soloClear.body.cleared === 1 && (await db.doc('expenses/adv_c1').get()).get('status') === 'shared', soloClear.body);
+      const soloClear = await call('POST', '/household/legacy-advances/settle', { token: tokens.carol, body: { groupId: 'g2', expectedExpenseIds: ['adv_c1'] } });
+      check('1 人だけの世帯でも精算済みにできる', soloClear.status === 200 && soloClear.body.settled === 1 && (await db.doc('expenses/adv_c1').get()).get('status') === 'advance_settled', soloClear.body);
 
       // 作成者の仮名「作成者」は名前として返さない（立替の記録の名前を使う）
-      const placeholder = await call('GET', '/household/advances?groupId=g5', { token: tokens.ivan });
+      const placeholder = await call('GET', '/household/legacy-advances?groupId=g5', { token: tokens.ivan });
       check('立替にした人の名前は支出に記録された名前', placeholder.status === 200 && placeholder.body.items[0].advanceByName === 'Ivan' && !JSON.stringify(placeholder.body).includes('作成者'), placeholder.body);
     }
 
     // ---------------- 500 件超 ----------------
-    console.log('\n立替の印が 500 件を超える世帯');
+    console.log('\n以前の立替が 500 件を超える世帯');
     {
-      const r = await call('GET', '/household/advances?groupId=g3', { token: tokens.dave });
+      const r = await call('GET', '/household/legacy-advances?groupId=g3', { token: tokens.dave });
       check('GET は 501 件を返す', r.status === 200 && r.body.expenseIds.length === 501);
-      const s = await call('POST', '/household/advances/clear', { token: tokens.dave, body: { groupId: 'g3', expectedExpenseIds: r.body.expenseIds.slice(0, 500) } });
-      check('外す操作は 409 too_many', s.status === 409 && s.body.error === 'too_many', s.body);
-      const echoed = await call('POST', '/household/advances/clear', { token: tokens.dave, body: { groupId: 'g3', expectedExpenseIds: r.body.expenseIds } });
+      const s = await call('POST', '/household/legacy-advances/settle', { token: tokens.dave, body: { groupId: 'g3', expectedExpenseIds: r.body.expenseIds.slice(0, 500) } });
+      check('精算済みにする操作は 409 too_many', s.status === 409 && s.body.error === 'too_many', s.body);
+      const echoed = await call('POST', '/household/legacy-advances/settle', { token: tokens.dave, body: { groupId: 'g3', expectedExpenseIds: r.body.expenseIds } });
       check('GET の 501 件をそのまま送っても 400 ではなく 409 too_many', echoed.status === 409 && echoed.body.error === 'too_many', echoed.body);
-      const staleMany = await call('POST', '/household/advances/clear', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: Array.from({ length: 501 }, (_, i) => `x${i}`) } });
+      const staleMany = await call('POST', '/household/legacy-advances/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: Array.from({ length: 501 }, (_, i) => `x${i}`) } });
       check('501 件を送ったが現在は 500 件以下なら 409 stale（最新の内容付き）', staleMany.status === 409 && staleMany.body.error === 'stale' && staleMany.body.current && Array.isArray(staleMany.body.current.expenseIds), staleMany.body && staleMany.body.error);
     }
 
@@ -499,7 +512,7 @@ async function main() {
     }
 
     // ---------------- レート制限 ----------------
-    console.log('\nレート制限（lineId 単位。全体 60 回/分、立替の印を外す操作は成功だけを数えて 5 回/分）');
+    console.log('\nレート制限（lineId 単位。全体 60 回/分、以前の立替を精算済みにする操作は成功だけを数えて 5 回/分）');
     {
       const addAdvance = (i) => db.doc(`expenses/lim_${i}`).set({ lineId: 'Ufrank', payerId: 'Ufrank', groupId: 'g4', amount: 100 * (i + 1), description: `lim ${i}`, date: '2026-09-22', category: '食費', status: 'advance_pending', advanceBy: 'Ufrank', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-22T01:00:00Z') });
 
@@ -507,34 +520,34 @@ async function main() {
       await addAdvance(0);
       const failures = [];
       for (let i = 0; i < 3; i++) {
-        failures.push((await call('POST', '/household/advances/clear', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: ['nope'] } })).status);
+        failures.push((await call('POST', '/household/legacy-advances/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: ['nope'] } })).status);
       }
       check('失敗（409）は 429 にならない', failures.every((st) => st === 409), failures);
 
       const statuses = [];
       for (let i = 0; i < 5; i++) {
         if (i > 0) await addAdvance(i);
-        const r = await call('POST', '/household/advances/clear', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: [`lim_${i}`] } });
+        const r = await call('POST', '/household/legacy-advances/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: [`lim_${i}`] } });
         statuses.push(r.status);
       }
       check('失敗 3 回の後でも成功は 5 回まで通る', statuses.every((st) => st === 200), statuses);
       await addAdvance(5);
-      const limited = await call('POST', '/household/advances/clear', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: ['lim_5'] }, allow429: true });
+      const limited = await call('POST', '/household/legacy-advances/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: ['lim_5'] }, allow429: true });
       check('6 回目は 429 rate_limited', limited.status === 429 && limited.body && limited.body.error === 'rate_limited', limited.status);
       check('429 にも CORS ヘッダー', acao(limited) === ORIGIN);
       check('429 にも X-Content-Type-Options: nosniff', limited.headers.get('x-content-type-options') === 'nosniff');
       check('429 のときは書き込まない', (await db.doc('expenses/lim_5').get()).get('status') === 'advance_pending');
-      const other = await call('POST', '/household/advances/clear', { token: tokens.gina, body: { groupId: 'g4', expectedExpenseIds: ['lim_5'] } });
+      const other = await call('POST', '/household/legacy-advances/settle', { token: tokens.gina, body: { groupId: 'g4', expectedExpenseIds: ['lim_5'] } });
       check('他のユーザーは制限されない', other.status === 200, other.status);
 
       // 全ルート共通の上限は失敗も数える（メンバー外が 403 を連打しても 60 回/分で止まる）
       const seen = [];
       for (let i = 0; i < 61 && seen[seen.length - 1] !== 429; i++) {
-        seen.push((await call('GET', '/household/advances?groupId=g1', { token: tokens.stranger, allow429: true })).status);
+        seen.push((await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.stranger, allow429: true })).status);
       }
       check('403 の連打も 60 回/分で 429', seen[seen.length - 1] === 429 && seen.slice(0, -1).every((st) => st === 403), `${seen.length} 回目 ${seen[seen.length - 1]}`);
-      const strangerClear = await call('POST', '/household/advances/clear', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: [] }, allow429: true });
-      check('上限に達すると立替の印を外す操作も 429', strangerClear.status === 429);
+      const strangerClear = await call('POST', '/household/legacy-advances/settle', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: [] }, allow429: true });
+      check('上限に達すると精算済みにする操作も 429', strangerClear.status === 429);
     }
 
     // ---------------- 未定義のルート ----------------
@@ -555,36 +568,36 @@ async function main() {
       console.warn = () => floodWarnings++;
       try {
         for (let i = 0; i < 301; i++) {
-          flood.push((await call('GET', '/household/advances?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': attacker }, allow429: true })).status);
+          flood.push((await call('GET', '/household/legacy-advances?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': attacker }, allow429: true })).status);
         }
       } finally {
         console.warn = origWarn;
       }
       check('429 になった要求はトークンを検証しない（警告は 300 回だけ）', floodWarnings === 300, floodWarnings);
       check('同じ接続元は 300 回まで 401、301 回目は 429', flood.slice(0, 300).every((st) => st === 401) && flood[300] === 429, `${flood.filter((st) => st === 401).length}×401, last ${flood[300]}`);
-      const spoofed = await call('GET', '/household/advances?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': `198.51.100.9, ${attacker}` }, allow429: true });
+      const spoofed = await call('GET', '/household/legacy-advances?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': `198.51.100.9, ${attacker}` }, allow429: true });
       check('前に別の IP を足しても同じ接続元として 429（末尾は詐称できない）', spoofed.status === 429, spoofed.status);
-      const neighbour = await call('GET', '/household/advances?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': `${attacker}, 198.51.100.10` } });
+      const neighbour = await call('GET', '/household/legacy-advances?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': `${attacker}, 198.51.100.10` } });
       check('末尾が違う接続元は別に数える（401）', neighbour.status === 401, neighbour.status);
-      const legit = await call('GET', '/household/advances?groupId=g1', { token: tokens.alice, headers: { 'X-Forwarded-For': '198.51.100.20' } });
+      const legit = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.alice, headers: { 'X-Forwarded-For': '198.51.100.20' } });
       check('他の利用者は締め出されない（200）', legit.status === 200, legit.status);
-      const direct = await call('GET', '/household/advances?groupId=g1', { token: tokens.alice });
+      const direct = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.alice });
       check('X-Forwarded-For の無い要求（req.ip）も締め出されない', direct.status === 200, direct.status);
     }
 
     // ---------------- 失効したトークン ----------------
     console.log('\n失効したトークン（verifyIdToken の checkRevoked）');
     {
-      const before = await call('GET', '/household/advances?groupId=g1', { token: tokens.bob });
+      const before = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.bob });
       check('失効前は 200', before.status === 200, before.status);
       // 失効時刻は秒単位で、auth_time がそれより前のトークンだけが失効扱いになる
       const wait = tokensIssuedAt + 1100 - Date.now();
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
       await getAuth().revokeRefreshTokens('uid-bob');
-      const revoked = await call('GET', '/household/advances?groupId=g1', { token: tokens.bob });
+      const revoked = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.bob });
       check('revokeRefreshTokens 後の古いトークンは 401', revoked.status === 401 && revoked.body.error === 'unauthenticated' && acao(revoked) === ORIGIN, revoked.body);
       await getAuth().updateUser('uid-gina', { disabled: true });
-      const disabled = await call('GET', '/household/advances?groupId=g4', { token: tokens.gina });
+      const disabled = await call('GET', '/household/legacy-advances?groupId=g4', { token: tokens.gina });
       check('無効化したユーザーのトークンは 401', disabled.status === 401 && disabled.body.error === 'unauthenticated', disabled.body);
     }
     // ---------------- 要求数の予算 ----------------

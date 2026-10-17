@@ -2,8 +2,9 @@
  * 期間の折半精算の純関数（Web の web/lib/periodSplit.ts と同じ式。LINE の精算サマリーが使う）
  *
  * 期間内の世帯の支出（合計に含むもの）を 2 人で折半し、指定したメンバー（集金するメンバー）が
- * すでに払った分を引いた額を、そのメンバーから集金する。
- *   集金額 = 合計 ÷ 2 − 集金するメンバーの支払い（四捨五入）
+ * すでに払った分を引いた額を、そのメンバーから集金する。立替（全額。isFullAdvance）は折半せず、
+ * 立て替えた人へ全額を返す（支出の日付の期間の精算に加算する）。
+ *   集金額 = 合計 ÷ 2 − 集金するメンバーの支払い + 相手の立替 − 集金するメンバーの立替（四捨五入）
  * クレジットカードの自動取得・共通口座の固定費など、集金するメンバー以外の支払いは相手の負担として扱う。
  * マイナスになるとき（集金するメンバーが半分より多く払っている）は、相手がその額を払う。
  * 支払者は payerId（無ければ登録者）で判定する。立替精算済み（advance_settled）は折半しない（二重精算を防ぐ）。
@@ -20,6 +21,8 @@ export interface SplitExpense {
   payerId?: string;
   status?: string;
   date?: string;
+  advanceBy?: string;
+  advanceFull?: boolean;
 }
 
 export interface SplitMember {
@@ -45,6 +48,8 @@ export interface PeriodSplit {
   excludedCount: number;
   /** 立替精算済みで折半しない件数 */
   settledCount: number;
+  /** 立替（全額）の件数（折半せず、立て替えた人へ全額を返す） */
+  advanceCount: number;
   /** 合計 ÷ 2（端数はそのまま。式の表示用） */
   half: number;
   /** 集金するメンバーと相手。決められないときは null */
@@ -52,6 +57,10 @@ export interface PeriodSplit {
   counterpart: SplitMember | null;
   /** 集金するメンバーの支払い（合計に含むもの） */
   targetPaid: number;
+  /** 集金するメンバーの立替（全額。相手から返してもらう） */
+  targetAdvanced: number;
+  /** 相手の立替（全額。集金するメンバーが返す） */
+  counterpartAdvanced: number;
   /** 精算。0 円や計算できないときは null */
   transfer: SplitTransfer | null;
   reason: SplitUnavailableReason | null;
@@ -76,9 +85,23 @@ export function periodPool<E extends SplitExpense>(
   );
 }
 
-/** 折半の対象（合計に含み、立替精算済みでないもの） */
-export function isSplitCounted(e: Pick<SplitExpense, 'includeInTotal' | 'status'>): boolean {
-  return e.includeInTotal === true && e.status !== 'advance_settled';
+/** 折半の対象（合計に含み、立替精算済み・立替（全額）でないもの） */
+export function isSplitCounted(e: Pick<SplitExpense, 'includeInTotal' | 'status' | 'advanceFull'>): boolean {
+  return e.includeInTotal === true && e.status !== 'advance_settled' && !isFullAdvance(e);
+}
+
+/**
+ * 立替（全額）か: 「自分が立替」にした支出（advance_pending）のうち、全額を返す扱い（advanceFull）のもの。
+ * advanceFull の無い advance_pending は全額にする前の立替で、これまでどおり支払った人の分として折半する
+ * （過去の期間の金額を変えないため。精算タブで精算済みにできる）。
+ */
+export function isFullAdvance(e: Pick<SplitExpense, 'status' | 'advanceFull'>): boolean {
+  return e.status === 'advance_pending' && e.advanceFull === true;
+}
+
+/** 立て替えた人（advanceBy、無ければ支払った人・登録者） */
+export function advancerOf(e: Pick<SplitExpense, 'advanceBy' | 'payerId' | 'lineId'>): string {
+  return e.advanceBy || e.payerId || e.lineId;
 }
 
 export function computePeriodSplit(input: {
@@ -90,31 +113,41 @@ export function computePeriodSplit(input: {
   range?: { startDate: string; endDate: string };
 }): PeriodSplit {
   const pool = periodPool(input.expenses, input.groupId, input.range);
-  const included = pool.filter((e) => e.includeInTotal);
+  // 立替（全額）は折半せず、立て替えた人へ全額を返す
+  const advances = pool.filter(isFullAdvance);
+  const rest = pool.filter((e) => !isFullAdvance(e));
+  const included = rest.filter((e) => e.includeInTotal);
   const counted = included.filter((e) => e.status !== 'advance_settled');
   const total = counted.reduce((sum, e) => sum + amountOf(e), 0);
   const base = {
     total,
     count: counted.length,
-    excludedCount: pool.length - included.length,
+    excludedCount: rest.length - included.length,
     settledCount: included.length - counted.length,
+    advanceCount: advances.length,
     half: total / 2,
   };
+  const none = { target: null, counterpart: null, targetPaid: 0, targetAdvanced: 0, counterpartAdvanced: 0, transfer: null };
 
   const members = input.members.filter((m, i, all) => all.findIndex((o) => o.lineId === m.lineId) === i);
   if (members.length !== 2) {
-    return { ...base, target: null, counterpart: null, targetPaid: 0, transfer: null, reason: 'not_two_members' };
+    return { ...base, ...none, reason: 'not_two_members' };
   }
   const target = members.find((m) => m.lineId === input.targetLineId) ?? null;
   if (!target) {
-    return { ...base, target: null, counterpart: null, targetPaid: 0, transfer: null, reason: 'no_target' };
+    return { ...base, ...none, reason: 'no_target' };
   }
   const counterpart = members.find((m) => m.lineId !== target.lineId) as SplitMember;
 
   const targetPaid = counted
     .filter((e) => (e.payerId || e.lineId) === target.lineId)
     .reduce((sum, e) => sum + amountOf(e), 0);
-  const diff = base.half - targetPaid;
+  // 立替は立て替えた人（advanceBy、無ければ支払った人）で分ける。集金するメンバー以外の立替は相手の分として扱う
+  const targetAdvanced = advances
+    .filter((e) => advancerOf(e) === target.lineId)
+    .reduce((sum, e) => sum + amountOf(e), 0);
+  const counterpartAdvanced = advances.reduce((sum, e) => sum + amountOf(e), 0) - targetAdvanced;
+  const diff = base.half - targetPaid + counterpartAdvanced - targetAdvanced;
   // 0.5 円は切り上げ（向きによらず絶対値で丸める）
   const amount = Math.round(Math.abs(diff));
   const transfer: SplitTransfer | null =
@@ -124,7 +157,7 @@ export function computePeriodSplit(input: {
       ? { fromLineId: target.lineId, toLineId: counterpart.lineId, amount }
       : { fromLineId: counterpart.lineId, toLineId: target.lineId, amount };
 
-  return { ...base, target, counterpart, targetPaid, transfer, reason: null };
+  return { ...base, target, counterpart, targetPaid, targetAdvanced, counterpartAdvanced, transfer, reason: null };
 }
 
 /** 式の表示用: 整数ならそのまま、端数があれば小数 1 桁（160,426.5） */

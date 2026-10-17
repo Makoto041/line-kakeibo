@@ -4,7 +4,7 @@ import type { ExpenseStatus } from './hooks';
 
 // ---- 型 ---------------------------------------------------------------------
 
-/** 立替の印が残っている支出（以前の「自分が立替」。立替の精算は期間の折半にまとめた） */
+/** 全額にする前の立替（advanceFull の無い advance_pending）。全額の立替は期間の精算で返すので含まない */
 export interface AdvanceItem {
   id: string;
   date: string;
@@ -17,7 +17,7 @@ export interface AdvanceItem {
   advanceByName: string;
 }
 
-/** GET /household/advances の応答 */
+/** GET /household/legacy-advances の応答 */
 export interface AdvancesResponse {
   groupId: string;
   /** 新しい順 */
@@ -26,8 +26,8 @@ export interface AdvancesResponse {
   asOf: string;
 }
 
-export interface ClearAdvancesResult {
-  cleared: number;
+export interface SettleLegacyAdvancesResult {
+  settled: number;
   skipped: number;
 }
 
@@ -76,8 +76,7 @@ export type HouseholdErrorCode =
   | 'unauthenticated'
   | 'forbidden'
   | 'not_found'
-  | 'settled'
-  | 'nothing_to_clear'
+  | 'nothing_to_settle'
   | 'stale'
   | 'too_many'
   | 'line_limit'
@@ -179,9 +178,9 @@ export function parseAdvancesResponse(json: unknown): AdvancesResponse | null {
   };
 }
 
-export function parseClearAdvancesResult(json: unknown): ClearAdvancesResult | null {
+export function parseSettleLegacyAdvancesResult(json: unknown): SettleLegacyAdvancesResult | null {
   if (!isRecord(json) || json.ok !== true) return null;
-  return { cleared: toNumber(json.cleared), skipped: toNumber(json.skipped) };
+  return { settled: toNumber(json.settled), skipped: toNumber(json.skipped) };
 }
 
 const SUMMARY_REASONS: readonly SummaryUnavailableReason[] = ['no_line_group', 'no_collect_from', 'not_two_members', 'fixed_period'];
@@ -234,8 +233,7 @@ const KNOWN_ERRORS: readonly HouseholdErrorCode[] = [
   'forbidden',
   'not_found',
   'unavailable',
-  'settled',
-  'nothing_to_clear',
+  'nothing_to_settle',
   'stale',
   'too_many',
   'line_limit',

@@ -73,6 +73,7 @@ export interface Expense {
   status?: ExpenseStatusType;     // 支出ステータス
   inputSource?: InputSourceType;  // 入力元
   advanceBy?: string;             // 立替者のLINE ID
+  advanceFull?: boolean;          // 立替を全額で返す扱い（期間の精算に全額を加算。無ければ全額にする前の立替）
   advanceSettledAt?: Timestamp;   // 精算日時
   paymentMethod?: string;         // 支払い方法（cash, paypay, card）
   gmailMessageId?: string;        // Gmail自動取得時のメッセージID

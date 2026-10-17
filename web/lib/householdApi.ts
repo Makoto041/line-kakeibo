@@ -1,6 +1,6 @@
 'use client';
 
-// bot の /household/* エンドポイントのクライアント（確認・立替の印を外す・精算の通知など）。
+// bot の /household/* エンドポイントのクライアント（確認・以前の立替の精算済み・精算の通知など）。
 // Firebase の ID トークンを Authorization: Bearer で送る。匿名ユーザーからは呼ばない。
 import { auth, ensureFirebaseInitialized } from './firebase';
 import {
@@ -8,14 +8,14 @@ import {
   deriveApiBase,
   isValidDocId,
   parseAdvancesResponse,
-  parseClearAdvancesResult,
+  parseSettleLegacyAdvancesResult,
   parseConfirmResponse,
   parseSummarySendResult,
   parseSummaryStatus,
   type AdvancesResponse,
-  type ClearAdvancesResult,
   type ConfirmedExpensePatch,
   type HouseholdErrorCode,
+  type SettleLegacyAdvancesResult,
   type SummaryPeriodKind,
   type SummarySendResult,
   type SummaryStatus,
@@ -23,16 +23,16 @@ import {
 
 export type {
   AdvancesResponse,
-  ClearAdvancesResult,
   ConfirmedExpensePatch,
   HouseholdErrorCode,
+  SettleLegacyAdvancesResult,
   SummaryPeriodKind,
   SummarySendResult,
   SummaryStatus,
 };
 
 const REQUEST_TIMEOUT_MS = 25_000;
-const MAX_CLEAR_IDS = 500;
+const MAX_LEGACY_SETTLE_IDS = 500;
 
 // NEXT_PUBLIC_* はビルド時に埋め込まれるため、参照は字句どおりに書く
 const API_BASE = deriveApiBase(process.env.NEXT_PUBLIC_API_BASE, process.env.NEXT_PUBLIC_AUTH_ENDPOINT);
@@ -134,28 +134,31 @@ export async function confirmExpense(expenseId: string): Promise<ConfirmedExpens
   return patch;
 }
 
-/** 立替の印が残っている支出（以前の「自分が立替」）の全件 */
-export async function fetchAdvances(groupId: string): Promise<AdvancesResponse> {
+/** 全額にする前の立替（advanceFull の無い advance_pending）の全件 */
+export async function fetchLegacyAdvances(groupId: string): Promise<AdvancesResponse> {
   if (!isValidDocId(groupId)) throw new HouseholdApiError('invalid_request');
-  const res = await send(`/household/advances?groupId=${encodeURIComponent(groupId)}`, { method: 'GET' });
+  const res = await send(`/household/legacy-advances?groupId=${encodeURIComponent(groupId)}`, { method: 'GET' });
   if (res.status !== 200) fail(res);
   const data = parseAdvancesResponse(res.body);
   if (!data) throw new HouseholdApiError('failed', res.status);
   return data;
 }
 
-export type ClearAdvancesOutcome = ({ ok: true } & ClearAdvancesResult) | { ok: false; stale: AdvancesResponse };
+export type SettleLegacyAdvancesOutcome = ({ ok: true } & SettleLegacyAdvancesResult) | { ok: false; stale: AdvancesResponse };
 
 /**
- * 立替の印を外す（共同費に戻す。支払った人・金額は変えない）。表示した対象（expectedExpenseIds）と
+ * 全額にする前の立替を精算済みにする（どの期間の精算にも入らなくなる）。表示した対象（expectedExpenseIds）と
  * サーバーの現在の内容が食い違うときは、例外ではなく最新の一覧（stale）を返す。
  */
-export async function clearAdvances(groupId: string, expectedExpenseIds: readonly string[]): Promise<ClearAdvancesOutcome> {
+export async function settleLegacyAdvances(
+  groupId: string,
+  expectedExpenseIds: readonly string[]
+): Promise<SettleLegacyAdvancesOutcome> {
   const ids = Array.from(new Set(expectedExpenseIds));
-  if (!isValidDocId(groupId) || ids.length === 0 || ids.length > MAX_CLEAR_IDS || !ids.every(isValidDocId)) {
+  if (!isValidDocId(groupId) || ids.length === 0 || ids.length > MAX_LEGACY_SETTLE_IDS || !ids.every(isValidDocId)) {
     throw new HouseholdApiError('invalid_request');
   }
-  const res = await send('/household/advances/clear', { method: 'POST', body: { groupId, expectedExpenseIds: ids } });
+  const res = await send('/household/legacy-advances/settle', { method: 'POST', body: { groupId, expectedExpenseIds: ids } });
   if (res.status === 409) {
     const body = res.body as { error?: unknown; current?: unknown } | null;
     if (body && body.error === 'stale') {
@@ -165,7 +168,7 @@ export async function clearAdvances(groupId: string, expectedExpenseIds: readonl
     fail(res);
   }
   if (res.status !== 200) fail(res);
-  const result = parseClearAdvancesResult(res.body);
+  const result = parseSettleLegacyAdvancesResult(res.body);
   if (!result) throw new HouseholdApiError('failed', res.status);
   return { ok: true, ...result };
 }

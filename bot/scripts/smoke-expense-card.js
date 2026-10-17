@@ -108,7 +108,7 @@ function common(name, msg) {
   common('手入力の登録カード', msg);
 
   const rows = settingsRows(msg);
-  check('現在の設定は3行', rows.length === 3, `got ${rows.length}`);
+  check('現在の設定は4行', rows.length === 4, `got ${rows.length}`);
   check('各行にアイコンがある', rows.every((r) => r.contents[0].type === 'image'));
   check(
     '支出区分は共同費（未確認）＋usersアイコン',
@@ -122,9 +122,14 @@ function common(name, msg) {
   );
   check('支払った人は詳細行に重ねて出さない', !JSON.stringify(msg.contents.body.contents.slice(0, -1)).includes('まこと'));
   check(
+    '立替はなし（折半）＋hand-coinsアイコン',
+    rowText(rows[2]) === '立替：なし（折半）' && rows[2].contents[0].url.endsWith('/hand-coins.png'),
+    `${rowText(rows[2])} / ${rows[2].contents[0].url}`
+  );
+  check(
     'カテゴリは食費アイコン',
-    rowText(rows[2]) === 'カテゴリ：食費' && rows[2].contents[0].url.endsWith('/cat-food.png'),
-    rows[2].contents[0].url
+    rowText(rows[3]) === 'カテゴリ：食費' && rows[3].contents[0].url.endsWith('/cat-food.png'),
+    rows[3].contents[0].url
   );
   check('各行に[変更]がある', rows.every((r) => r.contents.some((c) => c.action)));
 
@@ -161,7 +166,7 @@ function common(name, msg) {
   common('カード利用通知（Gmail）', msg);
 
   const rows = settingsRows(msg);
-  check('現在の設定は3行', rows.length === 3, `got ${rows.length}`);
+  check('現在の設定は4行', rows.length === 4, `got ${rows.length}`);
   check(
     '支出区分は共同費（未確認なし）＋usersアイコン',
     rowText(rows[0]) === '支出区分：共同費' &&
@@ -198,11 +203,11 @@ function common(name, msg) {
   common('精算済みの再構築カード', msg);
 
   const rows = settingsRows(msg);
-  check('現在の設定は3行', rows.length === 3, `got ${rows.length}`);
+  check('現在の設定は4行', rows.length === 4, `got ${rows.length}`);
   check('支出区分にボタンが出ない', !rows[0].contents.some((c) => c.action));
   check('支払った人にボタンが出ない', !rows[1].contents.some((c) => c.action));
-  check('支出区分は立替で精算済み', rowText(rows[0]) === '支出区分：共同費（立替で精算済み）', rowText(rows[0]));
-  check('カテゴリは変更できる', rows[2].contents.some((c) => c.action));
+  check('立替は精算済みでボタンが出ない', rowText(rows[2]) === '立替：精算済み' && !rows[2].contents.some((c) => c.action), rowText(rows[2]));
+  check('カテゴリは変更できる', rows[3].contents.some((c) => c.action));
   check(
     'paymentMethod の生値が漏れない',
     !JSON.stringify(msg).includes('unknown'),
@@ -216,7 +221,7 @@ function common(name, msg) {
     ['personal', '支出区分：除外', '/user.png'],
     ['shared', '支出区分：共同費', '/users.png'],
     ['advance_pending', '支出区分：共同費', '/users.png'],
-    ['advance_settled', '支出区分：共同費（立替で精算済み）', '/users.png'],
+    ['advance_settled', '支出区分：共同費', '/users.png'],
   ];
   for (const [status, expectText, expectIcon] of cases) {
     const msg = buildExpenseCardFromRecord('exp_' + status, {
@@ -256,6 +261,11 @@ function common(name, msg) {
     const row = settingsRows(buildExpenseCardFromRecord('e', { category: '食費', status: 'shared', ...record }))[1];
     check(`支払った人：${name}`, rowText(row) === `支払った人：${name}` && row.contents[0].url.endsWith(icon), `${rowText(row)} / ${row.contents[0].url}`);
   }
+  // 立替のラベル（全額で返す立替と、全額にする前の立替）
+  const full = buildExpenseCardFromRecord('e', { category: '食費', status: 'advance_pending', advanceFull: true, inputSource: 'line_text' });
+  check('全額の立替は「あり（全額を精算に加算）」', rowText(settingsRows(full)[2]) === '立替：あり（全額を精算に加算）', rowText(settingsRows(full)[2]));
+  const legacy = buildExpenseCardFromRecord('e', { category: '食費', status: 'advance_pending', inputSource: 'line_text' });
+  check('全額にする前の立替は「あり」', rowText(settingsRows(legacy)[2]) === '立替：あり', rowText(settingsRows(legacy)[2]));
   const card = settingsRows(
     buildCardUsageFlexMessage({ expenseId: 'g1', merchant: 'SHOP', amount: 100, category: '食費', categoryEmoji: '', date: '8/1', status: 'shared' })
   )[1];
@@ -273,21 +283,22 @@ function common(name, msg) {
     if (!b) return null;
     return { label: b.contents[0].text, color: b.contents[0].color, data: JSON.parse(b.action.data) };
   }
-  // [status, 支出区分ボタン, 色, to]。支払った人はどの状態でも［自分が払った］（青・set_payer）
+  // [status, 支出区分ボタン, 色, to, 立替ボタン, 色, to]。支払った人はどの状態でも［自分が払った］（青・set_payer）
   const cases = [
-    [undefined, '除外', RED, 'personal'],
-    ['pending', '除外', RED, 'personal'],
-    ['shared', '除外', RED, 'personal'],
-    ['personal', '戻す', BLUE, 'shared'],
-    ['advance_pending', '除外', RED, 'personal'],
+    [undefined, '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
+    ['pending', '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
+    ['shared', '除外', RED, 'personal', '自分が立替', BLUE, 'on'],
+    ['personal', '戻す', BLUE, 'shared', '自分が立替', BLUE, 'on'],
+    ['advance_pending', '除外', RED, 'personal', '取り消す', RED, 'off'],
   ];
-  for (const [status, splitLabel, splitColor, splitTo] of cases) {
+  for (const [status, splitLabel, splitColor, splitTo, advLabel, advColor, advTo] of cases) {
     const rows = settingsRows(
       buildExpenseCardFromRecord('exp_b', { category: '食費', status, inputSource: 'gmail_auto' })
     );
     const split = button(rows[0]);
     const payer = button(rows[1]);
-    const cat = button(rows[2]);
+    const adv = button(rows[2]);
+    const cat = button(rows[3]);
     check(
       `${status ?? '未指定'} → 支出区分[${splitLabel}]`,
       split && split.label === splitLabel && split.color === splitColor &&
@@ -300,6 +311,12 @@ function common(name, msg) {
       payer && payer.label === '自分が払った' && payer.color === BLUE &&
         payer.data.action === 'set_payer' && payer.data.expenseId === 'exp_b' && payer.data.source === 'gmail',
       JSON.stringify(payer)
+    );
+    check(
+      `${status ?? '未指定'} → 立替[${advLabel}]`,
+      adv && adv.label === advLabel && adv.color === advColor &&
+        adv.data.action === 'set_advance' && adv.data.to === advTo && adv.data.expenseId === 'exp_b',
+      JSON.stringify(adv)
     );
     check(`${status ?? '未指定'} → カテゴリ[変更]は青`, cat && cat.label === '変更' && cat.color === BLUE);
   }
@@ -317,7 +334,7 @@ function common(name, msg) {
     const msg = buildExpenseCardFromRecord('e', {
       category, status: 'shared', inputSource: 'line_text',
     });
-    const url = settingsRows(msg)[2].contents[0].url;
+    const url = settingsRows(msg)[3].contents[0].url;
     check(`${category} → ${key}`, url.endsWith(`/${key}.png`), url);
   }
 }

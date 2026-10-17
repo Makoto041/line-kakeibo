@@ -129,3 +129,41 @@ test('formatYenExact: 整数は小数なし', () => {
   assert.equal(formatYenExact(320853), '¥320,853');
   assert.equal(formatYenExact(0.5), '¥0.5');
 });
+
+test('立替（全額）は折半せず、支出の日付の期間の精算に全額を加算する', () => {
+  const range = { startDate: '2026-09-15', endDate: '2026-10-14' };
+  const d = (date, amount, payerId, extra = {}) => e(amount, payerId, { date, ...extra });
+  const base = [d('2026-09-20', 10000, PARTNER.lineId), d('2026-09-21', 30000, OWNER.lineId)];
+  const full = (date, amount, by) => d(date, amount, by, { status: 'advance_pending', advanceBy: by, advanceFull: true });
+  const split = (expenses) => computePeriodSplit({ expenses, groupId: G, members: MEMBERS, targetLineId: PARTNER.lineId, range });
+
+  // 誠が光麦の分を立て替えた 2,610 → 光麦は 10,000 + 2,610 を誠へ
+  const r = split([...base, full('2026-10-01', 2610, OWNER.lineId)]);
+  assert.equal(r.total, 40000);
+  assert.equal(r.count, 2);
+  assert.equal(r.advanceCount, 1);
+  assert.equal(r.counterpartAdvanced, 2610);
+  assert.equal(r.targetAdvanced, 0);
+  assert.deepEqual(r.transfer, { fromLineId: PARTNER.lineId, toLineId: OWNER.lineId, amount: 12610 });
+
+  // 光麦の立替は差し引く
+  const both = split([...base, full('2026-10-01', 2610, OWNER.lineId), full('2026-10-02', 788, PARTNER.lineId)]);
+  assert.deepEqual(both.transfer, { fromLineId: PARTNER.lineId, toLineId: OWNER.lineId, amount: 11822 });
+
+  // 期間外の立替はその期間の精算に入る（この期間には入らない）
+  assert.equal(split([...base, full('2026-10-15', 2610, OWNER.lineId)]).advanceCount, 0);
+
+  // 全額にする前の立替（advanceFull 無し）と精算済みは、これまでどおり
+  const legacy = split([...base, d('2026-10-01', 2610, OWNER.lineId, { status: 'advance_pending', advanceBy: OWNER.lineId })]);
+  assert.equal(legacy.total, 42610);
+  assert.equal(legacy.advanceCount, 0);
+  const settled = split([...base, d('2026-10-01', 2610, OWNER.lineId, { status: 'advance_settled', advanceFull: true })]);
+  assert.equal(settled.settledCount, 1);
+  assert.equal(settled.advanceCount, 0);
+
+  // 送金する人が決まっていなければ立替の額も出さない
+  const noTarget = computePeriodSplit({ expenses: [...base, full('2026-10-01', 2610, OWNER.lineId)], groupId: G, members: MEMBERS, targetLineId: null, range });
+  assert.equal(noTarget.reason, 'no_target');
+  assert.equal(noTarget.counterpartAdvanced, 0);
+  assert.equal(noTarget.transfer, null);
+});

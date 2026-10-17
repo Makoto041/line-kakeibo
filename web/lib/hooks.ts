@@ -21,7 +21,7 @@ import { normalizeCategoryName } from './categoryNormalization';
 import { getCached, setCached, hasCached, clearCached, updateCachedByPrefix } from './swrCache';
 import { timestampToMillis } from './expenseState';
 import {
-  fetchAdvances,
+  fetchLegacyAdvances,
   householdErrorCode,
   isHouseholdApiConfigured,
   type AdvancesResponse,
@@ -86,6 +86,7 @@ export interface Expense {
   }>;
   // 立替機能フィールド
   advanceBy?: string;             // 立替者のLINE ID
+  advanceFull?: boolean;          // 立替を全額で返す扱い（期間の精算に全額を加算。無ければ全額にする前の立替）
   advanceSettledAt?: FirestoreTimestamp; // 精算日時
   paymentMethod?: string;         // 支払い方法（cash, paypay, card）
   gmailMessageId?: string;        // Gmail自動取得時のメッセージID
@@ -1236,14 +1237,14 @@ export function useHousehold(lineId: string | null) {
 }
 
 // ---------------------------------------------------------------------------
-// 立替の印が残っている支出（bot の /household/advances）
+// 全額にする前の立替（bot の /household/legacy-advances）
 // ---------------------------------------------------------------------------
 
 /**
- * 以前の「自分が立替」で印が残っている支出。キャッシュを先に出して裏で取り直す（コールドスタートの待ちを隠す）。
- * API が未設定のときは取得しない（available=false。精算タブはお知らせを出さない）。
+ * 全額で精算するようにする前の立替（advanceFull の無い advance_pending）。キャッシュを先に出して裏で取り直す
+ * （コールドスタートの待ちを隠す）。API が未設定のときは取得しない（available=false。精算タブはお知らせを出さない）。
  */
-export function useAdvances(groupId: string | null) {
+export function useLegacyAdvances(groupId: string | null) {
   const available = isHouseholdApiConfigured();
   const key = groupId && available ? `advances:${groupId}` : '';
   const [nonce, setNonce] = useState(0);
@@ -1254,7 +1255,7 @@ export function useAdvances(groupId: string | null) {
   useEffect(() => {
     if (!key || !groupId) return;
     let cancelled = false;
-    fetchAdvances(groupId).then(
+    fetchLegacyAdvances(groupId).then(
       (value) => {
         if (cancelled) return;
         setCached(key, value);
@@ -1270,7 +1271,7 @@ export function useAdvances(groupId: string | null) {
     };
   }, [key, groupId, nonce]);
 
-  /** 最新の内容で差し替える（印を外したとき・409 stale など） */
+  /** 最新の内容で差し替える（精算済みにしたとき・409 stale など） */
   const setData = useCallback(
     (value: AdvancesResponse) => {
       if (!key) return;

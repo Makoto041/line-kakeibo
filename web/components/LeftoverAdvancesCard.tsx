@@ -1,11 +1,11 @@
 'use client';
 
-// 精算タブの「以前の立替が残っています」のお知らせ。立替の精算は期間の折半にまとめたので、
-// 以前に「自分が立替」にした支出（advance_pending）が残っているときだけ出す。
-// どれもその期間の折半に支払った人の分として入っているので、送金はせず印を外すだけ（/household/advances/clear）。
+// 精算タブの「以前の立替が残っています」のお知らせ。立替は期間の精算に全額を加算して返すようにした。
+// それより前に「自分が立替」にした支出（advanceFull の無い advance_pending）が残っているときだけ出し、
+// 精算済みにできるようにする（/household/legacy-advances/settle。どの期間の精算にも入らなくなる）。
 import React, { useState } from 'react';
 import { ChevronDown, Info, Loader2 } from 'lucide-react';
-import { clearAdvances, householdErrorCode, type AdvancesResponse } from '../lib/householdApi';
+import { householdErrorCode, settleLegacyAdvances, type AdvancesResponse } from '../lib/householdApi';
 import { advanceDateSpan, advanceItemMeta } from '../lib/leftoverAdvances';
 import { getCategoryVisual } from '../lib/categoryVisuals';
 import { yen } from '../lib/money';
@@ -15,54 +15,54 @@ interface Props {
   data: AdvancesResponse;
   /** 世帯のメンバー名（lineId → 表示名）。立替にした人の名前に使う */
   names: Readonly<Record<string, string>>;
-  canClear: boolean;
-  /** 外せた（件数）。呼び出し側で一覧を空にし、ほかの画面のキャッシュも直す */
-  onCleared: (ids: readonly string[], cleared: number) => void;
+  canSettle: boolean;
+  /** 精算済みにできた（件数・飛ばした件数）。呼び出し側で一覧を空にし、ほかの画面のキャッシュも直す */
+  onSettled: (ids: readonly string[], settled: number, skipped: number) => void;
   /** 表示が古かった（最新の一覧に差し替える） */
   onStale: (latest: AdvancesResponse) => void;
   onError: (text: string) => void;
 }
 
-function clearErrorMessage(error: unknown): string {
+function settleErrorMessage(error: unknown): string {
   switch (householdErrorCode(error)) {
     case 'forbidden':
       return 'この世帯の立替を変更する権限がありません';
-    case 'nothing_to_clear':
-      return '立替の印はもう外れています（ほかの端末で外した可能性があります）';
+    case 'nothing_to_settle':
+      return '以前の立替はもうありません（ほかの端末で精算済みにした可能性があります）';
     case 'too_many':
       return '件数が多すぎるため、ここでは外せません';
     case 'rate_limited':
       return '操作が多すぎます。少し待ってからやり直してください';
     default:
-      return '立替の印を外せませんでした。時間をおいてやり直してください';
+      return '精算済みにできませんでした。時間をおいてやり直してください';
   }
 }
 
-export default function LeftoverAdvancesCard({ groupId, data, names, canClear, onCleared, onStale, onError }: Props) {
+export default function LeftoverAdvancesCard({ groupId, data, names, canSettle, onSettled, onStale, onError }: Props) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [clearing, setClearing] = useState(false);
+  const [settling, setSettling] = useState(false);
   const count = data.items.length;
   const thisYear = new Date().getFullYear();
   const span = advanceDateSpan(data.items, thisYear);
 
-  const clear = async () => {
-    if (clearing || !canClear) return;
-    setClearing(true);
+  const settle = async () => {
+    if (settling || !canSettle) return;
+    setSettling(true);
     try {
-      const outcome = await clearAdvances(groupId, data.expenseIds);
+      const outcome = await settleLegacyAdvances(groupId, data.expenseIds);
       if (outcome.ok) {
-        onCleared(data.expenseIds, outcome.cleared);
+        onSettled(data.expenseIds, outcome.settled, outcome.skipped);
       } else {
         onStale(outcome.stale);
         setConfirming(false);
       }
     } catch (error) {
-      console.error('Failed to clear advances:', error);
-      onError(clearErrorMessage(error));
-      if (householdErrorCode(error) === 'nothing_to_clear') onStale({ ...data, items: [], expenseIds: [] });
+      console.error('Failed to settle legacy advances:', error);
+      onError(settleErrorMessage(error));
+      if (householdErrorCode(error) === 'nothing_to_settle') onStale({ ...data, items: [], expenseIds: [] });
     } finally {
-      setClearing(false);
+      setSettling(false);
     }
   };
 
@@ -73,8 +73,8 @@ export default function LeftoverAdvancesCard({ groupId, data, names, canClear, o
         以前の「立替」が{count}件残っています
       </h2>
       <p className="mt-1.5 text-xs leading-relaxed text-muted">
-        {span ? `${span}の支出です。` : ''}
-        どれも、その期間の折半に支払った人の分として入っているので、別に送金しなくて大丈夫です。
+        {span ? `${span}の、` : ''}
+        立替を全額で精算するようにする前の支出です。精算が済んでいれば、精算済みにしてください（どの期間の精算にも入らなくなります）。
       </p>
 
       {open && (
@@ -101,13 +101,11 @@ export default function LeftoverAdvancesCard({ groupId, data, names, canClear, o
 
       {confirming ? (
         <div className="mt-4 rounded-xl border border-accent/25 bg-accent/[0.06] p-4">
-          <p className="text-sm text-fg">
-            {count}件の立替の印を外します。金額はそのまま、それぞれの期間の折半に入ります。
-          </p>
+          <p className="text-sm text-fg">{count}件を精算済みにします。どの期間の精算（折半）にも入らなくなります。</p>
           <div className="mt-3 flex gap-2">
             <button
               type="button"
-              disabled={clearing}
+              disabled={settling}
               onClick={() => setConfirming(false)}
               className="flex-1 rounded-xl border border-line bg-card py-2.5 text-sm font-medium text-fg hover:bg-fg/5 disabled:opacity-50"
             >
@@ -115,12 +113,12 @@ export default function LeftoverAdvancesCard({ groupId, data, names, canClear, o
             </button>
             <button
               type="button"
-              disabled={clearing || !canClear}
-              onClick={clear}
+              disabled={settling || !canSettle}
+              onClick={settle}
               className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-accent py-2.5 text-sm font-medium text-accent-fg shadow-sm hover:opacity-90 disabled:opacity-50"
             >
-              {clearing && <Loader2 className="h-4 w-4 animate-spin" />}
-              外す
+              {settling && <Loader2 className="h-4 w-4 animate-spin" />}
+              精算済みにする
             </button>
           </div>
         </div>
@@ -137,11 +135,11 @@ export default function LeftoverAdvancesCard({ groupId, data, names, canClear, o
           </button>
           <button
             type="button"
-            disabled={!canClear}
+            disabled={!canSettle}
             onClick={() => setConfirming(true)}
             className="rounded-xl bg-accent py-2.5 text-sm font-medium text-accent-fg shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            立替の印を外す
+            精算済みにする
           </button>
         </div>
       )}

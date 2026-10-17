@@ -76,7 +76,9 @@ async function seed(db) {
   set('expenses/mitsu', { ...base, lineId: A, payerId: A, inputSource: 'line_text', amount: 4900, date: '2026-10-05', category: '日用品' });
   set('expenses/pending', { ...base, lineId: A, payerId: A, inputSource: 'line_text', amount: 2180, date: '2026-10-06', status: null, confirmed: false, includeInTotal: false });
   set('expenses/outside', { ...base, lineId: B, payerId: B, inputSource: 'line_text', amount: 50000, date: '2026-10-15' });
-  // 以前の立替の印が残っている支出（折半には支払った人の分として入る）
+  // 誠が光麦の分を立て替えた（全額を加算。折半の合計・カテゴリ別には入らない）
+  set('expenses/adv_full', { ...base, lineId: B, payerId: B, advanceBy: B, advanceFull: true, inputSource: 'line_text', amount: 2610, date: '2026-10-03', status: 'advance_pending', category: '美容' });
+  // 全額にする前の立替（advanceFull 無し。これまでどおり支払った人の分として折半する）
   set('expenses/adv1', { ...base, lineId: B, payerId: B, advanceBy: B, inputSource: 'line_text', amount: 6000, date: '2026-10-02', status: 'advance_pending', category: '日用品' });
   await batch.commit();
 }
@@ -123,16 +125,17 @@ async function seed(db) {
     const msg = sent[0];
     check('送り先は世帯の LINE グループ', msg && msg.to === 'C_line1', msg && msg.to);
     check('メンション付きテキスト + Flex の 2 通（1 回の push）', msg && msg.messages.length === 2 && msg.messages[0].type === 'textV2' && msg.messages[1].type === 'flex');
-    // 合計 160,900（立替の印が残っている支出も含む。期間外・要確認は入らない）÷ 2 − 光麦の 4,900 = 75,550
+    // 合計 160,900（全額にする前の立替も含む。全額の立替・期間外・要確認は入らない）÷ 2 − 光麦の 4,900 = 75,550
+    // ＋ 誠の立替（全額）2,610 = 78,160
     check(
-      '光麦から誠へ ¥75,550（Web の期間の精算と同じ式）',
-      msg && msg.messages[0].text.includes('{u1} から {u2} へ ¥75,550') &&
+      '光麦から誠へ ¥78,160（Web の期間の精算と同じ式。誠の立替は全額を加算）',
+      msg && msg.messages[0].text.includes('{u1} から {u2} へ ¥78,160') &&
         msg.messages[0].substitution.u1.mentionee.userId === A &&
         msg.messages[0].substitution.u2.mentionee.userId === B,
       msg && msg.messages[0]
     );
     const flex = JSON.stringify(msg && msg.messages[1]);
-    check('Flex に期間・要確認（立替の案内は出さない）', flex.includes('9/15〜10/14') && flex.includes('要確認が 1件（¥2,180）') && !flex.includes('立替が'), flex.slice(0, 200));
+    check('Flex に期間・要確認・立替（全額）の行', flex.includes('9/15〜10/14') && flex.includes('要確認が 1件（¥2,180）') && flex.includes('+ 岩渕 誠の立替（全額）') && !flex.includes('美容'), flex.slice(0, 200));
     const marker = await db.doc('system/settlementSummary_g1_2026-10-14').get();
     check('印に送った時刻が入る', marker.exists && !!marker.get('sentAt'));
 
@@ -165,7 +168,7 @@ async function seed(db) {
     const closed = await sendSettlementSummaryNow(db, 'g1', 'closed', deps(LATER));
     check('締まった期間は送信済みでも送る（日付にも関係なく）', closed && closed.ok && closed.range.endDate === '2026-10-14' && closed.interim === false && sent.length === before + 1, closed);
     const msg = sent[sent.length - 1];
-    check('内容は自動の通知と同じ（メンション付き・同じ金額）', msg.to === 'C_line1' && msg.messages[0].type === 'textV2' && msg.messages[0].text.includes('¥75,550'), msg.messages[0]);
+    check('内容は自動の通知と同じ（メンション付き・同じ金額）', msg.to === 'C_line1' && msg.messages[0].type === 'textV2' && msg.messages[0].text.includes('¥78,160'), msg.messages[0]);
     check('X-Line-Retry-Key は自動の通知と別（同じ期間を送り直せる）', /^[0-9a-f-]{36}$/.test(msg.retryKey) && msg.retryKey !== sent[0].retryKey, msg.retryKey);
 
     const current = await sendSettlementSummaryNow(db, 'g1', 'current', deps(LATER));

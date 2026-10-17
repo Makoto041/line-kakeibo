@@ -165,29 +165,39 @@ export interface DerivedExpenseSettings {
   splitButtonLabel: string;
   /** 支出区分のボタンの色 */
   splitButtonTone: ActionTone;
+  /** 立替の現在値 */
+  advanceLabel: string;
+  /** 立替のボタンで設定する値 */
+  nextAdvance: 'on' | 'off';
+  /** 立替のボタン表記（自分が立替 / 取り消す） */
+  advanceButtonLabel: string;
+  /** 立替のボタンの色 */
+  advanceButtonTone: ActionTone;
   /** 精算済み（以前の立替の精算）で変更を受け付けない状態か */
   settled: boolean;
 }
 
 /**
- * status から「支出区分」の現在値とボタンを導出する
+ * status から「支出区分」と「立替」の現在値とボタンを導出する
  *
  * 支出区分は運用上「共同費（集計に入る）」か「除外（集計に入らない）」の二択で、
  * status の personal は includeInTotal: false ＝ 集計から外すことを意味する。
  * 「個人費」という表記では集計に入らないことが伝わらないため「除外」と表示する。
  *
  * ボタンには押すと何が起きるかを書く（汎用の「変更」では操作が分からない）:
- * 共同費なら［除外］、除外なら［戻す］。
+ * - 支出区分: 共同費なら［除外］、除外なら［戻す］
+ * - 立替: なしなら［自分が立替］（押した人が払って相手の分を立て替えた。期間の精算で全額を返してもらう）、
+ *   ありなら［取り消す］
  *
  * pending（未確認）は LINE 手入力（status なし・includeInTotal: false）で、OK や
  * カテゴリ選択で共同費として確定する流れのため、表示は「共同費（未確認）」にする。
  * Gmail 取込は共同費（shared）として確定で入る（以前に pending で入った分の扱いは
  * buildExpenseCardFromRecord を参照）。
  *
- * 立替の精算は期間の折半にまとめた。以前の立替（advance_pending）は共同費として出し、
- * 立替で精算済み（advance_settled）は変更できない。
+ * 立替は期間の精算に全額を加算する（advanceFull）。全額にする前の立替（advanceFull の無い advance_pending）は
+ * 「あり」とだけ出す。立替で精算済み（advance_settled）は変更できない。
  */
-export function deriveExpenseSettings(status?: ExpenseStatusType): DerivedExpenseSettings {
+export function deriveExpenseSettings(status?: ExpenseStatusType, advanceFull?: boolean): DerivedExpenseSettings {
   const shared = {
     splitIconKey: 'users' as const,
     nextSplit: 'personal' as const,
@@ -201,17 +211,37 @@ export function deriveExpenseSettings(status?: ExpenseStatusType): DerivedExpens
     splitButtonTone: 'primary' as const,
   };
 
+  // 立替なしの共同費は折半する（立替は全額を返す）。2 行の違いが分かるよう「（折半）」を添える
+  const noAdvance = {
+    advanceLabel: 'なし（折半）',
+    nextAdvance: 'on' as const,
+    advanceButtonLabel: '自分が立替',
+    advanceButtonTone: 'primary' as const,
+  };
+  const withAdvance = {
+    nextAdvance: 'off' as const,
+    advanceButtonLabel: '取り消す',
+    advanceButtonTone: 'danger' as const,
+  };
+
   switch (status) {
     case 'shared':
-    case 'advance_pending':
-      return { splitLabel: '共同費', ...shared, settled: false };
+      return { splitLabel: '共同費', ...shared, ...noAdvance, settled: false };
     case 'personal':
-      return { splitLabel: '除外', ...excluded, settled: false };
+      return { splitLabel: '除外', ...excluded, ...noAdvance, advanceLabel: 'なし', settled: false };
+    case 'advance_pending':
+      return {
+        splitLabel: '共同費',
+        ...shared,
+        advanceLabel: advanceFull ? 'あり（全額を精算に加算）' : 'あり',
+        ...withAdvance,
+        settled: false,
+      };
     case 'advance_settled':
-      return { splitLabel: '共同費（立替で精算済み）', ...shared, settled: true };
+      return { splitLabel: '共同費', ...shared, advanceLabel: '精算済み', ...withAdvance, settled: true };
     default:
       // pending（未確認）/ status 未指定
-      return { splitLabel: '共同費（未確認）', ...shared, settled: false };
+      return { splitLabel: '共同費（未確認）', ...shared, ...noAdvance, settled: false };
   }
 }
 
@@ -331,7 +361,7 @@ function settingRow(opts: {
 }
 
 /**
- * 「現在の設定」セクション（支出区分・支払った人・カテゴリ）
+ * 「現在の設定」セクション（支出区分・支払った人・立替・カテゴリ）
  *
  * 現在値はリッチテキストで示し、ボタンは操作だけを担う。登録・編集カードで
  * 共通に使うことで、同じUIを使う画面全体で表現を揃える。
@@ -344,10 +374,11 @@ function buildCurrentSettingsSection(opts: {
   source: ExpenseCardSource;
   category: string;
   status?: ExpenseStatusType;
+  advanceFull?: boolean;
   payer: string;
 }): FlexComponent {
-  const { expenseId, source, category, status, payer } = opts;
-  const derived = deriveExpenseSettings(status);
+  const { expenseId, source, category, status, advanceFull, payer } = opts;
+  const derived = deriveExpenseSettings(status, advanceFull);
 
   return {
     type: 'box',
@@ -400,6 +431,25 @@ function buildCurrentSettingsSection(opts: {
             },
       }),
       settingRow({
+        iconUrl: iconUrl('hand-coins'),
+        label: '立替',
+        value: derived.advanceLabel,
+        buttonLabel: derived.advanceButtonLabel,
+        buttonTone: derived.advanceButtonTone,
+        action: derived.settled
+          ? undefined
+          : {
+              type: 'postback',
+              label: derived.nextAdvance === 'on' ? '自分が立替' : '立替を取り消す',
+              data: JSON.stringify({
+                action: 'set_advance',
+                expenseId,
+                to: derived.nextAdvance,
+                source,
+              }),
+            },
+      }),
+      settingRow({
         iconUrl: categoryIconUrl(category),
         label: 'カテゴリ',
         value: category,
@@ -433,6 +483,8 @@ function buildExpenseCard(opts: {
   category: string;
   source: ExpenseCardSource;
   status?: ExpenseStatusType;
+  /** 立替を全額で返す扱いか（立替の行の表示） */
+  advanceFull?: boolean;
   /** 支払った人の表示（payerLabel） */
   payer: string;
   /** 金額行の下に差し込むフロー固有の行（残り予算・支払い方法など） */
@@ -450,6 +502,7 @@ function buildExpenseCard(opts: {
     category,
     source,
     status,
+    advanceFull,
     payer,
     detailRows = [],
     editUrl,
@@ -517,7 +570,7 @@ function buildExpenseCard(opts: {
         },
         ...detailRows,
         // 現在の設定（値の表示と操作ボタンを分離）
-        buildCurrentSettingsSection({ expenseId, source, category, status, payer }),
+        buildCurrentSettingsSection({ expenseId, source, category, status, advanceFull, payer }),
       ],
       paddingAll: 'lg',
     },
@@ -758,6 +811,7 @@ export interface ExpenseRecordLike {
   category?: string;
   date?: string;
   status?: ExpenseStatusType;
+  advanceFull?: boolean;
   includeInTotal?: boolean;
   inputSource?: string;
   paymentMethod?: string;
@@ -819,6 +873,7 @@ export function buildExpenseCardFromRecord(
     category: record.category || 'その他',
     source,
     status,
+    advanceFull: record.advanceFull === true,
     payer: payerLabel(record),
     detailRows: detailRows as unknown as FlexComponent[],
     editUrl: opts.editUrl,

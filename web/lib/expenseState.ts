@@ -133,9 +133,15 @@ export function sortForList<E extends Pick<Expense, 'date' | 'amount'>>(list: re
 
 // ---- 支払い者 -----------------------------------------------------------------
 
-/** 共通のカード・口座から払った支出（Gmail 自動取込・固定費の自動計上） */
+/**
+ * 共通のカード・口座から払った支出（Gmail 自動取込・固定費の自動計上）。
+ * LINE の［自分が払った］［自分が立替］で支払った人をメンバーにしたカード取込は、その人の支払いとして扱う
+ */
 export function isCardSource(e: Pick<ExpenseFields, 'inputSource' | 'payerId'>): boolean {
-  return e.inputSource === 'gmail_auto' || (e.inputSource === 'recurring' && e.payerId === RECURRING_SYSTEM_LINE_ID);
+  return (
+    (e.inputSource === 'gmail_auto' && (!e.payerId || e.payerId === GMAIL_SYSTEM_LINE_ID)) ||
+    (e.inputSource === 'recurring' && e.payerId === RECURRING_SYSTEM_LINE_ID)
+  );
 }
 
 /**
@@ -148,7 +154,7 @@ export function resolvePayerName(
     Partial<Pick<Expense, 'inputSource' | 'payerId' | 'payerDisplayName' | 'userDisplayName'>>,
   historicalUsers: readonly KnownUser[]
 ): string {
-  if (expense.inputSource === 'gmail_auto') return 'クレジットカード';
+  if (expense.inputSource === 'gmail_auto' && (!expense.payerId || expense.payerId === GMAIL_SYSTEM_LINE_ID)) return 'クレジットカード';
   if (expense.inputSource === 'recurring' && expense.payerId === RECURRING_SYSTEM_LINE_ID) return '共通口座';
   const payerId = expense.payerId || expense.lineId;
   let payerName = expense.payerDisplayName || expense.userDisplayName || '個人';

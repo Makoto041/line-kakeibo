@@ -3,6 +3,7 @@
 // 設定（期間設定のタブ）の「LINEへの精算の通知」カード。
 // 精算の通知は期間の起算日に自動で LINE グループへ届く（bot の settlementSummary.ts）。ここでは、その状態を見せ、
 // 日付に関係なく今すぐ送れるようにする（締まった期間 = 自動と同じ内容 / 今の期間 = 今日までの途中経過）。
+// 起算日は送金する人（集金するメンバー）の期間設定（無ければ相手の設定）で決まる。見ている人の設定とは限らない。
 import React, { useCallback, useEffect, useState } from 'react';
 import { Bell, Loader2, Send } from 'lucide-react';
 import { useHousehold } from '../../lib/hooks';
@@ -32,7 +33,7 @@ const REASON_TEXT: Record<SummaryUnavailableReason, string> = {
   no_line_group: '世帯がLINEグループに紐づいていないため、通知は送れません',
   no_collect_from: '精算タブの「期間の精算」で送金する人を選ぶと、通知を送れます',
   not_two_members: '世帯のメンバーが2人そろうと、通知を送れます',
-  fixed_period: '期間を日付で固定しているため、通知は送れません（期間を月単位にすると送れます）',
+  fixed_period: '送金する人の期間設定が日付の固定になっているため、通知は送れません（月単位にすると送れます）',
 };
 
 function sendErrorMessage(error: unknown): string {
@@ -52,7 +53,22 @@ function sendErrorMessage(error: unknown): string {
   }
 }
 
-export default function SettlementNotifyCard({ lineId, className = '' }: { lineId: string; className?: string }) {
+/** 起算日の表記（29〜31 日は、その日が無い月は次の起算日にまとめて送る） */
+function startDayLabel(day: number | null): string {
+  if (day === null) return '期間の起算日';
+  return day >= 29 ? `毎月${day}日（その日が無い月は次の回にまとめて）` : `毎月${day}日`;
+}
+
+export default function SettlementNotifyCard({
+  lineId,
+  reloadKey = 0,
+  className = '',
+}: {
+  lineId: string;
+  /** 変わると読み直す（期間設定を保存したとき） */
+  reloadKey?: number;
+  className?: string;
+}) {
   const { household } = useHousehold(lineId);
   const groupId = household?.groupId ?? null;
   const apiAvailable = isHouseholdApiConfigured();
@@ -83,7 +99,7 @@ export default function SettlementNotifyCard({ lineId, className = '' }: { lineI
     return () => {
       cancelled = true;
     };
-  }, [groupId, apiAvailable, nonce]);
+  }, [groupId, apiAvailable, nonce, reloadKey]);
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
   // 世帯に入っていない・API が使えない環境では出さない
@@ -138,7 +154,10 @@ export default function SettlementNotifyCard({ lineId, className = '' }: { lineI
         <>
           <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
             <dt className="text-muted">自動で送る日</dt>
-            <dd className="text-fg">毎月{status.startDay}日（期間の起算日）</dd>
+            <dd className="text-fg">
+              {startDayLabel(status.startDay)}
+              <span className="block text-xs text-muted">送金する人の期間設定の起算日</span>
+            </dd>
             <dt className="text-muted">送り先</dt>
             <dd className="text-fg">世帯のLINEグループ</dd>
             <dt className="text-muted">前の期間</dt>

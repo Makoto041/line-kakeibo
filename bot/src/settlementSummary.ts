@@ -4,8 +4,8 @@
  * - いつ: 期間の起算日（集金するメンバーの期間設定。例: 15日起算なら毎月 15 日）に、締まった期間の分を 1 回。
  *   新しいスケジュールは増やさず、毎日の固定費の計上（index.ts の postRecurringExpenses）と同じ実行で判定する
  *   （Cloud Scheduler の無料枠のジョブ数を使い切っているため）。
- * - 何を: Web の「期間の精算（折半）」と同じ計算（periodSplit.ts）の結果。送金する人と受け取る人をメンションした
- *   テキストと、内訳・カテゴリ別・要確認をまとめた Flex を 1 回の push で送る。
+ * - 何を: Web の「期間の精算（折半）」と同じ計算（periodSplit.ts。立替は全額を加算）の結果。送金する人と受け取る人を
+ *   メンションしたテキストと、内訳（立替を含む）・カテゴリ別・要確認をまとめた Flex を 1 回の push で送る。
  * - 対象: LINE グループに紐づき、集金するメンバー（groups.splitSettings.collectFromLineId）が決まっていて、
  *   有効メンバーがちょうど 2 人の世帯。
  * - 冪等: 送る前に system/settlementSummary_{groupId}_{期間末日} を create する（同じ期間は 2 回送らない）。
@@ -25,7 +25,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import type { GroupMember } from './firestore';
 import { sortActiveMembers, type HouseholdMember } from './householdMembers';
 import { errorMessage, maskId } from './logSafe';
-import { amountOf, computePeriodSplit, periodPool, type PeriodSplit, type SplitExpense } from './periodSplit';
+import { amountOf, computePeriodSplit, isSplitCounted, periodPool, type PeriodSplit, type SplitExpense } from './periodSplit';
 import { dayjs, JST } from './time';
 
 export const SETTLEMENT_SUMMARY_MARKER_PREFIX = 'settlementSummary_';
@@ -156,7 +156,7 @@ export function buildSettlementSummary(input: {
     range: input.range,
   });
   const pool = periodPool(input.expenses, input.groupId, input.range);
-  const counted = pool.filter((e) => e.includeInTotal && e.status !== 'advance_settled');
+  const counted = pool.filter(isSplitCounted);
 
   const byCategory = new Map<string, number>();
   for (const e of counted) {
@@ -434,11 +434,18 @@ export async function sendSettlementSummaryNow(
   console.log('settlement summary: sent manually', { group: maskId(groupId), endDate: range.endDate, interim });
 
   if (!interim) {
-    await markerRef(db, groupId, range.endDate)
-      .set(
-        { groupId, endDate: range.endDate, sentAt: FieldValue.serverTimestamp(), manualSentAt: FieldValue.serverTimestamp() },
-        { merge: true }
-      )
+    // 起算日の自動の通知が同じ期間を送らないよう印を残す。自動で送った時刻（sentAt）があれば上書きしない
+    const ref = markerRef(db, groupId, range.endDate);
+    await db
+      .runTransaction(async (tx) => {
+        const marker = await tx.get(ref);
+        const now = FieldValue.serverTimestamp();
+        if (!marker.exists) {
+          tx.create(ref, { groupId, endDate: range.endDate, createdAt: now, sentAt: now, manualSentAt: now });
+        } else {
+          tx.update(ref, marker.get('sentAt') ? { manualSentAt: now } : { sentAt: now, manualSentAt: now });
+        }
+      })
       .catch((error: unknown) => {
         console.warn('settlement summary: failed to record a manual send', { group: maskId(groupId), error: errorMessage(error) });
       });

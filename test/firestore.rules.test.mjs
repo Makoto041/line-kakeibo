@@ -165,9 +165,10 @@ await test('★ inputSource（gmail_auto の偽装）は作成時に書けない
     lineId: 'A', amount: 5, date: '2026-08-02', description: '', inputSource: 'gmail_auto',
   }));
 });
-await test('★ 立替・精算系フィールド（status advance_settled / advanceBy）は作成時に書けない', async () => {
+await test('★ 立替・精算系フィールド（status advance_settled / advanceBy / advanceFull）は作成時に書けない', async () => {
   await assertFails(setDoc(doc(userA, 'expenses/newAS'), { lineId: 'A', amount: 5, date: '2026-08-02', status: 'advance_settled' }));
   await assertFails(setDoc(doc(userA, 'expenses/newAAdv'), { lineId: 'A', amount: 5, date: '2026-08-02', advanceBy: 'A' }));
+  await assertFails(setDoc(doc(userA, 'expenses/newAFull'), { lineId: 'A', amount: 5, date: '2026-08-02', advanceFull: true }));
 });
 await test('★ appUid は作成時に書けない（userLinks 同期の悪用防止）', async () => {
   await assertFails(setDoc(doc(userA, 'expenses/newAUid'), { lineId: 'A', amount: 5, date: '2026-08-02', appUid: 'victim' }));
@@ -259,9 +260,11 @@ await test('★ 不変フィールド: groupId / lineGroupId / createdAt / input
   await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { createdAt: new Date() }));
   await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { inputSource: 'gmail_auto' }));
 });
-await test('★ 不変フィールド: status / advanceBy / appUid は変更できない（bot 専用）', async () => {
+await test('★ 不変フィールド: status / advanceBy / advanceFull / appUid は変更できない（bot 専用）', async () => {
   await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { status: 'advance_pending' }));
   await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { advanceBy: 'A' }));
+  // 立替を全額で返す扱い（advanceFull）も bot 専用（期間の精算の金額が変わる）
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { advanceFull: true }));
   await assertFails(updateDoc(doc(userA, 'expenses/expA'), { appUid: 'x' }));
 });
 await test('★ groupId の削除（web から見えなくする）はできない', async () => {

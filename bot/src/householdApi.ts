@@ -6,8 +6,8 @@
  * LINE の postback と同じ関数（expenseActions.ts）。
  *
  * - POST /household/expenses/:expenseId/actions   { action: 'confirm' }
- * - GET  /household/advances?groupId=<id>          立替の印が残っている支出（以前の機能の残り）
- * - POST /household/advances/clear                { groupId, expectedExpenseIds }（立替の印を外す）
+ * - GET  /household/legacy-advances?groupId=<id>   全額にする前の立替（advanceFull の無い advance_pending）
+ * - POST /household/legacy-advances/settle        { groupId, expectedExpenseIds }（精算済みにする）
  * - POST /household/split-settings                { groupId, collectFromLineId }（期間の折半精算で集金するメンバー）
  * - GET  /household/settlement-summary?groupId=<id>  精算の通知の状態（送れるか・期間・締まった期間を送ったか）
  * - POST /household/settlement-summary/send       { groupId, period: 'closed' | 'current' }（今すぐ LINE へ送る）
@@ -28,7 +28,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore, type DocumentData, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { parseBearerToken } from './adminAuth';
-import { applyExpenseChange, decideClearAdvance, decideConfirm } from './expenseActions';
+import { applyExpenseChange, decideConfirm, decideSettleLegacyAdvance } from './expenseActions';
 import { getPendingAdvances, type Expense } from './firestore';
 import { readActiveMember } from './householdMembers';
 import { getLineClient } from './line/client';
@@ -49,8 +49,8 @@ import { sendSettlementSummaryNow, settlementSummaryStatus, type SummaryPeriodKi
 import { todayJST } from './time';
 import { applyWebCorsHeaders } from './webOrigins';
 
-/** 1 回に立替の印を外せる件数の上限（Firestore の batch の上限） */
-export const MAX_CLEAR_IDS = 500;
+/** 1 回に精算済みにできる以前の立替の件数の上限 */
+export const MAX_LEGACY_SETTLE_IDS = 500;
 
 // ============================================
 // 入力検証（純関数）
@@ -91,7 +91,7 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 export function parseExpectedExpenseIds(value: unknown): string[] | 'too_many' | null {
   if (!Array.isArray(value) || !value.every(isValidDocId)) return null;
   const ids = Array.from(new Set(value as string[]));
-  return ids.length > MAX_CLEAR_IDS ? 'too_many' : ids;
+  return ids.length > MAX_LEGACY_SETTLE_IDS ? 'too_many' : ids;
 }
 
 /** 2 つの ID 集合が等しいか（順序・重複は無視） */
@@ -185,7 +185,7 @@ type ErrorCode =
   | 'forbidden'
   | 'not_found'
   | 'too_many'
-  | 'nothing_to_clear'
+  | 'nothing_to_settle'
   | 'stale'
   | 'unavailable'
   | 'line_limit'
@@ -338,10 +338,10 @@ function lineIdLimiter(limit: number, options: { skipFailedRequests?: boolean; w
 /** 全ルート共通（失敗した応答も数える。1 つの store を全ルートで共有） */
 const userLimiter = lineIdLimiter(60);
 /**
- * 立替の印を外す操作の上限。成功したものだけを数える（400/403/409 stale などで枠を使い切らないように）。
+ * 以前の立替を精算済みにする操作の上限。成功したものだけを数える（400/403/409 stale などで枠を使い切らないように）。
  * 失敗の連打は userLimiter で抑える。
  */
-const clearLimiter = lineIdLimiter(5, { skipFailedRequests: true });
+const legacySettleLimiter = lineIdLimiter(5, { skipFailedRequests: true });
 /**
  * 精算の通知を手動で送る上限（10 分に 3 回。成功したものだけ）。LINE の push は月の無料枠
  * （送信数 × 受け取る人数）を使うので、連打で使い切らないようにする。
@@ -349,7 +349,7 @@ const clearLimiter = lineIdLimiter(5, { skipFailedRequests: true });
 const summarySendLimiter = lineIdLimiter(3, { skipFailedRequests: true, windowMs: 10 * 60 * 1000 });
 
 // ============================================
-// 立替の印が残っている支出（以前の機能の残り）
+// 全額にする前の立替（advanceFull の無い advance_pending）
 // ============================================
 
 interface AdvanceScope {
@@ -361,6 +361,7 @@ interface AdvanceScope {
  * 立替を引く範囲
  *
  * LINE グループに紐づく世帯は lineGroupId 基準（以前の LINE の「立替一覧」「精算」と同じ集合）。
+ * 以前の立替の精算は lineGroupId で引いていたので、それに合わせる。
  * 紐づいていなければ groupId 基準。グループが無ければ null。
  */
 async function resolveScope(db: Firestore, groupId: string): Promise<AdvanceScope | null> {
@@ -391,7 +392,8 @@ export interface AdvancesView {
 }
 
 async function loadAdvances(groupId: string, scope: AdvanceScope): Promise<AdvancesView> {
-  const expenses = await getPendingAdvances(scope.id, scope.isLine);
+  // 全額で返す立替（advanceFull）は期間の精算で返すので含めない
+  const expenses = (await getPendingAdvances(scope.id, scope.isLine)).filter((e) => e.advanceFull !== true);
   return {
     groupId,
     items: expenses.map((e: Expense) => ({
@@ -498,11 +500,11 @@ householdRouter.post(
   })
 );
 
-/** GET /household/advances?groupId=<id> — 立替の印が残っている支出（精算タブのお知らせ） */
+/** GET /household/legacy-advances?groupId=<id> — 全額にする前の立替（精算タブのお知らせ） */
 householdRouter.get(
-  '/advances',
+  '/legacy-advances',
   userLimiter,
-  route('advances', async (req, res) => {
+  route('legacy-advances', async (req, res) => {
     const lineId = res.locals.lineId as string;
     const groupId = req.query.groupId;
     if (!isValidDocId(groupId)) {
@@ -528,17 +530,17 @@ householdRouter.get(
 );
 
 /**
- * POST /household/advances/clear  { groupId, expectedExpenseIds }
+ * POST /household/legacy-advances/settle  { groupId, expectedExpenseIds }
  *
- * 立替の印を外す（共同費に戻す。支払った人・金額は変えないので、期間の折半の金額は変わらない）。
+ * 全額にする前の立替を精算済み（advance_settled）にする。精算済みはどの期間の折半にも入らない。
  * 表示した対象（ID の集合）とずれていれば、409 stale と最新の一覧を返す。500 件を超えていれば 409 too_many。
- * 1 件ずつトランザクションで判定し、その間に立替で精算済みになった・印が外れた支出は飛ばす。
+ * 1 件ずつトランザクションで判定し、その間に精算済み・取り消し・全額の立替になった支出は飛ばす。
  */
 householdRouter.post(
-  '/advances/clear',
+  '/legacy-advances/settle',
   userLimiter,
-  clearLimiter,
-  route('advances-clear', async (req, res) => {
+  legacySettleLimiter,
+  route('legacy-advances-settle', async (req, res) => {
     const lineId = res.locals.lineId as string;
     const body = req.body;
     if (!isPlainObject(body) || !isValidDocId(body.groupId)) {
@@ -564,7 +566,7 @@ householdRouter.post(
     }
 
     const current = await loadAdvances(groupId, scope);
-    if (current.expenseIds.length > MAX_CLEAR_IDS) {
+    if (current.expenseIds.length > MAX_LEGACY_SETTLE_IDS) {
       sendError(res, 409, 'too_many');
       return;
     }
@@ -573,29 +575,30 @@ householdRouter.post(
       return;
     }
     if (current.expenseIds.length === 0) {
-      sendError(res, 409, 'nothing_to_clear');
+      sendError(res, 409, 'nothing_to_settle');
       return;
     }
 
-    let cleared = 0;
+    let settled = 0;
     let skipped = 0;
     for (const id of current.expenseIds) {
       // 読んでから書くまでの間に、別の操作（LINE の古いカードなど）で変わっていないかをトランザクション内で見る
+      const now = new Date();
       const result = await applyExpenseChange(id, (data) => {
         const inScope = scope.isLine ? data.lineGroupId === scope.id : data.groupId === scope.id;
-        if (!inScope || data.status !== 'advance_pending') return { reject: 'not_pending' };
-        return decideClearAdvance()(data);
+        if (!inScope) return { reject: 'out_of_scope' };
+        return decideSettleLegacyAdvance(now)(data);
       });
-      if (result && 'record' in result) cleared += 1;
+      if (result && 'record' in result) settled += 1;
       else skipped += 1;
     }
-    if (cleared === 0) {
-      sendError(res, 409, 'nothing_to_clear');
+    if (settled === 0) {
+      sendError(res, 409, 'nothing_to_settle');
       return;
     }
 
-    console.log('household advances cleared', { group: maskId(groupId), by: maskId(lineId), cleared, skipped });
-    res.status(200).json({ ok: true, cleared, skipped });
+    console.log('household legacy advances settled', { group: maskId(groupId), by: maskId(lineId), settled, skipped });
+    res.status(200).json({ ok: true, settled, skipped });
   })
 );
 
@@ -654,18 +657,26 @@ householdRouter.post(
       return;
     }
 
+    // 502 にするのは LINE への送信の失敗だけ（世帯・支出の読み込みの失敗は route() の 500）
+    let pushError: { status: unknown; error: unknown } | null = null;
     let result;
     try {
       result = await sendSettlementSummaryNow(db, groupId, period, {
         build: buildSettlementSummaryMessages,
         push: async (to, messages, retryKey) => {
-          await getLineClient().pushMessage({ to, messages }, retryKey);
+          try {
+            await getLineClient().pushMessage({ to, messages }, retryKey);
+          } catch (error) {
+            pushError = { status: (error as { status?: unknown }).status, error };
+            throw error;
+          }
         },
       });
     } catch (error) {
-      const status = (error as { status?: unknown }).status;
-      console.error('household settlement summary: push failed', { group: maskId(groupId), status, error: errorMessage(error) });
-      sendError(res, 502, status === 429 ? 'line_limit' : 'line_failed');
+      if (!pushError) throw error;
+      const failure: { status: unknown; error: unknown } = pushError;
+      console.error('household settlement summary: push failed', { group: maskId(groupId), status: failure.status, error: errorMessage(failure.error) });
+      sendError(res, 502, failure.status === 429 ? 'line_limit' : 'line_failed');
       return;
     }
     if (!result) {

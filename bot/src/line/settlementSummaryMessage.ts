@@ -3,7 +3,7 @@
  *
  * 1 回の push に 2 通を入れる（LINE の通数は 1 回の送信で数えるので増えない）:
  * 1. 送金する人と受け取る人をメンションしたテキスト（Flex ではメンションできないため textV2）
- * 2. 内訳・カテゴリ別・要確認をまとめた Flex
+ * 2. 内訳（立替の全額を含む）・カテゴリ別・要確認をまとめた Flex
  * 今の期間の途中経過（summary.interim）は、期間に「（途中経過）」を付け、送金の依頼ではなく見込みとして書く。
  * 見た目は登録・編集カード（flexMessage.ts）と揃える（緑のヘッダー、同じアイコン）。
  */
@@ -222,6 +222,9 @@ export function buildSettlementSummaryFlex(summary: SettlementSummary): messagin
         row(`合計（${countLabel}）`, yen(split.total)),
         row('1人あたり（÷ 2）', formatYenExact(split.half)),
         row(`− ${targetName}の支払い`, yen(split.targetPaid)),
+        // 立替（全額）は折半せず、立て替えた人へ全額を返す
+        ...(split.counterpartAdvanced > 0 ? [row(`+ ${counterpartName}の立替（全額）`, yen(split.counterpartAdvanced))] : []),
+        ...(split.targetAdvanced > 0 ? [row(`− ${targetName}の立替（全額）`, yen(split.targetAdvanced))] : []),
         { type: 'separator', margin: 'md', color: COLOR.track } as FlexComponent,
         row(`${counterpartName}・カード・共通口座の支払い`, yen(summary.othersPaid), { muted: true, bold: false }),
       ],

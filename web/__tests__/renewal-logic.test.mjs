@@ -48,7 +48,7 @@ import {
   deriveApiBase,
   isValidDocId,
   parseAdvancesResponse,
-  parseClearAdvancesResult,
+  parseSettleLegacyAdvancesResult,
   parseConfirmResponse,
   parseSummaryStatus,
   parseSummarySendResult,
@@ -293,6 +293,9 @@ test('支払い者の候補と表示名（既存の編集ドロワーと同じ�
 test('resolvePayerName: Gmail はクレジットカード、固定費の自動計上は共通口座、不明系は履歴で補う', () => {
   const historical = [{ lineId: ME, displayName: 'あおい' }];
   assert.equal(resolvePayerName(expense({ inputSource: 'gmail_auto' }), historical), 'クレジットカード');
+  assert.equal(resolvePayerName(expense({ inputSource: 'gmail_auto', payerId: 'gmail-auto-system' }), historical), 'クレジットカード');
+  // LINE の［自分が払った］［自分が立替］で支払った人をメンバーにしたカード取込は、その人の名前
+  assert.equal(resolvePayerName(expense({ inputSource: 'gmail_auto', payerId: ME, payerDisplayName: 'あおい' }), historical), 'あおい');
   assert.equal(
     resolvePayerName(expense({ inputSource: 'recurring', payerId: 'recurring-system', lineId: 'recurring-system' }), historical),
     '共通口座'
@@ -311,6 +314,8 @@ test('resolvePayerName: Gmail はクレジットカード、固定費の自動�
 
 test('isCardSource: Gmail 取込と固定費の自動計上（共通口座）', () => {
   assert.equal(isCardSource({ inputSource: 'gmail_auto' }), true);
+  assert.equal(isCardSource({ inputSource: 'gmail_auto', payerId: 'gmail-auto-system' }), true);
+  assert.equal(isCardSource({ inputSource: 'gmail_auto', payerId: ME }), false);
   assert.equal(isCardSource({ inputSource: 'recurring', payerId: 'recurring-system' }), true);
   assert.equal(isCardSource({ inputSource: 'recurring', payerId: ME }), false);
   assert.equal(isCardSource({ inputSource: 'line_text', payerId: 'recurring-system' }), false);
@@ -449,8 +454,8 @@ test('parseAdvancesResponse: 形を検証して揃える', () => {
   const loose = parseAdvancesResponse({ items: [{ id: 'e3', amount: 'x' }, { description: 'no id' }, 'junk'], expenseIds: ['e3', 4] });
   assert.deepEqual(loose.items, [{ id: 'e3', date: '', description: '', amount: 0, category: '', advanceBy: null, advanceByName: '' }]);
   assert.deepEqual(loose.expenseIds, ['e3']);
-  assert.deepEqual(parseClearAdvancesResult({ ok: true, cleared: 2, skipped: 1 }), { cleared: 2, skipped: 1 });
-  assert.equal(parseClearAdvancesResult({ error: 'stale' }), null);
+  assert.deepEqual(parseSettleLegacyAdvancesResult({ ok: true, settled: 2, skipped: 1 }), { settled: 2, skipped: 1 });
+  assert.equal(parseSettleLegacyAdvancesResult({ error: 'stale' }), null);
 });
 
 test('parseSummaryStatus / parseSummarySendResult（設定の「LINEへの精算の通知」）', () => {
@@ -509,13 +514,13 @@ test('parseConfirmResponse', () => {
 });
 
 test('エラーの分類（K5-1）', () => {
-  assert.equal(classifyHouseholdFailure(409, { error: 'settled', message: '精算済みのため変更できません' }), 'settled');
+  assert.equal(classifyHouseholdFailure(409, { error: 'settled', message: '精算済みのため変更できません' }), 'failed');
   assert.equal(classifyHouseholdFailure(409, { error: 'stale' }), 'stale');
-  assert.equal(classifyHouseholdFailure(409, { error: 'nothing_to_clear' }), 'nothing_to_clear');
+  assert.equal(classifyHouseholdFailure(409, { error: 'nothing_to_settle' }), 'nothing_to_settle');
   assert.equal(classifyHouseholdFailure(409, { error: 'unavailable', reason: 'no_line_group' }), 'unavailable');
   assert.equal(classifyHouseholdFailure(502, { error: 'line_limit' }), 'line_limit');
   assert.equal(classifyHouseholdFailure(502, { error: 'line_failed' }), 'line_failed');
-  assert.equal(classifyHouseholdFailure(409, { error: 'nothing_to_settle' }), 'failed');
+  assert.equal(classifyHouseholdFailure(409, { error: 'nothing_to_clear' }), 'failed');
   assert.equal(classifyHouseholdFailure(403, {}), 'forbidden');
   assert.equal(classifyHouseholdFailure(404, '<html>'), 'not_found');
   assert.equal(classifyHouseholdFailure(429, null), 'rate_limited');

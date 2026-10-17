@@ -14,7 +14,15 @@ type PostbackEvent = webhook.PostbackEvent;
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { PostbackActionData } from '../gmail/types';
 import { ExpenseStatusType } from '../firestore';
-import { applyExpenseChange, decideClearAdvance, decideConfirm, decideSetPayer, SETTLED_REJECTION } from '../expenseActions';
+import {
+  applyExpenseChange,
+  decideClearAdvance,
+  decideConfirm,
+  decideSetAdvance,
+  decideSetPayer,
+  SETTLED_REJECTION,
+  type ExpenseDecider,
+} from '../expenseActions';
 import { fallbackDisplayName, readActiveMember } from '../householdMembers';
 import { errorMessage, maskId } from '../logSafe';
 import {
@@ -143,6 +151,9 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
       case 'set_payer':
         await handleSetPayer(event, actionData);
         break;
+      case 'set_advance':
+        await handleSetAdvance(event, actionData, actionData.to !== 'off');
+        break;
       case 'confirm':
         await handleConfirm(event, actionData);
         break;
@@ -167,14 +178,8 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
       case 'personal':
         await handleSetSplit(event, actionData, 'personal');
         break;
-      // 立替の精算は期間の折半にまとめた。以前のカードの［自分が立替］は「自分が払った」として扱い、
-      // ［取り消す］は立替の印を外す
-      case 'set_advance':
-        if (actionData.to === 'off') await handleClearAdvance(event, actionData);
-        else await handleSetPayer(event, actionData);
-        break;
       case 'advance':
-        await handleSetPayer(event, actionData);
+        await handleSetAdvance(event, actionData, true);
         break;
 
       default:
@@ -209,9 +214,10 @@ async function handleSetSplit(
         includeInTotal,
         confirmed: true,
         advanceBy: FieldValue.delete(),
+        advanceFull: FieldValue.delete(),
         updatedAt: new Date(),
       },
-      cardPatch: { status: to, includeInTotal, advanceBy: undefined },
+      cardPatch: { status: to, includeInTotal, advanceBy: undefined, advanceFull: undefined },
     };
   });
 
@@ -241,19 +247,23 @@ async function profileName(event: PostbackEvent, userId: string): Promise<string
 }
 
 /**
- * 支払った人を、押した人にする（［自分が払った］）
+ * 押した人として、世帯のメンバーだけに許す変更を行う（［自分が払った］［自分が立替］［取り消す］）
  *
- * 押せるのは支出の世帯の有効メンバーだけ（世帯の無い個人の支出は登録した本人）。期間の折半の金額が
- * 変わるため、グループにいるだけの人には変えさせない。表示名はメンバー文書の名前、無ければ LINE の
- * プロフィール名。
+ * 期間の精算の金額が変わるため、押せるのは支出の世帯の有効メンバーだけ（世帯の無い個人の支出は登録した本人。
+ * lineGroupId だけを持つ旧形式は変えない）。表示名はメンバー文書の名前、無ければ LINE のプロフィール名。
+ *
+ * @returns 返信を済ませたら null、変更できたら更新後のレコード
  */
-async function handleSetPayer(event: PostbackEvent, actionData: ExtendedPostbackActionData): Promise<void> {
-  const { expenseId } = actionData;
+async function applyAsMember(
+  event: PostbackEvent,
+  expenseId: string,
+  decide: (presser: { lineId: string; displayName: string }) => ExpenseDecider
+): Promise<Record<string, unknown> | null> {
   const userId = event.source!.userId;
   if (!userId) {
-    console.error('Cannot set payer: userId is missing', { expenseId, sourceType: event.source!.type });
+    console.error('Cannot identify the presser: userId is missing', { expense: maskId(expenseId), sourceType: event.source!.type });
     await replyText(event, '押した人を特定できなかったため、変更できませんでした');
-    return;
+    return null;
   }
 
   const fromProfile = await profileName(event, userId);
@@ -261,7 +271,7 @@ async function handleSetPayer(event: PostbackEvent, actionData: ExtendedPostback
   const db = getFirestore();
   const result = await applyExpenseChange(
     expenseId,
-    (data) => decideSetPayer({ lineId: userId, displayName: memberName || fromProfile || fallbackDisplayName(userId) })(data),
+    (data) => decide({ lineId: userId, displayName: memberName || fromProfile || fallbackDisplayName(userId) })(data),
     {
       authorize: async (data, tx) => {
         if (typeof data.groupId === 'string' && data.groupId) {
@@ -269,39 +279,48 @@ async function handleSetPayer(event: PostbackEvent, actionData: ExtendedPostback
           memberName = member?.displayName ?? '';
           return member !== null;
         }
-        // 世帯の無い個人の支出は本人だけ（lineGroupId だけを持つ旧形式は変えない）
         return !data.lineGroupId && data.lineId === userId;
       },
     }
   );
 
-  if (!result) return;
+  if (!result) return null;
   if ('forbidden' in result) {
-    await replyText(event, '支払った人を変えられるのは、世帯のメンバーだけです');
-    return;
+    await replyText(event, '変更できるのは、世帯のメンバーだけです');
+    return null;
   }
   if ('reject' in result) {
     await replyText(event, result.reject);
-    return;
+    return null;
   }
-
-  console.log('Expense payer set by the presser', { expense: maskId(expenseId), user: maskId(userId) });
-  await replyUpdatedCard(event, expenseId, result.record, '支払った人を変更しました');
+  return result.record;
 }
 
-/** 立替の印を外す（以前のカードの［取り消す］） */
-async function handleClearAdvance(event: PostbackEvent, actionData: ExtendedPostbackActionData): Promise<void> {
+/** 支払った人を、押した人にする（［自分が払った］） */
+async function handleSetPayer(event: PostbackEvent, actionData: ExtendedPostbackActionData): Promise<void> {
   const { expenseId } = actionData;
-  const result = await applyExpenseChange(expenseId, decideClearAdvance());
+  const record = await applyAsMember(event, expenseId, (presser) => decideSetPayer(presser));
+  if (!record) return;
+  console.log('Expense payer set by the presser', { expense: maskId(expenseId) });
+  await replyUpdatedCard(
+    event,
+    expenseId,
+    record,
+    record.status === 'advance_pending' ? '支払った人（立替した人）を変更しました' : '支払った人を変更しました'
+  );
+}
 
-  if (!result) return;
-  if ('reject' in result) {
-    await replyText(event, result.reject);
-    return;
-  }
-
-  console.log('Expense advance mark cleared', { expense: maskId(expenseId) });
-  await replyUpdatedCard(event, expenseId, result.record, '設定を更新しました');
+/**
+ * 立替にする / 取り消す（［自分が立替］［取り消す］。旧UIの advance も［自分が立替］として扱う）
+ *
+ * 立替は押した人が払って相手の分を立て替えた支出で、支出の日付の期間の精算で全額を返してもらう。
+ */
+async function handleSetAdvance(event: PostbackEvent, actionData: ExtendedPostbackActionData, on: boolean): Promise<void> {
+  const { expenseId } = actionData;
+  const record = await applyAsMember(event, expenseId, (presser) => (on ? decideSetAdvance(presser) : decideClearAdvance()));
+  if (!record) return;
+  console.log('Expense advance updated', { expense: maskId(expenseId), on });
+  await replyUpdatedCard(event, expenseId, record, on ? '立替にしました（精算で全額を返します）' : '設定を更新しました');
 }
 
 /**

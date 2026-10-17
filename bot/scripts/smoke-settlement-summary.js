@@ -136,6 +136,8 @@ const e = (amount, payerId, extra = {}) => ({
           includeInTotal: rnd() < 0.85,
           status: statuses[Math.floor(rnd() * statuses.length)],
           date: rnd() < 0.85 ? '2026-10-01' : '2026-10-20',
+          advanceFull: rnd() < 0.5,
+          advanceBy: rnd() < 0.7 ? [A, B, 'Uold'][Math.floor(rnd() * 3)] : undefined,
         };
       });
       const target = [A, B, null][Math.floor(rnd() * 3)];
@@ -143,6 +145,47 @@ const e = (amount, payerId, extra = {}) => ({
       assert.deepEqual(botSplit.computePeriodSplit(input), web.computePeriodSplit(input), `round ${round}`);
     }
     assert.equal(botSplit.formatYenExact(160426.5), web.formatYenExact(160426.5));
+  });
+
+  await test('立替（全額）は折半せず、立て替えた人へ全額を返す', () => {
+    const base = [e(10000, A), e(30000, B)];
+    // 光麦（集金するメンバー）: 20,000 − 10,000 = 10,000 を誠へ
+    assert.deepEqual(botSplit.computePeriodSplit({ expenses: base, groupId: G, members: MEMBERS, targetLineId: A, range: RANGE }).transfer, { fromLineId: A, toLineId: B, amount: 10000 });
+    // 誠が光麦の分を 2,610 立て替えた → 光麦が全額を足して返す
+    const byB = botSplit.computePeriodSplit({
+      expenses: [...base, e(2610, B, { status: 'advance_pending', advanceBy: B, advanceFull: true })],
+      groupId: G, members: MEMBERS, targetLineId: A, range: RANGE,
+    });
+    assert.equal(byB.total, 40000, '立替は折半の合計に入らない');
+    assert.equal(byB.advanceCount, 1);
+    assert.equal(byB.counterpartAdvanced, 2610);
+    assert.deepEqual(byB.transfer, { fromLineId: A, toLineId: B, amount: 12610 });
+    // 光麦が誠の分を 788 立て替えた → 送金から差し引く
+    const both = botSplit.computePeriodSplit({
+      expenses: [...base, e(2610, B, { status: 'advance_pending', advanceBy: B, advanceFull: true }), e(788, A, { status: 'advance_pending', advanceBy: A, advanceFull: true })],
+      groupId: G, members: MEMBERS, targetLineId: A, range: RANGE,
+    });
+    assert.equal(both.targetAdvanced, 788);
+    assert.deepEqual(both.transfer, { fromLineId: A, toLineId: B, amount: 11822 });
+    // 全額にする前の立替（advanceFull 無し）はこれまでどおり支払った人の分として折半する
+    const legacy = botSplit.computePeriodSplit({
+      expenses: [...base, e(2610, B, { status: 'advance_pending', advanceBy: B })],
+      groupId: G, members: MEMBERS, targetLineId: A, range: RANGE,
+    });
+    assert.equal(legacy.total, 42610);
+    assert.equal(legacy.advanceCount, 0);
+    // 期間外の立替は入らない（支出の日付の期間の精算に加算する）
+    const outside = botSplit.computePeriodSplit({
+      expenses: [...base, e(2610, B, { status: 'advance_pending', advanceBy: B, advanceFull: true, date: '2026-10-15' })],
+      groupId: G, members: MEMBERS, targetLineId: A, range: RANGE,
+    });
+    assert.equal(outside.advanceCount, 0);
+    // 立替が送金の向きを逆にする（光麦の立替が大きい）
+    const reverse = botSplit.computePeriodSplit({
+      expenses: [e(1000, A, { status: 'advance_pending', advanceBy: A, advanceFull: true })],
+      groupId: G, members: MEMBERS, targetLineId: A, range: RANGE,
+    });
+    assert.deepEqual(reverse.transfer, { fromLineId: B, toLineId: A, amount: 1000 });
   });
 
   console.log('\n[サマリーの中身]');
@@ -159,6 +202,8 @@ const e = (amount, payerId, extra = {}) => ({
     e(2180, A, { status: undefined, confirmed: false, includeInTotal: false }),
     // 以前のカード取込（pending）は要確認に数えない
     e(700, 'gmail-auto-system', { status: 'pending', confirmed: false, inputSource: 'gmail_auto', category: '食費' }),
+    // 誠が光麦の分を立て替えた（全額を加算。カテゴリ別・合計には入らない）
+    e(2610, B, { status: 'advance_pending', advanceBy: B, advanceFull: true, category: '美容' }),
     // 期間外・別の世帯は数えない
     e(99999, B, { date: '2026-10-15' }),
     e(99999, B, { groupId: 'other' }),
@@ -170,11 +215,13 @@ const e = (amount, payerId, extra = {}) => ({
     collectFrom: A,
     expenses,
   });
-  await test('合計・集金額は Web の式どおり（光麦が払う）', () => {
+  await test('合計・集金額は Web の式どおり（光麦が払う。誠の立替は全額を加算）', () => {
     assert.equal(summary.split.total, 170100);
     assert.equal(summary.split.targetPaid, 4900);
     assert.equal(summary.othersPaid, 165200);
-    assert.deepEqual(summary.split.transfer, { fromLineId: A, toLineId: B, amount: 80150 });
+    assert.equal(summary.split.counterpartAdvanced, 2610);
+    assert.deepEqual(summary.split.transfer, { fromLineId: A, toLineId: B, amount: 82760 });
+    assert.ok(!summary.categories.some((c) => c.category === '美容'), '立替はカテゴリ別に入らない');
   });
   await test('カテゴリは金額の多い順に上位 5 つ、残りは「ほか」', () => {
     assert.deepEqual(summary.categories.map((c) => c.category), ['住居費', '食費', '娯楽', '日用品', '交通費']);
@@ -193,18 +240,18 @@ const e = (amount, payerId, extra = {}) => ({
   const [text, flex] = buildSettlementSummaryMessages(summary);
   await test('1 通目: 送金する人と受け取る人をメンションしたテキスト', () => {
     assert.equal(text.type, 'textV2');
-    assert.equal(text.text, '9/15〜10/14 の精算（折半）です。\n{u1} から {u2} へ ¥80,150 の送金をお願いします。');
+    assert.equal(text.text, '9/15〜10/14 の精算（折半）です。\n{u1} から {u2} へ ¥82,760 の送金をお願いします。');
     assert.deepEqual(text.substitution.u1, { type: 'mention', mentionee: { type: 'user', userId: A } });
     assert.deepEqual(text.substitution.u2, { type: 'mention', mentionee: { type: 'user', userId: B } });
   });
   const json = JSON.stringify(flex);
   await test('2 通目: Flex に送金額・内訳・カテゴリ・要確認・精算へのリンク', () => {
     assert.equal(flex.type, 'flex');
-    assert.equal(flex.altText, '9/15〜10/14 の精算: 光麦→岩渕 誠 ¥80,150');
-    for (const s of ['¥80,150', '光麦  →  岩渕 誠', '合計（9件・除外1件）', '¥170,100', '¥85,050', '− 光麦の支払い', '岩渕 誠・カード・共通口座の支払い', '住居費', '70.5%', 'ほか 3カテゴリ ¥3,500', '要確認が 1件（¥2,180）', SETTLEMENT_URL]) {
+    assert.equal(flex.altText, '9/15〜10/14 の精算: 光麦→岩渕 誠 ¥82,760');
+    for (const s of ['¥82,760', '光麦  →  岩渕 誠', '合計（9件・除外1件）', '¥170,100', '¥85,050', '− 光麦の支払い', '+ 岩渕 誠の立替（全額）', '¥2,610', '岩渕 誠・カード・共通口座の支払い', '住居費', '70.5%', 'ほか 3カテゴリ ¥3,500', '要確認が 1件（¥2,180）', SETTLEMENT_URL]) {
       assert.ok(json.includes(s), `Flex に「${s}」が無い`);
     }
-    assert.ok(!json.includes('立替が'), '立替の精算は折半にまとめたので出さない');
+    assert.ok(!json.includes('光麦の立替'), '光麦の立替が 0 なら出さない');
     assert.ok(!json.includes('途中経過'), '締まった期間は途中経過と書かない');
     assert.ok(json.includes('/icons/cat-housing.png'), 'カテゴリのアイコン');
     // LINE の Flex の上限（1 メッセージ 30KB）に十分収まる

@@ -70,8 +70,7 @@ export interface PostbackActionData {
   /**
    * アクション種別
    *
-   * - set_split / set_payer / show_list … 現行UI（現在値表示＋[変更]ボタン）が送る操作
-   * - set_advance … 立替の精算を期間の折半にまとめる前のカードのボタン（［自分が立替］は set_payer と同じ扱い）
+   * - set_split / set_payer / set_advance / show_list … 現行UI（現在値表示＋[変更]ボタン）が送る操作
    * - shared / personal / advance … 旧UIのボタン。配信済みメッセージは編集できないため、
    *   過去に送ったカードから押される可能性がある。互換のため残す。
    */

@@ -39,6 +39,7 @@ const ICONS = {
   'cat-other': ['ellipsis', '#94a3b8'],
   // ユーティリティ（emerald）
   'wallet': ['wallet', ACCENT],
+  'hand-coins': ['hand-coins', ACCENT],
   'receipt': ['receipt', ACCENT],
   'calendar': ['calendar-range', ACCENT],
   'paperclip': ['paperclip', ACCENT],

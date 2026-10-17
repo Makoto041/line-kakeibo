@@ -1,14 +1,14 @@
 'use client';
 
-// 精算: 期間の精算（折半）だけ。期間内の世帯の支出を折半し、指定したメンバーから集金する額（PeriodSplitCard）。
-// 誰が払ったかは支出の「支払った人」で数えるので、立替を別に精算する仕組みはやめた。以前に「自分が立替」に
-// した支出が残っていれば、印を外すお知らせ（LeftoverAdvancesCard）を下に出す。
+// 精算: 期間の精算（折半）。期間内の世帯の支出を折半し、立替は全額を加算して、指定したメンバーから集金する額
+// （PeriodSplitCard）。立替を全額にする前に「自分が立替」にした支出が残っていれば、精算済みにするお知らせ
+// （LeftoverAdvancesCard）を下に出す。
 import React, { useMemo, useState } from 'react';
 import { HandCoins, RefreshCw, Users } from 'lucide-react';
 import PreviewModeBanner from '../../components/PreviewModeBanner';
 import PeriodSplitCard from '../../components/PeriodSplitCard';
 import LeftoverAdvancesCard from '../../components/LeftoverAdvancesCard';
-import { useAdvances, useHousehold, useLineAuth, patchCachedExpenses, invalidateStatsCache } from '../../lib/hooks';
+import { useLegacyAdvances, useHousehold, useLineAuth, patchCachedExpenses, invalidateStatsCache } from '../../lib/hooks';
 import { isHouseholdApiConfigured } from '../../lib/householdApi';
 
 export default function SettlementPage() {
@@ -17,7 +17,7 @@ export default function SettlementPage() {
   const householdState = useHousehold(lineId);
   const household = householdState.household;
   const groupId = household ? household.groupId : null;
-  const advancesState = useAdvances(groupId);
+  const advancesState = useLegacyAdvances(groupId);
   const apiAvailable = isHouseholdApiConfigured();
   const advances = advancesState.data;
 
@@ -104,25 +104,26 @@ export default function SettlementPage() {
             />
           )}
 
-          {/* 以前の立替が残っているときだけ（0 件・読み込み中・読めないときは出さない） */}
+          {/* 全額にする前の立替が残っているときだけ（0 件・読み込み中・読めないときは出さない） */}
           {advances && advances.items.length > 0 && (
             <LeftoverAdvancesCard
               groupId={household.groupId}
               data={advances}
               names={names}
-              canClear={apiAvailable}
-              onCleared={(ids, cleared) => {
-                // ほかの画面（支出の一覧）が古い状態を出さないよう、読み込み済みの一覧も共同費に戻す
-                patchCachedExpenses(ids, { status: 'shared', advanceBy: undefined });
+              canSettle={apiAvailable}
+              onSettled={(ids, settled, skipped) => {
+                // ほかの画面（支出の一覧・期間の精算）が古い状態を出さないよう、読み込み済みの一覧も精算済みにする
+                // （飛ばしたものがあればどれか分からないので、次に読み込むときに任せる）
+                if (skipped === 0) patchCachedExpenses(ids, { status: 'advance_settled' });
                 invalidateStatsCache();
                 advancesState.setData({ ...advances, items: [], expenseIds: [] });
                 advancesState.refetch();
-                setMessage({ type: 'success', text: `${cleared}件の立替の印を外しました。金額はそのまま折半に入っています。` });
+                setMessage({ type: 'success', text: `${settled}件を精算済みにしました` });
               }}
               onStale={(latest) => {
                 advancesState.setData(latest);
                 if (latest.items.length > 0) {
-                  setMessage({ type: 'info', text: '立替の内容が更新されました。件数を確認してから、もう一度外してください' });
+                  setMessage({ type: 'info', text: '立替の内容が更新されました。件数を確認してから、もう一度精算済みにしてください' });
                 }
               }}
               onError={(text) => setMessage({ type: 'error', text })}

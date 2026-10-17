@@ -10,7 +10,9 @@ const assert = require('assert');
 const {
   decideClearAdvance,
   decideConfirm,
+  decideSetAdvance,
   decideSetPayer,
+  decideSettleLegacyAdvance,
   isPendingStatus,
   SETTLED_REJECTION,
 } = require('../dist/expenseActions');
@@ -25,7 +27,7 @@ const {
   householdErrorHandler,
   clientIpKey,
   parseCollectFromLineId,
-  MAX_CLEAR_IDS,
+  MAX_LEGACY_SETTLE_IDS,
 } = require('../dist/householdApi');
 const { isAllowedWebOrigin } = require('../dist/webOrigins');
 
@@ -48,6 +50,9 @@ function deepEqual(a, b) {
     return false;
   }
 }
+
+/** FieldValue.delete() の番兵か */
+const isFieldDelete = (v) => !!v && typeof v === 'object' && !!v.constructor && v.constructor.name.includes('Transform');
 
 // ------------------------------------------------------------
 console.log('decideConfirm（LINE の OK と同じ判定）');
@@ -100,7 +105,6 @@ check('SETTLED_REJECTION の文言は従来どおり', SETTLED_REJECTION === '�
 console.log('\ndecideSetPayer（LINE の［自分が払った］）');
 {
   const payer = { lineId: 'U1', displayName: 'まこと' };
-  const isFieldDelete = (v) => v && typeof v === 'object' && v.constructor && v.constructor.name.includes('Transform');
   const pending = decideSetPayer(payer)({});
   check(
     '未確認 → 支払った人を変え、共同費・計上・確認済み',
@@ -108,8 +112,8 @@ console.log('\ndecideSetPayer（LINE の［自分が払った］）');
       pending.update.status === 'shared' && pending.update.includeInTotal === true && pending.update.confirmed === true,
     JSON.stringify(pending.update)
   );
-  const advance = decideSetPayer(payer)({ status: 'advance_pending', advanceBy: 'U2' });
-  check('立替の印が残っていれば外す（共同費・advanceBy を消す）', advance.update.status === 'shared' && isFieldDelete(advance.update.advanceBy) && advance.cardPatch.advanceBy === undefined, JSON.stringify(advance.update));
+  const advance = decideSetPayer(payer)({ status: 'advance_pending', advanceBy: 'U2', advanceFull: true });
+  check('立替なら立て替えた人も押した人にする（立替のまま）', advance.update.status === undefined && advance.update.advanceBy === 'U1' && advance.cardPatch.advanceBy === 'U1', JSON.stringify(advance.update));
   const personal = decideSetPayer(payer)({ status: 'personal', includeInTotal: false });
   check('除外は除外のまま（支払った人だけ変える）', personal.update.status === undefined && personal.update.includeInTotal === undefined && personal.update.payerId === 'U1');
   const shared = decideSetPayer(payer)({ status: 'shared' });
@@ -119,13 +123,39 @@ console.log('\ndecideSetPayer（LINE の［自分が払った］）');
 }
 
 // ------------------------------------------------------------
-console.log('\ndecideClearAdvance（立替の印を外す）');
+console.log('\ndecideSetAdvance（LINE の［自分が立替］）');
 {
-  const d = decideClearAdvance()({ status: 'advance_pending', advanceBy: 'U2', payerId: 'U3' });
+  const presser = { lineId: 'U1', displayName: 'まこと' };
+  for (const status of [undefined, 'pending', 'shared', 'personal', 'advance_pending']) {
+    const d = decideSetAdvance(presser)({ status, includeInTotal: status !== 'personal' });
+    check(
+      `status=${status ?? '無し'} → 全額の立替（押した人が立替・支払い、計上・確認済み）`,
+      d.update.status === 'advance_pending' && d.update.advanceFull === true && d.update.advanceBy === 'U1' &&
+        d.update.payerId === 'U1' && d.update.payerDisplayName === 'まこと' && d.update.includeInTotal === true && d.update.confirmed === true,
+      JSON.stringify(d.update)
+    );
+  }
+  check('立替で精算済みは拒否', deepEqual(decideSetAdvance(presser)({ status: 'advance_settled' }), { reject: SETTLED_REJECTION }));
+}
+
+// ------------------------------------------------------------
+console.log('\ndecideClearAdvance（立替を取り消す）');
+{
+  const d = decideClearAdvance()({ status: 'advance_pending', advanceBy: 'U2', advanceFull: true, payerId: 'U3' });
   check('advance_pending → 共同費（支払った人・金額は変えない）', d.update.status === 'shared' && !('payerId' in d.update) && !('amount' in d.update) && d.update.confirmed === true);
+  check('advanceBy・advanceFull を消す', isFieldDelete(d.update.advanceBy) && isFieldDelete(d.update.advanceFull) && d.cardPatch.advanceFull === undefined);
   check('立替で精算済みは拒否', deepEqual(decideClearAdvance()({ status: 'advance_settled' }), { reject: SETTLED_REJECTION }));
-  const noop = decideClearAdvance()({ status: 'shared' });
-  check('印が無ければ何も変えない（更新時刻だけ）', deepEqual(Object.keys(noop.update), ['updatedAt']) && deepEqual(noop.cardPatch, {}));
+  check('立替でなければ変えない（理由を返す）', deepEqual(decideClearAdvance()({ status: 'shared' }), { reject: '立替ではないため、変更はありません' }));
+}
+
+// ------------------------------------------------------------
+console.log('\ndecideSettleLegacyAdvance（全額にする前の立替を精算済みにする）');
+{
+  const now = new Date('2026-10-17T01:00:00Z');
+  const d = decideSettleLegacyAdvance(now)({ status: 'advance_pending', advanceBy: 'U2' });
+  check('advanceFull の無い立替 → advance_settled・精算日時', d.update.status === 'advance_settled' && d.update.advanceSettledAt === now);
+  check('全額の立替は対象外（期間の精算で返す）', 'reject' in decideSettleLegacyAdvance(now)({ status: 'advance_pending', advanceFull: true }));
+  check('立替でなければ対象外', 'reject' in decideSettleLegacyAdvance(now)({ status: 'shared' }) && 'reject' in decideSettleLegacyAdvance(now)({ status: 'advance_settled' }));
 }
 
 const ts = (ms) => ({ toMillis: () => ms });
@@ -174,10 +204,10 @@ check('expectedExpenseIds: 空配列は可', deepEqual(parseExpectedExpenseIds([
 check('expectedExpenseIds: 配列以外は不可', parseExpectedExpenseIds('a') === null && parseExpectedExpenseIds(undefined) === null);
 check('expectedExpenseIds: 文字列以外の要素は不可', parseExpectedExpenseIds(['a', 1]) === null);
 check('expectedExpenseIds: 不正な ID は不可', parseExpectedExpenseIds(['a/b']) === null && parseExpectedExpenseIds(['..']) === null);
-check(`expectedExpenseIds: ${MAX_CLEAR_IDS} 件までは可`, parseExpectedExpenseIds(Array.from({ length: MAX_CLEAR_IDS }, (_, i) => `e${i}`)).length === MAX_CLEAR_IDS);
-check(`expectedExpenseIds: ${MAX_CLEAR_IDS + 1} 件は too_many（400 にせず 409 で返す）`, parseExpectedExpenseIds(Array.from({ length: MAX_CLEAR_IDS + 1 }, (_, i) => `e${i}`)) === 'too_many');
-check('expectedExpenseIds: 重複を除いて 500 件以下なら可', parseExpectedExpenseIds([...Array.from({ length: MAX_CLEAR_IDS }, (_, i) => `e${i}`), 'e0']).length === MAX_CLEAR_IDS);
-check('expectedExpenseIds: 件数が多くても不正な要素があれば不可', parseExpectedExpenseIds([...Array.from({ length: MAX_CLEAR_IDS + 1 }, (_, i) => `e${i}`), 'a/b']) === null);
+check(`expectedExpenseIds: ${MAX_LEGACY_SETTLE_IDS} 件までは可`, parseExpectedExpenseIds(Array.from({ length: MAX_LEGACY_SETTLE_IDS }, (_, i) => `e${i}`)).length === MAX_LEGACY_SETTLE_IDS);
+check(`expectedExpenseIds: ${MAX_LEGACY_SETTLE_IDS + 1} 件は too_many（400 にせず 409 で返す）`, parseExpectedExpenseIds(Array.from({ length: MAX_LEGACY_SETTLE_IDS + 1 }, (_, i) => `e${i}`)) === 'too_many');
+check('expectedExpenseIds: 重複を除いて 500 件以下なら可', parseExpectedExpenseIds([...Array.from({ length: MAX_LEGACY_SETTLE_IDS }, (_, i) => `e${i}`), 'e0']).length === MAX_LEGACY_SETTLE_IDS);
+check('expectedExpenseIds: 件数が多くても不正な要素があれば不可', parseExpectedExpenseIds([...Array.from({ length: MAX_LEGACY_SETTLE_IDS + 1 }, (_, i) => `e${i}`), 'a/b']) === null);
 check('sameIdSet: 順序は無視', sameIdSet(['a', 'b'], ['b', 'a']));
 check('sameIdSet: 過不足は不一致', !sameIdSet(['a', 'b'], ['a']) && !sameIdSet(['a'], ['a', 'c']) && !sameIdSet(['a', 'b'], ['a', 'c']));
 check('送る期間: closed / current だけ可', parseSummaryPeriod('closed') === 'closed' && parseSummaryPeriod('current') === 'current');
