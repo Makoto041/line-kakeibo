@@ -115,7 +115,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 | アクション | 効果 |
 |---|---|
-| `set_split`（`to: shared \| personal`） | `status` を設定し `includeInTotal` を連動（`shared`=true / `personal`=false）。立替は解除（`advanceBy` / `advanceFull` を削除）。あわせて `confirmed: true` |
+| `set_split`（`to: shared \| personal`） | `status` を設定し `includeInTotal` を連動（`shared`=true / `personal`=false）。立替は解除（`advanceBy` / `advanceFull` を削除）。あわせて `confirmed: true`。押せるのは世帯の有効メンバーだけ |
 | `set_payer`（自分が払った） | `payerId` / `payerDisplayName` を押下者にし、`confirmed: true`。未確認（status なし / `pending`）は `status: 'shared'`・`includeInTotal: true` へ昇格。立替（`advance_pending`）は立替のまま、`advanceBy` も押下者にする（払った人と立て替えた人は同じ）。`personal` は `personal` のまま |
 | `set_advance`（`to: on \| off`） | on（自分が立替）= `status: 'advance_pending'`・`advanceFull: true`・`advanceBy` / `payerId` / `payerDisplayName` に押下者・`includeInTotal: true`・`confirmed: true`（除外からでも立替になる）/ off（取り消す）= `status: 'shared'`・`includeInTotal: true`・`confirmed: true`・`advanceBy` / `advanceFull` を削除（支払った人は変えないので、折半で支払った人の分になる）。立替でない支出の off は「立替ではないため、変更はありません」 |
 | `confirm`（OK） | `confirmed: true`。**`pending` のときだけ** `status: 'shared'`・`includeInTotal: true` へ昇格（設定済みの支出を共同費へ巻き戻さない） |
@@ -124,7 +124,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | `show_list` | 押下者の `lineId` を含む家計簿一覧 URL を返す |
 | `shared` / `personal` / `advance`（旧 UI） | 配信済みカードからの押下に備えて `set_split` / `set_advance`（`advance` は［自分が立替］）へ読み替える |
 
-**押せる人**: `set_payer` と `set_advance`（on / off）は期間の精算の金額が変わるため、押せるのは支出の世帯（`groupId`）の有効メンバーだけ（`groupId` の無い個人の支出は登録した本人だけ、`lineGroupId` だけを持つ旧形式は不可。それ以外は「変更できるのは、世帯のメンバーだけです」）。表示名はメンバー文書の名前 → LINE のプロフィール名 → `User_xxxxxx`。
+**押せる人**: `set_split`・`set_payer`・`set_advance`（on / off）と旧UIの `shared` / `personal` / `advance` は期間の精算の金額が変わるため、押せるのは支出の世帯（`groupId`）の有効メンバーだけ（`groupId` の無い個人の支出は登録した本人だけ、`lineGroupId` だけを持つ旧形式は不可。それ以外は「変更できるのは、世帯のメンバーだけです」）。表示名はメンバー文書の名前 → LINE のプロフィール名 → `User_xxxxxx`。
 
 **矛盾の解消**: 個人費（除外）にすると立替は解除され、立替にすると支出区分は共同費相当に揃う（除外かつ立替は成立しない）。`advance_settled` の支出に対する**支出区分・支払った人・立替の変更**はサーバー側で拒否する（「精算済みのため変更できません」。古いカードにボタンが残っているため、表示を消すだけでは足りない）。カテゴリ変更は精算後も可能（精算額に影響しないため）。
 
@@ -272,7 +272,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 - **立替は期間の精算に全額を加算する**: 以前は立替（`advance_pending`）が期間の精算（折半。支払った人 `payerId || lineId` で数える）と別の立替の精算の両方に入り、二重に払うおそれがあった。立替の精算（`GET /household/settlement`・`POST /household/settlement/settle`、LINE の `精算` の記録）はやめ、［自分が立替］にした支出（`advanceFull: true`）は支出の日付の期間の精算で全額を返す。全額にする前の立替（`advanceFull` 無し）は、これまでどおり支払った人の分として折半する（過去の期間の金額を変えないため）。精算が済んでいれば `legacy-advances/settle` で精算済みにする
 - **対象範囲**（全額にする前の立替）: `groups/{groupId}.lineGroupId` があれば `lineGroupId` 基準（以前の LINE の `立替一覧` / `精算` と同じ集合）、無ければ `groupId` 基準。期間は見ず、残っている全件
-- **期間の精算（折半）**の計算は API を持たない。`web/lib/periodSplit.ts` の `computePeriodSplit` がクライアントで計算する（LINE への通知は同じ式の `bot/src/periodSplit.ts`）: 集金額 = 世帯の支出合計 ÷ 2 − 集金するメンバーの支払い（`payerId`、無ければ `lineId`）＋ 相手の立替（全額）− 集金するメンバーの立替（全額）。合計は `groupId` が一致し `includeInTotal` のもので、`advance_settled` と立替（全額）を除く。立替（全額）は `isFullAdvance`（`status: 'advance_pending'` かつ `advanceFull: true`）のうち日付が期間内のもので、立て替えた人（`advanceBy` → `payerId` → `lineId`）で分ける（集金するメンバー以外の立替は相手の分）。結果の `advanceCount` / `targetAdvanced` / `counterpartAdvanced` が件数と各人の立替の合計。有効メンバーが 2 人でない（`not_two_members`）か集金するメンバー未指定（`no_target`）なら出さない。記録は残さない
+- **期間の精算（折半）**の計算は API を持たない。`web/lib/periodSplit.ts` の `computePeriodSplit` がクライアントで計算する（LINE への通知は同じ式の `bot/src/periodSplit.ts`）: 集金額 = 世帯の支出合計 ÷ 2 − 集金するメンバーの支払い（`payerId`、無ければ `lineId`）＋ 相手の立替（全額）− 集金するメンバーの立替（全額）。合計は `groupId` が一致し `includeInTotal` のもので、`advance_settled` と立替（全額）を除く。立替（全額）は `isFullAdvance`（`status: 'advance_pending'` かつ `advanceFull: true`）のうち日付が期間内で `includeInTotal` のもの（合計から除外した立替は返さず、除外として数える）で、立て替えた人＝支払った人（`payerId` → `advanceBy` → `lineId`。Web の編集で支払った人を変えたらその人に返す）で分ける（集金するメンバー以外の立替は相手の分）。結果の `advanceCount` / `targetAdvanced` / `counterpartAdvanced` が件数と各人の立替の合計。有効メンバーが 2 人でない（`not_two_members`）か集金するメンバー未指定（`no_target`）なら出さない。記録は残さない
 - テスト: 純関数は `bot/scripts/smoke-household-api.js` / `smoke-recurring.js`（`npm -w bot test`）、web 側は `web/__tests__/periodSplit.test.mjs` / `renewal-logic.test.mjs`（`npm -w web test`）。ルーター・認証・Firestore を通した確認は `bot/scripts/emulator-household-api.js` / `emulator-recurring.js` / `emulator-settlement-summary.js`（`npm -w bot run test:emulator`。`bot/scripts/firebase.emulator.json` のポート 18080 / 19099 で Firestore・Auth エミュレータを起動する。firebase-tools は依存に入れていないので、別途入れて PATH に置く）
 
 ---

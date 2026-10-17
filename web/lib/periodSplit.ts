@@ -81,9 +81,12 @@ export function isFullAdvance(e: Pick<SplitExpense, 'status' | 'advanceFull'>): 
   return e.status === 'advance_pending' && e.advanceFull === true;
 }
 
-/** 立て替えた人（advanceBy、無ければ支払った人・登録者） */
+/**
+ * 立て替えた人: 支払った人（payerId、無ければ登録者）。立替は「払った人が相手の分を立て替えた」ので、
+ * Web の編集で支払った人を変えたときもその人に返す（bot は advanceBy と payerId を同じ人にする）
+ */
 export function advancerOf(e: Pick<SplitExpense, 'advanceBy' | 'payerId' | 'lineId'>): string {
-  return e.advanceBy || e.payerId || e.lineId;
+  return e.payerId || e.advanceBy || e.lineId;
 }
 
 export function computePeriodSplit(input: {
@@ -95,9 +98,10 @@ export function computePeriodSplit(input: {
   range?: { startDate: string; endDate: string };
 }): PeriodSplit {
   const pool = periodPool(input.expenses, input.groupId, input.range);
-  // 立替（全額）は折半せず、立て替えた人へ全額を返す
-  const advances = pool.filter(isFullAdvance);
-  const rest = pool.filter((e) => !isFullAdvance(e));
+  // 立替（全額）は折半せず、立て替えた人へ全額を返す。合計から除外した立替は返さない（除外の扱い）
+  const isReturned = (e: SplitExpense) => isFullAdvance(e) && e.includeInTotal === true;
+  const advances = pool.filter(isReturned);
+  const rest = pool.filter((e) => !isReturned(e));
   const included = rest.filter((e) => e.includeInTotal);
   const counted = included.filter((e) => e.status !== 'advance_settled');
   const total = counted.reduce((sum, e) => sum + amountOf(e), 0);
@@ -124,7 +128,7 @@ export function computePeriodSplit(input: {
   const targetPaid = counted
     .filter((e) => (e.payerId || e.lineId) === target.lineId)
     .reduce((sum, e) => sum + amountOf(e), 0);
-  // 立替は立て替えた人（advanceBy、無ければ支払った人）で分ける。集金するメンバー以外の立替は相手の分として扱う
+  // 立替は立て替えた人（支払った人）で分ける。集金するメンバー以外の立替は相手の分として扱う
   const targetAdvanced = advances
     .filter((e) => advancerOf(e) === target.lineId)
     .reduce((sum, e) => sum + amountOf(e), 0);

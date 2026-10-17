@@ -174,7 +174,7 @@ export function buildSettlementSummaryFlex(summary: SettlementSummary): messagin
   const targetName = split.target?.displayName || 'メンバー';
   const counterpartName = split.counterpart?.displayName || 'メンバー';
 
-  const countLabel = [`${split.count}件`, split.excludedCount > 0 ? `除外${split.excludedCount}件` : '', split.settledCount > 0 ? `立替精算済み${split.settledCount}件` : '']
+  const countLabel = [`${split.count}件`, split.excludedCount > 0 ? `除外${split.excludedCount}件` : '', split.settledCount > 0 ? `立替精算済み${split.settledCount}件` : '', split.advanceCount > 0 ? `立替${split.advanceCount}件は全額で別` : '']
     .filter(Boolean)
     .join('・');
 

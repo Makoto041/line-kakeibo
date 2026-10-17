@@ -161,6 +161,17 @@ test('立替（全額）は折半せず、支出の日付の期間の精算に�
   assert.equal(settled.settledCount, 1);
   assert.equal(settled.advanceCount, 0);
 
+  // 合計から除外した立替は返さない（除外として数える）
+  const excluded = split([...base, d('2026-10-01', 2610, OWNER.lineId, { status: 'advance_pending', advanceBy: OWNER.lineId, advanceFull: true, includeInTotal: false })]);
+  assert.equal(excluded.advanceCount, 0);
+  assert.equal(excluded.excludedCount, 1);
+  assert.deepEqual(excluded.transfer, { fromLineId: PARTNER.lineId, toLineId: OWNER.lineId, amount: 10000 });
+
+  // 立て替えた人は支払った人（Web の編集で支払った人を変えたら、その人に返す）
+  const moved = split([...base, d('2026-10-01', 2610, PARTNER.lineId, { status: 'advance_pending', advanceBy: OWNER.lineId, advanceFull: true })]);
+  assert.equal(moved.targetAdvanced, 2610);
+  assert.deepEqual(moved.transfer, { fromLineId: PARTNER.lineId, toLineId: OWNER.lineId, amount: 7390 });
+
   // 送金する人が決まっていなければ立替の額も出さない
   const noTarget = computePeriodSplit({ expenses: [...base, full('2026-10-01', 2610, OWNER.lineId)], groupId: G, members: MEMBERS, targetLineId: null, range });
   assert.equal(noTarget.reason, 'no_target');

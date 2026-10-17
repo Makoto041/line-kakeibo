@@ -287,7 +287,8 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
                 <div className="flex justify-between">
                   <dt className="text-muted">
                     合計（{split.count}件{split.excludedCount > 0 ? `・除外${split.excludedCount}件` : ''}
-                    {split.settledCount > 0 ? `・立替精算済み${split.settledCount}件` : ''}）
+                    {split.settledCount > 0 ? `・立替精算済み${split.settledCount}件` : ''}
+                    {split.advanceCount > 0 ? `・立替${split.advanceCount}件は全額で別` : ''}）
                   </dt>
                   <dd className="font-medium text-fg">{yen(split.total, 'ja-JP')}</dd>
                 </div>

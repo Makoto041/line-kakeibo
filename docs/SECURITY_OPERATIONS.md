@@ -207,12 +207,9 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
   `firebase functions:delete syncUserLinks importMoneyForward --region asia-northeast1` を実行したあと、`bot/src/index.ts` の export を消す。
 - レシートはトークン付きのダウンロード URL を `receiptUrl` に保存している。この URL は Storage ルールを経由しない（REC-SEC-2）。
   パスを保存する方式への移行は、別の PR で扱う。
-- LINE の postback のうち区分の変更（［除外］［戻す］）では、押した人のメンバーシップを確認していない（SET-18）。
-  クライアントからは status / advanceBy / advanceFull を変えられないので、残る経路は LINE グループに居る非メンバーがカードのボタンを押すこと。
-  後続で `groupMembers/{groupId}_{event.source.userId}` を引き、`isActive` を要求してから status を変更する。
-  支払った人・立替の変更（［自分が払った］［自分が立替］［取り消す］）は期間の精算（折半）の金額が変わるため、すでに
-  トランザクション内で `groupMembers/{groupId}_{lineId}` の `isActive` を確かめている（`groupId` の無い個人の支出は
-  登録した本人だけ、`lineGroupId` だけを持つ旧形式は不可）。
+- LINE の postback で支出を変えるボタン（区分の［除外］［戻す］、［自分が払った］［自分が立替］［取り消す］）は、期間の精算（折半）の
+  金額が変わるため、トランザクション内で `groupMembers/{groupId}_{lineId}` の `isActive` を確かめてから変更する（SET-18 は対応済み。
+  `groupId` の無い個人の支出は登録した本人だけ、`lineGroupId` だけを持つ旧形式は不可）。OK・カテゴリの変更は従来どおり確認しない。
 - 脱退済み（`isActive:false`）の元メンバーも、自分が登録したグループ支出の **読み取り**（とそのレシートの取得）だけはできる。
   web の個人支出クエリ `where('lineId','==',自分)` をルールで証明できるようにするため。閉じるには、個人支出クエリに
   `groupId` の制約（または専用フラグ）を足し、read の所有者条件を `groupId` なしに限定する必要がある。

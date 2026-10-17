@@ -180,6 +180,19 @@ const e = (amount, payerId, extra = {}) => ({
       groupId: G, members: MEMBERS, targetLineId: A, range: RANGE,
     });
     assert.equal(outside.advanceCount, 0);
+    // 合計から除外した立替は返さない
+    const excluded = botSplit.computePeriodSplit({
+      expenses: [...base, e(2610, B, { status: 'advance_pending', advanceBy: B, advanceFull: true, includeInTotal: false })],
+      groupId: G, members: MEMBERS, targetLineId: A, range: RANGE,
+    });
+    assert.equal(excluded.advanceCount, 0);
+    assert.equal(excluded.excludedCount, 1);
+    // 立て替えた人は支払った人（advanceBy と食い違っても支払った人に返す）
+    const moved = botSplit.computePeriodSplit({
+      expenses: [...base, e(2610, A, { status: 'advance_pending', advanceBy: B, advanceFull: true })],
+      groupId: G, members: MEMBERS, targetLineId: A, range: RANGE,
+    });
+    assert.equal(moved.targetAdvanced, 2610);
     // 立替が送金の向きを逆にする（光麦の立替が大きい）
     const reverse = botSplit.computePeriodSplit({
       expenses: [e(1000, A, { status: 'advance_pending', advanceBy: A, advanceFull: true })],
@@ -248,7 +261,7 @@ const e = (amount, payerId, extra = {}) => ({
   await test('2 通目: Flex に送金額・内訳・カテゴリ・要確認・精算へのリンク', () => {
     assert.equal(flex.type, 'flex');
     assert.equal(flex.altText, '9/15〜10/14 の精算: 光麦→岩渕 誠 ¥82,760');
-    for (const s of ['¥82,760', '光麦  →  岩渕 誠', '合計（9件・除外1件）', '¥170,100', '¥85,050', '− 光麦の支払い', '+ 岩渕 誠の立替（全額）', '¥2,610', '岩渕 誠・カード・共通口座の支払い', '住居費', '70.5%', 'ほか 3カテゴリ ¥3,500', '要確認が 1件（¥2,180）', SETTLEMENT_URL]) {
+    for (const s of ['¥82,760', '光麦  →  岩渕 誠', '合計（9件・除外1件・立替1件は全額で別）', '¥170,100', '¥85,050', '− 光麦の支払い', '+ 岩渕 誠の立替（全額）', '¥2,610', '岩渕 誠・カード・共通口座の支払い', '住居費', '70.5%', 'ほか 3カテゴリ ¥3,500', '要確認が 1件（¥2,180）', SETTLEMENT_URL]) {
       assert.ok(json.includes(s), `Flex に「${s}」が無い`);
     }
     assert.ok(!json.includes('光麦の立替'), '光麦の立替が 0 なら出さない');

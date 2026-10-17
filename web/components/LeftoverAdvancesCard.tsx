@@ -30,7 +30,7 @@ function settleErrorMessage(error: unknown): string {
     case 'nothing_to_settle':
       return '以前の立替はもうありません（ほかの端末で精算済みにした可能性があります）';
     case 'too_many':
-      return '件数が多すぎるため、ここでは外せません';
+      return '件数が多すぎるため、ここでは精算済みにできません';
     case 'rate_limited':
       return '操作が多すぎます。少し待ってからやり直してください';
     default:

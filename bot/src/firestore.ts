@@ -739,14 +739,14 @@ export async function getAllUserCategories(lineId: string): Promise<Array<Catego
 }
 
 // ============================================
-// 立替（以前の機能の残り）
+// 立替
 // ============================================
 
 /**
- * グループの、立替の印が残っている支出（status: advance_pending）
+ * グループの立替（status: advance_pending）
  *
- * 立替の精算は期間の折半にまとめた。新しくは作られないが、以前に「自分が立替」にした支出が残っているので、
- * Web の精算タブで一覧を出し、印を外せるようにする（householdApi.ts の /household/advances）。
+ * 全額で返す立替（advanceFull）は期間の精算で返す。全額にする前の立替（advanceFull 無し）は Web の精算タブで
+ * 一覧を出し、精算済みにできる（householdApi.ts の /household/legacy-advances）。
  */
 export async function getPendingAdvances(groupIdOrLineGroupId: string, isLineGroupId: boolean = false): Promise<Expense[]> {
   try {

@@ -41,7 +41,7 @@ interface ExtendedPostbackActionData extends PostbackActionData {
   source?: 'gmail' | 'text';  // 入力元
   category?: string;          // 設定するカテゴリ
   /**
-   * set_split / set_advance（以前のカード）で設定する値
+   * set_split / set_advance で設定する値
    *
    * カードを描画した時点の現在値の「反対」を埋め込んである。トグル（反転）ではなく
    * 絶対値を渡すことで、古いカードから押しても表示どおりの結果になる。
@@ -195,7 +195,7 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
  * 支出区分（共同費 / 個人費）を設定
  *
  * 個人費・共同費のどちらに変えても立替は解除する。立替者が残ったままだと
- * 精算対象に残り続けてしまうため。
+ * 精算対象に残り続けてしまうため。期間の精算の金額が変わるので、押せるのは世帯のメンバーだけ（applyAsMember）。
  */
 async function handleSetSplit(
   event: PostbackEvent,
@@ -205,7 +205,7 @@ async function handleSetSplit(
   const { expenseId } = actionData;
   const includeInTotal = to === 'shared';
 
-  const result = await applyExpenseChange(expenseId, (data) => {
+  const record = await applyAsMember(event, expenseId, () => (data) => {
     if (data.status === 'advance_settled') return { reject: SETTLED_REJECTION };
 
     return {
@@ -220,15 +220,10 @@ async function handleSetSplit(
       cardPatch: { status: to, includeInTotal, advanceBy: undefined, advanceFull: undefined },
     };
   });
+  if (!record) return;
 
-  if (!result) return;
-  if ('reject' in result) {
-    await replyText(event, result.reject);
-    return;
-  }
-
-  console.log(`Expense ${expenseId} split set to ${to}`);
-  await replyUpdatedCard(event, expenseId, result.record, '設定を更新しました');
+  console.log('Expense split updated', { expense: maskId(expenseId), to });
+  await replyUpdatedCard(event, expenseId, record, '設定を更新しました');
 }
 
 /** 押した人の LINE の表示名（世帯のメンバー文書に名前が無いときに使う）。取れなければ空文字 */
@@ -247,7 +242,7 @@ async function profileName(event: PostbackEvent, userId: string): Promise<string
 }
 
 /**
- * 押した人として、世帯のメンバーだけに許す変更を行う（［自分が払った］［自分が立替］［取り消す］）
+ * 押した人として、世帯のメンバーだけに許す変更を行う（支出区分・［自分が払った］［自分が立替］［取り消す］）
  *
  * 期間の精算の金額が変わるため、押せるのは支出の世帯の有効メンバーだけ（世帯の無い個人の支出は登録した本人。
  * lineGroupId だけを持つ旧形式は変えない）。表示名はメンバー文書の名前、無ければ LINE のプロフィール名。
@@ -320,7 +315,7 @@ async function handleSetAdvance(event: PostbackEvent, actionData: ExtendedPostba
   const record = await applyAsMember(event, expenseId, (presser) => (on ? decideSetAdvance(presser) : decideClearAdvance()));
   if (!record) return;
   console.log('Expense advance updated', { expense: maskId(expenseId), on });
-  await replyUpdatedCard(event, expenseId, record, on ? '立替にしました（精算で全額を返します）' : '設定を更新しました');
+  await replyUpdatedCard(event, expenseId, record, on ? '立替にしました（期間の精算で相手から全額を返してもらいます）' : '設定を更新しました');
 }
 
 /**

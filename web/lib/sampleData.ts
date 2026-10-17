@@ -52,7 +52,7 @@ function buildSampleExpense(
 
 /**
  * サンプル支出データ（要確認 2 件を含む。どちらも手入力の未確認で、1 件は集計に含め、1 件は含めない）。
- * 以前の立替で精算済みの 1 件も含む（立替の精算は期間の折半にまとめた）。
+ * 以前の立替で精算済みの 1 件も含む。
  */
 export function getSampleExpenses(): Expense[] {
   return [
