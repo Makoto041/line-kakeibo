@@ -111,24 +111,26 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 ### 2.5 Postback アクション（`bot/src/line/postback.ts`）
 
-支出区分の [変更] ボタンにはトグル（反転）ではなく**設定する値そのもの**を埋め込む（`to`）。カード描画時点の現在値の反対が入っているため、古いカードから押しても表示どおりの結果になる。
+支出区分・立替のボタンにはトグル（反転）ではなく**設定する値そのもの**を埋め込む（`to`）。カード描画時点の現在値の反対が入っているため、古いカードから押しても表示どおりの結果になる。
 
 | アクション | 効果 |
 |---|---|
-| `set_split`（`to: shared \| personal`） | `status` を設定し `includeInTotal` を連動（`shared`=true / `personal`=false）。立替の印は外す（`advanceBy` を削除）。あわせて `confirmed: true` |
-| `set_payer`（自分が払った） | `payerId` / `payerDisplayName` を押下者にし、`confirmed: true`。未確認（status なし / `pending`）は `status: 'shared'`・`includeInTotal: true` へ昇格。立替の印（`advance_pending`）が残っていれば `status: 'shared'`・`advanceBy` 削除。`personal` は `personal` のまま。押せるのは支出の世帯（`groupId`）の有効メンバーだけで、`groupId` の無い個人の支出は登録した本人だけ、`lineGroupId` だけを持つ旧形式は不可（それ以外は「支払った人を変えられるのは、世帯のメンバーだけです」）。表示名はメンバー文書の名前 → LINE のプロフィール名 → `User_xxxxxx` |
+| `set_split`（`to: shared \| personal`） | `status` を設定し `includeInTotal` を連動（`shared`=true / `personal`=false）。立替は解除（`advanceBy` / `advanceFull` を削除）。あわせて `confirmed: true` |
+| `set_payer`（自分が払った） | `payerId` / `payerDisplayName` を押下者にし、`confirmed: true`。未確認（status なし / `pending`）は `status: 'shared'`・`includeInTotal: true` へ昇格。立替（`advance_pending`）は立替のまま、`advanceBy` も押下者にする（払った人と立て替えた人は同じ）。`personal` は `personal` のまま |
+| `set_advance`（`to: on \| off`） | on（自分が立替）= `status: 'advance_pending'`・`advanceFull: true`・`advanceBy` / `payerId` / `payerDisplayName` に押下者・`includeInTotal: true`・`confirmed: true`（除外からでも立替になる）/ off（取り消す）= `status: 'shared'`・`includeInTotal: true`・`confirmed: true`・`advanceBy` / `advanceFull` を削除（支払った人は変えないので、折半で支払った人の分になる）。立替でない支出の off は「立替ではないため、変更はありません」 |
 | `confirm`（OK） | `confirmed: true`。**`pending` のときだけ** `status: 'shared'`・`includeInTotal: true` へ昇格（設定済みの支出を共同費へ巻き戻さない） |
 | `edit`（修正） | 押下者の `lineId` を含む Web 編集 URL（`/expenses?edit=<id>&lineId=...`）を返信。**押す人が分かっているカードでは「修正」は URI ボタンで直接 Web を開く**ため、この postback へ来るのは Gmail 通知と配信済みの古いカードだけ |
 | `show_category_select` / `set_category` | カテゴリ選択カルーセルを表示 / カテゴリを更新 |
 | `show_list` | 押下者の `lineId` を含む家計簿一覧 URL を返す |
-| `set_advance`（以前のカード） | 立替の精算を期間の折半にまとめる前のカードのボタン。`to: on`（自分が立替）は `set_payer` と同じ。`to: off`（取り消す）は立替の印を外す（`advance_pending` なら `status: 'shared'`・`includeInTotal: true`・`confirmed: true`・`advanceBy` 削除。`advance_settled` は拒否、それ以外は変えない） |
-| `shared` / `personal` / `advance`（旧 UI） | 配信済みカードからの押下に備えて `set_split` / `set_payer` へ読み替える |
+| `shared` / `personal` / `advance`（旧 UI） | 配信済みカードからの押下に備えて `set_split` / `set_advance`（`advance` は［自分が立替］）へ読み替える |
 
-**矛盾の解消**: 個人費にすると立替の印は外れる。`advance_settled`（以前の立替の精算で精算済み）の支出に対する**支出区分・支払った人の変更と立替の印を外す操作**はサーバー側で拒否する（「精算済みのため変更できません」。古いカードにボタンが残っているため、表示を消すだけでは足りない）。カテゴリ変更は精算後も可能（精算額に影響しないため）。
+**押せる人**: `set_payer` と `set_advance`（on / off）は期間の精算の金額が変わるため、押せるのは支出の世帯（`groupId`）の有効メンバーだけ（`groupId` の無い個人の支出は登録した本人だけ、`lineGroupId` だけを持つ旧形式は不可。それ以外は「変更できるのは、世帯のメンバーだけです」）。表示名はメンバー文書の名前 → LINE のプロフィール名 → `User_xxxxxx`。
+
+**矛盾の解消**: 個人費（除外）にすると立替は解除され、立替にすると支出区分は共同費相当に揃う（除外かつ立替は成立しない）。`advance_settled` の支出に対する**支出区分・支払った人・立替の変更**はサーバー側で拒否する（「精算済みのため変更できません」。古いカードにボタンが残っているため、表示を消すだけでは足りない）。カテゴリ変更は精算後も可能（精算額に影響しないため）。
 
 **変更後の再表示**: LINE は送信済みメッセージを編集できないため、状態を変えたら最新値のカードを `replyToken` で返信する（`buildExpenseCardFromRecord()`）。登録直後のカードと同じビルダーを通すので表現がぶれない。
 
-**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`。OK・支払った人・立替の印を外す判定 `decideConfirm()` / `decideSetPayer()` / `decideClearAdvance()` とともに `bot/src/expenseActions.ts` にあり、Web の確認・立替の印を外す操作（§5.4）も同じ関数を使う。`set_payer` のメンバー確認も同じトランザクション内で読む）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
+**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`。OK・支払った人・立替・取り消しの判定 `decideConfirm()` / `decideSetPayer()` / `decideSetAdvance()` / `decideClearAdvance()` とともに `bot/src/expenseActions.ts` にあり、Web の確認と以前の立替を精算済みにする操作（§5.4。`decideSettleLegacyAdvance()`）も同じ仕組みを使う。`set_payer` / `set_advance` のメンバー確認も同じトランザクション内で読む）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
 
 ### 2.6 メッセージ送信ポリシー
 
@@ -151,7 +153,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 ### 3.1 Gmail 連携（三井住友カード利用通知）
 
 - Gmail API（`gmail.readonly` スコープのみ）＋ **Pub/Sub push 通知**（topic: `gmail-notifications`）
-- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → Gemini でカテゴリ分類 → **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 3 行＋[変更] ボタン）
+- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → Gemini でカテゴリ分類 → **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 4 行＋ボタン）
 - 保存フィールド: `lineId`/`payerId` はシステムユーザー `gmail-auto-system`、`inputSource: 'gmail_auto'`, `status: 'shared'`, `confirmed: true`（自動で入るので要確認にしない）, `includeInTotal: true`, `usedAt`（カード利用日時）、`groupId`（`DEFAULT_GROUP_ID`）/ `lineGroupId`（`LINE_GROUP_ID`）
 - watch は7日で失効するため、**6日ごとの cron**（`renewGmailWatch`）で更新
 - 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。認証は `ADMIN_SECRET` を **`Authorization: Bearer` ヘッダーでのみ**受け付け、定数時間で比較する（`requireAdminAuth`）＋レートリミット（OAuth callback のみ CSRF state 検証）。`?adminSecret=` クエリ渡しはアクセスログ等に秘密値が残るため廃止した。詳細は [GMAIL_AUTO_SPEC.md](./GMAIL_AUTO_SPEC.md)
