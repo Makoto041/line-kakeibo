@@ -105,7 +105,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | `personal` | — | 除外 | なし |
 | `advance_pending`（`advanceFull: true`） | ［自分が立替］ | 共同費 | あり（全額を精算に加算） |
 | `advance_pending`（`advanceFull` なし） | 全額にする前の立替（新しくは作られない） | 共同費 | あり |
-| `advance_settled` | 全額にする前の立替を精算済みにしたもの | 共同費 | 精算済み |
+| `advance_settled` | 以前の立替の精算・全額にする前の立替を精算済みにしたもの | 共同費 | 精算済み |
 
 `advance_settled` のカードには支出区分・支払った人・立替のボタンを出さない（カテゴリのみ変更可）。
 
@@ -169,7 +169,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - `postRecurringExpenses`（cron: 毎日 9:10 JST。§3.4 の精算サマリーと同じ実行）が、有効（`active`）な項目のうち当月の引き落とし日（`dayOfMonth`。月の日数を超える日はその月の末日）を迎えたものを `expenses` に計上する。文書 ID を `recurring_{項目ID}_{YYYYMM}` に固定して create するため、同じ月に 2 回は入らない。`lastPostedMonth` に計上した月を記録し、作成日（`startDate`）より前の引き落とし日の分と、停止→再開時に当月の引き落とし日を過ぎていた分は遡らない
 - 計上する明細: `inputSource: 'recurring'`, `recurringId`, `confirmed: true`, `includeInTotal: true`, `groupId`（＋世帯の `lineGroupId`）、金額は設定した見込み額（請求確定後は明細側を直す）
   - 支払い元 `shared`（共通のカード・口座）: `lineId`/`payerId` = `recurring-system`、`status: 'shared'`
-  - 支払い元 `advance`（メンバーの個人口座）: `lineId`/`payerId`/`payerDisplayName`（`userDisplayName` も）= その人、`status: 'shared'`。`advanceBy` は付けない。期間の精算（折半）でその人の支払いとして数える（例: 家賃）。値の名前 `advance` は以前の「立替」のなごりで、保存する値は変えていない。Web の表示は「個人の口座」、一覧では「<名前>の口座」
+  - 支払い元 `advance`（メンバーの個人口座）: `lineId`/`payerId`/`payerDisplayName`（`userDisplayName` も）= その人、`status: 'shared'`。`advanceBy` は付けない。期間の精算（折半）でその人の支払いとして数える（例: 家賃。共同費なので立替〔全額〕にはせず折半する）。値の名前 `advance` は以前の「立替」のなごりで、保存する値は変えていない。Web の表示は「個人の口座」、一覧では「<名前>の口座」
 - LINE への通知は送らない。カード利用通知メールで自動登録される支出を固定費に登録すると二重になる（画面で案内）
 - テスト: 純関数は `bot/scripts/smoke-recurring.js`（`npm -w bot test`）、API と計上は `bot/scripts/emulator-recurring.js`（`npm -w bot run test:emulator`）
 
@@ -281,7 +281,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 | コレクション | 主なフィールド | 備考 |
 |---|---|---|
-| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`。`advance_*` は以前の立替の値で、新しくは作られない), `inputSource`(`line_text\|gmail_auto\|recurring`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `recurringId?`, `receiptUrl?`, `needsEdit?`（**レガシー**。書き込み・読み出しとも廃止済みで既存データにのみ存在）, `items?[]`, `ocrText?`（レガシー）, `createdAt`, `updatedAt` | 中核コレクション。システムユーザーの `lineId`: Gmail 取込 `gmail-auto-system` / 固定費 `recurring-system`（ルールで世帯メンバーが修正・削除できる） |
+| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`。`advance_pending` は立替、`advance_settled` は以前の立替の精算か、全額にする前の立替を精算済みにしたもの), `inputSource`(`line_text\|gmail_auto\|recurring`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceFull?`（立替を全額で精算に加算する扱い。［自分が立替］で `true`。無い `advance_pending` は全額にする前の立替で、新しくは作られない。bot だけが書き、クライアントからは作成・更新とも不可）, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `recurringId?`, `receiptUrl?`, `needsEdit?`（**レガシー**。書き込み・読み出しとも廃止済みで既存データにのみ存在）, `items?[]`, `ocrText?`（レガシー）, `createdAt`, `updatedAt` | 中核コレクション。システムユーザーの `lineId`: Gmail 取込 `gmail-auto-system` / 固定費 `recurring-system`（ルールで世帯メンバーが修正・削除できる） |
 | `groups` | `name`, `inviteCode`(8桁・暗号学的乱数。参加には使わない), `createdBy`, `lineGroupId?`, `splitSettings?`(`{ collectFromLineId, updatedBy, updatedAt }`) | 汎用グループ機能はコード上「非推奨」— 実運用は LINE グループ共有。クライアント書込不可 |
 | `groupMembers/{groupId}_{lineId}` | `groupId`, `lineId`, `displayName`, `isActive`, `joinedAt`, `leftAt?`, `deactivatedReason?` | `isActive == true` が Web アクセス権。LINE グループ退出（`memberLeft`）で bot が `false` にする。発言による自動追加はしない（世帯2名固定、追加は管理スクリプト）。クライアント書込不可 |
 | `recurringExpenses` | `groupId`, `name`, `amount`, `category`, `dayOfMonth`, `payment`(`shared\|advance`), `payerLineId`, `active`, `lastPostedMonth`, `startDate`, `createdBy`, `createdAt`, `updatedAt` | 固定費の項目（§3.3）。クライアントからは読み書き不可（`/household/recurring` 経由） |
@@ -292,7 +292,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | `userCustomCategories` | `lineId`, `name`, `icon?`, `keywords?[]` | Bot 専用 |
 | `categoryFeedback` | `originalCategory`, `correctedCategory`, `description` | 分類改善用ログ。Bot 専用 |
 | `system/{gmailToken,gmailState,oauthState,gmailFailures}` | Gmail OAuth トークン・historyId / watch 期限・CSRF state・処理失敗の記録 | Bot 専用 |
-| `system/settlementSummary_{groupId}_{YYYY-MM-DD}` | `groupId`, `endDate`, `createdAt`, `sentAt`, `manualSentAt?` | 期間の精算サマリーを送った印（§3.4。同じ期間は 1 回。Web から締まった期間を手動で送ったときも `sentAt`・`manualSentAt` を書く）。Bot 専用 |
+| `system/settlementSummary_{groupId}_{YYYY-MM-DD}` | `groupId`, `endDate`, `createdAt`, `sentAt`, `manualSentAt?` | 期間の精算サマリーを送った印（§3.4。同じ期間は 1 回。Web から締まった期間を手動で送ったときは `manualSentAt` を書き、印が無ければ作る。自動で送った `sentAt` は上書きしない）。Bot 専用 |
 
 複合インデックス: `expenses` の `lineId/groupId/lineGroupId × createdAt/date/status` 組合せ、`groupMembers` の `lineId+isActive` / `groupId+isActive`（`firestore.indexes.json`）。
 
@@ -304,7 +304,7 @@ Storage: `receipts/{expenseId}/{fileName}` — cross-service rules で支出を�
 
 - **Web**: LIFF ログイン。`web/lib/lineAuth.ts` が LIFF の ID トークンを bot の `POST /auth/line` へ送り、LINE の verify API で検証（`aud` = `LINE_LIFF_CHANNEL_ID`）した `sub` を `lineId` クレームに持つ **Firebase カスタムトークン**（`uid` = `appUid`）でサインインする。**URL の `?lineId=` は識別に使わない**（LINE のリンクに付いていても無視される）。未ログインなら LINE ログインへ移り、ログイン後は元のページ（`/attach?expenseId=…` など）へ戻る。LIFF 未設定（ローカル・プレビュー）や失敗時は匿名サインインへフォールバックし、`lineId` クレームが無いためルール上は何も読めない（ゲスト表示）
 - **Bot**: LINE webhook 署名検証（`LINE_CHANNEL_SECRET`）。`appUid` は Firebase Auth 匿名ユーザーとして裏で発行。Firestore は Admin SDK で操作しルールをバイパスする
-- **Firestore ルール**（`firestore.rules`）: `request.auth.token.lineId` と各文書の `lineId`、および `groupMembers/{groupId}_{lineId}.isActive` で判定。`expenses` は所有者と世帯メンバーが読め、create / update / delete はフィールド許可リストと値の検証付き（`status` / `advanceBy` / `inputSource` / `groupId` などはクライアント不変、精算済みは金額・日付・支払者の変更と削除不可）。`groups` / `groupMembers` / `userLinks` / `linkTokens` はクライアント書込不可、`userSettings` / `budgetSettings` は本人のみ、未定義パスは既定拒否。要点は `docs/SECURITY_OPERATIONS.md` §3
+- **Firestore ルール**（`firestore.rules`）: `request.auth.token.lineId` と各文書の `lineId`、および `groupMembers/{groupId}_{lineId}.isActive` で判定。`expenses` は所有者と世帯メンバーが読め、create / update / delete はフィールド許可リストと値の検証付き（`status` / `advanceBy` / `advanceFull` / `inputSource` / `groupId` などはクライアント不変、精算済みは金額・日付・支払者の変更と削除不可）。`groups` / `groupMembers` / `userLinks` / `linkTokens` はクライアント書込不可、`userSettings` / `budgetSettings` は本人のみ、未定義パスは既定拒否。要点は `docs/SECURITY_OPERATIONS.md` §3
 - **Storage ルール**（`storage.rules`）: §6 の記載どおり。cross-service rules の IAM 前提は `docs/SECURITY_OPERATIONS.md` §4
 - **Web 向け API**: §5.4 の ID トークン認証＋メンバー判定。Gmail 管理 API は `ADMIN_SECRET`
 - **世帯メンバー管理**: 2 名固定。追加・無効化は `scripts/manage-group-members.mjs`（`docs/SECURITY_OPERATIONS.md` §1–2）
