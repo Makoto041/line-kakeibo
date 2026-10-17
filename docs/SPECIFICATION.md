@@ -182,11 +182,11 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - **計算**: `bot/src/periodSplit.ts`（Web の `web/lib/periodSplit.ts` と同じ式。`smoke-settlement-summary.js` が同じ入力で両方の結果を突き合わせる）
 - **メッセージ**（1 回の push に 2 通。LINE の通数は受け取る人数で数えるので、2 人の世帯で月 2 通）
   1. テキスト（`textV2`）: 送金する人と受け取る人をメンション（「9/15〜10/14 の精算（折半）です。@光麦 から @誠 へ ¥159,794 の送金をお願いします。」）。送金なしのときは 2 人をメンションして「今回は送金なし」
-  2. Flex: 送金額、内訳（合計・1 人あたり・集金するメンバーの支払い・相手とカード・共通口座の支払い）、カテゴリ別の上位 5 つ（割合のバー。残りは「ほか」）、要確認の件数（手入力で未確認。合計に入っていない）、「精算を開く」「支出を見る」ボタン。未精算の立替の案内は出さない（立替の精算は折半にまとめた）
+  2. Flex: 送金額、内訳（合計・1 人あたり・集金するメンバーの支払い、立替（全額）があれば「+ 相手の立替（全額）」「− 集金するメンバーの立替（全額）」、相手とカード・共通口座の支払い）、カテゴリ別の上位 5 つ（割合のバー。残りは「ほか」。立替（全額）は合計・カテゴリ別に入れない）、要確認の件数（手入力で未確認。合計に入っていない）、「精算を開く」「支出を見る」ボタン
 - **冪等**: 送る前に `system/settlementSummary_{groupId}_{期間末日}` を create（同じ期間は 2 回送らない）。送信に失敗したら消して、関数のリトライ（`retryCount: 1`）で送り直す。push には `X-Line-Retry-Key`（世帯と期間から決まる UUID）も付け、LINE が 409（送信済み）を返したら送れたものとして扱う。印があって `sentAt` が無い（前の実行が送信の途中で止まった）ときは、同じキーで送り直す
 - **注意**: 起算日が 29〜31 日でその日が無い月には送らず、次の回でその分も含める（31日起算なら 3/31 に 1/31〜3/30）。起算日の 9:10 より後に届いたカード利用通知のうち、利用日が締まった期間内のものはサマリーに入らない（Web の期間の精算には入る）
 - **手動の送信**（`sendSettlementSummaryNow`。Web の設定 > 期間タブの「LINEへの精算の通知」→ §5.4 の `POST /household/settlement-summary/send`）: 日付や送信済みの印に関係なく送る。期間は `latestPeriods(今日, 起算日)` で決める（どの日でも決まる。29〜31 日起算でその日が無い月を飛ばす数え方は `closedPeriodFor` と同じ）
-  - `closed`（締まった期間）: 直近の起算日に自動で送る期間と同じで、内容も自動の通知と同じ（メンション付き）。`X-Line-Retry-Key` は毎回新しい乱数（同じ期間を送り直せる）。送ったら `system/settlementSummary_{groupId}_{期間末日}` に `sentAt`（と `manualSentAt`）を書き、起算日の自動の通知が同じ期間をもう一度送らないようにする
+  - `closed`（締まった期間）: 直近の起算日に自動で送る期間と同じで、内容も自動の通知と同じ（メンション付き）。`X-Line-Retry-Key` は毎回新しい乱数（同じ期間を送り直せる）。送ったら `system/settlementSummary_{groupId}_{期間末日}` に印を残し、起算日の自動の通知が同じ期間をもう一度送らないようにする（トランザクションで、印が無ければ `groupId`・`endDate`・`createdAt`・`sentAt`・`manualSentAt` で作る。あれば `manualSentAt` だけを書き、`sentAt` が無いときだけ `sentAt` も書く。自動で送った時刻は上書きしない）
   - `current`（今の期間）: 直近の起算日〜今日の途中経過。期間に「（途中経過）」を付け、メンションせずに見込みとして送る。印は付けない（締まったら自動で確定の分が届く）
   - 送れない世帯（LINE グループ無し・集金するメンバー未指定・有効メンバーが 2 人でない・固定期間）は理由を返し、送らない
 - テスト: 純関数とメッセージは `bot/scripts/smoke-settlement-summary.js`、送る日の判定・冪等・失敗時の送り直し・手動の送信は `bot/scripts/emulator-settlement-summary.js`
@@ -221,9 +221,9 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | ルート | 内容 |
 |---|---|
 | `/` | **ホーム（ダッシュボード）**。期間ナビ、合計/件数/日平均カード、予算プログレス、**カテゴリ別 / 支払い者別カード**（`components/home/CategoryBreakdownCard.tsx`。割合の帯と行ごとの金額・件数・前期比。行や「内訳を見る」から内訳シートを開く）＋日別推移（Recharts）、前月比インサイト、残り日数ペース。要確認の支出（LINE で手入力して未確認のもの。`lib/expenseState.ts` の `isPending`。Gmail 取込・固定費は対象外）があれば件数バナー（→ `/expenses?filter=pending`）。LINE 未ログイン（`lineId` クレーム無し）はゲストモード（サンプルデータ＋ガイド） |
-| `/expenses` | **支出一覧**。セグメント（全て / 要確認 / 立替。立替は以前の立替〔`advance_pending` / `advance_settled`〕の履歴を見るために残している）、絞り込み（説明・カテゴリの文字検索、集計対象/対象外、カテゴリ、日付/金額ソート。`lib/expenseState.ts`）、支払者別集計、インライン編集ドロワー、削除、集計対象トグル、レシートプレビュー、要確認の支出の「確認」ボタン（§5.4 の confirm API。LINE の OK と同じ判定）。`?edit=<id>` で編集を自動オープン（LINE の「修正」ボタン連携）、`?filter=pending\|advance` で初期セグメント指定、`?from=YYYY-MM-DD` でその日を含む期間、`?category=` でカテゴリの絞り込み（内訳シートから開くとき） |
-| `/settlement` | **精算**。**期間の精算（折半）**（`PeriodSplitCard`）だけ: 表示期間内の世帯の支出（合計に含むもの。立替精算済みは除く）を 2 人で折半し、「集金するメンバー」（`groups.splitSettings`、§5.4 の split-settings API で保存）の支払い分を引いた集金額を表示。誰が払ったかは支出の支払った人（`payerId`、無ければ `lineId`）で数えるので、立替を別に精算する仕組みは持たない。2 人の支払いのタイルと「カテゴリ別の内訳を見る」から内訳シートを開く（集金するメンバーの支払い / 相手・カード・共通口座の支払い / 期間の合計）。以前の立替（`advance_pending`）が残っているときだけ、下に「以前の「立替」がN件残っています」のお知らせ（`LeftoverAdvancesCard`。`GET /household/advances`）を出す: どれもその期間の折半に支払った人の分として入っているので別に送金しなくてよい旨、［N件を見る］（その場で一覧を開く）、［立替の印を外す］（その場で確認 → `POST /household/advances/clear`） |
-| `/settings` | **設定**。予算タブ（月次予算・アラート閾値・カテゴリ別予算）、期間タブ（月次/開始日カスタム/期間指定。保存ボタンの下に「LINEへの精算の通知」カード〔`components/settings/SettlementNotifyCard.tsx`。§3.4〕: 自動で送る日〔毎月N日〕・送り先・前の期間とその送信済みの状態を表示し、［今すぐ送る］→ 締まった期間 / 今の期間（途中）を選んで［送る］。送れない世帯では理由を表示）、固定費タブ（`RecurringExpensesPanel`。§3.3 の項目の追加・編集・停止・削除） |
+| `/expenses` | **支出一覧**。セグメント（全て / 要確認 / 立替。立替は `advance_pending` / `advance_settled`。区分のチップは「立替（全額）」〔`advanceFull`〕/「立替」〔全額にする前の立替〕/「精算済み」）、絞り込み（説明・カテゴリの文字検索、集計対象/対象外、カテゴリ、日付/金額ソート。`lib/expenseState.ts`）、支払者別集計、インライン編集ドロワー、削除、集計対象トグル、レシートプレビュー、要確認の支出の「確認」ボタン（§5.4 の confirm API。LINE の OK と同じ判定）。`?edit=<id>` で編集を自動オープン（LINE の「修正」ボタン連携）、`?filter=pending\|advance` で初期セグメント指定、`?from=YYYY-MM-DD` でその日を含む期間、`?category=` でカテゴリの絞り込み（内訳シートから開くとき） |
+| `/settlement` | **精算**。**期間の精算（折半）**（`PeriodSplitCard`）: 表示期間内の世帯の支出（合計に含むもの。立替精算済みと立替（全額）は除く）を 2 人で折半し、「集金するメンバー」（`groups.splitSettings`、§5.4 の split-settings API で保存）の支払い分を引き、立替（全額）を足し引きした集金額を表示（立替があれば式に「+ <相手>の立替（全額）」「− <集金するメンバー>の立替（全額）」の行を出す。§5.4）。誰が払ったかは支出の支払った人（`payerId`、無ければ `lineId`）で数える。2 人の支払いのタイルと「カテゴリ別の内訳を見る」から内訳シートを開く（集金するメンバーの支払い / 相手・カード・共通口座の支払い / 期間の合計。立替（全額）は入れない）。全額にする前の立替（`advanceFull` の無い `advance_pending`）が残っているときだけ、下に「以前の「立替」がN件残っています」のお知らせ（`LeftoverAdvancesCard`。`GET /household/legacy-advances`）を出す: 立替を全額で精算するようにする前の支出なので、精算が済んでいれば精算済みにしてほしい旨（どの期間の精算にも入らなくなる）、［N件を見る］（その場で一覧を開く）、［精算済みにする］（その場で確認 → `POST /household/legacy-advances/settle`） |
+| `/settings` | **設定**。予算タブ（月次予算・アラート閾値・カテゴリ別予算）、期間タブ（月次/開始日カスタム/期間指定。保存ボタンの下に「LINEへの精算の通知」カード〔`components/settings/SettlementNotifyCard.tsx`。§3.4〕: 自動で送る日〔毎月N日。「送金する人の期間設定の起算日」と添え、29〜31 日は「その日が無い月は次の回にまとめて」〕・送り先・前の期間とその送信済みの状態を表示し、［今すぐ送る］→ 締まった期間 / 今の期間（途中）を選んで［送る］。送れない世帯では理由を表示。［設定を保存］のあとに読み直す）、固定費タブ（`RecurringExpensesPanel`。§3.3 の項目の追加・編集・停止・削除） |
 | `/attach` | **レシート添付**。LINE のカードから直接開かれるため、LINE サインインの完了（`waitForLineAuth`）を待ってから支出を読む。`?expenseId=` の支出にカメラ/アルバムから画像を選択→クライアント側で圧縮（リサイズ＋JPEG 再エンコード）→ Firebase Storage `receipts/{expenseId}/{timestamp}_{name}` へレジューマブルアップロード→ `receiptUrl` を書き戻し。アンマウント後もバックグラウンド継続 |
 | `/link` | アカウント連携確認画面（`token` + `lineId` クエリの存在チェックのみ。認証には関与しない） |
 | `/dashboard` | `/` へのリダイレクト（レガシー） |
@@ -234,7 +234,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - **内訳シート**（`components/drilldown/DrillSheet.tsx`、計算は `lib/drilldown.ts`）: 合計 → カテゴリ / 支払い者 → 明細と潜っていく（モバイルは下からのシート、デスクトップは右のドロワー。パンくずで戻れる）。各階層に金額・件数・合計に占める割合・1 件平均（カテゴリはホームでは前期比と週ごとの棒）、内訳の行、明細（日付順 / 金額順）。明細から編集（`/expenses?edit=<id>`）、カテゴリの階層から支出一覧（`?from=&category=`）へ。読み込み済みの明細から計算し、Firestore を追加で読まない
 
 - Tailwind CSS v4（CSS 変数トークン、ライト/ダーク/システム切替）
-- framer-motion による SPA 風ページ遷移アニメーション＋ SWR キャッシュ（`lib/swrCache.ts`）で再読込感を排除。支出・集計・世帯・立替の印（`advances:`）・設定のキャッシュは localStorage にも保存し（14 日で破棄。別の LINE アカウントに切り替わったら消す）、LINE から開き直したときも前回の内容をすぐ出して裏で取り直す
+- framer-motion による SPA 風ページ遷移アニメーション＋ SWR キャッシュ（`lib/swrCache.ts`）で再読込感を排除。支出・集計・世帯・以前の立替（`advances:`）・設定のキャッシュは localStorage にも保存し（14 日で破棄。別の LINE アカウントに切り替わったら消す）、LINE から開き直したときも前回の内容をすぐ出して裏で取り直す
 - レスポンシブ: デスクトップはサイドバー、モバイルはボトムタブ。タブは **ホーム / 支出 / 精算 / 設定** の 4 つ（`components/layout/nav.ts`）
 - `/attach` `/link` はナビ chrome なし（`components/layout/AppShell.tsx` の BARE_ROUTES）
 - セキュリティヘッダー（`next.config.ts`）: CSP は Report-Only、`X-Frame-Options: DENY`、`X-Robots-Tag: noindex`
@@ -242,7 +242,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 ### 5.3 データアクセス
 
 - **API Route は無し**。読み取りと通常の編集は**クライアントから Firestore/Storage SDK 直アクセス**（セキュリティルールで許可された範囲。§7）
-- 例外: 支出の確認（`status` / `confirmed` の変更）、立替の印を外す操作、固定費の CRUD、折半設定の保存、精算の通知の状態の取得と手動の送信は、bot の `api` 関数の認証付き API（§5.4）を経由する（Firestore ルールではクライアントから書けないため。通知は LINE へ送るため）
+- 例外: 支出の確認（`status` / `confirmed` の変更）、以前の立替を精算済みにする操作、固定費の CRUD、折半設定の保存、精算の通知の状態の取得と手動の送信は、bot の `api` 関数の認証付き API（§5.4）を経由する（Firestore ルールではクライアントから書けないため。通知は LINE へ送るため）
 - `lib/lineAuth.ts`: 起動時に LIFF でログインし、ID トークンを `POST /auth/line` へ送って Firebase カスタムトークンでサインインする。`lib/hooks.ts` の `useLineAuth` は `lineId` を **ID トークンのカスタムクレームからのみ**取得する（URL の `?lineId=` は使わない）
 - `useExpenses`: 個人分（`where lineId == 自分`）＋ `groupMembers`（`isActive == true`）から解決した `groupId` の世帯分（`where groupId == …`）をマージ。`useHousehold` が世帯（`groups` 文書・有効メンバー・`splitSettings`）を、`useAdvances` が残っている立替（`GET /household/advances`）の応答を保持する
 
