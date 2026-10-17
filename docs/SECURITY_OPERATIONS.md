@@ -10,8 +10,8 @@
   - LINE グループで支出らしい発言をしても、`groupMembers` は作られず、無効なメンバーが再有効化されることもない。
     LINE グループに紐づくアプリ内グループの有効なメンバーでない人（第三者、脱退済みの元メンバー、別の家計グループを
     作った人など）が世帯の LINE グループで支出を登録すると、`groupId` も `lineGroupId` も付けない **個人支出** として
-    保存する（`bot/src/expenseGroupScope.ts`）。世帯の Web 一覧に出ないだけでなく、LINE 側の `家計簿` 集計・
-    `立替一覧`・`精算`（いずれも `lineGroupId` で引く）にも入らない。
+    保存する（`bot/src/expenseGroupScope.ts`）。世帯の Web 一覧に出ないだけでなく、LINE 側の `家計簿` 集計
+    （`lineGroupId` で引く）や期間の精算（折半。`groupId` で引く）にも入らない。
   - LINE グループに紐づくアプリ内グループが無い場合も、自動では作らない。
   - LINE の「参加 <コード> <表示名>」コマンドは無効化済み（招待コードが漏れると第三者が参加できてしまうため）。
 - LINE グループから **退出・削除されたメンバー**（`memberLeft` イベント）は、bot が `isActive:false`、`leftAt`、
@@ -89,7 +89,8 @@ LINE グループでの発言を `groupId` も `lineGroupId` も持たない個�
   `amount` / `description` / `date` / `category` / `includeInTotal` / `payerId` / `payerDisplayName` / `receiptUrl` / `updatedAt`。
   それ以外（`lineId` / `groupId` / `lineGroupId` / `createdAt` / `inputSource` / `status` / `advanceBy` など）は不変。
   変更は bot（Admin SDK）だけが行う。`receiptUrl` は `https://firebasestorage.googleapis.com/` から始まる URL に限る。
-- 精算済み（`status == 'advance_settled'`）の支出は、金額・日付・支払者（`payerId` / `payerDisplayName`）の変更と削除ができない。
+- 精算済み（`status == 'advance_settled'`。以前の立替の精算で記録したもので、今は新しく作られない）の支出は、
+  金額・日付・支払者（`payerId` / `payerDisplayName`）の変更と削除ができない。
   web の編集ドロワーは、精算済みの支出ではこれらを送らない。
 - グループ支出の更新・削除は有効なメンバーに限る。
 - 個人支出（`groupId` も `lineGroupId` も持たない）の更新・削除は所有者に限る。`groupId` を持たず `lineGroupId` だけを
@@ -206,9 +207,12 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
   `firebase functions:delete syncUserLinks importMoneyForward --region asia-northeast1` を実行したあと、`bot/src/index.ts` の export を消す。
 - レシートはトークン付きのダウンロード URL を `receiptUrl` に保存している。この URL は Storage ルールを経由しない（REC-SEC-2）。
   パスを保存する方式への移行は、別の PR で扱う。
-- LINE の postback（区分・立替の変更）で、押した人のメンバーシップを確認していない（SET-18）。
+- LINE の postback のうち区分の変更（と以前のカードの立替の［取り消す］）では、押した人のメンバーシップを確認していない（SET-18）。
   クライアントからは status / advanceBy を変えられないので、残る経路は LINE グループに居る非メンバーがカードのボタンを押すこと。
   後続で `groupMembers/{groupId}_{event.source.userId}` を引き、`isActive` を要求してから status / advanceBy を変更する。
+  支払った人の変更（［自分が払った］、以前のカードの［自分が立替］）は期間の精算（折半）の金額が変わるため、すでに
+  トランザクション内で `groupMembers/{groupId}_{lineId}` の `isActive` を確かめている（`groupId` の無い個人の支出は
+  登録した本人だけ、`lineGroupId` だけを持つ旧形式は不可）。
 - 脱退済み（`isActive:false`）の元メンバーも、自分が登録したグループ支出の **読み取り**（とそのレシートの取得）だけはできる。
   web の個人支出クエリ `where('lineId','==',自分)` をルールで証明できるようにするため。閉じるには、個人支出クエリに
   `groupId` の制約（または専用フラグ）を足し、read の所有者条件を `groupId` なしに限定する必要がある。

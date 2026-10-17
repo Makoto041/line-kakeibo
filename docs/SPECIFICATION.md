@@ -19,7 +19,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 - **閲覧チャネル**
   - LINE Bot（`家計簿` コマンドで月次サマリー Flex メッセージ）
   - Web アプリ（Next.js / Vercel）: ホーム・支出一覧・精算・設定（予算 / 期間 / 固定費）
-- **共有機能**: LINE グループに紐づく世帯（2 名固定）での支出共有・立替（advance）管理・精算・期間の折半精算
+- **共有機能**: LINE グループに紐づく世帯（2 名固定）での支出共有・期間の折半精算（誰が払ったかは支出の「支払った人」で数える）・LINE グループへの精算の通知
 
 > 📸 **レシート画像 OCR は廃止済み**（`bot/src/line/webhookApp.ts`）。画像を送ると「画像からの読み取り機能は終了しました。テキストで入力してください」と案内されます。レシート画像は Web の `/attach` ページから支出への「添付」としてのみ扱われます。
 
@@ -37,8 +37,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | `グループ作成 <名前>` | グループ作成（作成者のみがメンバー。招待コードは内部互換のため生成するが表示しない） |
 | `参加 <コード> <表示名>` | **無効化済み**。世帯は2名固定で、メンバー追加は管理者が `scripts/manage-group-members.mjs` で行う旨を返信 |
 | `グループ一覧` | 所属グループ一覧 |
-| `立替一覧` / `立替` | （グループのみ）未精算の立替一覧と精算額計算。立て替えた人がちょうど 2 人なら折半額を出す。**1 人だけが立て替えていて世帯の有効メンバーがちょうど 2 人なら、もう 1 人を 0 円として補った折半額も出す**（§5.4 の「精算額」。Web の精算タブと同じ共有関数） |
-| `精算` | （グループのみ）立替を精算済みにする（精算額の表示は `立替一覧` と同じ。金額を出せない場合でも記録は行う） |
+| `立替一覧` / `立替` / `精算` | 一覧も精算もしない。立替の精算は期間の精算（折半）にまとめた旨の案内を返す（誰が払ったかは支出カードの「支払った人」で数えること・精算額は毎月の起算日にグループへ通知すること・Web の精算画面のリンク。`line/commands/advance.ts`） |
 | `要望 / 改善 / 不具合 / フィードバック <本文>` | Gemini で内容を解析し GitHub Issue を自動起票（`Makoto041/line-kakeibo`） |
 | その他のテキスト | 支出テキストとしてパース（§2.2）。金額が取れない場合は**無反応**（誤爆防止） |
 
@@ -75,54 +74,57 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 ```text
 現在の設定
-[users]  支出区分：共同費　　[変更]
-[wallet] 立替：なし　　　　　[変更]
-[食費]   カテゴリ：食費　　　[変更]
+[users]  支出区分：共同費　　　[変更]
+[wallet] 支払った人：誠　　　　[自分が払った]
+[食費]   カテゴリ：食費　　　　[変更]
 ```
 
 | 領域 | 内容 |
 |---|---|
 | ヘッダー | テキスト入力=「支出を登録しました」/ カード利用=「カード利用を記録」 |
-| 本文 | 店舗名・説明 → 金額と日付 → （残り予算 / 支払い方法・支払い者）→ 「現在の設定」3行 |
+| 本文 | 店舗名・説明 → 金額と日付 → （残り予算 / 支払い方法）→ 「現在の設定」3行。支払った人は金額の下ではなく「現在の設定」に出す |
 | フッター | `OK` `修正` / `レシート添付` / `家計簿一覧を見る` |
 
-各行の先頭にはアイコンを置く。支出区分は共同費系が `users`・個人費/未設定が `user`、立替は `wallet`、カテゴリは `categoryIconUrl()` が返すカテゴリ別アイコン（未知のカテゴリは `cat-other`）。値をボタンで並べていた頃と同じ絵柄を使い、表示だけになっても見た目の手がかりが減らないようにする。
+各行の先頭にはアイコンを置く。支出区分は共同費系が `users`・個人費/未設定が `user`、支払った人は `wallet`（支払った人がカードのときは `credit-card`）、カテゴリは `categoryIconUrl()` が返すカテゴリ別アイコン（未知のカテゴリは `cat-other`）。値をボタンで並べていた頃と同じ絵柄を使い、表示だけになっても見た目の手がかりが減らないようにする。
+
+**支払った人**の表示（`payerLabel()`。Web の `resolvePayerName` と同じ分け方）: `payerId`（無ければ `lineId`）が `gmail-auto-system` なら「カード」、`recurring-system` なら「共通口座」、それ以外は `payerDisplayName` → `userDisplayName` → 「メンバー」の順。期間の精算（折半）はこの支払った人で数える。[自分が払った] は押した人を支払った人にする（カードを送った時点では押す人が分からないので、すでに自分でも出す）。
 
 **「修正」は押す人が分かっていれば URI ボタンで Web 編集画面へ直接飛ぶ**（テキスト入力の登録カード、および postback 応答で返す再構築カード）。Gmail のカード利用通知はグループ宛の push で送信時点では押下者が不明なため、`edit` postback で押した人の `lineId` を含む URL を返す方式を残す。なおグループではカードが全員に届くため、URI ボタンのリンクは組み立てた時点の本人の `lineId` で固定される（`家計簿一覧を見る` の直リンクと同じ性質）。URL の `lineId` は Web 側では**識別に使わない**（§7。編集対象の特定は `?edit=<id>` のみ）。
 
-支出区分と立替は単一の `status` フィールドに排他的に入るため、表示上の 2 行は `status` から導出する（`deriveExpenseSettings()`）。
+支出区分は `status` から導出する（`deriveExpenseSettings()`）。立替の精算は期間の折半にまとめたため、以前の立替（`advance_pending`）は共同費として表示する。
 
 **要確認（未確認）は LINE で手入力した支出だけ**。Gmail のカード取込と固定費の自動計上は、取込元で内容が決まっているので確認を求めない（`status: 'shared'`・`confirmed: true` で保存する）。以前に `pending` で入った Gmail 取込も、カードの再表示（`buildExpenseCardFromRecord`）と Web では共同費として扱う（集計にはもとから入っている）。
 
-| `status` | 入力元 | 支出区分 | 立替 |
-|---|---|---|---|
-| なし / `pending` | LINE 手入力（`includeInTotal: false`） | 共同費（未確認） | なし |
-| `shared` | Gmail 取込・確認後の手入力 | 共同費 | なし |
-| `personal` | — | 除外 | なし |
-| `advance_pending` | — | 共同費 | あり（精算待ち） |
-| `advance_settled` | — | 共同費 | 精算済み |
+| `status` | 入力元 | 支出区分 |
+|---|---|---|
+| なし / `pending` | LINE 手入力（`includeInTotal: false`） | 共同費（未確認） |
+| `shared` | Gmail 取込・固定費・確認後の手入力 | 共同費 |
+| `personal` | — | 除外 |
+| `advance_pending` | 以前の「自分が立替」（新しくは作られない） | 共同費 |
+| `advance_settled` | 以前の立替の精算（新しくは作られない） | 共同費（立替で精算済み） |
 
-`advance_settled` の行には支出区分・立替の [変更] を出さない（カテゴリのみ変更可）。
+`advance_settled` のカードには支出区分・支払った人のボタンを出さない（カテゴリのみ変更可）。
 
 ### 2.5 Postback アクション（`bot/src/line/postback.ts`）
 
-[変更] ボタンにはトグル（反転）ではなく**設定する値そのもの**を埋め込む（`to`）。カード描画時点の現在値の反対が入っているため、古いカードから押しても表示どおりの結果になる。
+支出区分の [変更] ボタンにはトグル（反転）ではなく**設定する値そのもの**を埋め込む（`to`）。カード描画時点の現在値の反対が入っているため、古いカードから押しても表示どおりの結果になる。
 
 | アクション | 効果 |
 |---|---|
-| `set_split`（`to: shared \| personal`） | `status` を設定し `includeInTotal` を連動（`shared`=true / `personal`=false）。立替は解除（`advanceBy` を削除）。あわせて `confirmed: true` |
-| `set_advance`（`to: on \| off`） | on=`status: 'advance_pending'`・`advanceBy` に押下者 / off=`status: 'shared'`・`advanceBy` 削除。いずれも `includeInTotal: true`・`confirmed: true` |
+| `set_split`（`to: shared \| personal`） | `status` を設定し `includeInTotal` を連動（`shared`=true / `personal`=false）。立替の印は外す（`advanceBy` を削除）。あわせて `confirmed: true` |
+| `set_payer`（自分が払った） | `payerId` / `payerDisplayName` を押下者にし、`confirmed: true`。未確認（status なし / `pending`）は `status: 'shared'`・`includeInTotal: true` へ昇格。立替の印（`advance_pending`）が残っていれば `status: 'shared'`・`advanceBy` 削除。`personal` は `personal` のまま。押せるのは支出の世帯（`groupId`）の有効メンバーだけで、`groupId` の無い個人の支出は登録した本人だけ、`lineGroupId` だけを持つ旧形式は不可（それ以外は「支払った人を変えられるのは、世帯のメンバーだけです」）。表示名はメンバー文書の名前 → LINE のプロフィール名 → `User_xxxxxx` |
 | `confirm`（OK） | `confirmed: true`。**`pending` のときだけ** `status: 'shared'`・`includeInTotal: true` へ昇格（設定済みの支出を共同費へ巻き戻さない） |
 | `edit`（修正） | 押下者の `lineId` を含む Web 編集 URL（`/expenses?edit=<id>&lineId=...`）を返信。**押す人が分かっているカードでは「修正」は URI ボタンで直接 Web を開く**ため、この postback へ来るのは Gmail 通知と配信済みの古いカードだけ |
 | `show_category_select` / `set_category` | カテゴリ選択カルーセルを表示 / カテゴリを更新 |
 | `show_list` | 押下者の `lineId` を含む家計簿一覧 URL を返す |
-| `shared` / `personal` / `advance`（旧 UI） | 配信済みカードからの押下に備えて `set_split` / `set_advance` へ読み替える |
+| `set_advance`（以前のカード） | 立替の精算を期間の折半にまとめる前のカードのボタン。`to: on`（自分が立替）は `set_payer` と同じ。`to: off`（取り消す）は立替の印を外す（`advance_pending` なら `status: 'shared'`・`includeInTotal: true`・`confirmed: true`・`advanceBy` 削除。`advance_settled` は拒否、それ以外は変えない） |
+| `shared` / `personal` / `advance`（旧 UI） | 配信済みカードからの押下に備えて `set_split` / `set_payer` へ読み替える |
 
-**矛盾の解消**: 個人費にすると立替は解除され、立替ありにすると支出区分は共同費相当に揃う（個人費かつ立替ありは成立しない）。`advance_settled` の支出に対する**支出区分・立替の変更**はサーバー側で拒否する（古いカードにボタンが残っているため、表示を消すだけでは足りない）。カテゴリ変更は精算後も可能（精算額に影響しないため）。
+**矛盾の解消**: 個人費にすると立替の印は外れる。`advance_settled`（以前の立替の精算で精算済み）の支出に対する**支出区分・支払った人の変更と立替の印を外す操作**はサーバー側で拒否する（「精算済みのため変更できません」。古いカードにボタンが残っているため、表示を消すだけでは足りない）。カテゴリ変更は精算後も可能（精算額に影響しないため）。
 
 **変更後の再表示**: LINE は送信済みメッセージを編集できないため、状態を変えたら最新値のカードを `replyToken` で返信する（`buildExpenseCardFromRecord()`）。登録直後のカードと同じビルダーを通すので表現がぶれない。
 
-**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`。OK の判定 `decideConfirm()` とともに `bot/src/expenseActions.ts` にあり、Web の確認（§5.4）も同じ関数を使う）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
+**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`。OK・支払った人・立替の印を外す判定 `decideConfirm()` / `decideSetPayer()` / `decideClearAdvance()` とともに `bot/src/expenseActions.ts` にあり、Web の確認・立替の印を外す操作（§5.4）も同じ関数を使う。`set_payer` のメンバー確認も同じトランザクション内で読む）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
 
 ### 2.6 メッセージ送信ポリシー
 
@@ -134,7 +136,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 - Gmail カード利用通知（`sendCardUsageNotification`, `flexMessage.ts`）… グループ宛の非同期プッシュのため reply トークンが無い
 - メンバー参加時の案内（`handleMemberJoined`）
-- 期間の精算サマリー（§3.4。月 1 回。メンション付きテキストと Flex を 1 回の push で送る）
+- 期間の精算サマリー（§3.4。月 1 回。メンション付きテキストと Flex を 1 回の push で送る。Web の設定から手動で送ったときも push）
 
 これは push 枠を消費する。固定費の自動計上（§3.3）は LINE へ通知しない。Flex メッセージのアイコンは `line-kakeibo.vercel.app/icons` から PNG 配信（lucide 風）。
 
@@ -161,7 +163,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - `postRecurringExpenses`（cron: 毎日 9:10 JST。§3.4 の精算サマリーと同じ実行）が、有効（`active`）な項目のうち当月の引き落とし日（`dayOfMonth`。月の日数を超える日はその月の末日）を迎えたものを `expenses` に計上する。文書 ID を `recurring_{項目ID}_{YYYYMM}` に固定して create するため、同じ月に 2 回は入らない。`lastPostedMonth` に計上した月を記録し、作成日（`startDate`）より前の引き落とし日の分と、停止→再開時に当月の引き落とし日を過ぎていた分は遡らない
 - 計上する明細: `inputSource: 'recurring'`, `recurringId`, `confirmed: true`, `includeInTotal: true`, `groupId`（＋世帯の `lineGroupId`）、金額は設定した見込み額（請求確定後は明細側を直す）
   - 支払い元 `shared`（共通のカード・口座）: `lineId`/`payerId` = `recurring-system`、`status: 'shared'`
-  - 支払い元 `advance`（メンバーの個人口座）: `lineId`/`payerId`/`advanceBy` = その人、`status: 'advance_pending'`（立替として精算対象になる）
+  - 支払い元 `advance`（メンバーの個人口座）: `lineId`/`payerId`/`payerDisplayName`（`userDisplayName` も）= その人、`status: 'shared'`。`advanceBy` は付けない。期間の精算（折半）でその人の支払いとして数える（例: 家賃）。値の名前 `advance` は以前の「立替」のなごりで、保存する値は変えていない。Web の表示は「個人の口座」、一覧では「<名前>の口座」
 - LINE への通知は送らない。カード利用通知メールで自動登録される支出を固定費に登録すると二重になる（画面で案内）
 - テスト: 純関数は `bot/scripts/smoke-recurring.js`（`npm -w bot test`）、API と計上は `bot/scripts/emulator-recurring.js`（`npm -w bot run test:emulator`）
 
@@ -174,10 +176,14 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - **計算**: `bot/src/periodSplit.ts`（Web の `web/lib/periodSplit.ts` と同じ式。`smoke-settlement-summary.js` が同じ入力で両方の結果を突き合わせる）
 - **メッセージ**（1 回の push に 2 通。LINE の通数は受け取る人数で数えるので、2 人の世帯で月 2 通）
   1. テキスト（`textV2`）: 送金する人と受け取る人をメンション（「9/15〜10/14 の精算（折半）です。@光麦 から @誠 へ ¥159,794 の送金をお願いします。」）。送金なしのときは 2 人をメンションして「今回は送金なし」
-  2. Flex: 送金額、内訳（合計・1 人あたり・集金するメンバーの支払い・相手とカード・共通口座の支払い）、カテゴリ別の上位 5 つ（割合のバー。残りは「ほか」）、要確認の件数（手入力で未確認。合計に入っていない）、未精算の立替（件数と精算額）、「精算を開く」「支出を見る」ボタン
+  2. Flex: 送金額、内訳（合計・1 人あたり・集金するメンバーの支払い・相手とカード・共通口座の支払い）、カテゴリ別の上位 5 つ（割合のバー。残りは「ほか」）、要確認の件数（手入力で未確認。合計に入っていない）、「精算を開く」「支出を見る」ボタン。未精算の立替の案内は出さない（立替の精算は折半にまとめた）
 - **冪等**: 送る前に `system/settlementSummary_{groupId}_{期間末日}` を create（同じ期間は 2 回送らない）。送信に失敗したら消して、関数のリトライ（`retryCount: 1`）で送り直す。push には `X-Line-Retry-Key`（世帯と期間から決まる UUID）も付け、LINE が 409（送信済み）を返したら送れたものとして扱う。印があって `sentAt` が無い（前の実行が送信の途中で止まった）ときは、同じキーで送り直す
 - **注意**: 起算日が 29〜31 日でその日が無い月には送らず、次の回でその分も含める（31日起算なら 3/31 に 1/31〜3/30）。起算日の 9:10 より後に届いたカード利用通知のうち、利用日が締まった期間内のものはサマリーに入らない（Web の期間の精算には入る）
-- テスト: 純関数とメッセージは `bot/scripts/smoke-settlement-summary.js`、送る日の判定・冪等・失敗時の送り直しは `bot/scripts/emulator-settlement-summary.js`
+- **手動の送信**（`sendSettlementSummaryNow`。Web の設定 > 期間タブの「LINEへの精算の通知」→ §5.4 の `POST /household/settlement-summary/send`）: 日付や送信済みの印に関係なく送る。期間は `latestPeriods(今日, 起算日)` で決める（どの日でも決まる。29〜31 日起算でその日が無い月を飛ばす数え方は `closedPeriodFor` と同じ）
+  - `closed`（締まった期間）: 直近の起算日に自動で送る期間と同じで、内容も自動の通知と同じ（メンション付き）。`X-Line-Retry-Key` は毎回新しい乱数（同じ期間を送り直せる）。送ったら `system/settlementSummary_{groupId}_{期間末日}` に `sentAt`（と `manualSentAt`）を書き、起算日の自動の通知が同じ期間をもう一度送らないようにする
+  - `current`（今の期間）: 直近の起算日〜今日の途中経過。期間に「（途中経過）」を付け、メンションせずに見込みとして送る。印は付けない（締まったら自動で確定の分が届く）
+  - 送れない世帯（LINE グループ無し・集金するメンバー未指定・有効メンバーが 2 人でない・固定期間）は理由を返し、送らない
+- テスト: 純関数とメッセージは `bot/scripts/smoke-settlement-summary.js`、送る日の判定・冪等・失敗時の送り直し・手動の送信は `bot/scripts/emulator-settlement-summary.js`
 
 ---
 
@@ -209,9 +215,9 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | ルート | 内容 |
 |---|---|
 | `/` | **ホーム（ダッシュボード）**。期間ナビ、合計/件数/日平均カード、予算プログレス、**カテゴリ別 / 支払い者別カード**（`components/home/CategoryBreakdownCard.tsx`。割合の帯と行ごとの金額・件数・前期比。行や「内訳を見る」から内訳シートを開く）＋日別推移（Recharts）、前月比インサイト、残り日数ペース。要確認の支出（LINE で手入力して未確認のもの。`lib/expenseState.ts` の `isPending`。Gmail 取込・固定費は対象外）があれば件数バナー（→ `/expenses?filter=pending`）。LINE 未ログイン（`lineId` クレーム無し）はゲストモード（サンプルデータ＋ガイド） |
-| `/expenses` | **支出一覧**。セグメント（全て / 要確認 / 立替）、絞り込み（説明・カテゴリの文字検索、集計対象/対象外、カテゴリ、日付/金額ソート。`lib/expenseState.ts`）、支払者別集計、インライン編集ドロワー、削除、集計対象トグル、レシートプレビュー、要確認の支出の「確認」ボタン（§5.4 の confirm API。LINE の OK と同じ判定）。`?edit=<id>` で編集を自動オープン（LINE の「修正」ボタン連携）、`?filter=pending\|advance` で初期セグメント指定、`?from=YYYY-MM-DD` でその日を含む期間、`?category=` でカテゴリの絞り込み（内訳シートから開くとき） |
-| `/settlement` | **精算**。(1) **期間の精算（折半）**（`PeriodSplitCard`）: 表示期間内の世帯の支出（合計に含むもの。立替精算済みは除く）を 2 人で折半し、「集金するメンバー」（`groups.splitSettings`、§5.4 の split-settings API で保存）の支払い分を引いた集金額を表示。2 人の支払いのタイルと「カテゴリ別の内訳を見る」から内訳シートを開く（集金するメンバーの支払い / 相手・カード・共通口座の支払い / 期間の合計）。(2) **未精算の立替の精算**: `GET /household/settlement` の内容（関係者・立替合計・精算額・明細）を表示し、`POST /household/settlement/settle` で精算を記録 |
-| `/settings` | **設定**。予算タブ（月次予算・アラート閾値・カテゴリ別予算）、期間タブ（月次/開始日カスタム/期間指定）、固定費タブ（`RecurringExpensesPanel`。§3.3 の項目の追加・編集・停止・削除） |
+| `/expenses` | **支出一覧**。セグメント（全て / 要確認 / 立替。立替は以前の立替〔`advance_pending` / `advance_settled`〕の履歴を見るために残している）、絞り込み（説明・カテゴリの文字検索、集計対象/対象外、カテゴリ、日付/金額ソート。`lib/expenseState.ts`）、支払者別集計、インライン編集ドロワー、削除、集計対象トグル、レシートプレビュー、要確認の支出の「確認」ボタン（§5.4 の confirm API。LINE の OK と同じ判定）。`?edit=<id>` で編集を自動オープン（LINE の「修正」ボタン連携）、`?filter=pending\|advance` で初期セグメント指定、`?from=YYYY-MM-DD` でその日を含む期間、`?category=` でカテゴリの絞り込み（内訳シートから開くとき） |
+| `/settlement` | **精算**。**期間の精算（折半）**（`PeriodSplitCard`）だけ: 表示期間内の世帯の支出（合計に含むもの。立替精算済みは除く）を 2 人で折半し、「集金するメンバー」（`groups.splitSettings`、§5.4 の split-settings API で保存）の支払い分を引いた集金額を表示。誰が払ったかは支出の支払った人（`payerId`、無ければ `lineId`）で数えるので、立替を別に精算する仕組みは持たない。2 人の支払いのタイルと「カテゴリ別の内訳を見る」から内訳シートを開く（集金するメンバーの支払い / 相手・カード・共通口座の支払い / 期間の合計）。以前の立替（`advance_pending`）が残っているときだけ、下に「以前の「立替」がN件残っています」のお知らせ（`LeftoverAdvancesCard`。`GET /household/advances`）を出す: どれもその期間の折半に支払った人の分として入っているので別に送金しなくてよい旨、［N件を見る］（その場で一覧を開く）、［立替の印を外す］（その場で確認 → `POST /household/advances/clear`） |
+| `/settings` | **設定**。予算タブ（月次予算・アラート閾値・カテゴリ別予算）、期間タブ（月次/開始日カスタム/期間指定。保存ボタンの下に「LINEへの精算の通知」カード〔`components/settings/SettlementNotifyCard.tsx`。§3.4〕: 自動で送る日〔毎月N日〕・送り先・前の期間とその送信済みの状態を表示し、［今すぐ送る］→ 締まった期間 / 今の期間（途中）を選んで［送る］。送れない世帯では理由を表示）、固定費タブ（`RecurringExpensesPanel`。§3.3 の項目の追加・編集・停止・削除） |
 | `/attach` | **レシート添付**。LINE のカードから直接開かれるため、LINE サインインの完了（`waitForLineAuth`）を待ってから支出を読む。`?expenseId=` の支出にカメラ/アルバムから画像を選択→クライアント側で圧縮（リサイズ＋JPEG 再エンコード）→ Firebase Storage `receipts/{expenseId}/{timestamp}_{name}` へレジューマブルアップロード→ `receiptUrl` を書き戻し。アンマウント後もバックグラウンド継続 |
 | `/link` | アカウント連携確認画面（`token` + `lineId` クエリの存在チェックのみ。認証には関与しない） |
 | `/dashboard` | `/` へのリダイレクト（レガシー） |
@@ -222,7 +228,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - **内訳シート**（`components/drilldown/DrillSheet.tsx`、計算は `lib/drilldown.ts`）: 合計 → カテゴリ / 支払い者 → 明細と潜っていく（モバイルは下からのシート、デスクトップは右のドロワー。パンくずで戻れる）。各階層に金額・件数・合計に占める割合・1 件平均（カテゴリはホームでは前期比と週ごとの棒）、内訳の行、明細（日付順 / 金額順）。明細から編集（`/expenses?edit=<id>`）、カテゴリの階層から支出一覧（`?from=&category=`）へ。読み込み済みの明細から計算し、Firestore を追加で読まない
 
 - Tailwind CSS v4（CSS 変数トークン、ライト/ダーク/システム切替）
-- framer-motion による SPA 風ページ遷移アニメーション＋ SWR キャッシュ（`lib/swrCache.ts`）で再読込感を排除。支出・集計・世帯・精算・設定のキャッシュは localStorage にも保存し（14 日で破棄。別の LINE アカウントに切り替わったら消す）、LINE から開き直したときも前回の内容をすぐ出して裏で取り直す
+- framer-motion による SPA 風ページ遷移アニメーション＋ SWR キャッシュ（`lib/swrCache.ts`）で再読込感を排除。支出・集計・世帯・立替の印（`advances:`）・設定のキャッシュは localStorage にも保存し（14 日で破棄。別の LINE アカウントに切り替わったら消す）、LINE から開き直したときも前回の内容をすぐ出して裏で取り直す
 - レスポンシブ: デスクトップはサイドバー、モバイルはボトムタブ。タブは **ホーム / 支出 / 精算 / 設定** の 4 つ（`components/layout/nav.ts`）
 - `/attach` `/link` はナビ chrome なし（`components/layout/AppShell.tsx` の BARE_ROUTES）
 - セキュリティヘッダー（`next.config.ts`）: CSP は Report-Only、`X-Frame-Options: DENY`、`X-Robots-Tag: noindex`
@@ -230,9 +236,9 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 ### 5.3 データアクセス
 
 - **API Route は無し**。読み取りと通常の編集は**クライアントから Firestore/Storage SDK 直アクセス**（セキュリティルールで許可された範囲。§7）
-- 例外: 支出の確認（`status` / `confirmed` の変更）、立替の精算、固定費の CRUD、折半設定の保存は、bot の `api` 関数の認証付き API（§5.4）を経由する（Firestore ルールではクライアントから書けないため）
+- 例外: 支出の確認（`status` / `confirmed` の変更）、立替の印を外す操作、固定費の CRUD、折半設定の保存、精算の通知の状態の取得と手動の送信は、bot の `api` 関数の認証付き API（§5.4）を経由する（Firestore ルールではクライアントから書けないため。通知は LINE へ送るため）
 - `lib/lineAuth.ts`: 起動時に LIFF でログインし、ID トークンを `POST /auth/line` へ送って Firebase カスタムトークンでサインインする。`lib/hooks.ts` の `useLineAuth` は `lineId` を **ID トークンのカスタムクレームからのみ**取得する（URL の `?lineId=` は使わない）
-- `useExpenses`: 個人分（`where lineId == 自分`）＋ `groupMembers`（`isActive == true`）から解決した `groupId` の世帯分（`where groupId == …`）をマージ。`useHousehold` が世帯（`groups` 文書・有効メンバー・`splitSettings`）を、`useSettlement` が精算 API の応答を保持する
+- `useExpenses`: 個人分（`where lineId == 自分`）＋ `groupMembers`（`isActive == true`）から解決した `groupId` の世帯分（`where groupId == …`）をマージ。`useHousehold` が世帯（`groups` 文書・有効メンバー・`splitSettings`）を、`useAdvances` が残っている立替（`GET /household/advances`）の応答を保持する
 
 ### 5.4 Web 向け API（bot の `api` 関数 `/household`、`bot/src/householdApi.ts`）
 
@@ -242,27 +248,26 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - **認可**: `groupMembers/{groupId}_{lineId}` が `isActive: true`。支出は `groupId` あり → その世帯の有効メンバー / 個人支出 → 所有者 / `lineGroupId` だけの旧形式 → 不可。Firestore ルールより厳しい（`groupId` のある支出は所有者であっても、その世帯の有効メンバーでなければ 403。旧形式は所有者でも 403）。判定はトランザクション内で読む
 - **入力検証**: ID（`:expenseId`・`groupId`・`expectedExpenseIds[]`・`:id`）は 1〜128 文字の文字列で、`/` を含まず `.` `..` `__…__` でないこと。body は JSON オブジェクト。違反は 400
 - **CORS**: 許可オリジンは `/auth/line` と同じ（`WEB_ORIGINS` / 本番 Vercel・localhost・`line-kakeibo*.vercel.app`）。`Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS`、`Allow-Headers: Content-Type, Authorization`、Cookie は使わない。JSON の解析エラーやレート制限の応答にも付ける。**防御線はトークンとメンバー確認**で、CORS ではない
-- **レート制限**: 認証前は接続元 IP 単位 300 回/分（Bearer トークンの無い要求は数えない）。`/auth/line` の挙動を変えないため `trust proxy` は設定せず、Google のフロントエンドが `X-Forwarded-For` の末尾に足す接続元の IP をキーにする（クライアントが送った値はその前に並ぶだけなので詐称できない。IP として読めなければ `req.ip`、IPv6 は /56 単位）。前段が増えて末尾が共通のアドレスになると、インスタンス全体の上限として働く（その場合は 1 つの接続元の連打で全員が 429 になりうるため、上限は大きめにしてある）。認証後は lineId 単位で全ルート合わせて 60 回/分（失敗した応答も数える）、加えて精算の記録は成功したものだけを数えて 5 回/分。いずれの上限もインスタンス内メモリで数えるため、複数インスタンスでは最大その倍数まで通る（`api` は maxInstances: 5）
+- **レート制限**: 認証前は接続元 IP 単位 300 回/分（Bearer トークンの無い要求は数えない）。`/auth/line` の挙動を変えないため `trust proxy` は設定せず、Google のフロントエンドが `X-Forwarded-For` の末尾に足す接続元の IP をキーにする（クライアントが送った値はその前に並ぶだけなので詐称できない。IP として読めなければ `req.ip`、IPv6 は /56 単位）。前段が増えて末尾が共通のアドレスになると、インスタンス全体の上限として働く（その場合は 1 つの接続元の連打で全員が 429 になりうるため、上限は大きめにしてある）。認証後は lineId 単位で全ルート合わせて 60 回/分（失敗した応答も数える）、加えて立替の印を外す操作は成功したものだけを数えて 5 回/分、精算の通知の手動送信は成功したものだけを数えて 10 分に 3 回（LINE の push の無料枠を連打で使い切らないように）。いずれの上限もインスタンス内メモリで数えるため、複数インスタンスでは最大その倍数まで通る（`api` は maxInstances: 5）
 - 全応答 `Cache-Control: no-store`・`X-Content-Type-Options: nosniff`。エラーは `{ "error": "<code>" }`（`invalid_request` / `unauthenticated` / `forbidden` / `not_found` / `rate_limited` / `internal` ほか下表）
 
 | メソッド・パス | リクエスト | 成功時 | 主なエラー |
 |---|---|---|---|
 | `POST /household/expenses/:expenseId/actions` | `{ "action": "confirm" }`（これ以外の action は 400） | 200 `{ ok: true, expense: { id, status, includeInTotal, confirmed: true, advanceBy \| null, category, updatedAt(ISO) } }`。LINE の OK と同じ判定: status 無し / `pending` → `shared`・`includeInTotal: true`、それ以外は `confirmed: true` だけ（精算済みも 200） | 403 / 404（`confirm` は拒否しないので 409 は無い） |
-| `GET /household/settlement?groupId=<id>` | − | 200 `{ groupId, scope: "line_group"\|"group", participants: [{ lineId, displayName, isMember }], totals: { <lineId>: 円 }, basis, reason, settlement: { fromUserId, toUserId, amount } \| null, items: [{ id, date, description, amount, category, advanceBy }], expenseIds: [...], asOf }` | 403 / 404 |
-| `POST /household/settlement/settle` | `{ "groupId": "<id>", "expectedExpenseIds": ["…"], "expectedSettlement"?: { fromUserId, toUserId, amount } \| null }`（ID は重複を除いて 500 件まで照合する。GET の `expenseIds` が 500 件を超えていてそのまま送った場合は 400 にせず、現在も 500 件超なら `too_many`、500 件以下に減っていれば `stale`。`expectedSettlement` は画面に出した精算額で、省略時は ID の集合だけを照合） | 200 `{ ok: true, settled, skipped, basis, settlement }`。LINE の `精算` と同じ `settleAdvances`（`advance_pending` → `advance_settled`）。**LINE への通知は送らない** | 409 `too_many`（未精算 500 件超。記録はできないので Web はボタンを無効にしてよい）/ `stale`（ID の集合か、送られていれば精算額が現在と違う。未精算が 0 件になっていても画面が古ければこちら。`current` に最新の GET 内容）/ `nothing_to_settle`（未精算も画面も 0 件）/ `undeterminable`（`reason` 付き）/ `nothing_settled` |
-| `GET /household/recurring?groupId=<id>` | − | 200 `{ items: [固定費項目（dayOfMonth・名前順）], members: [{ lineId, displayName }] }`（`members` は立替者に選べる有効メンバー） | 403 / 404 |
+| `GET /household/advances?groupId=<id>` | − | 200 `{ groupId, items: [{ id, date, description, amount, category, advanceBy, advanceByName }], expenseIds: [...], asOf }`。立替の印が残っている支出（`advance_pending`。以前の機能の残り）を `createdAt` の新しい順で全件。`advanceBy` は `advanceBy`、無ければ `payerId`。`advanceByName` は支出に記録された名前（`advanceBy` があれば `userDisplayName` → `payerDisplayName`、無ければ `payerDisplayName`。分からなければ空文字） | 403 / 404 |
+| `POST /household/advances/clear` | `{ "groupId": "<id>", "expectedExpenseIds": ["…"] }`（ID は重複を除いて 500 件まで照合する。GET の `expenseIds` が 500 件を超えていてそのまま送った場合は 400 にせず、現在も 500 件超なら `too_many`、500 件以下に減っていれば `stale`） | 200 `{ ok: true, cleared, skipped }`。1 件ずつトランザクションで `status: 'shared'`・`includeInTotal: true`・`confirmed: true`・`advanceBy` 削除（`decideClearAdvance`。LINE の以前のカードの［取り消す］と同じ）。**`payerId` と金額は変えない**ので、過去の期間の折半の金額は変わらない。その間に範囲外になった・印が外れた・`advance_settled` の支出は飛ばして `skipped` に数える（`advance_settled` は変えない） | 409 `too_many`（500 件超）/ `stale`（ID の集合が現在と違う。`current` に最新の GET 内容）/ `nothing_to_clear`（対象も画面も 0 件、または 1 件も外せなかった） |
+| `GET /household/settlement-summary?groupId=<id>` | − | 200 `{ reason, startDay, closed: { startDate, endDate } \| null, current: { startDate, endDate } \| null, closedSentAt: ISO \| null }`（設定の「LINEへの精算の通知」の状態。§3.4）。`reason` は送れるなら `null`、送れなければ `no_line_group`（LINE グループに紐づいていない）/ `no_collect_from`（集金するメンバー未指定。脱退も含む）/ `not_two_members`（有効メンバーが 2 人でない）/ `fixed_period`（期間を日付で固定）。`closedSentAt` は締まった期間を送った時刻（自動・手動のどちらでも） | 403 / 404 |
+| `POST /household/settlement-summary/send` | `{ "groupId": "<id>", "period": "closed" \| "current" }` | 200 `{ ok: true, range: { startDate, endDate }, interim }`。精算サマリーを今すぐ世帯の LINE グループへ push する（`sendSettlementSummaryNow`。§3.4 の手動の送信。`closed` は自動の通知と同じ内容で、送ったら送信済みの印を書く。`current` は途中経過で印は書かない） | 409 `unavailable`（`reason` 付き。理由は GET と同じ）/ 502 `line_limit`（LINE が 429。月の上限・送りすぎ）/ `line_failed`（それ以外の送信失敗） |
+| `GET /household/recurring?groupId=<id>` | − | 200 `{ items: [固定費項目（dayOfMonth・名前順）], members: [{ lineId, displayName }] }`（`members` は引き落とされるメンバーに選べる有効メンバー） | 403 / 404 |
 | `POST /household/recurring` | `{ groupId, name, amount, category, dayOfMonth, payment: "shared"\|"advance", payerLineId: string \| null, active? }`（`advance` は `payerLineId` に世帯の有効メンバーが必須、`shared` は `null`） | 201 `{ item }` | 400 `invalid_request` / 409 `too_many`（30 件超） |
 | `PATCH /household/recurring/:id` | 上記のうち変更するキーだけ（空は 400）。トランザクションで読み直して書く。`shared` に変えると `payerLineId` は外れる。停止→再開で当月の引き落とし日を過ぎていれば当月分は遡らない | 200 `{ item }` | 400 / 403 / 404 |
 | `DELETE /household/recurring/:id` | − | 200 `{ ok: true }`（計上済みの明細はそのまま残る） | 403 / 404 |
 | `POST /household/split-settings` | `{ groupId, collectFromLineId: string \| null }`（有効メンバーの lineId か `null`=解除） | 200 `{ collectFromLineId }`。`groups/{groupId}.splitSettings` に `{ collectFromLineId, updatedBy, updatedAt }` を書く | 400 / 403 / 404 |
 
-- **対象範囲**（精算）: `groups/{groupId}.lineGroupId` があれば `lineGroupId` 基準（LINE の `立替一覧` / `精算` と同じ集合）、無ければ `groupId` 基準。期間は見ず、未精算の全件
-- **精算額**（`bot/src/householdSettlement.ts` の `computeHouseholdSettlement`。LINE の `立替一覧` / `精算` と共通）: 計算は従来の `calculateSettlement`（差額の 1/2 を `Math.round`）のまま。
-  - **Web**: 世帯の有効メンバーがちょうど 2 人で、未精算の立替がある人が全員そのどちらかのときだけ計算する。2 人とも立替あり = `pair`。1 人だけ立替あり → 相手を 0 円として補う = `single_advancer`（例: A だけが ¥10,000 → B → A ¥5,000）。未精算が無い = `none`。それ以外は `undeterminable`（`reason`: `more_than_two`=関係者〔有効メンバー ∪ 立替者〕が 3 人以上 / `partner_unknown`=有効メンバーが 2 人そろっていない〔本人だけ・立替者がメンバー外や脱退済み〕）で金額を出さず、記録も 409 にする
-  - **LINE**（`legacyPair`）: 立て替えた人がちょうど 2 人なら、メンバー登録に関係なく `pair`（`groups` 文書が無い・メンバーの読み込みに失敗した場合も同じ）。1 人だけなら Web と同じ条件で `single_advancer`。それ以外は金額を出さない（`精算` は記録まで行う）。そのため有効メンバー 3 人以上の世帯や、脱退者・メンバー外の人が立て替えている場合は、LINE は金額を出し Web は出さないことがある
-- `participants` は精算の関係者（有効メンバーを `joinedAt` 昇順、その後にメンバー外・脱退済みの立替者を `isMember: false` で）。`displayName` は `groupMembers` の表示名を優先し、空か世帯作成時の仮名「作成者」（作成者 `groups.createdBy` の文書だけを仮名として扱う。`createdBy` が無ければ全員の文書で扱う）なら立替に記録された名前、それも無ければ空文字（クライアントで補う）。LINE の `立替一覧` / `精算` で補った相手の名前が分からないときは LINE のグループメンバーのプロフィール名（そのまま使う）、取れなければ `User_xxxxxx`。`totals` は全員分（有効メンバーは 0 で埋める）。`items[].advanceBy` は集計キー（`advanceBy || payerId`）
-- **期間の精算（折半）**は API を持たない。`web/lib/periodSplit.ts` の `computePeriodSplit` がクライアントで計算する: 集金額 = 世帯の支出合計（`groupId` が一致し `includeInTotal`、`advance_settled` を除く）÷ 2 − 集金するメンバーの支払い（`payerId`、無ければ `lineId`）。有効メンバーが 2 人でない（`not_two_members`）か集金するメンバー未指定（`no_target`）なら出さない。記録は残さない
-- テスト: 純関数は `bot/scripts/smoke-household-api.js` / `smoke-recurring.js`（`npm -w bot test`）、web 側は `web/__tests__/periodSplit.test.mjs`（`npm -w web test`）。ルーター・認証・Firestore を通した確認は `bot/scripts/emulator-household-api.js` / `emulator-recurring.js`（`npm -w bot run test:emulator`。`bot/scripts/firebase.emulator.json` のポート 18080 / 19099 で Firestore・Auth エミュレータを起動する。firebase-tools は依存に入れていないので、別途入れて PATH に置く）
+- **立替の精算は期間の折半にまとめた**: 以前は「立替」にした支出（`advance_pending`）が、期間の精算（折半。支払った人 `payerId || lineId` で数える）と立替の精算の両方に入り、二重に払うおそれがあった。折半はもとから払った人の分として数えているので、立替の精算（`GET /household/settlement`・`POST /household/settlement/settle`、LINE の `精算` の記録）はやめた。残っている立替は印を外すだけでよい（金額はそのまま折半に入っている）
+- **対象範囲**（残っている立替）: `groups/{groupId}.lineGroupId` があれば `lineGroupId` 基準（以前の LINE の `立替一覧` / `精算` と同じ集合）、無ければ `groupId` 基準。期間は見ず、印が残っている全件
+- **期間の精算（折半）**の計算は API を持たない。`web/lib/periodSplit.ts` の `computePeriodSplit` がクライアントで計算する（LINE への通知は同じ式の `bot/src/periodSplit.ts`）: 集金額 = 世帯の支出合計（`groupId` が一致し `includeInTotal`、`advance_settled` を除く）÷ 2 − 集金するメンバーの支払い（`payerId`、無ければ `lineId`）。有効メンバーが 2 人でない（`not_two_members`）か集金するメンバー未指定（`no_target`）なら出さない。記録は残さない
+- テスト: 純関数は `bot/scripts/smoke-household-api.js` / `smoke-recurring.js`（`npm -w bot test`）、web 側は `web/__tests__/periodSplit.test.mjs` / `renewal-logic.test.mjs`（`npm -w web test`）。ルーター・認証・Firestore を通した確認は `bot/scripts/emulator-household-api.js` / `emulator-recurring.js` / `emulator-settlement-summary.js`（`npm -w bot run test:emulator`。`bot/scripts/firebase.emulator.json` のポート 18080 / 19099 で Firestore・Auth エミュレータを起動する。firebase-tools は依存に入れていないので、別途入れて PATH に置く）
 
 ---
 
@@ -270,7 +275,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 | コレクション | 主なフィールド | 備考 |
 |---|---|---|
-| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`), `inputSource`(`line_text\|gmail_auto\|recurring`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `recurringId?`, `receiptUrl?`, `needsEdit?`（**レガシー**。書き込み・読み出しとも廃止済みで既存データにのみ存在）, `items?[]`, `ocrText?`（レガシー）, `createdAt`, `updatedAt` | 中核コレクション。システムユーザーの `lineId`: Gmail 取込 `gmail-auto-system` / 固定費 `recurring-system`（ルールで世帯メンバーが修正・削除できる） |
+| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`。`advance_*` は以前の立替の値で、新しくは作られない), `inputSource`(`line_text\|gmail_auto\|recurring`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `recurringId?`, `receiptUrl?`, `needsEdit?`（**レガシー**。書き込み・読み出しとも廃止済みで既存データにのみ存在）, `items?[]`, `ocrText?`（レガシー）, `createdAt`, `updatedAt` | 中核コレクション。システムユーザーの `lineId`: Gmail 取込 `gmail-auto-system` / 固定費 `recurring-system`（ルールで世帯メンバーが修正・削除できる） |
 | `groups` | `name`, `inviteCode`(8桁・暗号学的乱数。参加には使わない), `createdBy`, `lineGroupId?`, `splitSettings?`(`{ collectFromLineId, updatedBy, updatedAt }`) | 汎用グループ機能はコード上「非推奨」— 実運用は LINE グループ共有。クライアント書込不可 |
 | `groupMembers/{groupId}_{lineId}` | `groupId`, `lineId`, `displayName`, `isActive`, `joinedAt`, `leftAt?`, `deactivatedReason?` | `isActive == true` が Web アクセス権。LINE グループ退出（`memberLeft`）で bot が `false` にする。発言による自動追加はしない（世帯2名固定、追加は管理スクリプト）。クライアント書込不可 |
 | `recurringExpenses` | `groupId`, `name`, `amount`, `category`, `dayOfMonth`, `payment`(`shared\|advance`), `payerLineId`, `active`, `lastPostedMonth`, `startDate`, `createdBy`, `createdAt`, `updatedAt` | 固定費の項目（§3.3）。クライアントからは読み書き不可（`/household/recurring` 経由） |
@@ -281,7 +286,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | `userCustomCategories` | `lineId`, `name`, `icon?`, `keywords?[]` | Bot 専用 |
 | `categoryFeedback` | `originalCategory`, `correctedCategory`, `description` | 分類改善用ログ。Bot 専用 |
 | `system/{gmailToken,gmailState,oauthState,gmailFailures}` | Gmail OAuth トークン・historyId / watch 期限・CSRF state・処理失敗の記録 | Bot 専用 |
-| `system/settlementSummary_{groupId}_{YYYY-MM-DD}` | `groupId`, `endDate`, `createdAt`, `sentAt` | 期間の精算サマリーを送った印（§3.4。同じ期間は 1 回）。Bot 専用 |
+| `system/settlementSummary_{groupId}_{YYYY-MM-DD}` | `groupId`, `endDate`, `createdAt`, `sentAt`, `manualSentAt?` | 期間の精算サマリーを送った印（§3.4。同じ期間は 1 回。Web から締まった期間を手動で送ったときも `sentAt`・`manualSentAt` を書く）。Bot 専用 |
 
 複合インデックス: `expenses` の `lineId/groupId/lineGroupId × createdAt/date/status` 組合せ、`groupMembers` の `lineId+isActive` / `groupId+isActive`（`firestore.indexes.json`）。
 

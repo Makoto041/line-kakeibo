@@ -71,8 +71,8 @@ flowchart LR
 
 | コンポーネント | 技術 | ホスティング | 役割 |
 |---|---|---|---|
-| `bot/` | Node.js 22 + TypeScript + Express 5 + `@line/bot-sdk` v11 + `firebase-functions` v7 | Firebase Functions gen2（`firebase.json` の `functions.source: "bot"` / `runtime: nodejs22` / region `asia-northeast1`。`api` 関数のみ `us-central1`） | LINE webhook、Gmail 取込、cron バッチ（Gmail watch 更新・固定費計上）、Web 向け API（LIFF ログイン・確認・精算・固定費） |
-| `web/` | Next.js 16（App Router）+ React 19 + TypeScript + Tailwind CSS v4 + Recharts + framer-motion + `@line/liff` | Vercel（Git 連携。設定はリポジトリ直下の `vercel.json`） | ダッシュボード・支出管理 UI。読み取りと通常の編集は**クライアントから Firestore/Storage 直アクセス**（セキュリティルールで制御）。確認・精算・固定費・折半設定は bot の `api` 関数経由 |
+| `bot/` | Node.js 22 + TypeScript + Express 5 + `@line/bot-sdk` v11 + `firebase-functions` v7 | Firebase Functions gen2（`firebase.json` の `functions.source: "bot"` / `runtime: nodejs22` / region `asia-northeast1`。`api` 関数のみ `us-central1`） | LINE webhook、Gmail 取込、cron バッチ（Gmail watch 更新・固定費計上・精算サマリー）、Web 向け API（LIFF ログイン・確認・立替の印・固定費・折半設定・精算の通知） |
+| `web/` | Next.js 16（App Router）+ React 19 + TypeScript + Tailwind CSS v4 + Recharts + framer-motion + `@line/liff` | Vercel（Git 連携。設定はリポジトリ直下の `vercel.json`） | ダッシュボード・支出管理 UI。読み取りと通常の編集は**クライアントから Firestore/Storage 直アクセス**（セキュリティルールで制御）。確認・立替の印を外す操作・固定費・折半設定・精算の通知の送信は bot の `api` 関数経由 |
 | Firestore | − | GCP | 唯一の永続データストア。ルール/インデックスはリポジトリ管理（`firestore.rules` / `firestore.indexes.json`） |
 | Cloud Storage | − | GCP | レシート画像（`receipts/{expenseId}/`）。`storage.rules` は cross-service rules で Firestore の支出・メンバーシップを参照 |
 
@@ -90,9 +90,9 @@ flowchart LR
 | `gmailPubSubHandler` | Pub/Sub `gmail-notifications` | asia-northeast1 | SMBC カード利用メールの取込 |
 | `renewGmailWatch` | cron `0 3 */6 * *` JST | asia-northeast1 | Gmail watch（7日失効）の更新 |
 | `importMoneyForward` | cron `0 5 * * *` JST | asia-northeast1 | **廃止（何もしない）**。旧 MoneyForward CSV 取込。送信先 `/api/mf/import` が存在せず機能していなかったため処理を削除。`syncUserLinks` と同じ理由で関数名だけ残置。削除は手動 `firebase functions:delete importMoneyForward --region asia-northeast1` |
-| `postRecurringExpenses` | cron `10 9 * * *` JST | asia-northeast1 | 毎日のバッチ。固定費（`recurringExpenses`）のうち引き落とし日を迎えた項目を `expenses` に計上（`recurringExpenses.ts`。同じ月に 2 回は入らない。LINE 通知なし）。期間の起算日には、締まった期間の精算サマリーを LINE グループへメンション付きで送る（`settlementSummary.ts`。同じ期間は 1 回）。Secret: `LINE_CHANNEL_TOKEN` / `LINE_CHANNEL_SECRET` |
+| `postRecurringExpenses` | cron `10 9 * * *` JST | asia-northeast1 | 毎日のバッチ。固定費（`recurringExpenses`）のうち引き落とし日を迎えた項目を `expenses` に計上（`recurringExpenses.ts`。同じ月に 2 回は入らない。LINE 通知なし）。期間の起算日には、締まった期間の精算サマリーを LINE グループへメンション付きで送る（`settlementSummary.ts`。同じ期間は 1 回。Web の設定から手動で送った期間は送らない）。Secret: `LINE_CHANNEL_TOKEN` / `LINE_CHANNEL_SECRET` |
 | `syncUserLinks` | Firestore `expenses/{id}` onCreate | asia-northeast1 | **無効化済み（何もしない）**。export から外すと CI の非対話デプロイが関数削除の確認で失敗するため残置。削除は手動 `firebase functions:delete syncUserLinks` |
-| `api` | HTTPS（Express） | **us-central1** | Gmail OAuth / watch 管理 `/gmail/*`（`ADMIN_SECRET` 認証）、LIFF ログイン `/auth/line`、Web の確認・精算・固定費・折半設定 `/household/*`（Firebase ID トークン認証。SPECIFICATION.md §5.4） |
+| `api` | HTTPS（Express） | **us-central1** | Gmail OAuth / watch 管理 `/gmail/*`（`ADMIN_SECRET` 認証）、LIFF ログイン `/auth/line`、Web の確認・立替の印・固定費・折半設定・精算の通知 `/household/*`（Firebase ID トークン認証。SPECIFICATION.md §5.4） |
 
 ## 4. 主要データフロー
 
@@ -105,8 +105,9 @@ LINEテキスト → webhook(署名検証)
   → カテゴリ分類: キャッシュ → キーワードマップ → Gemini（確信度≥0.4で採用）
   → グループ所属の決定（expenseGroupScope.ts: 発言元 LINE グループに紐づく世帯の有効メンバーなら groupId+lineGroupId、それ以外は個人支出）
   → expenses 保存 (confirmed:false, includeInTotal:false, inputSource:'line_text')
-  → 確認Flex返信（現在の設定3行＋[変更] / OK / 修正 / レシート添付 / 家計簿一覧を見る）
-  → postbackで status / includeInTotal / category を確定 → 最新値のカードを返信
+  → 確認Flex返信（現在の設定3行〔支出区分・支払った人・カテゴリ〕＋ボタン / OK / 修正 / レシート添付 / 家計簿一覧を見る）
+  → postbackで status / includeInTotal / payerId / category を確定 → 最新値のカードを返信
+     （［自分が払った］は押した人を支払った人にする。押せるのは世帯の有効メンバーだけ）
 ```
 
 ### 4.2 Gmail カード利用自動取込
@@ -131,11 +132,12 @@ Web を開く（LINE の「家計簿一覧を見る」/「修正」リンク、�
      uid→lineId を localStorage に覚え、開き直したときは先に使って裏でクレームを確かめる）
   → useExpenses: 個人分(where lineId==) と groupMembers(isActive) から解決した groupId の世帯分を並べて取り、マージ
      （所属グループの問い合わせは 5 分使い回す）
-  → SWRキャッシュ（lib/swrCache.ts。支出・集計・世帯・精算・設定は localStorage にも保存し、開き直したときも
+  → SWRキャッシュ（lib/swrCache.ts。支出・集計・世帯・立替の印・設定は localStorage にも保存し、開き直したときも
      前回の内容を即表示して裏で取り直す。14 日で破棄、別の人に切り替わったら消す）＋framer-motionでSPA風遷移
-  → 精算ページは精算 API（コールドスタートあり）を待たずに描き、立替のカードだけ中で読み込む
+  → 精算ページは期間の折半（Firestore から読む）を先に描き、以前の立替が残っていればそのお知らせを
+     /household/advances（コールドスタートあり）の応答が来てから出す
   → 編集/削除/レシート添付はクライアントSDKでFirestore/Storageへ直書き（ルールで許可された範囲のみ）
-  → 確認（要確認→共同費）・立替の精算・固定費・折半設定は ID トークン付きで api 関数の /household/* を呼ぶ
+  → 確認（要確認→共同費）・立替の印を外す・固定費・折半設定・精算の通知の送信は ID トークン付きで api 関数の /household/* を呼ぶ
 ```
 
 ### 4.3.1 PWA（ホーム画面に追加）
@@ -156,21 +158,21 @@ viewport-fit=cover: ノッチ・ホームバーは env(safe-area-inset-*) で避
   （止めたいときは sw.js を「登録を解除するだけ」の内容に差し替えて配信する）
 ```
 
-### 4.4 立替・精算（グループ）
+### 4.4 精算（期間の折半）
 
-- 支出を `status: 'advance_pending'` + `advanceBy` でマーク
-- `立替一覧` コマンドで未精算集計と精算額計算、`精算` で `advance_settled` へ一括更新
-- Web の精算タブ（`/settlement`）は `api` 関数の `GET /household/settlement` / `POST /household/settlement/settle` で同じ集合（`lineGroupId` 基準）を表示・精算する（Web からの精算では LINE へ通知しない）
-- 精算額の決め方は `householdSettlement.ts` の共有関数（1 人だけ立替・有効メンバー 2 人なら相手を 0 円で補う点は LINE と Web で同じ。Web は有効メンバー 2 人の世帯に限り、LINE は立替者 2 人なら従来どおり計算する。SPECIFICATION.md §5.4）
-- 精算タブにはもう 1 つ、**期間の精算（折半）**がある（`components/PeriodSplitCard.tsx` + `lib/periodSplit.ts`）。表示期間内の世帯の支出（合計に含むもの。立替精算済みは除く）を 2 人で折半し、`groups.splitSettings.collectFromLineId`（`POST /household/split-settings` で保存）に指定したメンバーの支払い分を引いて集金額を出す。クライアント側の純関数で計算し、記録は残さない
-- 支出の確認（LINE の OK / Web の確認ボタン）は `expenseActions.ts` の `applyExpenseChange` + `decideConfirm` を共用する
+- 精算タブ（`/settlement`）は**期間の精算（折半）**だけ（`components/PeriodSplitCard.tsx` + `lib/periodSplit.ts`）。表示期間内の世帯の支出（合計に含むもの。立替精算済みは除く）を 2 人で折半し、`groups.splitSettings.collectFromLineId`（`POST /household/split-settings` で保存）に指定したメンバーの支払い分を引いて集金額を出す。クライアント側の純関数で計算し、記録は残さない
+- 誰が払ったかは支出の支払った人（`payerId`、無ければ `lineId`）で数える。LINE のカードの［自分が払った］（`set_payer`）で押した人に変えられる（世帯の有効メンバーだけ）
+- 立替の精算は折半にまとめた。以前は立替（`advance_pending`）が折半と立替の精算の両方に入り、二重に払うおそれがあったため。`立替一覧` / `立替` / `精算` コマンドは案内を返すだけになり、`GET /household/settlement`・`POST /household/settlement/settle` と立替の精算額の計算（旧 `householdSettlement.ts`。メンバーと表示名の関数は `householdMembers.ts` に残した）は削除した。新しく立替は作られない（以前のカードの［自分が立替］は［自分が払った］として扱う）
+- 以前の立替が残っていれば、精算タブにお知らせ（`components/LeftoverAdvancesCard.tsx`）を出す。`GET /household/advances` で一覧（世帯に `lineGroupId` があればその基準、無ければ `groupId`）を取り、`POST /household/advances/clear` で印を外す（共同費に戻すだけで `payerId`・金額は変えないので、過去の期間の折半の金額は変わらない）
+- 期間の起算日には、締まった期間の精算サマリーを LINE グループへ送る（`settlementSummary.ts`）。Web の設定 > 期間タブ（`components/settings/SettlementNotifyCard.tsx`）から、締まった期間（自動と同じ内容）か今の期間の途中経過を今すぐ送れる（`GET /household/settlement-summary`・`POST /household/settlement-summary/send`。締まった期間を送ったら送信済みの印を付け、自動の通知と二重にならない）
+- 支出の確認（LINE の OK / Web の確認ボタン）・支払った人・立替の印を外す操作は `expenseActions.ts` の `applyExpenseChange` + `decideConfirm` / `decideSetPayer` / `decideClearAdvance` を共用する
 - Web の支出一覧では支払者（`payerId`/`payerDisplayName`）別集計を表示
 
 ### 4.5 固定費（毎月の自動計上）
 
 - 項目は `recurringExpenses/{id}`（世帯 `groupId` 単位、上限 30 件）。クライアントからは読み書きできず、Web の設定 > 固定費タブ（`components/RecurringExpensesPanel.tsx`）が `/household/recurring` の CRUD を通して Admin SDK で扱う
 - `postRecurringExpenses` が毎朝 9:10 JST に、引き落とし日（`dayOfMonth`。月の日数を超える日は末日）を迎えた有効な項目を `expenses` に計上する。文書 ID を `recurring_{項目ID}_{YYYYMM}` に固定して create するため冪等
-- 支払い元 `shared`（共通のカード・口座）は `lineId`/`payerId` = `recurring-system`・`status: 'shared'`、`advance`（メンバーの個人口座）はその人の立替（`advance_pending`）として計上する。いずれも `inputSource: 'recurring'`・`confirmed: true`・`includeInTotal: true`
+- 支払い元 `shared`（共通のカード・口座）は `lineId`/`payerId` = `recurring-system`・`status: 'shared'`、`advance`（メンバーの個人口座）は `lineId`/`payerId`/`payerDisplayName` = その人・`status: 'shared'`（その人が支払った共同費として期間の折半に入る。`advanceBy` は付けない。値の名前 `advance` は以前の立替のなごり）として計上する。いずれも `inputSource: 'recurring'`・`confirmed: true`・`includeInTotal: true`
 
 ## 5. カテゴリ分類パイプライン（コスト最適化）
 
@@ -238,13 +240,13 @@ line-kakeibo/
 │  ├─ src/
 │  │  ├─ index.ts            # 初期化と Function のエクスポート（webhook / api / スケジュール関数）だけ
 │  │  ├─ textParser.ts       # 支出テキストパーサ
-│  │  ├─ firestore.ts        # Firestore データアクセス（支出/グループ/メンバー/予算/精算）
-│  │  ├─ expenseActions.ts   # 支出の確認の判定とトランザクション（LINE postback と Web API で共用）
+│  │  ├─ firestore.ts        # Firestore データアクセス（支出/グループ/メンバー/予算/残っている立替）
+│  │  ├─ expenseActions.ts   # 支出の確認・支払った人・立替の印を外す判定とトランザクション（LINE postback と Web API で共用）
 │  │  ├─ expenseGroupScope.ts # LINE 発言に付ける groupId / lineGroupId の決定（非メンバーは個人支出）
-│  │  ├─ householdApi.ts     # Web 向け /household ルーター（ID トークン認証・メンバー確認・CORS・レート制限・固定費 CRUD・折半設定）
-│  │  ├─ householdSettlement.ts # 精算額の決め方（LINE の立替一覧/精算と Web で共用）
+│  │  ├─ householdApi.ts     # Web 向け /household ルーター（ID トークン認証・メンバー確認・CORS・レート制限・立替の印・固定費 CRUD・折半設定・精算の通知）
+│  │  ├─ householdMembers.ts # 世帯の有効メンバーと表示名（精算サマリー・固定費・LINE の支払った人で共用）
 │  │  ├─ recurringExpenses.ts # 固定費の検証・計上ロジック（postRecurringExpenses）
-│  │  ├─ settlementSummary.ts # 期間の精算サマリー（起算日の判定・集計・冪等な送信）。periodSplit.ts は Web と同じ折半の式
+│  │  ├─ settlementSummary.ts # 期間の精算サマリー（起算日の判定・集計・冪等な送信・Web からの手動の送信）。periodSplit.ts は Web と同じ折半の式
 │  │  ├─ line/settlementSummaryMessage.ts # 精算サマリーのメンション付きテキストと Flex
 │  │  ├─ webOrigins.ts       # Web オリジンの許可リスト（/auth/line と /household で共用）
 │  │  ├─ adminAuth.ts        # ADMIN_SECRET の定数時間比較
@@ -253,7 +255,7 @@ line-kakeibo/
 │  │  ├─ linkUserResolver.ts / syncUserLinks.ts
 │  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue
 │  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）
-│  │  ├─ line/               # webhookApp.ts（署名検証・イベント振り分け・/health）/ textMessage.ts / commands/*.ts（家計簿・要望・カテゴリー・グループ・立替/精算）
+│  │  ├─ line/               # webhookApp.ts（署名検証・イベント振り分け・/health）/ textMessage.ts / commands/*.ts（家計簿・要望・カテゴリー・グループ・立替/精算〔期間の折半の案内だけ〕）
 │  │  │                      # / expenseFlow.ts（テキスト入力の支出登録）/ groupEvents.ts / client.ts（LINE クライアント・返信）/ flexMessage.ts / postback.ts
 │  │  └─ gmail/              # auth.ts / watch.ts / parser.ts / handler.ts / types.ts / adminRouter.ts（/gmail/* 管理 API）/ index.ts
 │  ├─ scripts/               # smoke-*.js（npm test）/ emulator-*.js（test:emulator）/ firebase.emulator.json
@@ -261,10 +263,11 @@ line-kakeibo/
 ├─ web/                      # Next.js 16 (Vercel)
 │  ├─ app/                   # / , /expenses , /settlement , /settings , /attach , /link , /dashboard , /terms , /privacy
 │  ├─ app/manifest.ts        # PWA の manifest（apple-icon.png / favicon.ico も app/ に置く）
-│  ├─ components/            # Charts, PeriodSplitCard, RecurringExpensesPanel, GuestGuide, layout/(AppShell, Sidebar, BottomTabBar, TopBar, nav), theme/,
-│  │                         # settings/InstallAppCard（ホーム画面への追加の案内）
+│  ├─ components/            # Charts, PeriodSplitCard, LeftoverAdvancesCard（残っている立替のお知らせ）, RecurringExpensesPanel, GuestGuide,
+│  │                         # layout/(AppShell, Sidebar, BottomTabBar, TopBar, nav), theme/,
+│  │                         # settings/InstallAppCard（ホーム画面への追加の案内）・SettlementNotifyCard（LINEへの精算の通知）
 │  ├─ lib/                   # firebase.ts, lineAuth.ts, hooks.ts, householdApi.ts, householdContract.ts, recurringApi.ts,
-│  │                         # periodSplit.ts, settlementView.ts, expenseState.ts, dateSettings.ts, swrCache.ts, categoryNormalization.ts,
+│  │                         # periodSplit.ts, leftoverAdvances.ts, expenseState.ts, dateSettings.ts, swrCache.ts, categoryNormalization.ts,
 │  │                         # installApp.ts（PWA の案内の出し分け・Service Worker の登録）ほか
 │  ├─ __tests__/             # renewal-logic / periodSplit / drilldown / swrCache / installApp（node --test）
 │  ├─ public/icons/          # Flex メッセージ用アイコン PNG（scripts/gen-line-icons.mjs で生成）
