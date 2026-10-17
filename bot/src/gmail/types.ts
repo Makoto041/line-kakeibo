@@ -70,12 +70,13 @@ export interface PostbackActionData {
   /**
    * アクション種別
    *
-   * - set_split / set_advance / show_list … 現行UI（現在値表示＋[変更]ボタン）が送る操作
+   * - set_split / set_payer / set_advance / show_list … 現行UI（現在値表示＋[変更]ボタン）が送る操作
    * - shared / personal / advance … 旧UIのボタン。配信済みメッセージは編集できないため、
    *   過去に送ったカードから押される可能性がある。互換のため残す。
    */
   action:
     | 'set_split'
+    | 'set_payer'
     | 'set_advance'
     | 'show_list'
     | 'confirm'

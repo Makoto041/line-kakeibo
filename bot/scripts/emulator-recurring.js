@@ -26,7 +26,6 @@ if (getApps().length === 0) initializeApp({ projectId });
 
 const { householdRouter, householdErrorHandler } = require('../dist/householdApi');
 const { postDueRecurringExpenses } = require('../dist/recurringExpenses');
-const { getAdvanceSummaryByUser } = require('../dist/firestore');
 
 const ORIGIN = 'https://line-kakeibo.vercel.app';
 
@@ -113,15 +112,15 @@ async function main() {
     console.log('recurring API: 作成');
     const rent = { groupId: 'h1', name: '家賃', amount: 120000, category: '住居費', dayOfMonth: 27, payment: 'advance', payerLineId: 'Uaki' };
     const created = await call('POST', '/household/recurring', { token: aki, body: rent });
-    check('家賃（Aki の立替）を作成', created.status === 201 && created.body.item.name === '家賃' && created.body.item.active === true, created.body);
+    check('家賃（Aki の個人口座）を作成', created.status === 201 && created.body.item.name === '家賃' && created.body.item.active === true, created.body);
     const rentId = created.body.item.id;
     const util = { groupId: 'h1', name: '電気代', amount: 9000, category: '光熱費', dayOfMonth: 10, payment: 'shared', payerLineId: null };
     const createdUtil = await call('POST', '/household/recurring', { token: aki, body: util });
     check('電気代（共通カード）を作成', createdUtil.status === 201, createdUtil.body);
     const utilId = createdUtil.body.item.id;
 
-    check('脱退者を立替者にできない', (await call('POST', '/household/recurring', { token: aki, body: { ...rent, payerLineId: 'Uold' } })).status === 400);
-    check('世帯外の人を立替者にできない', (await call('POST', '/household/recurring', { token: aki, body: { ...rent, payerLineId: 'Uzed' } })).status === 400);
+    check('脱退者を引き落とされるメンバーにできない', (await call('POST', '/household/recurring', { token: aki, body: { ...rent, payerLineId: 'Uold' } })).status === 400);
+    check('世帯外の人を引き落とされるメンバーにできない', (await call('POST', '/household/recurring', { token: aki, body: { ...rent, payerLineId: 'Uzed' } })).status === 400);
     check('不正な金額は 400', (await call('POST', '/household/recurring', { token: aki, body: { ...rent, amount: -5 } })).status === 400);
     check('他の世帯へは作れない', (await call('POST', '/household/recurring', { token: zed, body: rent })).status === 403);
     check('知らないキーは 400', (await call('POST', '/household/recurring', { token: aki, body: { ...rent, lastPostedMonth: '2099-01' } })).status === 400);
@@ -134,10 +133,10 @@ async function main() {
     const upd = await call('PATCH', `/household/recurring/${utilId}`, { token: aki, body: { amount: 9800 } });
     check('金額だけ更新', upd.status === 200 && upd.body.item.amount === 9800 && upd.body.item.name === '電気代', upd.body);
     const toShared = await call('PATCH', `/household/recurring/${rentId}`, { token: aki, body: { payment: 'shared' } });
-    check('共通に切り替えると立替者を外す', toShared.status === 200 && toShared.body.item.payerLineId === null, toShared.body);
+    check('共通に切り替えるとメンバーを外す', toShared.status === 200 && toShared.body.item.payerLineId === null, toShared.body);
     const back = await call('PATCH', `/household/recurring/${rentId}`, { token: aki, body: { payment: 'advance', payerLineId: 'Uaki' } });
-    check('立替に戻す', back.status === 200 && back.body.item.payerLineId === 'Uaki', back.body);
-    check('立替者なしの立替は 400', (await call('PATCH', `/household/recurring/${rentId}`, { token: aki, body: { payment: 'advance', payerLineId: null } })).status === 400);
+    check('個人口座に戻す', back.status === 200 && back.body.item.payerLineId === 'Uaki', back.body);
+    check('メンバーなしの個人口座は 400', (await call('PATCH', `/household/recurring/${rentId}`, { token: aki, body: { payment: 'advance', payerLineId: null } })).status === 400);
     check('空の更新は 400', (await call('PATCH', `/household/recurring/${rentId}`, { token: aki, body: {} })).status === 400);
     check('無い項目は 404', (await call('PATCH', '/household/recurring/nope', { token: aki, body: { amount: 1 } })).status === 404);
 
@@ -161,13 +160,10 @@ async function main() {
     check('実行が遅れても同じ月なら家賃を計上', s3.posted === 1, s3);
     const e2 = await db.doc(`expenses/recurring_${rentId}_202609`).get();
     check(
-      '家賃は Aki の未精算の立替として入る（日付は引き落とし日）',
-      e2.exists && e2.get('status') === 'advance_pending' && e2.get('advanceBy') === 'Uaki' && e2.get('date') === '2026-09-27' && e2.get('payerDisplayName') === 'Aki',
+      '家賃は Aki が支払った共同費として入る（立替にはしない。日付は引き落とし日）',
+      e2.exists && e2.get('status') === 'shared' && e2.get('advanceBy') === undefined && e2.get('payerId') === 'Uaki' && e2.get('date') === '2026-09-27' && e2.get('payerDisplayName') === 'Aki' && e2.get('lineGroupId') === 'C_home',
       e2.data()
     );
-    const summary = await getAdvanceSummaryByUser('C_home', true);
-    const akiAdv = summary.find((s) => s.userId === 'Uaki');
-    check('LINE の立替一覧（lineGroupId 基準）に家賃が入る', akiAdv && akiAdv.totalAdvanced === 120000, summary);
 
     // 同時に 2 回動いても 1 件
     await db.doc(`recurringExpenses/${utilId}`).update({ lastPostedMonth: '2026-09' });
@@ -207,14 +203,14 @@ async function main() {
       { startDate: lateDoc.get('startDate'), sLate }
     );
 
-    // 立替者が世帯を抜けていたら計上しない
+    // 引き落とされるメンバーが世帯を抜けていたら計上しない
     const benRent = await call('POST', '/household/recurring', { token: aki, body: { ...rent, name: '駐車場', payerLineId: 'Uben' } });
     const benId = benRent.body.item.id;
     await db.doc(`recurringExpenses/${benId}`).update({ startDate: '2026-09-01' });
     await db.doc('groupMembers/h1_Uben').update({ isActive: false });
     const sLeft = await postDueRecurringExpenses(db, new Date('2026-09-27T00:00:00Z'));
     const benExpense = await db.doc(`expenses/recurring_${benId}_202609`).get();
-    check('立替者が脱退していたら計上しない', !benExpense.exists && sLeft.failed === 0, sLeft);
+    check('引き落とされるメンバーが脱退していたら計上しない', !benExpense.exists && sLeft.failed === 0, sLeft);
     await db.doc('groupMembers/h1_Uben').update({ isActive: true });
 
     // 計上した明細は項目を消しても残る

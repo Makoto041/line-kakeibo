@@ -76,7 +76,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.6.0 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.7.0 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
@@ -101,6 +101,7 @@ flowchart LR
   JOBS -->|精算サマリー| LINE
   Browser["ブラウザ / LIFF<br/>ホーム画面のアプリ"] --> WEB["Next.js（Vercel）"]
   WEB -->|/auth/line・/household/*| API["api 関数<br/>us-central1"]
+  API -->|精算サマリー（手動）| LINE
   WEB -->|読み取り（ルールで制限）| FS[("Firestore")]
   WEB -->|レシート| ST[("Cloud Storage")]
   WH --> GEM["Gemini"]
@@ -111,7 +112,7 @@ flowchart LR
   API --> FS
 </pre>
       </div>
-      <p>Web はブラウザから Firestore を直接読む（セキュリティルールで世帯メンバーに限定）。確認・精算・固定費の登録のように状態を変える操作は、ID トークン付きで bot の <code>api</code> 関数に送る。</p>
+      <p>Web はブラウザから Firestore を直接読む（セキュリティルールで世帯メンバーに限定）。確認・固定費の登録・精算の通知の送信のように状態を変える操作は、ID トークン付きで bot の <code>api</code> 関数に送る。</p>
     </div>
   </section>
 
@@ -146,7 +147,7 @@ flowchart LR
             <li>金額・日付・支払方法・内容を解析</li>
             <li>カテゴリを分類（下の 3 段）</li>
             <li>支出を保存し確認カードで返信</li>
-            <li>カードの OK / 修正 / 立替 / 除外で更新</li>
+            <li>カードの OK / 修正 / 自分が払った / 自分が立替 / 除外で更新</li>
           </ol>
           <span class="src">bot/src/index.ts · line/</span>
         </div>
@@ -164,38 +165,40 @@ flowchart LR
           <h3>固定費</h3>
           <ol>
             <li>Web の設定で家賃・光熱費などを見込み額と引き落とし日で登録</li>
-            <li>毎朝、当日が引き落とし日の項目を計上</li>
+            <li>毎朝、当日が引き落とし日の項目を計上（個人の口座から引き落とす項目は、その人の支払いとして期間の折半に入る）</li>
             <li>ID は <code>recurring_{項目}_{年月}</code> で重複しない</li>
             <li>実額が分かったら Web で修正</li>
           </ol>
           <span class="src">bot/src/recurringExpenses.ts</span>
         </div>
         <div class="flow">
-          <h3>立替の精算</h3>
-          <ol>
-            <li>立替は「未精算」として残る</li>
-            <li>未精算の立替から精算額を計算（<code>GET /household/settlement</code>）</li>
-            <li>「精算を記録」で立替が精算済みになる</li>
-            <li>精算済みは金額・日付・支払者の変更と削除ができない（内容・カテゴリは直せる）</li>
-          </ol>
-          <span class="src">bot/src/householdSettlement.ts</span>
-        </div>
-        <div class="flow">
           <h3>期間の折半</h3>
           <ol>
-            <li>精算タブで期間の支出合計を 2 で割る</li>
-            <li>送金する人の支払いとの差から「誰が誰にいくら送金するか」を表示</li>
+            <li>精算タブで期間の支出合計（立替を除く）を 2 で割る</li>
+            <li>誰が払ったかは支出の「支払った人」で数える（LINE のカードの［自分が払った］で変えられる）</li>
+            <li>送金する人の支払いとの差に、期間内の立替の全額を足し引きして「誰が誰にいくら送金するか」を表示</li>
             <li>表示だけで、何も記録しない（送金する人の設定だけ保存）</li>
           </ol>
-          <span class="src">web/lib/periodSplit.ts</span>
+          <span class="src">web/lib/periodSplit.ts · bot/src/periodSplit.ts</span>
+        </div>
+        <div class="flow">
+          <h3>立替</h3>
+          <ol>
+            <li>LINE のカードの［自分が立替］で、押した人が相手の分を立て替えた支出にする（世帯のメンバーだけ）</li>
+            <li>折半せず、支出の日付の期間の精算で立て替えた人へ全額を返す（「+ 相手の立替（全額）」「− 自分の立替（全額）」）</li>
+            <li>全額にする前の立替はこれまでどおり折半。残っていれば精算タブで「精算済みにする」（<code>/household/legacy-advances</code>）</li>
+            <li>精算済みのものは金額・日付・支払者の変更と削除ができない（内容・カテゴリは直せる）</li>
+          </ol>
+          <span class="src">bot/src/expenseActions.ts · web/components/LeftoverAdvancesCard.tsx</span>
         </div>
         <div class="flow">
           <h3>精算サマリー（月 1 回）</h3>
           <ol>
             <li>毎朝のバッチで、今日が期間の起算日（例: 15 日）かを判定</li>
             <li>締まった期間を Web の期間の折半と同じ式で計算</li>
-            <li>送金する人と受け取る人をメンションしたテキストと、内訳・カテゴリ別・要確認・未精算の立替の Flex を 1 回の push で送る</li>
+            <li>送金する人と受け取る人をメンションしたテキストと、内訳（立替の全額を含む）・カテゴリ別・要確認の Flex を 1 回の push で送る</li>
             <li>送った印を <code>system/</code> に残し、同じ期間は 2 回送らない</li>
+            <li>Web の設定から今すぐ送ることもできる（締まった期間か、今の期間の途中経過）。締まった期間を送ったら印を付け、自動では送らない</li>
           </ol>
           <span class="src">bot/src/settlementSummary.ts</span>
         </div>
@@ -233,6 +236,7 @@ flowchart LR
         <li><b>Firestore ルール</b>: 世帯のデータは <code>groupMembers/{groupId}_{lineId}</code> が有効なメンバーだけが読める。支出の項目は型と値を検証し、精算済みの立替は金額・日付・支払者の変更と削除を拒否する。</li>
         <li><b>Storage ルール</b>: レシート画像は Firestore のメンバー情報を参照して制限（cross-service rules）。</li>
         <li><b>/household API</b>: ID トークンを検証し、世帯メンバーかを確認。レート制限と CORS の許可リストあり。</li>
+        <li><b>LINE のボタン</b>: 精算の金額が変わる［自分が払った］［自分が立替］［取り消す］は、世帯の有効メンバーだけが押せる。立替の項目（<code>status</code>・<code>advanceBy</code>・<code>advanceFull</code>）はクライアントから書けない。</li>
         <li><b>世帯は 2 名固定</b>: メンバーの追加・無効化は bot ではなく管理スクリプト <code>scripts/manage-group-members.mjs</code> で行う。</li>
         <li><b>シークレット</b>: LINE のトークンなどは Secret Manager に置き、関数は宣言した名前だけを読む。</li>
       </ul>
@@ -249,16 +253,16 @@ flowchart LR
             <tr><td class="name">bot/src/index.ts</td><td>初期化と Cloud Functions の export だけ（関数名・リージョン・シークレットはここで決まる）</td></tr>
             <tr><td class="name">bot/src/line/webhookApp.ts</td><td>webhook の Express アプリ。本文サイズ制限、署名検証、イベントの振り分け、<code>/health</code></td></tr>
             <tr><td class="name">bot/src/line/textMessage.ts</td><td>テキストを受けてコマンドを試し、当たらなければ支出として解析</td></tr>
-            <tr><td class="name">bot/src/line/commands/</td><td>家計簿・要望/不具合・カテゴリー・グループ・立替一覧/精算の各コマンド</td></tr>
+            <tr><td class="name">bot/src/line/commands/</td><td>家計簿・要望/不具合・カテゴリー・グループ・立替一覧/精算（期間の折半の案内だけ）の各コマンド</td></tr>
             <tr><td class="name">bot/src/line/expenseFlow.ts</td><td>支出の登録と確認カードの返信（プロフィール取得のリトライ込み）</td></tr>
             <tr><td class="name">bot/src/line/groupEvents.ts</td><td>グループへの参加・メンバーの参加/退出</td></tr>
             <tr><td class="name">bot/src/line/client.ts</td><td>LINE クライアントと返信・push の共通処理（返信できなければ push）</td></tr>
             <tr><td class="name">bot/src/line/flexMessage.ts · postback.ts</td><td>確認カードの組み立てと、カードのボタン操作</td></tr>
             <tr><td class="name">bot/src/auth/lineAuth.ts</td><td><code>/auth/line</code>（LIFF → カスタムトークン）</td></tr>
-            <tr><td class="name">bot/src/householdApi.ts</td><td><code>/household/*</code>（確認・精算・固定費・折半設定）</td></tr>
+            <tr><td class="name">bot/src/householdApi.ts</td><td><code>/household/*</code>（確認・以前の立替の精算済み・固定費・折半設定・精算の通知）</td></tr>
             <tr><td class="name">bot/src/gmail/</td><td>Gmail 取込と管理 API（<code>adminRouter.ts</code>）</td></tr>
             <tr><td class="name">bot/src/recurringExpenses.ts</td><td>固定費の計上ロジック</td></tr>
-            <tr><td class="name">bot/src/settlementSummary.ts · line/settlementSummaryMessage.ts</td><td>期間の精算サマリー（送る日の判定・集計・冪等な送信と、メンション付きテキスト・Flex）</td></tr>
+            <tr><td class="name">bot/src/settlementSummary.ts · line/settlementSummaryMessage.ts</td><td>期間の精算サマリー（送る日の判定・集計・冪等な送信・Web からの手動の送信と、メンション付きテキスト・Flex）</td></tr>
             <tr><td class="name">web/app/ · components/ · lib/</td><td>画面・部品・ロジック（lib は純関数でテストあり）</td></tr>
             <tr><td class="name">web/app/manifest.ts · public/sw.js · lib/installApp.ts</td><td>PWA の manifest、Service Worker（オフライン画面と <code>/_next/static</code> のキャッシュ）、追加の案内の出し分け。アイコンは <code>scripts/gen-app-icons.mjs</code> で生成</td></tr>
             <tr><td class="name">firestore.rules · storage.rules</td><td>アクセス制御（CI がデプロイ、エミュレータでテスト）</td></tr>

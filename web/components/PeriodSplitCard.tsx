@@ -1,6 +1,6 @@
 'use client';
 
-// 期間の折半精算: 期間内の世帯の支出を 2 人で折半し、指定したメンバーから集金する額を出す。
+// 期間の折半精算: 期間内の世帯の支出を 2 人で折半し、立替は全額を加算して、指定したメンバーから集金する額を出す。
 // 集金するメンバーは世帯ごとの設定（groups.splitSettings）。計算は lib/periodSplit.ts。
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
@@ -18,7 +18,7 @@ import {
   getEffectiveDateRange,
   type DateRangeSettings,
 } from '../lib/dateSettings';
-import { computePeriodSplit, formatYenExact } from '../lib/periodSplit';
+import { computePeriodSplit, formatYenExact, isFullAdvance } from '../lib/periodSplit';
 import { yen } from '../lib/money';
 import { getCached, hasCached, setCached } from '../lib/swrCache';
 
@@ -85,7 +85,7 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
   );
   const nameOf = (id: string | undefined) => members.find((m) => m.lineId === id)?.displayName || 'メンバー';
 
-  // 内訳シート: 折半の計算と同じ明細（世帯・期間内。合計に含み、立替精算済みでないもの）を、支払い者（payerId）で分ける
+  // 内訳シート: 折半の計算と同じ明細（世帯・期間内。合計に含み、立替精算済み・立替（全額）でないもの）を、支払い者（payerId）で分ける
   const [drill, setDrill] = useState<DrillView[] | null>(null);
   const closeDrill = useCallback(() => setDrill(null), []);
   const drillItems = useMemo(() => {
@@ -95,7 +95,7 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
       expenses.filter((e) => e.groupId === groupId),
       {
         range,
-        included: (e) => !!e.includeInTotal && e.status !== 'advance_settled',
+        included: (e) => !!e.includeInTotal && e.status !== 'advance_settled' && !isFullAdvance(e),
         payer: (e) => {
           const key = e.payerId || e.lineId;
           const name =
@@ -172,7 +172,7 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
             </div>
           ) : (
             <>
-              {/* 図: 送金する人 → 受け取る人（立替の精算と同じ見せ方）。アイコンをタップすると「送金する人」を切り替える */}
+              {/* 図: 送金する人 → 受け取る人。アイコンをタップすると「送金する人」を切り替える */}
               {(() => {
                 // 未設定のときは 2 人を並べるだけ（どちらかをタップして送金する人を選ぶ）
                 const from = split.transfer ? split.transfer.fromLineId : target;
@@ -287,7 +287,8 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
                 <div className="flex justify-between">
                   <dt className="text-muted">
                     合計（{split.count}件{split.excludedCount > 0 ? `・除外${split.excludedCount}件` : ''}
-                    {split.settledCount > 0 ? `・立替精算済み${split.settledCount}件` : ''}）
+                    {split.settledCount > 0 ? `・立替精算済み${split.settledCount}件` : ''}
+                    {split.advanceCount > 0 ? `・立替${split.advanceCount}件は全額で別` : ''}）
                   </dt>
                   <dd className="font-medium text-fg">{yen(split.total, 'ja-JP')}</dd>
                 </div>
@@ -299,6 +300,19 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
                   <div className="flex justify-between">
                     <dt className="text-muted">− {split.target.displayName || 'メンバー'}の支払い</dt>
                     <dd className="font-medium text-fg">{yen(split.targetPaid, 'ja-JP')}</dd>
+                  </div>
+                )}
+                {/* 立替（全額）は折半せず、立て替えた人へ全額を返す */}
+                {split.counterpart && split.counterpartAdvanced > 0 && (
+                  <div className="flex justify-between">
+                    <dt className="text-muted">+ {split.counterpart.displayName || 'メンバー'}の立替（全額）</dt>
+                    <dd className="font-medium text-fg">{yen(split.counterpartAdvanced, 'ja-JP')}</dd>
+                  </div>
+                )}
+                {split.target && split.targetAdvanced > 0 && (
+                  <div className="flex justify-between">
+                    <dt className="text-muted">− {split.target.displayName || 'メンバー'}の立替（全額）</dt>
+                    <dd className="font-medium text-fg">{yen(split.targetAdvanced, 'ja-JP')}</dd>
                   </div>
                 )}
               </dl>

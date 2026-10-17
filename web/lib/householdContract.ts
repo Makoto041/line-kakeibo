@@ -4,47 +4,60 @@ import type { ExpenseStatus } from './hooks';
 
 // ---- 型 ---------------------------------------------------------------------
 
-export type SettlementBasis = 'none' | 'pair' | 'single_advancer' | 'undeterminable';
-
-export interface SettlementMember {
-  lineId: string;
-  displayName: string;
-  /** 有効メンバーか（false はメンバー外・脱退済みの立替者） */
-  isMember: boolean;
-}
-
-/** 計算できない理由（basis が undeterminable のときだけ） */
-export type UndeterminableReason = 'more_than_two' | 'partner_unknown';
-
-export interface SettlementTransfer {
-  fromUserId: string;
-  toUserId: string;
-  amount: number;
-}
-
-export interface SettlementItem {
+/** 全額にする前の立替（advanceFull の無い advance_pending）。全額の立替は期間の精算で返すので含まない */
+export interface AdvanceItem {
   id: string;
   date: string;
   description: string;
   amount: number;
   category: string;
+  /** 立替にした人（advanceBy、無ければ支払った人） */
   advanceBy: string | null;
+  /** 立替にした人の名前（支出に記録された名前。分からなければ空文字） */
+  advanceByName: string;
 }
 
-/** GET /household/settlement の応答（未精算の立替の全件） */
-export interface SettlementResponse {
+/** GET /household/legacy-advances の応答 */
+export interface AdvancesResponse {
   groupId: string;
-  scope: 'line_group' | 'group';
-  /** 精算の関係者（応答の participants）。有効メンバー（joinedAt 昇順）→ メンバー外の立替者 */
-  members: SettlementMember[];
-  /** 関係者全員の立替合計（有効メンバーは 0 埋め） */
-  totals: Record<string, number>;
-  basis: SettlementBasis;
-  reason: UndeterminableReason | null;
-  settlement: SettlementTransfer | null;
-  items: SettlementItem[];
+  /** 新しい順 */
+  items: AdvanceItem[];
   expenseIds: string[];
   asOf: string;
+}
+
+export interface SettleLegacyAdvancesResult {
+  settled: number;
+  skipped: number;
+}
+
+export interface DateRangeYmd {
+  startDate: string;
+  endDate: string;
+}
+
+/**
+ * 精算の通知を送れない理由
+ * no_line_group: LINE グループに紐づいていない / no_collect_from: 集金するメンバーが未指定 /
+ * not_two_members: 有効メンバーが 2 人でない / fixed_period: 期間を日付で固定している
+ */
+export type SummaryUnavailableReason = 'no_line_group' | 'no_collect_from' | 'not_two_members' | 'fixed_period';
+
+/** GET /household/settlement-summary の応答（設定の「LINEへの精算の通知」） */
+export interface SummaryStatus {
+  reason: SummaryUnavailableReason | null;
+  startDay: number | null;
+  closed: DateRangeYmd | null;
+  current: DateRangeYmd | null;
+  /** 締まった期間を送った時刻（ISO 8601）。まだなら null */
+  closedSentAt: string | null;
+}
+
+export type SummaryPeriodKind = 'closed' | 'current';
+
+export interface SummarySendResult {
+  range: DateRangeYmd;
+  interim: boolean;
 }
 
 /** POST /household/expenses/:id/actions（confirm）の応答から画面に反映する項目 */
@@ -57,24 +70,17 @@ export interface ConfirmedExpensePatch {
   category?: string;
 }
 
-export interface SettleResult {
-  settled: number;
-  skipped: number;
-  basis: SettlementBasis;
-  settlement: SettlementTransfer | null;
-}
-
 export type HouseholdErrorCode =
   | 'unavailable'
   | 'invalid_request'
   | 'unauthenticated'
   | 'forbidden'
   | 'not_found'
-  | 'settled'
   | 'nothing_to_settle'
-  | 'nothing_settled'
-  | 'undeterminable'
+  | 'stale'
   | 'too_many'
+  | 'line_limit'
+  | 'line_failed'
   | 'rate_limited'
   | 'network'
   | 'internal'
@@ -97,7 +103,7 @@ function normalizeBase(value: string): string | null {
 
 /**
  * API のベース URL。明示の値（空文字は未設定扱い）→ 認証エンドポイントの /auth/line を除いたもの。
- * どちらからも得られなければ null（確認・精算の操作は無効にする）。
+ * どちらからも得られなければ null（確認・立替の印を外す・通知の送信などの操作は無効にする）。
  * 明示の値が off / none のときは機能を止める（bot を戻したときに web を出し直さずに済むように）。
  */
 export function deriveApiBase(explicit: string | undefined, authEndpoint: string | undefined): string | null {
@@ -126,7 +132,6 @@ export function isValidDocId(id: unknown): id is string {
 
 // ---- 応答の検証 ----------------------------------------------------------------
 
-const BASES: readonly SettlementBasis[] = ['none', 'pair', 'single_advancer', 'undeterminable'];
 const STATUSES: readonly ExpenseStatus[] = ['pending', 'shared', 'personal', 'advance_pending', 'advance_settled'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -142,63 +147,66 @@ function toStr(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function parseTransfer(value: unknown): SettlementTransfer | null {
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseRange(value: unknown): DateRangeYmd | null {
   if (!isRecord(value)) return null;
-  const fromUserId = toStr(value.fromUserId);
-  const toUserId = toStr(value.toUserId);
-  if (!fromUserId || !toUserId) return null;
-  return { fromUserId, toUserId, amount: toNumber(value.amount) };
+  const startDate = toStr(value.startDate);
+  const endDate = toStr(value.endDate);
+  return YMD.test(startDate) && YMD.test(endDate) ? { startDate, endDate } : null;
 }
 
 /** 応答の形を確かめて型に揃える。必須の形でなければ null */
-export function parseSettlementResponse(json: unknown): SettlementResponse | null {
-  if (!isRecord(json)) return null;
-  // 関係者は participants（bot の応答）。古い形の members も受け付ける
-  const people = Array.isArray(json.participants) ? json.participants : json.members;
-  if (!Array.isArray(people) || !Array.isArray(json.expenseIds)) return null;
-  const basis = BASES.includes(json.basis as SettlementBasis) ? (json.basis as SettlementBasis) : null;
-  if (!basis) return null;
-
-  const members: SettlementMember[] = [];
-  for (const m of people) {
-    if (!isRecord(m) || !toStr(m.lineId)) continue;
-    if (members.some((x) => x.lineId === m.lineId)) continue;
-    members.push({ lineId: toStr(m.lineId), displayName: toStr(m.displayName), isMember: m.isMember !== false });
-  }
-
-  const totals: Record<string, number> = {};
-  for (const m of members) totals[m.lineId] = 0;
-  const reason: UndeterminableReason | null =
-    basis === 'undeterminable' && (json.reason === 'more_than_two' || json.reason === 'partner_unknown')
-      ? json.reason
-      : null;
-  if (isRecord(json.totals)) {
-    for (const [id, v] of Object.entries(json.totals)) totals[id] = toNumber(v);
-  }
-
-  const items: SettlementItem[] = Array.isArray(json.items)
-    ? json.items.filter(isRecord).map((it) => ({
+export function parseAdvancesResponse(json: unknown): AdvancesResponse | null {
+  if (!isRecord(json) || !Array.isArray(json.items) || !Array.isArray(json.expenseIds)) return null;
+  return {
+    groupId: toStr(json.groupId),
+    items: json.items
+      .filter(isRecord)
+      .map((it) => ({
         id: toStr(it.id),
         date: toStr(it.date),
         description: toStr(it.description),
         amount: toNumber(it.amount),
         category: toStr(it.category),
         advanceBy: toStr(it.advanceBy) || null,
+        advanceByName: toStr(it.advanceByName),
       }))
-    : [];
-
-  return {
-    groupId: toStr(json.groupId),
-    scope: json.scope === 'group' ? 'group' : 'line_group',
-    members,
-    totals,
-    basis,
-    reason,
-    settlement: parseTransfer(json.settlement),
-    items,
+      .filter((it) => it.id),
     expenseIds: json.expenseIds.filter((id): id is string => typeof id === 'string'),
     asOf: toStr(json.asOf),
   };
+}
+
+export function parseSettleLegacyAdvancesResult(json: unknown): SettleLegacyAdvancesResult | null {
+  if (!isRecord(json) || json.ok !== true) return null;
+  return { settled: toNumber(json.settled), skipped: toNumber(json.skipped) };
+}
+
+const SUMMARY_REASONS: readonly SummaryUnavailableReason[] = ['no_line_group', 'no_collect_from', 'not_two_members', 'fixed_period'];
+
+export function parseSummaryStatus(json: unknown): SummaryStatus | null {
+  if (!isRecord(json)) return null;
+  const reason = SUMMARY_REASONS.includes(json.reason as SummaryUnavailableReason) ? (json.reason as SummaryUnavailableReason) : null;
+  if (json.reason !== null && !reason) return null;
+  const closed = parseRange(json.closed);
+  const current = parseRange(json.current);
+  // 送れるなら 2 つの期間がそろっている
+  if (!reason && (!closed || !current)) return null;
+  const day = toNumber(json.startDay);
+  return {
+    reason,
+    startDay: Number.isInteger(day) && day >= 1 && day <= 31 ? day : null,
+    closed,
+    current,
+    closedSentAt: typeof json.closedSentAt === 'string' && !Number.isNaN(Date.parse(json.closedSentAt)) ? json.closedSentAt : null,
+  };
+}
+
+export function parseSummarySendResult(json: unknown): SummarySendResult | null {
+  if (!isRecord(json) || json.ok !== true) return null;
+  const range = parseRange(json.range);
+  return range ? { range, interim: json.interim === true } : null;
 }
 
 export function parseConfirmResponse(json: unknown): ConfirmedExpensePatch | null {
@@ -217,16 +225,6 @@ export function parseConfirmResponse(json: unknown): ConfirmedExpensePatch | nul
   };
 }
 
-export function parseSettleResult(json: unknown): SettleResult | null {
-  if (!isRecord(json) || json.ok !== true) return null;
-  return {
-    settled: toNumber(json.settled),
-    skipped: toNumber(json.skipped),
-    basis: BASES.includes(json.basis as SettlementBasis) ? (json.basis as SettlementBasis) : 'none',
-    settlement: parseTransfer(json.settlement),
-  };
-}
-
 // ---- エラー ------------------------------------------------------------------
 
 const KNOWN_ERRORS: readonly HouseholdErrorCode[] = [
@@ -234,11 +232,12 @@ const KNOWN_ERRORS: readonly HouseholdErrorCode[] = [
   'unauthenticated',
   'forbidden',
   'not_found',
-  'settled',
+  'unavailable',
   'nothing_to_settle',
-  'nothing_settled',
-  'undeterminable',
+  'stale',
   'too_many',
+  'line_limit',
+  'line_failed',
   'rate_limited',
   'internal',
 ];

@@ -23,7 +23,7 @@
 ### 1.3 Gmail 連携で追加した機能
 
 - **Gmail 自動取得**: 三井住友カード利用通知メールを自動検知・登録
-- **現在値＋[変更] の確認 UI**: 支出区分/立替/カテゴリの現在値をリッチテキストで表示し、変更は [変更] ボタンで行う（テキスト入力の登録カードと共通）
+- **現在値＋[変更] の確認 UI**: 支出区分/支払った人/立替/カテゴリの現在値をリッチテキストで表示し、変更は各行のボタンで行う（テキスト入力の登録カードと共通）
 
 ### 1.4 運用方針
 
@@ -121,7 +121,7 @@ Flex Message 通知（line/flexMessage.ts）
 | 「カテゴリー 食費」 | デフォルトカテゴリを食費に設定 | line/commands/category.ts |
 | 「グループ作成 名前」 | 新規グループ作成 | line/commands/group.ts |
 | 「グループ一覧」 | 参加中グループ表示 | line/commands/group.ts |
-| 「立替一覧」/「精算」 | 未精算の立替の確認・精算 | line/commands/advance.ts |
+| 「立替一覧」/「立替」/「精算」 | 期間の精算（折半）と［自分が立替］の案内、精算画面へのリンク（一覧・精算の記録はしない） | line/commands/advance.ts |
 
 （「参加 コード 名前」コマンドは無効化済み。世帯は 2 名固定で、メンバー追加は `scripts/manage-group-members.mjs` で行う）
 
@@ -137,7 +137,7 @@ Flex Message 通知（line/flexMessage.ts）
 | 店舗名 | 大きく表示（例: イオン） |
 | 金額 / 日付 | 金額を大きく、日付は同じ行の右端 |
 | 残り予算 | 緑（余裕）/ 赤（残り 2 万以下） |
-| 現在の設定 | `支出区分：…` `立替：…` `カテゴリ：…` の 3 行。各行の右端に [変更] |
+| 現在の設定 | `支出区分：…` `支払った人：カード` `立替：なし（折半）` `カテゴリ：…` の 4 行。各行の右端にボタン（支払った人は [自分が払った]、立替は [自分が立替] / [取り消す]） |
 | フッター | `OK` `修正` / `レシート添付` / `家計簿一覧を見る` |
 
 現在値は `status` から導出する。導出ルールと遷移ルールは `docs/SPECIFICATION.md` §2.4 / §2.5 を参照。
@@ -149,7 +149,8 @@ Flex Message 通知（line/flexMessage.ts）
 | 操作 | Firestore の status | 備考 |
 |-------|-------------------|---------------|
 | 支出区分 [変更] | shared ⇔ personal | `includeInTotal` を連動。立替は解除 |
-| 立替 [変更] | advance_pending ⇔ shared | 立替ありは押下者を `advanceBy` に記録。精算に含める |
+| 支払った人 [自分が払った] | （status 不変） | 押下者を `payerId` / `payerDisplayName` に記録（世帯の有効メンバーだけ。立替なら `advanceBy` も押下者）。期間の精算（折半）はこの支払った人で数える。Web の支払い者も「クレジットカード」ではなくその人になる |
+| 立替 [自分が立替] / [取り消す] | shared ⇔ advance_pending | 立替は押下者を `advanceBy` と支払った人に記録し `advanceFull: true`（世帯の有効メンバーだけ）。折半せず、支出の日付の期間の精算で全額を返す。取り消すと shared に戻り、支払った人の分として折半する |
 | カテゴリ [変更] | （status 不変） | 選択カルーセルを表示して確定 |
 | OK | （shared のまま） | `confirmed` を立てるだけ。以前に `pending` で入った分は shared へ揃う |
 | （無反応） | shared のまま | 取込時点で共同費として確定（`confirmed: true`）。要確認にはしない（要確認は LINE 手入力の支出だけ） |
@@ -189,6 +190,7 @@ Flex Message 通知（line/flexMessage.ts）
 | usedAt | Timestamp | カード利用日時（重複チェック・表示用） |
 | status | string | `shared`（取込時）/ `personal` / `advance_pending` / `advance_settled`。`pending` は以前の取込にだけ残るレガシー値（Web・LINE とも共同費として扱う） |
 | advanceBy | string | 立替者（立替時のみ） |
+| advanceFull | boolean | 立替を全額で精算に加算する扱い（［自分が立替］で `true`。無い立替は全額にする前の立替） |
 | includeInTotal | boolean | 合計金額に含めるか |
 
 ### 5.3 includeInTotal の初期値
@@ -198,10 +200,10 @@ Flex Message 通知（line/flexMessage.ts）
 | 入力元 | includeInTotal 初期値 | 理由 |
 |--------|---------------------|------|
 | `gmail_auto` | `true` | 共用カードからの取得なので、初期状態で会計に含める（`status: 'shared'`・`confirmed: true` で確定扱い） |
-| `line_text` | `false` | 確認ボタン（OK / 共同費 / 立替）を押すまで含めない |
+| `line_text` | `false` | 確認ボタン（OK / 共同費 / 自分が払った / 自分が立替）を押すまで含めない |
 | `recurring` | `true` | 固定費は登録時点で確定扱い（`confirmed: true`） |
 
-- LINE 手入力: OK または「支出区分：共同費」「立替：あり」で `includeInTotal: true` に更新
+- LINE 手入力: OK、「支出区分：共同費」、「支払った人」の [自分が払った]、または「立替」の [自分が立替] で `includeInTotal: true` に更新
 - 「個人費」を選択すると `includeInTotal: false` に設定
 
 ### 5.4 システムコレクション（`system/*`。Bot 専用、クライアントからは読み書き不可）

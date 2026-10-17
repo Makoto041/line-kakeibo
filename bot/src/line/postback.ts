@@ -14,7 +14,17 @@ type PostbackEvent = webhook.PostbackEvent;
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { PostbackActionData } from '../gmail/types';
 import { ExpenseStatusType } from '../firestore';
-import { applyExpenseChange, decideConfirm, SETTLED_REJECTION } from '../expenseActions';
+import {
+  applyExpenseChange,
+  decideClearAdvance,
+  decideConfirm,
+  decideSetAdvance,
+  decideSetPayer,
+  SETTLED_REJECTION,
+  type ExpenseDecider,
+} from '../expenseActions';
+import { fallbackDisplayName, readActiveMember } from '../householdMembers';
+import { errorMessage, maskId } from '../logSafe';
 import {
   buildCategorySelectCarousel,
   buildExpenseCardFromRecord,
@@ -22,7 +32,7 @@ import {
   EXPENSE_LIST_URL,
   CategorySelectInfo,
 } from './flexMessage';
-import { replyWithPushFallback } from './client';
+import { getLineClient, replyWithPushFallback } from './client';
 
 /**
  * 拡張されたPostbackアクションデータ
@@ -138,6 +148,9 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
       case 'set_split':
         await handleSetSplit(event, actionData, actionData.to === 'personal' ? 'personal' : 'shared');
         break;
+      case 'set_payer':
+        await handleSetPayer(event, actionData);
+        break;
       case 'set_advance':
         await handleSetAdvance(event, actionData, actionData.to !== 'off');
         break;
@@ -182,7 +195,7 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
  * 支出区分（共同費 / 個人費）を設定
  *
  * 個人費・共同費のどちらに変えても立替は解除する。立替者が残ったままだと
- * 精算対象に残り続けてしまうため。
+ * 精算対象に残り続けてしまうため。期間の精算の金額が変わるので、押せるのは世帯のメンバーだけ（applyAsMember）。
  */
 async function handleSetSplit(
   event: PostbackEvent,
@@ -192,7 +205,7 @@ async function handleSetSplit(
   const { expenseId } = actionData;
   const includeInTotal = to === 'shared';
 
-  const result = await applyExpenseChange(expenseId, (data) => {
+  const record = await applyAsMember(event, expenseId, () => (data) => {
     if (data.status === 'advance_settled') return { reject: SETTLED_REJECTION };
 
     return {
@@ -201,81 +214,108 @@ async function handleSetSplit(
         includeInTotal,
         confirmed: true,
         advanceBy: FieldValue.delete(),
+        advanceFull: FieldValue.delete(),
         updatedAt: new Date(),
       },
-      cardPatch: { status: to, includeInTotal, advanceBy: undefined },
+      cardPatch: { status: to, includeInTotal, advanceBy: undefined, advanceFull: undefined },
     };
   });
+  if (!record) return;
 
-  if (!result) return;
-  if ('reject' in result) {
-    await replyText(event, result.reject);
-    return;
+  console.log('Expense split updated', { expense: maskId(expenseId), to });
+  await replyUpdatedCard(event, expenseId, record, '設定を更新しました');
+}
+
+/** 押した人の LINE の表示名（世帯のメンバー文書に名前が無いときに使う）。取れなければ空文字 */
+async function profileName(event: PostbackEvent, userId: string): Promise<string> {
+  try {
+    const client = getLineClient();
+    const profile =
+      event.source?.type === 'group'
+        ? await client.getGroupMemberProfile((event.source as any).groupId, userId)
+        : await client.getProfile(userId);
+    return profile.displayName || '';
+  } catch (error) {
+    console.warn('Failed to load LINE profile for payer', { user: maskId(userId), error: errorMessage(error) });
+    return '';
   }
-
-  console.log(`Expense ${expenseId} split set to ${to}`);
-  await replyUpdatedCard(event, expenseId, result.record, '設定を更新しました');
 }
 
 /**
- * 立替（あり / なし）を設定
+ * 押した人として、世帯のメンバーだけに許す変更を行う（支出区分・［自分が払った］［自分が立替］［取り消す］）
  *
- * 立替ありにする場合は支出区分を共同費相当に揃える（個人費かつ立替ありは成立しない）。
+ * 期間の精算の金額が変わるため、押せるのは支出の世帯の有効メンバーだけ（世帯の無い個人の支出は登録した本人。
+ * lineGroupId だけを持つ旧形式は変えない）。表示名はメンバー文書の名前、無ければ LINE のプロフィール名。
+ *
+ * @returns 返信を済ませたら null、変更できたら更新後のレコード
  */
-async function handleSetAdvance(
+async function applyAsMember(
   event: PostbackEvent,
-  actionData: ExtendedPostbackActionData,
-  on: boolean
-): Promise<void> {
-  const { expenseId } = actionData;
-
-  // 立替ありにする場合、ボタンを押したユーザーを立替者として記録する
+  expenseId: string,
+  decide: (presser: { lineId: string; displayName: string }) => ExpenseDecider
+): Promise<Record<string, unknown> | null> {
   const userId = event.source!.userId;
-  if (on && !userId) {
-    console.error('Cannot process advance: userId is missing', {
-      expenseId,
-      sourceType: event.source!.type,
-    });
-    await replyText(event, '立替者を特定できなかったため、変更できませんでした');
-    return;
+  if (!userId) {
+    console.error('Cannot identify the presser: userId is missing', { expense: maskId(expenseId), sourceType: event.source!.type });
+    await replyText(event, '押した人を特定できなかったため、変更できませんでした');
+    return null;
   }
 
-  const result = await applyExpenseChange(expenseId, (data) => {
-    if (data.status === 'advance_settled') return { reject: SETTLED_REJECTION };
-
-    if (on) {
-      return {
-        update: {
-          status: 'advance_pending',
-          advanceBy: userId,
-          includeInTotal: true,
-          confirmed: true,
-          updatedAt: new Date(),
-        },
-        cardPatch: { status: 'advance_pending', includeInTotal: true, advanceBy: userId },
-      };
-    }
-
-    return {
-      update: {
-        status: 'shared',
-        advanceBy: FieldValue.delete(),
-        includeInTotal: true,
-        confirmed: true,
-        updatedAt: new Date(),
+  const fromProfile = await profileName(event, userId);
+  let memberName = '';
+  const db = getFirestore();
+  const result = await applyExpenseChange(
+    expenseId,
+    (data) => decide({ lineId: userId, displayName: memberName || fromProfile || fallbackDisplayName(userId) })(data),
+    {
+      authorize: async (data, tx) => {
+        if (typeof data.groupId === 'string' && data.groupId) {
+          const member = await readActiveMember(db, data.groupId, userId, tx);
+          memberName = member?.displayName ?? '';
+          return member !== null;
+        }
+        return !data.lineGroupId && data.lineId === userId;
       },
-      cardPatch: { status: 'shared', includeInTotal: true, advanceBy: undefined },
-    };
-  });
+    }
+  );
 
-  if (!result) return;
+  if (!result) return null;
+  if ('forbidden' in result) {
+    await replyText(event, '変更できるのは、世帯のメンバーだけです');
+    return null;
+  }
   if ('reject' in result) {
     await replyText(event, result.reject);
-    return;
+    return null;
   }
+  return result.record;
+}
 
-  console.log(`Expense ${expenseId} advance set to ${on ? 'on' : 'off'}`);
-  await replyUpdatedCard(event, expenseId, result.record, '設定を更新しました');
+/** 支払った人を、押した人にする（［自分が払った］） */
+async function handleSetPayer(event: PostbackEvent, actionData: ExtendedPostbackActionData): Promise<void> {
+  const { expenseId } = actionData;
+  const record = await applyAsMember(event, expenseId, (presser) => decideSetPayer(presser));
+  if (!record) return;
+  console.log('Expense payer set by the presser', { expense: maskId(expenseId) });
+  await replyUpdatedCard(
+    event,
+    expenseId,
+    record,
+    record.status === 'advance_pending' ? '支払った人（立替した人）を変更しました' : '支払った人を変更しました'
+  );
+}
+
+/**
+ * 立替にする / 取り消す（［自分が立替］［取り消す］。旧UIの advance も［自分が立替］として扱う）
+ *
+ * 立替は押した人が払って相手の分を立て替えた支出で、支出の日付の期間の精算で全額を返してもらう。
+ */
+async function handleSetAdvance(event: PostbackEvent, actionData: ExtendedPostbackActionData, on: boolean): Promise<void> {
+  const { expenseId } = actionData;
+  const record = await applyAsMember(event, expenseId, (presser) => (on ? decideSetAdvance(presser) : decideClearAdvance()));
+  if (!record) return;
+  console.log('Expense advance updated', { expense: maskId(expenseId), on });
+  await replyUpdatedCard(event, expenseId, record, on ? '立替にしました（期間の精算で相手から全額を返してもらいます）' : '設定を更新しました');
 }
 
 /**

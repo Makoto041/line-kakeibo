@@ -2,7 +2,7 @@
 // 一度取得したデータをキー単位で保持し、再訪時はキャッシュを即表示しつつ
 // 裏で再取得（stale-while-revalidate）してスピナーの点滅をなくす。
 //
-// 一部のキー（支出・集計・世帯・精算・設定）は localStorage にも保存し、ページを開き直したとき
+// 一部のキー（支出・集計・世帯・以前の立替・設定）は localStorage にも保存し、ページを開き直したとき
 // （LINE のボタンから開く・再読み込み）にも前回の内容をすぐ出す。取得し直した結果で置き換わる。
 // 端末に残るのは、同じ端末の Firebase のログイン状態（IndexedDB）で読める内容と同じ範囲。
 //
@@ -18,7 +18,7 @@ const store = new Map<string, unknown>();
 const touchedAt = new Map<string, number>();
 
 const PERSIST_KEY = 'kakeibo:swr:v1';
-const PERSIST_PREFIXES = ['expenses:', 'stats:', 'household:', 'settlement:', 'dateSettings:', 'budget:', 'settingsBudget:'];
+const PERSIST_PREFIXES = ['expenses:', 'stats:', 'household:', 'advances:', 'dateSettings:', 'budget:', 'settingsBudget:'];
 /** これより古い保存分は使わない（期間・世帯が変わっている可能性が高い） */
 const PERSIST_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 /** 保存する大きさの上限（localStorage は 5MB 前後。ほかの用途の分を残す） */

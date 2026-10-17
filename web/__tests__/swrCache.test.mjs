@@ -28,16 +28,16 @@ test('保存するのは支出・集計・世帯・精算・設定のキーだ�
   const first = await openPage(storage);
   const expenses = [{ id: 'e1', amount: 100, createdAt: { seconds: 10, nanoseconds: 0 } }];
   first.setCached('expenses:U1:0:500:2026-09-15', expenses);
-  first.setCached('settlement:g1', { items: [], asOf: 'x' });
+  first.setCached('advances:g1', { items: [], asOf: 'x' });
   first.setCached('scratch:other', 1);
   await sleep(500);
 
   const saved = JSON.parse(storage.getItem(KEY));
-  assert.deepEqual(Object.keys(saved).sort(), ['expenses:U1:0:500:2026-09-15', 'settlement:g1']);
+  assert.deepEqual(Object.keys(saved).sort(), ['advances:g1', 'expenses:U1:0:500:2026-09-15']);
 
   const reopened = await openPage(storage);
   assert.deepEqual(reopened.getCached('expenses:U1:0:500:2026-09-15'), expenses);
-  assert.equal(reopened.hasCached('settlement:g1'), true);
+  assert.equal(reopened.hasCached('advances:g1'), true);
   assert.equal(reopened.hasCached('scratch:other'), false);
 });
 

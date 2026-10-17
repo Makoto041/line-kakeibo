@@ -1,7 +1,7 @@
 /**
  * LINE から登録する支出に付けるグループ所属（groupId / lineGroupId）を決める。
  *
- * bot の LINE 側の集計（家計簿・立替一覧・精算）はすべて lineGroupId で支出を引く。
+ * bot の LINE 側の集計（家計簿・以前の立替）は lineGroupId で支出を引く。
  * 世帯の LINE グループに居るだけの非メンバー（第三者、脱退済みの元メンバー、
  * 別の家計グループを作った人など）の支出に lineGroupId を付けると、Web には出ないのに
  * 世帯の LINE 集計・精算にだけ混入してしまう。firestore.rules がクライアントに禁じている

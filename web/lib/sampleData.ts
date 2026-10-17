@@ -52,7 +52,7 @@ function buildSampleExpense(
 
 /**
  * サンプル支出データ（要確認 2 件を含む。どちらも手入力の未確認で、1 件は集計に含め、1 件は含めない）。
- * 未精算の立替 3 件と精算済み 1 件も含む。
+ * 以前の立替で精算済みの 1 件も含む。
  */
 export function getSampleExpenses(): Expense[] {
   return [
@@ -63,9 +63,9 @@ export function getSampleExpenses(): Expense[] {
     buildSampleExpense(5, 5, 520, 'カフェ', '食費'),
     buildSampleExpense(6, 7, 1900, '映画', '娯楽'),
     buildSampleExpense(7, 10, 3980, '携帯料金', '通信費'),
-    buildSampleExpense(8, 2, 6480, '日用品まとめ買い', '日用品', { status: 'advance_pending', advanceBy: 'guest' }),
-    buildSampleExpense(9, 4, 2860, '外食', '食費', { status: 'advance_pending', advanceBy: 'guest' }),
-    buildSampleExpense(10, 6, 1740, 'ホームセンター', '日用品', { status: 'advance_pending', advanceBy: 'guest-partner' }),
+    buildSampleExpense(8, 2, 6480, '日用品まとめ買い', '日用品'),
+    buildSampleExpense(9, 4, 2860, '外食', '食費'),
+    buildSampleExpense(10, 6, 1740, 'ホームセンター', '日用品'),
     buildSampleExpense(11, 12, 5200, 'ガス代', '光熱費', { status: 'advance_settled', advanceBy: 'guest-partner' }),
   ];
 }

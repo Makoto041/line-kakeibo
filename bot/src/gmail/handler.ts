@@ -270,7 +270,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       confirmed: true,
       includeInTotal: true, // Gmail自動取得は基本的に会計に含める
       payerId: GMAIL_SYSTEM_LINE_ID,
-      // グループ関連（ダッシュボード集計・立替精算に必要）
+      // グループ関連（ダッシュボード集計・期間の精算に必要）
       groupId,
       lineGroupId,
       // Gmail拡張フィールド
@@ -379,7 +379,7 @@ export async function processLatestEmail(): Promise<{
         confirmed: true, // 自動で入るので確認を求めない（要確認は手入力の支出だけ）
         includeInTotal: true, // Gmail自動取得は基本的に会計に含める
         payerId: GMAIL_SYSTEM_LINE_ID,
-        // グループ関連（ダッシュボード集計・立替精算に必要）
+        // グループ関連（ダッシュボード集計・期間の精算に必要）
         groupId: getDefaultGroupId(),
         lineGroupId: getDefaultLineGroupId(),
         inputSource: 'gmail_auto' as const,

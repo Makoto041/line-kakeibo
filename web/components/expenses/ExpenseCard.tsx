@@ -134,7 +134,8 @@ export default function ExpenseCard({
             )}
             {(() => {
               const chip = splitChip(expense);
-              const label = { shared: "共同費", personal: "個人", advance: "立替", settled: "精算済み" }[chip];
+              // 立替（全額）は期間の精算で全額を返す。全額にする前の立替は「立替」のまま
+              const label = { shared: "共同費", personal: "個人", advance: expense.advanceFull ? "立替（全額）" : "立替", settled: "精算済み" }[chip];
               const tone = {
                 shared: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
                 personal: "bg-fg/5 text-muted",

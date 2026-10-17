@@ -36,9 +36,8 @@ if (!projectId.startsWith('demo-')) {
 initializeApp({ projectId });
 
 const { householdRouter, householdErrorHandler } = require('../dist/householdApi');
-const { applyExpenseChange, decideConfirm } = require('../dist/expenseActions');
-const { getAdvanceSummaryByUser } = require('../dist/firestore');
-const { computeLineGroupSettlement } = require('../dist/householdSettlement');
+const { applyExpenseChange, decideConfirm, decideSetAdvance, decideSetPayer } = require('../dist/expenseActions');
+const { readActiveMember } = require('../dist/householdMembers');
 
 const ORIGIN = 'https://line-kakeibo.vercel.app';
 const EVIL_ORIGIN = 'https://evil.example.com';
@@ -106,12 +105,12 @@ async function seed(db) {
   set('groups/g1_x', { name: 'collision', inviteCode: '444444', createdBy: 'Umallory' });
   set('groupMembers/g1_x_Umallory', { groupId: 'g1_x', lineId: 'Umallory', displayName: 'Mallory', isActive: true, joinedAt: ts('2026-01-01T00:00:00Z') });
 
-  // 世帯 g4（LINE グループなし）: Frank と Gina（精算の記録のレート制限を確かめる）
+  // 世帯 g4（LINE グループなし）: Frank と Gina（立替の印を外す操作のレート制限を確かめる）
   set('groups/g4', { name: 'limit', inviteCode: '555555', createdBy: 'Ufrank' });
   set('groupMembers/g4_Ufrank', { groupId: 'g4', lineId: 'Ufrank', displayName: 'Frank', isActive: true, joinedAt: ts('2026-01-01T00:00:00Z') });
   set('groupMembers/g4_Ugina', { groupId: 'g4', lineId: 'Ugina', displayName: 'Gina', isActive: true, joinedAt: ts('2026-01-02T00:00:00Z') });
 
-  // 世帯 g2（LINE グループなし）: Carol だけ → 1 人だけの立替は計算できない（Q17）
+  // 世帯 g2（LINE グループなし）: Carol だけ
   set('groups/g2', { name: 'solo', inviteCode: '222222', createdBy: 'Ucarol' });
   set('groupMembers/g2_Ucarol', { groupId: 'g2', lineId: 'Ucarol', displayName: 'Carol', isActive: true, joinedAt: ts('2026-01-01T00:00:00Z') });
 
@@ -126,31 +125,26 @@ async function seed(db) {
   set('expenses/e_legacy', { ...base, lineId: 'Ualice', payerId: 'Ualice', lineGroupId: 'C_line1', amount: 900, description: '旧形式', includeInTotal: false });
   set('expenses/e_settled', { ...base, lineId: 'Ubob', payerId: 'Ubob', groupId: 'g1', lineGroupId: 'C_line1', amount: 3000, description: '旅行', status: 'advance_settled', advanceBy: 'Ubob', includeInTotal: true, confirmed: true });
 
-  // 未精算の立替（LINE グループ C_line1）: Alice 12,400 / Bob 4,000 → Bob → Alice ¥4,200
+  // 立替の印が残っている支出（LINE グループ C_line1）: Alice 12,400 / Bob 4,000
   set('expenses/adv_a1', { ...base, lineId: 'Ualice', payerId: 'Ualice', groupId: 'g1', lineGroupId: 'C_line1', amount: 10000, description: '家具', status: 'advance_pending', advanceBy: 'Ualice', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-10T01:00:00Z') });
   set('expenses/adv_a2', { ...base, lineId: 'Ualice', payerId: 'Ualice', groupId: 'g1', lineGroupId: 'C_line1', amount: 2400, description: '日用品', status: 'advance_pending', advanceBy: 'Ualice', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-11T01:00:00Z') });
   set('expenses/adv_b1', { ...base, lineId: 'Ubob', payerId: 'Ubob', groupId: 'g1', lineGroupId: 'C_line1', amount: 4000, description: '外食', status: 'advance_pending', advanceBy: 'Ubob', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-12T01:00:00Z') });
-  // 個人チャットで登録した立替（groupId だけ）は LINE グループ基準の精算に入らない（LINE の「精算」と同じ）
+  // 全額で返す立替（advanceFull）は期間の精算で返すので、以前の立替の一覧に入らない
+  set('expenses/adv_full', { ...base, lineId: 'Ubob', payerId: 'Ubob', groupId: 'g1', lineGroupId: 'C_line1', amount: 2610, description: 'ゆで太郎', status: 'advance_pending', advanceBy: 'Ubob', advanceFull: true, includeInTotal: true, confirmed: true });
+  // 個人チャットで登録した立替（groupId だけ）は LINE グループ基準の一覧に入らない（以前の LINE の「精算」と同じ）
   set('expenses/adv_private', { ...base, lineId: 'Ubob', payerId: 'Ubob', groupId: 'g1', amount: 777, description: '個人チャット', status: 'advance_pending', advanceBy: 'Ubob', includeInTotal: true, confirmed: true });
 
-  // 世帯 g5（LINE グループ C_line5 に紐づく）: 作成者 Hana のメンバー文書は仮名「作成者」のまま（createGroup の既定）。
-  // Ivan だけが立て替えている → Q15 で補う相手（Hana）の名前が分からない
+  // 世帯 g5（LINE グループ C_line5 に紐づく）: 作成者 Hana のメンバー文書は仮名「作成者」のまま（createGroup の既定）
   set('groups/g5', { name: 'LINEグループ placeholder', inviteCode: '666666', createdBy: 'Uhana', lineGroupId: 'C_line5' });
   set('groupMembers/g5_Uhana', { groupId: 'g5', lineId: 'Uhana', displayName: '作成者', isActive: true, joinedAt: ts('2026-01-01T00:00:00Z') });
   set('groupMembers/g5_Uivan', { groupId: 'g5', lineId: 'Uivan', displayName: 'Ivan', isActive: true, joinedAt: ts('2026-01-02T00:00:00Z') });
   set('expenses/adv_i1', { ...base, lineId: 'Uivan', payerId: 'Uivan', userDisplayName: 'Ivan', groupId: 'g5', lineGroupId: 'C_line5', amount: 6000, description: '家電', status: 'advance_pending', advanceBy: 'Uivan', includeInTotal: true, confirmed: true });
 
-  // 世帯 g6（LINE グループ C_line6 に紐づく）: 作成者は Jun。Kai の本当の表示名が「作成者」（仮名ではない）
-  set('groups/g6', { name: 'LINEグループ realname', inviteCode: '777777', createdBy: 'Ujun', lineGroupId: 'C_line6' });
-  set('groupMembers/g6_Ujun', { groupId: 'g6', lineId: 'Ujun', displayName: 'Jun', isActive: true, joinedAt: ts('2026-01-01T00:00:00Z') });
-  set('groupMembers/g6_Ukai', { groupId: 'g6', lineId: 'Ukai', displayName: '作成者', isActive: true, joinedAt: ts('2026-01-02T00:00:00Z') });
-  set('expenses/adv_j1', { ...base, lineId: 'Ujun', payerId: 'Ujun', userDisplayName: 'Jun', groupId: 'g6', lineGroupId: 'C_line6', amount: 2000, description: '日用品', status: 'advance_pending', advanceBy: 'Ujun', includeInTotal: true, confirmed: true });
-
   // g2 の立替（Carol だけ）
   set('expenses/adv_c1', { ...base, lineId: 'Ucarol', payerId: 'Ucarol', groupId: 'g2', amount: 3000, description: 'solo', status: 'advance_pending', advanceBy: 'Ucarol', includeInTotal: true, confirmed: true });
   await batch.commit();
 
-  // 世帯 g3: 未精算が 501 件（batch の上限を超える）
+  // 世帯 g3: 立替の印が 501 件（batch の上限を超える）
   await db.doc('groups/g3').set({ name: 'many', inviteCode: '333333', createdBy: 'Udave' });
   await db.doc('groupMembers/g3_Udave').set({ groupId: 'g3', lineId: 'Udave', displayName: 'Dave', isActive: true, joinedAt: ts('2026-01-01T00:00:00Z') });
   await db.doc('groupMembers/g3_Ueve').set({ groupId: 'g3', lineId: 'Ueve', displayName: 'Eve', isActive: true, joinedAt: ts('2026-01-02T00:00:00Z') });
@@ -235,7 +229,6 @@ async function main() {
     frank: await idTokenFor('uid-frank', { lineId: 'Ufrank' }),
     gina: await idTokenFor('uid-gina', { lineId: 'Ugina' }),
     ivan: await idTokenFor('uid-ivan', { lineId: 'Uivan' }),
-    jun: await idTokenFor('uid-jun', { lineId: 'Ujun' }),
     noLineId: await idTokenFor('uid-nolineid'),
     anonymous: await anonymousIdToken(),
   };
@@ -245,7 +238,7 @@ async function main() {
     // ---------------- CORS ----------------
     console.log('CORS');
     {
-      const r = await call('OPTIONS', '/household/settlement?groupId=g1', { headers: { 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' } });
+      const r = await call('OPTIONS', '/household/legacy-advances?groupId=g1', { headers: { 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' } });
       check('プリフライトは 204', r.status === 204);
       check('許可オリジンに ACAO', acao(r) === ORIGIN);
       check('Vary: Origin', r.headers.get('vary') === 'Origin');
@@ -253,61 +246,57 @@ async function main() {
       check('GET, POST, PATCH, DELETE, OPTIONS を許可', r.headers.get('access-control-allow-methods') === 'GET, POST, PATCH, DELETE, OPTIONS');
       check('Allow-Credentials は付けない', r.headers.get('access-control-allow-credentials') === null);
       check('X-Content-Type-Options: nosniff', r.headers.get('x-content-type-options') === 'nosniff');
-      const evil = await call('OPTIONS', '/household/settlement?groupId=g1', { origin: EVIL_ORIGIN });
+      const evil = await call('OPTIONS', '/household/legacy-advances?groupId=g1', { origin: EVIL_ORIGIN });
       check('許可外のオリジンは ACAO なし', evil.status === 204 && acao(evil) === null);
     }
 
     // ---------------- 認証 ----------------
     console.log('\n認証');
     {
-      const r = await call('GET', '/household/settlement?groupId=g1');
+      const r = await call('GET', '/household/legacy-advances?groupId=g1');
       check('トークン無しは 401 unauthenticated', r.status === 401 && r.body && r.body.error === 'unauthenticated', r.body);
       check('401 にも CORS ヘッダー', acao(r) === ORIGIN);
       check('Cache-Control: no-store', r.headers.get('cache-control') === 'no-store');
       check('401 にも X-Content-Type-Options: nosniff', r.headers.get('x-content-type-options') === 'nosniff');
-      const bad = await call('GET', '/household/settlement?groupId=g1', { token: 'not-a-jwt' });
+      const bad = await call('GET', '/household/legacy-advances?groupId=g1', { token: 'not-a-jwt' });
       check('不正なトークンは 401', bad.status === 401 && bad.body.error === 'unauthenticated');
-      const basic = await call('GET', '/household/settlement?groupId=g1', { headers: { Authorization: `Basic ${tokens.alice}` } });
+      const basic = await call('GET', '/household/legacy-advances?groupId=g1', { headers: { Authorization: `Basic ${tokens.alice}` } });
       check('Bearer 以外は 401', basic.status === 401);
-      const anon = await call('GET', '/household/settlement?groupId=g1', { token: tokens.anonymous });
+      const anon = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.anonymous });
       check('匿名ユーザーは 403', anon.status === 403 && anon.body.error === 'forbidden', anon.body);
-      const noLine = await call('GET', '/household/settlement?groupId=g1', { token: tokens.noLineId });
+      const noLine = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.noLineId });
       check('lineId クレームの無いカスタムトークンは 403', noLine.status === 403, noLine.body);
     }
 
     // ---------------- 精算の表示 ----------------
-    console.log('\nGET /household/settlement');
+    console.log('\nGET /household/legacy-advances');
     {
-      const stranger = await call('GET', '/household/settlement?groupId=g1', { token: tokens.stranger });
+      const stranger = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.stranger });
       check('メンバー外は 403', stranger.status === 403 && stranger.body.error === 'forbidden' && acao(stranger) === ORIGIN);
-      const left = await call('GET', '/household/settlement?groupId=g1', { token: tokens.left });
+      const left = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.left });
       check('脱退者（isActive:false）は 403', left.status === 403);
-      const other = await call('GET', '/household/settlement?groupId=g1', { token: tokens.carol });
+      const other = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.carol });
       check('他の世帯のメンバーは 403', other.status === 403);
-      const collider = await call('GET', '/household/settlement?groupId=g1', { token: tokens.collider });
+      const collider = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.collider });
       check('文書 ID が一致しても中身の groupId・lineId が違えば 403', collider.status === 403 && collider.body.error === 'forbidden', collider.body);
-      const missing = await call('GET', '/household/settlement?groupId=nope', { token: tokens.alice });
+      const missing = await call('GET', '/household/legacy-advances?groupId=nope', { token: tokens.alice });
       check('存在しない世帯（メンバーでもない）は 403', missing.status === 403);
-      const arr = await call('GET', '/household/settlement?groupId=g1&groupId=g2', { token: tokens.alice });
+      const arr = await call('GET', '/household/legacy-advances?groupId=g1&groupId=g2', { token: tokens.alice });
       check('groupId が配列なら 400', arr.status === 400 && arr.body.error === 'invalid_request', arr.body);
-      const none = await call('GET', '/household/settlement', { token: tokens.alice });
+      const none = await call('GET', '/household/legacy-advances', { token: tokens.alice });
       check('groupId が無ければ 400', none.status === 400);
-      const reserved = await call('GET', '/household/settlement?groupId=__x__', { token: tokens.alice });
+      const reserved = await call('GET', '/household/legacy-advances?groupId=__x__', { token: tokens.alice });
       check('予約 ID（__x__）は 400', reserved.status === 400);
-      const long = await call('GET', `/household/settlement?groupId=${'a'.repeat(129)}`, { token: tokens.alice });
+      const long = await call('GET', `/household/legacy-advances?groupId=${'a'.repeat(129)}`, { token: tokens.alice });
       check('129 文字の groupId は 400', long.status === 400);
 
-      const r = await call('GET', '/household/settlement?groupId=g1', { token: tokens.alice });
+      const r = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.alice });
       const v = r.body;
       check('メンバーは 200', r.status === 200, v);
-      check('LINE グループ基準（scope=line_group）', v.scope === 'line_group');
-      check('関係者は joinedAt 順の有効メンバーで脱退者を含まない', JSON.stringify(v.participants) === JSON.stringify([{ lineId: 'Ualice', displayName: 'Alice', isMember: true }, { lineId: 'Ubob', displayName: 'Bob', isMember: true }]), v.participants);
-      check('立替合計（Alice 12,400 / Bob 4,000）', v.totals.Ualice === 12400 && v.totals.Ubob === 4000, v.totals);
-      check('basis=pair', v.basis === 'pair' && v.reason === null);
-      check('Bob → Alice ¥4,200', v.settlement && v.settlement.fromUserId === 'Ubob' && v.settlement.toUserId === 'Ualice' && v.settlement.amount === 4200, v.settlement);
-      check('対象は LINE グループの未精算 3 件（個人チャット分は含まない）', sameMembers(v.expenseIds, ['adv_a1', 'adv_a2', 'adv_b1']), v.expenseIds);
+      check('対象は LINE グループの以前の立替 3 件（全額の立替・個人チャット分・精算済みは含まない）', sameMembers(v.expenseIds, ['adv_a1', 'adv_a2', 'adv_b1']), v.expenseIds);
       check('items は createdAt 降順', v.items.map((i) => i.id).join(',') === 'adv_b1,adv_a2,adv_a1', v.items.map((i) => i.id));
-      check('items のフィールドは必要なものだけ', JSON.stringify(Object.keys(v.items[0]).sort()) === JSON.stringify(['advanceBy', 'amount', 'category', 'date', 'description', 'id']), Object.keys(v.items[0]));
+      check('items のフィールドは必要なものだけ', JSON.stringify(Object.keys(v.items[0]).sort()) === JSON.stringify(['advanceBy', 'advanceByName', 'amount', 'category', 'date', 'description', 'id']), Object.keys(v.items[0]));
+      check('立替にした人と金額', v.items[0].advanceBy === 'Ubob' && v.items[0].amount === 4000 && v.items[2].advanceBy === 'Ualice', v.items);
       check('asOf は ISO 8601', typeof v.asOf === 'string' && !Number.isNaN(Date.parse(v.asOf)));
       check('応答にトークンや内部フィールドを含まない', !JSON.stringify(v).includes('lineGroupId') && !JSON.stringify(v).includes('C_line1'));
     }
@@ -377,183 +366,188 @@ async function main() {
       check('lineGroupId だけの旧形式は 403（所有者でも）', legacy.status === 403);
     }
 
-    // ---------------- 精算を記録 ----------------
-    console.log('\nPOST /household/settlement/settle');
+    // ---------------- 支払った人を自分にする（LINE の［自分が払った］） ----------------
+    console.log('\n［自分が払った］（postback と同じ applyExpenseChange + decideSetPayer + メンバー確認）');
     {
-      const noTok = await call('POST', '/household/settlement/settle', { body: { groupId: 'g1', expectedExpenseIds: [] } });
+      // postback.ts の handleSetPayer と同じ組み立て（authorize でメンバー文書を読み、その名前を使う）
+      const setPayer = async (expenseId, userId) => {
+        let name = '';
+        return applyExpenseChange(expenseId, (data) => decideSetPayer({ lineId: userId, displayName: name || 'User_x' })(data), {
+          authorize: async (data, tx) => {
+            const member = await readActiveMember(db, data.groupId, userId, tx);
+            name = member ? member.displayName : '';
+            return member !== null;
+          },
+        });
+      };
+      await db.doc('expenses/pay_card').set({ lineId: 'gmail-auto-system', payerId: 'gmail-auto-system', groupId: 'g1', lineGroupId: 'C_line1', amount: 2231, description: 'NIKUNOHANAMASA', date: '2026-09-20', category: '食費', status: 'shared', inputSource: 'gmail_auto', includeInTotal: true, confirmed: true });
+      const byBob = await setPayer('pay_card', 'Ubob');
+      const doc = (await db.doc('expenses/pay_card').get()).data();
+      check('メンバーが押すと支払った人がその人になる（名前はメンバー文書）', byBob && byBob.record && doc.payerId === 'Ubob' && doc.payerDisplayName === 'Bob' && doc.status === 'shared' && doc.amount === 2231, doc);
+      const byStranger = await setPayer('pay_card', 'Ustranger');
+      const byLeft = await setPayer('pay_card', 'Uleft');
+      check('メンバー外・脱退者は forbidden で書かない', byStranger && byStranger.forbidden === true && byLeft && byLeft.forbidden === true && (await db.doc('expenses/pay_card').get()).get('payerId') === 'Ubob');
+      const onAdvance = await setPayer('adv_private', 'Ualice');
+      const advDoc = (await db.doc('expenses/adv_private').get()).data();
+      check('立替なら立て替えた人も押した人にする（立替のまま）', onAdvance && onAdvance.record && advDoc.status === 'advance_pending' && advDoc.advanceBy === 'Ualice' && advDoc.payerId === 'Ualice', advDoc);
+
+      // ［自分が立替］（postback と同じ applyExpenseChange + decideSetAdvance + メンバー確認）
+      const setAdvance = async (expenseId, userId) =>
+        applyExpenseChange(expenseId, (data) => decideSetAdvance({ lineId: userId, displayName: 'Bob' })(data), {
+          authorize: async (data, tx) => (await readActiveMember(db, data.groupId, userId, tx)) !== null,
+        });
+      const advanced = await setAdvance('pay_card', 'Ubob');
+      const fullDoc = (await db.doc('expenses/pay_card').get()).data();
+      check('［自分が立替］で全額の立替になる（押した人が立替・支払い）', advanced && advanced.record && fullDoc.status === 'advance_pending' && fullDoc.advanceFull === true && fullDoc.advanceBy === 'Ubob' && fullDoc.payerId === 'Ubob', fullDoc);
+      const strangerAdvance = await setAdvance('pay_card', 'Ustranger');
+      check('メンバー外は立替にできない', strangerAdvance && strangerAdvance.forbidden === true);
+      const onSettled = await setPayer('e_settled', 'Ualice');
+      check('立替で精算済みは変えない', onSettled && onSettled.reject && (await db.doc('expenses/e_settled').get()).get('payerId') === 'Ubob', onSettled);
+    }
+
+    // ---------------- 以前の立替を精算済みにする ----------------
+    console.log('\nPOST /household/legacy-advances/settle');
+    {
+      const noTok = await call('POST', '/household/legacy-advances/settle', { body: { groupId: 'g1', expectedExpenseIds: [] } });
       check('トークン無しは 401', noTok.status === 401);
-      // 入力検証（400）は認可より前。settle の上限（5 回/分・lineId 単位）を使い切らないよう left で送る
-      const badIds = await call('POST', '/household/settlement/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: 'adv_a1' } });
+      // 入力検証（400）は認可より前。上限（成功 5 回/分・lineId 単位）とは関係なく left で送る
+      const badIds = await call('POST', '/household/legacy-advances/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: 'adv_a1' } });
       check('expectedExpenseIds が配列でなければ 400', badIds.status === 400);
-      const badElem = await call('POST', '/household/settlement/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 42] } });
+      const badElem = await call('POST', '/household/legacy-advances/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 42] } });
       check('文字列以外の要素は 400', badElem.status === 400);
-      const tooLongBad = await call('POST', '/household/settlement/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: [...Array.from({ length: 501 }, (_, i) => `x${i}`), 'a/b'] } });
+      const tooLongBad = await call('POST', '/household/legacy-advances/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: [...Array.from({ length: 501 }, (_, i) => `x${i}`), 'a/b'] } });
       check('件数が多くても不正な要素があれば 400', tooLongBad.status === 400);
-      const tooLongLeft = await call('POST', '/household/settlement/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: Array.from({ length: 501 }, (_, i) => `x${i}`) } });
+      const tooLongLeft = await call('POST', '/household/legacy-advances/settle', { token: tokens.left, body: { groupId: 'g1', expectedExpenseIds: Array.from({ length: 501 }, (_, i) => `x${i}`) } });
       check('501 件の expectedExpenseIds でもメンバー確認を先に行う（脱退者は 403）', tooLongLeft.status === 403, tooLongLeft.body);
-      const badGroup = await call('POST', '/household/settlement/settle', { token: tokens.left, body: { groupId: ['g1'], expectedExpenseIds: [] } });
+      const badGroup = await call('POST', '/household/legacy-advances/settle', { token: tokens.left, body: { groupId: ['g1'], expectedExpenseIds: [] } });
       check('groupId が文字列でなければ 400', badGroup.status === 400);
-      const stranger = await call('POST', '/household/settlement/settle', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1'] } });
+      const stranger = await call('POST', '/household/legacy-advances/settle', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1'] } });
       check('メンバー外は 403', stranger.status === 403);
 
-      const stale = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2'] } });
+      const stale = await call('POST', '/household/legacy-advances/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2'] } });
       check('表示と対象がずれていれば 409 stale', stale.status === 409 && stale.body.error === 'stale', stale.body && stale.body.error);
-      check('stale には最新の表示内容が付く', stale.body.current && stale.body.current.settlement && stale.body.current.settlement.amount === 4200 && sameMembers(stale.body.current.expenseIds, ['adv_a1', 'adv_a2', 'adv_b1']));
+      check('stale には最新の一覧が付く', stale.body.current && sameMembers(stale.body.current.expenseIds, ['adv_a1', 'adv_a2', 'adv_b1']));
       check('409 にも CORS ヘッダー', acao(stale) === ORIGIN);
-      const staleExtra = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1', 'adv_private'] } });
+      const staleExtra = await call('POST', '/household/legacy-advances/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1', 'adv_private'] } });
       check('余分な ID があっても 409 stale', staleExtra.status === 409 && staleExtra.body.error === 'stale');
-      const ids = ['adv_a1', 'adv_a2', 'adv_b1'];
-      const badFigure = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ids, expectedSettlement: { fromUserId: 'Ubob', toUserId: 'Ualice', amount: '4200' } } });
-      check('expectedSettlement の形が不正なら 400', badFigure.status === 400 && badFigure.body.error === 'invalid_request', badFigure.body);
-      const staleAmount = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ids, expectedSettlement: { fromUserId: 'Ubob', toUserId: 'Ualice', amount: 4000 } } });
-      check('ID が同じでも表示した精算額と違えば 409 stale', staleAmount.status === 409 && staleAmount.body.error === 'stale' && staleAmount.body.current.settlement.amount === 4200, staleAmount.body && staleAmount.body.error);
-      const staleNull = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ids, expectedSettlement: null } });
-      check('精算額なし（null）を表示していたのに額があれば 409 stale', staleNull.status === 409 && staleNull.body.error === 'stale');
-      const stillPending = (await db.doc('expenses/adv_a1').get()).data();
-      check('stale のときは書き込まない', stillPending.status === 'advance_pending');
+      check('stale のときは書き込まない', (await db.doc('expenses/adv_a1').get()).get('status') === 'advance_pending');
 
-      const ok = await call('POST', '/household/settlement/settle', { token: tokens.bob, body: { groupId: 'g1', expectedExpenseIds: ['adv_b1', 'adv_a1', 'adv_a2', 'adv_a1'], expectedSettlement: { fromUserId: 'Ubob', toUserId: 'Ualice', amount: 4200 } } });
+      const ok = await call('POST', '/household/legacy-advances/settle', { token: tokens.bob, body: { groupId: 'g1', expectedExpenseIds: ['adv_b1', 'adv_a1', 'adv_a2', 'adv_a1'] } });
       check('一致すれば 200（重複 ID は除く）', ok.status === 200 && ok.body.ok === true && ok.body.settled === 3 && ok.body.skipped === 0, ok.body);
-      check('応答の精算額（Bob → Alice ¥4,200）', ok.body.basis === 'pair' && ok.body.settlement && ok.body.settlement.fromUserId === 'Ubob' && ok.body.settlement.amount === 4200, ok.body.settlement);
       const settledDocs = await Promise.all(['adv_a1', 'adv_a2', 'adv_b1'].map(async (id) => (await db.doc(`expenses/${id}`).get()).data()));
-      check('対象は advance_settled・advanceSettledAt 付き', settledDocs.every((d) => d.status === 'advance_settled' && d.advanceSettledAt));
-      const priv = (await db.doc('expenses/adv_private').get()).data();
-      check('LINE グループ外の立替は精算しない', priv.status === 'advance_pending');
+      check('対象は advance_settled・精算日時付き', settledDocs.every((d) => d.status === 'advance_settled' && d.advanceSettledAt), settledDocs);
+      check('支払った人・金額は変えない', settledDocs[0].payerId === 'Ualice' && settledDocs[0].amount === 10000 && settledDocs[2].payerId === 'Ubob');
+      check('全額の立替には触れない（期間の精算で返す）', (await db.doc('expenses/adv_full').get()).get('status') === 'advance_pending');
 
-      const staleEmpty = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ids } });
-      check('精算済みの画面から送ると 409 stale（current は 0 件）', staleEmpty.status === 409 && staleEmpty.body.error === 'stale' && staleEmpty.body.current && staleEmpty.body.current.expenseIds.length === 0 && staleEmpty.body.current.basis === 'none', staleEmpty.body);
-      const nothing = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: [] } });
-      check('未精算が無く画面も 0 件なら 409 nothing_to_settle', nothing.status === 409 && nothing.body.error === 'nothing_to_settle', nothing.body);
-      const after = await call('GET', '/household/settlement?groupId=g1', { token: tokens.alice });
-      check('精算後は basis=none・金額なし・0 円で並ぶ', after.body.basis === 'none' && after.body.settlement === null && after.body.totals.Ualice === 0 && after.body.totals.Ubob === 0, after.body);
-    }
+      const staleEmpty = await call('POST', '/household/legacy-advances/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: ['adv_a1', 'adv_a2', 'adv_b1'] } });
+      check('精算済みにしたあとの画面から送ると 409 stale（current は 0 件）', staleEmpty.status === 409 && staleEmpty.body.error === 'stale' && staleEmpty.body.current && staleEmpty.body.current.expenseIds.length === 0, staleEmpty.body);
+      const nothing = await call('POST', '/household/legacy-advances/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: [] } });
+      check('以前の立替が無く画面も 0 件なら 409 nothing_to_settle', nothing.status === 409 && nothing.body.error === 'nothing_to_settle', nothing.body);
+      const after = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.alice });
+      check('精算済みにしたあとの一覧は 0 件', after.status === 200 && after.body.items.length === 0, after.body);
 
-    // ---------------- Q15: 1 人だけの立替 ----------------
-    console.log('\nQ15（立替者が 1 人・メンバー 2 人）');
-    {
-      await db.doc('expenses/adv_b2').set({ lineId: 'Ubob', payerId: 'Ubob', groupId: 'g1', lineGroupId: 'C_line1', amount: 3000, description: '日用品', date: '2026-09-20', category: '日用品', status: 'advance_pending', advanceBy: 'Ubob', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-20T01:00:00Z') });
-      const r = await call('GET', '/household/settlement?groupId=g1', { token: tokens.alice });
-      check('basis=single_advancer', r.body.basis === 'single_advancer', r.body.basis);
-      check('Alice → Bob ¥1,500（相手を 0 円で補う）', r.body.settlement && r.body.settlement.fromUserId === 'Ualice' && r.body.settlement.toUserId === 'Ubob' && r.body.settlement.amount === 1500, r.body.settlement);
-      check('totals は 0 で埋める', r.body.totals.Ualice === 0 && r.body.totals.Ubob === 3000, r.body.totals);
+      // LINE グループの無い世帯は groupId 基準（1 人だけの世帯でも精算済みにできる）
+      const solo = await call('GET', '/household/legacy-advances?groupId=g2', { token: tokens.carol });
+      check('groupId 基準の一覧', solo.status === 200 && sameMembers(solo.body.expenseIds, ['adv_c1']), solo.body);
+      const soloClear = await call('POST', '/household/legacy-advances/settle', { token: tokens.carol, body: { groupId: 'g2', expectedExpenseIds: ['adv_c1'] } });
+      check('1 人だけの世帯でも精算済みにできる', soloClear.status === 200 && soloClear.body.settled === 1 && (await db.doc('expenses/adv_c1').get()).get('status') === 'advance_settled', soloClear.body);
 
-      // LINE の「立替一覧」「精算」も同じ共有関数で同じ金額を出す
-      const line = await computeLineGroupSettlement('C_line1', await getAdvanceSummaryByUser('C_line1', true));
-      check('LINE 側も single_advancer で同じ金額', line.basis === 'single_advancer' && line.settlement && line.settlement.amount === 1500 && line.settlement.fromUserId === 'Ualice', line);
-      check('LINE の表示名はメンバー名で補う', line.settlement && line.settlement.fromUserName === 'Alice');
-
-      // 脱退した Left にも未精算の立替がある（関係者 3 人）
-      await db.doc('expenses/adv_left1').set({ lineId: 'Uleft', payerId: 'Uleft', groupId: 'g1', lineGroupId: 'C_line1', amount: 1000, description: '脱退前', date: '2026-09-21', category: '食費', status: 'advance_pending', advanceBy: 'Uleft', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-21T01:00:00Z') });
-      const withLeft = await call('GET', '/household/settlement?groupId=g1', { token: tokens.alice });
-      check('脱退者の立替があると Web は undeterminable / more_than_two', withLeft.body.basis === 'undeterminable' && withLeft.body.reason === 'more_than_two' && withLeft.body.settlement === null, withLeft.body.basis);
-      check('脱退者は isMember:false で末尾に並ぶ', JSON.stringify(withLeft.body.participants.map((p) => [p.lineId, p.isMember])) === JSON.stringify([['Ualice', true], ['Ubob', true], ['Uleft', false]]), withLeft.body.participants);
-      const settleWithLeft = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: withLeft.body.expenseIds } });
-      check('同上の記録は 409 undeterminable', settleWithLeft.status === 409 && settleWithLeft.body.error === 'undeterminable' && settleWithLeft.body.reason === 'more_than_two', settleWithLeft.body);
-      const lineWithLeft = await computeLineGroupSettlement('C_line1', await getAdvanceSummaryByUser('C_line1', true));
-      check('LINE は立替者 2 人なので従来どおり pair（Left → Bob ¥1,000）', lineWithLeft.basis === 'pair' && lineWithLeft.settlement && lineWithLeft.settlement.fromUserId === 'Uleft' && lineWithLeft.settlement.toUserId === 'Ubob' && lineWithLeft.settlement.amount === 1000, lineWithLeft.settlement);
-    }
-
-    // ---------------- Q15 の相手の表示名（仮名「作成者」） ----------------
-    console.log('\nQ15 の相手の表示名（メンバー文書が仮名「作成者」のまま）');
-    {
-      const r = await call('GET', '/household/settlement?groupId=g5', { token: tokens.ivan });
-      check('Web: single_advancer で Hana → Ivan ¥3,000', r.status === 200 && r.body.basis === 'single_advancer' && r.body.settlement && r.body.settlement.fromUserId === 'Uhana' && r.body.settlement.toUserId === 'Uivan' && r.body.settlement.amount === 3000, r.body);
-      check('Web: 仮名「作成者」は表示名として返さない（空文字）', JSON.stringify(r.body.participants) === JSON.stringify([{ lineId: 'Uhana', displayName: '', isMember: true }, { lineId: 'Uivan', displayName: 'Ivan', isMember: true }]), r.body.participants);
-
-      const summaries = await getAdvanceSummaryByUser('C_line5', true);
-      const resolved = await computeLineGroupSettlement('C_line5', summaries, async (id) => (id === 'Uhana' ? 'Hana' : undefined));
-      check('LINE: 補った相手の名前は LINE のプロフィールで補う', resolved.basis === 'single_advancer' && resolved.settlement && resolved.settlement.fromUserName === 'Hana' && resolved.settlement.toUserName === 'Ivan' && resolved.settlement.amount === 3000, resolved.settlement);
-      const noResolver = await computeLineGroupSettlement('C_line5', summaries);
-      check('LINE: 引けなければ User_xxxxxx（仮名を出さない）', noResolver.settlement && noResolver.settlement.fromUserName === 'User_Uhana', noResolver.settlement);
-      const rejected = await computeLineGroupSettlement('C_line5', summaries, () => Promise.reject(new Error('404')));
-      check('LINE: プロフィール取得が失敗しても User_xxxxxx で金額を出す', rejected.settlement && rejected.settlement.fromUserName === 'User_Uhana' && rejected.settlement.amount === 3000, rejected.settlement);
-      check('LINE: どの結果にも「作成者」が出ない', ![resolved, noResolver, rejected].some((x) => JSON.stringify(x).includes('作成者')));
-
-      // 作成者も立て替えれば、立替に記録された名前を使う
-      await db.doc('expenses/adv_h1').set({ lineId: 'Uhana', payerId: 'Uhana', userDisplayName: 'はな', groupId: 'g5', lineGroupId: 'C_line5', amount: 1000, description: '日用品', date: '2026-09-21', category: '日用品', status: 'advance_pending', advanceBy: 'Uhana', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-21T01:00:00Z') });
-      const pair = await call('GET', '/household/settlement?groupId=g5', { token: tokens.ivan });
-      check('Web: 作成者の立替があれば立替の名前（はな）', pair.body.basis === 'pair' && pair.body.participants[0].displayName === 'はな' && pair.body.settlement && pair.body.settlement.amount === 2500, pair.body);
-    }
-
-    // ---------------- 作成者ではないメンバーの表示名「作成者」 ----------------
-    console.log('\n作成者ではないメンバーの表示名「作成者」（仮名として扱わない）');
-    {
-      const r = await call('GET', '/household/settlement?groupId=g6', { token: tokens.jun });
-      check('Web: Kai の表示名「作成者」はそのまま返す', r.status === 200 && JSON.stringify(r.body.participants) === JSON.stringify([{ lineId: 'Ujun', displayName: 'Jun', isMember: true }, { lineId: 'Ukai', displayName: '作成者', isMember: true }]), r.body.participants);
-      check('Web: single_advancer で Kai → Jun ¥1,000', r.body.basis === 'single_advancer' && r.body.settlement && r.body.settlement.fromUserId === 'Ukai' && r.body.settlement.amount === 1000, r.body.settlement);
-      const lookups = [];
-      const line = await computeLineGroupSettlement('C_line6', await getAdvanceSummaryByUser('C_line6', true), async (id) => {
-        lookups.push(id);
-        return 'LINE の名前';
-      });
-      check('LINE: メンバー名「作成者」をそのまま使い、プロフィールを引かない', line.settlement && line.settlement.fromUserName === '作成者' && lookups.length === 0, { settlement: line.settlement, lookups });
-    }
-
-    // ---------------- Q17: 計算できない世帯 ----------------
-    console.log('\nQ17（計算できない世帯）');
-    {
-      const r = await call('GET', '/household/settlement?groupId=g2', { token: tokens.carol });
-      check('groupId 基準（scope=group）', r.status === 200 && r.body.scope === 'group');
-      check('basis=undeterminable・reason=partner_unknown・金額なし', r.body.basis === 'undeterminable' && r.body.reason === 'partner_unknown' && r.body.settlement === null, r.body);
-      const s = await call('POST', '/household/settlement/settle', { token: tokens.carol, body: { groupId: 'g2', expectedExpenseIds: ['adv_c1'] } });
-      check('精算の記録は 409 undeterminable（理由付き）', s.status === 409 && s.body.error === 'undeterminable' && s.body.reason === 'partner_unknown', s.body);
-      const doc = (await db.doc('expenses/adv_c1').get()).data();
-      check('undeterminable のときは書き込まない', doc.status === 'advance_pending');
+      // 作成者の仮名「作成者」は名前として返さない（立替の記録の名前を使う）
+      const placeholder = await call('GET', '/household/legacy-advances?groupId=g5', { token: tokens.ivan });
+      check('立替にした人の名前は支出に記録された名前', placeholder.status === 200 && placeholder.body.items[0].advanceByName === 'Ivan' && !JSON.stringify(placeholder.body).includes('作成者'), placeholder.body);
     }
 
     // ---------------- 500 件超 ----------------
-    console.log('\n未精算が 500 件を超える世帯');
+    console.log('\n以前の立替が 500 件を超える世帯');
     {
-      const r = await call('GET', '/household/settlement?groupId=g3', { token: tokens.dave });
+      const r = await call('GET', '/household/legacy-advances?groupId=g3', { token: tokens.dave });
       check('GET は 501 件を返す', r.status === 200 && r.body.expenseIds.length === 501);
-      const s = await call('POST', '/household/settlement/settle', { token: tokens.dave, body: { groupId: 'g3', expectedExpenseIds: r.body.expenseIds.slice(0, 500) } });
-      check('精算の記録は 409 too_many', s.status === 409 && s.body.error === 'too_many', s.body);
-      const echoed = await call('POST', '/household/settlement/settle', { token: tokens.dave, body: { groupId: 'g3', expectedExpenseIds: r.body.expenseIds } });
+      const s = await call('POST', '/household/legacy-advances/settle', { token: tokens.dave, body: { groupId: 'g3', expectedExpenseIds: r.body.expenseIds.slice(0, 500) } });
+      check('精算済みにする操作は 409 too_many', s.status === 409 && s.body.error === 'too_many', s.body);
+      const echoed = await call('POST', '/household/legacy-advances/settle', { token: tokens.dave, body: { groupId: 'g3', expectedExpenseIds: r.body.expenseIds } });
       check('GET の 501 件をそのまま送っても 400 ではなく 409 too_many', echoed.status === 409 && echoed.body.error === 'too_many', echoed.body);
-      const staleMany = await call('POST', '/household/settlement/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: Array.from({ length: 501 }, (_, i) => `x${i}`) } });
+      const staleMany = await call('POST', '/household/legacy-advances/settle', { token: tokens.alice, body: { groupId: 'g1', expectedExpenseIds: Array.from({ length: 501 }, (_, i) => `x${i}`) } });
       check('501 件を送ったが現在は 500 件以下なら 409 stale（最新の内容付き）', staleMany.status === 409 && staleMany.body.error === 'stale' && staleMany.body.current && Array.isArray(staleMany.body.current.expenseIds), staleMany.body && staleMany.body.error);
     }
 
+    // ---------------- 精算の通知（LINE） ----------------
+    console.log('\nGET /household/settlement-summary・POST /household/settlement-summary/send');
+    {
+      const stranger = await call('GET', '/household/settlement-summary?groupId=g1', { token: tokens.stranger });
+      check('メンバー外は 403', stranger.status === 403);
+      const bad = await call('GET', '/household/settlement-summary?groupId=a%2Fb', { token: tokens.alice });
+      check('不正な groupId は 400', bad.status === 400);
+      const noCollect = await call('GET', '/household/settlement-summary?groupId=g1', { token: tokens.alice });
+      check('集金するメンバーが未指定なら reason=no_collect_from', noCollect.status === 200 && noCollect.body.reason === 'no_collect_from' && noCollect.body.closed === null, noCollect.body);
+      const noLine = await call('GET', '/household/settlement-summary?groupId=g4', { token: tokens.frank });
+      check('LINE グループに紐づかなければ reason=no_line_group', noLine.status === 200 && noLine.body.reason === 'no_line_group', noLine.body);
+
+      await db.doc('groups/g1').set({ splitSettings: { collectFromLineId: 'Ualice' } }, { merge: true });
+      const ready = await call('GET', '/household/settlement-summary?groupId=g1', { token: tokens.bob });
+      const v = ready.body || {};
+      const today = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+      check('送れる世帯は reason=null・起算日（既定 1 日）・期間', ready.status === 200 && v.reason === null && v.startDay === 1 && v.current && v.current.endDate === today && v.current.startDate === `${today.slice(0, 8)}01`, v);
+      check('締まった期間は今の期間の前日まで', v.closed && v.closed.endDate < v.current.startDate && v.closed.startDate.endsWith('-01'), v.closed);
+      check('締まった期間はまだ送っていない', v.closedSentAt === null);
+      await db.doc(`system/settlementSummary_g1_${v.closed.endDate}`).set({ groupId: 'g1', endDate: v.closed.endDate, sentAt: Timestamp.now() });
+      const sent = await call('GET', '/household/settlement-summary?groupId=g1', { token: tokens.bob });
+      check('送った印があれば送った時刻（ISO 8601）', typeof sent.body.closedSentAt === 'string' && !Number.isNaN(Date.parse(sent.body.closedSentAt)), sent.body);
+
+      const badPeriod = await call('POST', '/household/settlement-summary/send', { token: tokens.alice, body: { groupId: 'g1', period: 'all' } });
+      check('period が closed / current 以外は 400', badPeriod.status === 400 && badPeriod.body.error === 'invalid_request');
+      const strangerSend = await call('POST', '/household/settlement-summary/send', { token: tokens.stranger, body: { groupId: 'g1', period: 'closed' } });
+      check('メンバー外は送れない（403）', strangerSend.status === 403);
+      const unavailable = await call('POST', '/household/settlement-summary/send', { token: tokens.frank, body: { groupId: 'g4', period: 'closed' } });
+      check('送れない世帯は 409 unavailable（理由付き）', unavailable.status === 409 && unavailable.body.error === 'unavailable' && unavailable.body.reason === 'no_line_group', unavailable.body);
+      // このテストでは LINE の認証情報が無いので送信は失敗する（502。送れなかったときは印を書き換えない）
+      const origError = console.error;
+      console.error = () => {};
+      let failedSend;
+      try {
+        failedSend = await call('POST', '/household/settlement-summary/send', { token: tokens.alice, body: { groupId: 'g1', period: 'current' } });
+      } finally {
+        console.error = origError;
+      }
+      check('LINE に送れなければ 502 line_failed', failedSend.status === 502 && failedSend.body.error === 'line_failed', failedSend.body);
+    }
+
     // ---------------- レート制限 ----------------
-    console.log('\nレート制限（lineId 単位。全体 60 回/分、精算の記録は成功だけを数えて 5 回/分）');
+    console.log('\nレート制限（lineId 単位。全体 60 回/分、以前の立替を精算済みにする操作は成功だけを数えて 5 回/分）');
     {
       const addAdvance = (i) => db.doc(`expenses/lim_${i}`).set({ lineId: 'Ufrank', payerId: 'Ufrank', groupId: 'g4', amount: 100 * (i + 1), description: `lim ${i}`, date: '2026-09-22', category: '食費', status: 'advance_pending', advanceBy: 'Ufrank', includeInTotal: true, confirmed: true, createdAt: ts('2026-09-22T01:00:00Z') });
 
-      // 失敗（409 stale）は精算の枠を使わない
+      // 失敗（409 stale）は枠を使わない
       await addAdvance(0);
       const failures = [];
       for (let i = 0; i < 3; i++) {
-        failures.push((await call('POST', '/household/settlement/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: ['nope'] } })).status);
+        failures.push((await call('POST', '/household/legacy-advances/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: ['nope'] } })).status);
       }
-      check('失敗した記録（409）は 429 にならない', failures.every((st) => st === 409), failures);
+      check('失敗（409）は 429 にならない', failures.every((st) => st === 409), failures);
 
       const statuses = [];
       for (let i = 0; i < 5; i++) {
         if (i > 0) await addAdvance(i);
-        const view = await call('GET', '/household/settlement?groupId=g4', { token: tokens.frank });
-        const r = await call('POST', '/household/settlement/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: view.body.expenseIds } });
+        const r = await call('POST', '/household/legacy-advances/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: [`lim_${i}`] } });
         statuses.push(r.status);
       }
       check('失敗 3 回の後でも成功は 5 回まで通る', statuses.every((st) => st === 200), statuses);
       await addAdvance(5);
-      const view = await call('GET', '/household/settlement?groupId=g4', { token: tokens.frank });
-      const limited = await call('POST', '/household/settlement/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: view.body.expenseIds }, allow429: true });
-      check('6 回目の記録は 429 rate_limited', limited.status === 429 && limited.body && limited.body.error === 'rate_limited', limited.status);
+      const limited = await call('POST', '/household/legacy-advances/settle', { token: tokens.frank, body: { groupId: 'g4', expectedExpenseIds: ['lim_5'] }, allow429: true });
+      check('6 回目は 429 rate_limited', limited.status === 429 && limited.body && limited.body.error === 'rate_limited', limited.status);
       check('429 にも CORS ヘッダー', acao(limited) === ORIGIN);
       check('429 にも X-Content-Type-Options: nosniff', limited.headers.get('x-content-type-options') === 'nosniff');
-      const pending = (await db.doc('expenses/lim_5').get()).data();
-      check('429 のときは書き込まない', pending.status === 'advance_pending');
-      const other = await call('POST', '/household/settlement/settle', { token: tokens.gina, body: { groupId: 'g4', expectedExpenseIds: view.body.expenseIds } });
+      check('429 のときは書き込まない', (await db.doc('expenses/lim_5').get()).get('status') === 'advance_pending');
+      const other = await call('POST', '/household/legacy-advances/settle', { token: tokens.gina, body: { groupId: 'g4', expectedExpenseIds: ['lim_5'] } });
       check('他のユーザーは制限されない', other.status === 200, other.status);
 
       // 全ルート共通の上限は失敗も数える（メンバー外が 403 を連打しても 60 回/分で止まる）
       const seen = [];
       for (let i = 0; i < 61 && seen[seen.length - 1] !== 429; i++) {
-        seen.push((await call('GET', '/household/settlement?groupId=g1', { token: tokens.stranger, allow429: true })).status);
+        seen.push((await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.stranger, allow429: true })).status);
       }
       check('403 の連打も 60 回/分で 429', seen[seen.length - 1] === 429 && seen.slice(0, -1).every((st) => st === 403), `${seen.length} 回目 ${seen[seen.length - 1]}`);
-      const strangerSettle = await call('POST', '/household/settlement/settle', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: [] }, allow429: true });
-      check('上限に達すると精算の記録も 429', strangerSettle.status === 429);
+      const strangerClear = await call('POST', '/household/legacy-advances/settle', { token: tokens.stranger, body: { groupId: 'g1', expectedExpenseIds: [] }, allow429: true });
+      check('上限に達すると精算済みにする操作も 429', strangerClear.status === 429);
     }
 
     // ---------------- 未定義のルート ----------------
@@ -574,36 +568,36 @@ async function main() {
       console.warn = () => floodWarnings++;
       try {
         for (let i = 0; i < 301; i++) {
-          flood.push((await call('GET', '/household/settlement?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': attacker }, allow429: true })).status);
+          flood.push((await call('GET', '/household/legacy-advances?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': attacker }, allow429: true })).status);
         }
       } finally {
         console.warn = origWarn;
       }
       check('429 になった要求はトークンを検証しない（警告は 300 回だけ）', floodWarnings === 300, floodWarnings);
       check('同じ接続元は 300 回まで 401、301 回目は 429', flood.slice(0, 300).every((st) => st === 401) && flood[300] === 429, `${flood.filter((st) => st === 401).length}×401, last ${flood[300]}`);
-      const spoofed = await call('GET', '/household/settlement?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': `198.51.100.9, ${attacker}` }, allow429: true });
+      const spoofed = await call('GET', '/household/legacy-advances?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': `198.51.100.9, ${attacker}` }, allow429: true });
       check('前に別の IP を足しても同じ接続元として 429（末尾は詐称できない）', spoofed.status === 429, spoofed.status);
-      const neighbour = await call('GET', '/household/settlement?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': `${attacker}, 198.51.100.10` } });
+      const neighbour = await call('GET', '/household/legacy-advances?groupId=g1', { token: 'not-a-jwt', headers: { 'X-Forwarded-For': `${attacker}, 198.51.100.10` } });
       check('末尾が違う接続元は別に数える（401）', neighbour.status === 401, neighbour.status);
-      const legit = await call('GET', '/household/settlement?groupId=g1', { token: tokens.alice, headers: { 'X-Forwarded-For': '198.51.100.20' } });
+      const legit = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.alice, headers: { 'X-Forwarded-For': '198.51.100.20' } });
       check('他の利用者は締め出されない（200）', legit.status === 200, legit.status);
-      const direct = await call('GET', '/household/settlement?groupId=g1', { token: tokens.alice });
+      const direct = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.alice });
       check('X-Forwarded-For の無い要求（req.ip）も締め出されない', direct.status === 200, direct.status);
     }
 
     // ---------------- 失効したトークン ----------------
     console.log('\n失効したトークン（verifyIdToken の checkRevoked）');
     {
-      const before = await call('GET', '/household/settlement?groupId=g1', { token: tokens.bob });
+      const before = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.bob });
       check('失効前は 200', before.status === 200, before.status);
       // 失効時刻は秒単位で、auth_time がそれより前のトークンだけが失効扱いになる
       const wait = tokensIssuedAt + 1100 - Date.now();
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
       await getAuth().revokeRefreshTokens('uid-bob');
-      const revoked = await call('GET', '/household/settlement?groupId=g1', { token: tokens.bob });
+      const revoked = await call('GET', '/household/legacy-advances?groupId=g1', { token: tokens.bob });
       check('revokeRefreshTokens 後の古いトークンは 401', revoked.status === 401 && revoked.body.error === 'unauthenticated' && acao(revoked) === ORIGIN, revoked.body);
       await getAuth().updateUser('uid-gina', { disabled: true });
-      const disabled = await call('GET', '/household/settlement?groupId=g4', { token: tokens.gina });
+      const disabled = await call('GET', '/household/legacy-advances?groupId=g4', { token: tokens.gina });
       check('無効化したユーザーのトークンは 401', disabled.status === 401 && disabled.body.error === 'unauthenticated', disabled.body);
     }
     // ---------------- 要求数の予算 ----------------

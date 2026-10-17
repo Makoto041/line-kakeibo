@@ -173,30 +173,31 @@ export interface DerivedExpenseSettings {
   advanceButtonLabel: string;
   /** 立替のボタンの色 */
   advanceButtonTone: ActionTone;
-  /** 精算済みで変更を受け付けない状態か */
+  /** 精算済み（以前の立替の精算）で変更を受け付けない状態か */
   settled: boolean;
 }
 
 /**
- * status から「支出区分」と「立替」の現在値を導出する
- *
- * 支出区分と立替は単一の status フィールドに排他的に格納されているため、
- * 表示上の2行はここで導出する。
+ * status から「支出区分」と「立替」の現在値とボタンを導出する
  *
  * 支出区分は運用上「共同費（集計に入る）」か「除外（集計に入らない）」の二択で、
  * status の personal は includeInTotal: false ＝ 集計から外すことを意味する。
  * 「個人費」という表記では集計に入らないことが伝わらないため「除外」と表示する。
  *
- * ボタンには押すと何が起きるかを書く（汎用の「変更」では操作が分からない）。
+ * ボタンには押すと何が起きるかを書く（汎用の「変更」では操作が分からない）:
  * - 支出区分: 共同費なら［除外］、除外なら［戻す］
- * - 立替: なしなら［自分が立替］（押した人が立替者として記録される）、ありなら［取り消す］
+ * - 立替: なしなら［自分が立替］（押した人が払って相手の分を立て替えた。期間の精算で全額を返してもらう）、
+ *   ありなら［取り消す］
  *
  * pending（未確認）は LINE 手入力（status なし・includeInTotal: false）で、OK や
  * カテゴリ選択で共同費として確定する流れのため、表示は「共同費（未確認）」にする。
  * Gmail 取込は共同費（shared）として確定で入る（以前に pending で入った分の扱いは
  * buildExpenseCardFromRecord を参照）。
+ *
+ * 立替は期間の精算に全額を加算する（advanceFull）。全額にする前の立替（advanceFull の無い advance_pending）は
+ * 「あり」とだけ出す。立替で精算済み（advance_settled）は変更できない。
  */
-export function deriveExpenseSettings(status?: ExpenseStatusType): DerivedExpenseSettings {
+export function deriveExpenseSettings(status?: ExpenseStatusType, advanceFull?: boolean): DerivedExpenseSettings {
   const shared = {
     splitIconKey: 'users' as const,
     nextSplit: 'personal' as const,
@@ -209,8 +210,10 @@ export function deriveExpenseSettings(status?: ExpenseStatusType): DerivedExpens
     splitButtonLabel: '戻す',
     splitButtonTone: 'primary' as const,
   };
+
+  // 立替なしの共同費は折半する（立替は全額を返す）。2 行の違いが分かるよう「（折半）」を添える
   const noAdvance = {
-    advanceLabel: 'なし',
+    advanceLabel: 'なし（折半）',
     nextAdvance: 'on' as const,
     advanceButtonLabel: '自分が立替',
     advanceButtonTone: 'primary' as const,
@@ -225,15 +228,44 @@ export function deriveExpenseSettings(status?: ExpenseStatusType): DerivedExpens
     case 'shared':
       return { splitLabel: '共同費', ...shared, ...noAdvance, settled: false };
     case 'personal':
-      return { splitLabel: '除外', ...excluded, ...noAdvance, settled: false };
+      return { splitLabel: '除外', ...excluded, ...noAdvance, advanceLabel: 'なし', settled: false };
     case 'advance_pending':
-      return { splitLabel: '共同費', ...shared, advanceLabel: 'あり（精算待ち）', ...withAdvance, settled: false };
+      return {
+        splitLabel: '共同費',
+        ...shared,
+        advanceLabel: advanceFull ? 'あり（全額を精算に加算）' : 'あり',
+        ...withAdvance,
+        settled: false,
+      };
     case 'advance_settled':
       return { splitLabel: '共同費', ...shared, advanceLabel: '精算済み', ...withAdvance, settled: true };
     default:
       // pending（未確認）/ status 未指定
       return { splitLabel: '共同費（未確認）', ...shared, ...noAdvance, settled: false };
   }
+}
+
+/** Gmail 自動取込の支出の lineId / payerId（gmail/handler.ts と同じ） */
+const GMAIL_SYSTEM_PAYER = 'gmail-auto-system';
+/** 固定費を共通のカード・口座で払ったときの payerId（recurringExpenses.ts の RECURRING_SYSTEM_LINE_ID と同じ） */
+const RECURRING_SYSTEM_PAYER = 'recurring-system';
+
+/**
+ * 「支払った人」の表示（Web の resolvePayerName と同じ分け方）
+ *
+ * 期間の折半は支払った人（payerId、無ければ登録者）で数える。カードの自動取込は「カード」、
+ * 固定費の共通口座は「共通口座」（どちらも折半では集金するメンバーの相手側に入る）。
+ */
+export function payerLabel(record: {
+  lineId?: string;
+  payerId?: string;
+  payerDisplayName?: string;
+  userDisplayName?: string;
+}): string {
+  const payerId = record.payerId || record.lineId;
+  if (payerId === GMAIL_SYSTEM_PAYER) return 'カード';
+  if (payerId === RECURRING_SYSTEM_PAYER) return '共通口座';
+  return record.payerDisplayName || record.userDisplayName || 'メンバー';
 }
 
 /** 日付を M/D 表記に揃える（Firestore は YYYY-MM-DD 保存） */
@@ -329,19 +361,24 @@ function settingRow(opts: {
 }
 
 /**
- * 「現在の設定」セクション（支出区分・立替・カテゴリ）
+ * 「現在の設定」セクション（支出区分・支払った人・立替・カテゴリ）
  *
  * 現在値はリッチテキストで示し、ボタンは操作だけを担う。登録・編集カードで
  * 共通に使うことで、同じUIを使う画面全体で表現を揃える。
+ *
+ * 支払った人の［自分が払った］は押した人を支払った人にする（期間の折半はこれで数える）。
+ * 押す人はカードを送った時点では分からないので、すでに自分でも出す。
  */
 function buildCurrentSettingsSection(opts: {
   expenseId: string;
   source: ExpenseCardSource;
   category: string;
   status?: ExpenseStatusType;
+  advanceFull?: boolean;
+  payer: string;
 }): FlexComponent {
-  const { expenseId, source, category, status } = opts;
-  const derived = deriveExpenseSettings(status);
+  const { expenseId, source, category, status, advanceFull, payer } = opts;
+  const derived = deriveExpenseSettings(status, advanceFull);
 
   return {
     type: 'box',
@@ -376,7 +413,25 @@ function buildCurrentSettingsSection(opts: {
             },
       }),
       settingRow({
-        iconUrl: iconUrl('wallet'),
+        iconUrl: iconUrl(payer === 'カード' ? 'credit-card' : 'wallet'),
+        label: '支払った人',
+        value: payer,
+        buttonLabel: '自分が払った',
+        buttonTone: 'primary',
+        action: derived.settled
+          ? undefined
+          : {
+              type: 'postback',
+              label: '自分が払った',
+              data: JSON.stringify({
+                action: 'set_payer',
+                expenseId,
+                source,
+              }),
+            },
+      }),
+      settingRow({
+        iconUrl: iconUrl('hand-coins'),
         label: '立替',
         value: derived.advanceLabel,
         buttonLabel: derived.advanceButtonLabel,
@@ -428,6 +483,10 @@ function buildExpenseCard(opts: {
   category: string;
   source: ExpenseCardSource;
   status?: ExpenseStatusType;
+  /** 立替を全額で返す扱いか（立替の行の表示） */
+  advanceFull?: boolean;
+  /** 支払った人の表示（payerLabel） */
+  payer: string;
   /** 金額行の下に差し込むフロー固有の行（残り予算・支払い方法など） */
   detailRows?: FlexComponent[];
   /** 「修正」の遷移先。未指定なら押下者のIDで解決する postback にする。 */
@@ -443,6 +502,8 @@ function buildExpenseCard(opts: {
     category,
     source,
     status,
+    advanceFull,
+    payer,
     detailRows = [],
     editUrl,
   } = opts;
@@ -509,7 +570,7 @@ function buildExpenseCard(opts: {
         },
         ...detailRows,
         // 現在の設定（値の表示と操作ボタンを分離）
-        buildCurrentSettingsSection({ expenseId, source, category, status }),
+        buildCurrentSettingsSection({ expenseId, source, category, status, advanceFull, payer }),
       ],
       paddingAll: 'lg',
     },
@@ -637,6 +698,7 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
     category,
     source: 'gmail',
     status,
+    payer: 'カード',
     detailRows: detailRows as unknown as FlexComponent[],
   });
 }
@@ -691,8 +753,8 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     editUrl,
   } = info;
 
-  // 支払い方法・支払い者（設定されている場合のみ）
-  const detailRows = [paymentMethod, payerName]
+  // 支払い方法（設定されている場合のみ。支払った人は「現在の設定」に出す）
+  const detailRows = [paymentMethod]
     .filter((text): text is string => Boolean(text))
     .map((text) => ({
       type: 'text' as const,
@@ -712,6 +774,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     category,
     source: 'text',
     status,
+    payer: payerName || 'メンバー',
     detailRows: detailRows as unknown as FlexComponent[],
     editUrl,
   });
@@ -748,9 +811,12 @@ export interface ExpenseRecordLike {
   category?: string;
   date?: string;
   status?: ExpenseStatusType;
+  advanceFull?: boolean;
   includeInTotal?: boolean;
   inputSource?: string;
   paymentMethod?: string;
+  lineId?: string;
+  payerId?: string;
   payerDisplayName?: string;
   userDisplayName?: string;
 }
@@ -777,7 +843,7 @@ export function buildExpenseCardFromRecord(
   const status: ExpenseStatusType | undefined =
     source === 'gmail' && (!record.status || record.status === 'pending') ? 'shared' : record.status;
 
-  // 支払い方法・支払い者はテキスト入力フローのカードだけが持つ情報。
+  // 支払い方法はテキスト入力フローのカードだけが持つ情報。
   // Firestoreには 'cash' | 'paypay' | 'card' | 'unknown' の生値が入っているため、
   // 登録直後のカードと同じく表示名へ変換する（'unknown' は空文字になり行ごと消える）。
   const paymentLabel = record.paymentMethod
@@ -786,7 +852,7 @@ export function buildExpenseCardFromRecord(
 
   const detailRows =
     source === 'text'
-      ? [paymentLabel, record.payerDisplayName ?? record.userDisplayName]
+      ? [paymentLabel]
           .filter((text): text is string => Boolean(text))
           .map((text) => ({
             type: 'text' as const,
@@ -807,6 +873,8 @@ export function buildExpenseCardFromRecord(
     category: record.category || 'その他',
     source,
     status,
+    advanceFull: record.advanceFull === true,
+    payer: payerLabel(record),
     detailRows: detailRows as unknown as FlexComponent[],
     editUrl: opts.editUrl,
   });

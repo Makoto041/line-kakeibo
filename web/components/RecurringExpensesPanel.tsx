@@ -53,7 +53,7 @@ function toInput(draft: Draft, active: boolean): RecurringInput | string {
   if (Array.from(name).length > 40) return '名前は40文字以内で入力してください';
   const amount = Number(draft.amount);
   if (!Number.isInteger(amount) || amount < 1 || amount > 10_000_000) return '金額は1円以上の整数で入力してください';
-  if (draft.payment === 'advance' && !draft.payerLineId) return '立て替える人を選んでください';
+  if (draft.payment === 'advance' && !draft.payerLineId) return '引き落とされる人を選んでください';
   return {
     name,
     amount,
@@ -295,7 +295,7 @@ export default function RecurringExpensesPanel({ lineId }: { lineId: string }) {
                     <p className="truncate text-sm font-medium text-fg">{item.name}</p>
                     <p className="truncate text-xs text-muted">
                       {dayLabel(item.dayOfMonth)}・
-                      {item.payment === 'shared' ? '共通のカード・口座' : `${memberName(item.payerLineId)}が立替`}
+                      {item.payment === 'shared' ? '共通のカード・口座' : `${memberName(item.payerLineId)}の口座`}
                       {!item.active && '・停止中'}
                     </p>
                   </div>
@@ -471,15 +471,15 @@ function DraftForm({
               className="mt-0.5 h-4 w-4 accent-accent"
             />
             <span className="text-sm text-fg">
-              個人の口座（立替）
-              <span className="block text-xs text-muted">精算のときに相手が半分を払います（例: 家賃）</span>
+              個人の口座
+              <span className="block text-xs text-muted">その人の支払いとして期間の折半に入ります（例: 家賃）</span>
             </span>
           </label>
           {draft.payment === 'advance' && (
             <select
               value={draft.payerLineId}
               onChange={(e) => set('payerLineId', e.target.value)}
-              aria-label="立て替える人"
+              aria-label="引き落とされる人"
               className={INPUT}
             >
               {members.map((m) => (

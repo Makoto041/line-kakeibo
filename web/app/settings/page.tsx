@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { Wallet, CalendarRange, Repeat } from 'lucide-react';
 import RecurringExpensesPanel from '../../components/RecurringExpensesPanel';
 import InstallAppCard from '../../components/settings/InstallAppCard';
+import SettlementNotifyCard from '../../components/settings/SettlementNotifyCard';
 import { useLineAuth, DEFAULT_BUDGET_CONFIG, type BudgetConfig } from '../../lib/hooks';
 import { fetchDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, DEFAULT_SETTINGS, type DateRangeSettings } from '../../lib/dateSettings';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -68,6 +69,8 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'period' | 'budget' | 'recurring'>('budget');
+  // 期間設定を保存した回数（精算の通知のカードが起算日を読み直す）
+  const [savedCount, setSavedCount] = useState(0);
 
   useEffect(() => {
     const loadAllSettings = async () => {
@@ -182,6 +185,7 @@ export default function Settings() {
     try {
       await saveDateSettingsHandler();
       await saveBudgetSettingsHandler();
+      setSavedCount((n) => n + 1);
       setMessage({ type: 'success', text: '設定を保存しました' });
     } catch (error) {
       console.error('Failed to save settings:', error);
@@ -487,6 +491,9 @@ export default function Settings() {
           </button>
         </motion.div>
         )}
+
+        {/* LINE への精算の通知（送る日は期間の起算日で決まる。保存ボタンとは別に、その場で送る） */}
+        {activeTab === 'period' && <SettlementNotifyCard lineId={lineId} reloadKey={savedCount} className="mt-5" />}
       </main>
     </div>
   );
