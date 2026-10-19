@@ -139,7 +139,8 @@ function summarize(rows) {
   for (const r of rows) {
     const p = PRICES[r.model];
     if (!p) {
-      costKnown = false;
+      // 呼び出しが失敗してトークンが 0 の件（モデル名なし）は、単価不明とは数えない
+      if (r.model) costKnown = false;
       continue;
     }
     costUsd += (r.inTok * p.input + r.outTok * p.output) / 1e6;
