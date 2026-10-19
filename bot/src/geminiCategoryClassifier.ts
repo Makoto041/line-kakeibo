@@ -144,7 +144,7 @@ export interface ClassifyOptions {
 const GEMINI_TIMEOUT_MS = 8000;
 
 /** 各カテゴリの判断基準（プロンプト用）。CANONICAL_CATEGORIES にあるものは全て説明する */
-const CATEGORY_GUIDE: Record<string, string> = {
+export const CATEGORY_GUIDE: Record<string, string> = {
   '食費': '食材、外食、カフェ、コンビニ・スーパーでの買い物、飲み物、デリバリー',
   '交通費': '電車、バス、タクシー、新幹線、ガソリン、駐車場、高速料金(ETC)、レンタカー',
   '日用品': '洗剤、ティッシュ、シャンプーなどの消耗品、ドラッグストア・100円ショップ・ホームセンターの買い物',
