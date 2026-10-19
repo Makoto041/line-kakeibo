@@ -224,10 +224,12 @@ export async function generateJson<T = unknown>(
                 ? { thinkingConfig: { thinkingLevel: options.thinkingLevel ?? ThinkingLevel.MINIMAL } }
                 : {}),
               abortSignal: controller.signal,
-              // 一時的な失敗（429 / 5xx）だけ 1 回・短い待ちで再試行し、1 回ごとにも時間を区切る
+              // 一時的な失敗（429 / 5xx）だけ 1 回・短い待ちで再試行する
               // （再試行の待ち中は abort が効かないため、待ちは最大 1 秒に抑える）
+              // 締め切りは AbortController だけで管理する。httpOptions.timeout は API の締め切り（X-Server-Timeout）
+              // としても送られ、10 秒未満だと API が次の 400 で拒否するので送らない
+              // "Manually set deadline 8s is too short. Minimum allowed deadline is 10s."
               httpOptions: {
-                timeout: options.timeoutMs,
                 retryOptions: { attempts: 2, initialDelay: 0.5, maxDelay: 1 },
               },
             },

@@ -6,6 +6,7 @@
  * - メインが終了・提供停止（404 など）なら予備の Flash-Lite に切り替える。以後しばらくは予備を直接使う
  * - 思考レベルを受け付けない 400 なら、思考の設定なしで同じモデルにもう一度送る
  * - スキーマ誤りなど関係のない 400 では予備に切り替えない
+ * - API に締め切り（httpOptions.timeout）を送らない（再試行の設定は送る）。打ち切りは呼び出し側の AbortController が受け持つ
  *   node bot/scripts/smoke-gemini-client.js
  */
 const path = require('path');
@@ -47,7 +48,11 @@ const fakeGenai = {
           return { async *[Symbol.asyncIterator]() { yield* items; } };
         },
         generateContent: async (params) => {
-          calls.push({ model: params.model, thinking: params.config?.thinkingConfig?.thinkingLevel ?? null });
+          calls.push({
+            model: params.model,
+            thinking: params.config?.thinkingConfig?.thinkingLevel ?? null,
+            httpOptions: params.config?.httpOptions ?? null,
+          });
           return behavior(params);
         },
       };
@@ -108,6 +113,17 @@ async function main() {
   check('結果を返す', r && r.category === '食費', JSON.stringify(r));
   check('一覧が取れないときは既知の gemini-3.5-flash-lite', calls.length === 1 && calls[0].model === 'gemini-3.5-flash-lite', JSON.stringify(calls));
   check('思考は MINIMAL', calls[0].thinking === 'MINIMAL');
+
+  console.log('\n# API に締め切り（httpOptions.timeout）を送らない（10 秒未満だと API が 400 で拒否する）');
+  for (const timeoutMs of [3000, 8000, 15000]) {
+    calls = [];
+    behavior = () => ({ text: '{"ok":4}' });
+    await client.generateJson('p', { timeoutMs });
+    const httpOptions = calls[0]?.httpOptions;
+    check(`timeoutMs ${timeoutMs}: 1 回だけ呼ぶ`, calls.length === 1, JSON.stringify(calls));
+    check(`timeoutMs ${timeoutMs}: httpOptions に timeout を含めない`, !!httpOptions && !('timeout' in httpOptions), JSON.stringify(httpOptions));
+    check(`timeoutMs ${timeoutMs}: 再試行の設定は送る`, httpOptions?.retryOptions?.attempts === 2, JSON.stringify(httpOptions));
+  }
 
   console.log('\n# 既定モデルが終了（404）→ 予備に切り替え、以後は予備を直接使う');
   client.resetGeminiModelState();
@@ -214,6 +230,8 @@ async function main() {
   check('null を返す', r === null);
   check('打ち切り時間で止まる', elapsed < 1500, `${elapsed}ms`);
   check('予備には進まない', calls.length === 1, JSON.stringify(calls));
+  const abortHttpOptions = calls[0]?.httpOptions;
+  check('打ち切りは呼び出し側の AbortController が受け持つ（httpOptions に timeout なし）', !!abortHttpOptions && !('timeout' in abortHttpOptions) && elapsed < 1500, `${JSON.stringify(abortHttpOptions)} ${elapsed}ms`);
 
   console.log(failed ? `\n${failed} failed` : '\nAll checks passed');
   process.exit(failed ? 1 : 0);
