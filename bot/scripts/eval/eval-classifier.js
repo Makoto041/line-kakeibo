@@ -8,7 +8,7 @@
  *   --provider gemini            評価する分類器（gemini = いまの本番の分類処理そのもの）
  *   --source text|merchant|all   評価する経路（既定 all）
  *   --limit N                    各経路の先頭 N 件だけ（試運転用）
- *   --delay-ms N                 1 件ごとに N ミリ秒待つ（Gemini の無料枠の 429 を避ける。既定 3000。待ちは計測に含めない）
+ *   --delay-ms N                 1 件ごとに N ミリ秒待つ（Gemini の無料枠の 429 を避ける。既定 4000。待ちは計測に含めない）
  *   --golden PATH                評価データ（既定 bot/scripts/eval/golden.local.json）
  *   --out-dir PATH               結果の出力先（既定 bot/scripts/eval/results）
  *   --include-unreviewed         reviewed でない件も使う（動作確認用。数字の報告には使わない）
@@ -19,7 +19,7 @@
  *   - summary: 集計だけ（説明文を含まない。Issue に貼ってよい）
  * 画面には集計だけを出す。
  *
- * 前提: .env（リポジトリ直下）に GEMINI_API_KEY。
+ * 前提: GEMINI_API_KEY を .env（リポジトリ直下）か bot/.env に置く（両方を読む。両方にあればリポジトリ直下の値を使う）。
  * 公式の単価は 2026-10-19 に確認した値（PRICES）。発表の前に公式ページで確かめ直す。
  */
 const fs = require('fs');
@@ -39,7 +39,7 @@ const flag = (name) => process.argv.includes(`--${name}`);
 const PROVIDER = arg('provider', 'gemini');
 const SOURCE = arg('source', 'all');
 const LIMIT = arg('limit') ? Number(arg('limit')) : Infinity;
-const DELAY_MS = Number(arg('delay-ms', 3000));
+const DELAY_MS = Number(arg('delay-ms', 4000));
 const GOLDEN = arg('golden', path.join(__dirname, 'golden.local.json'));
 
 /** USD / 100 万トークン。出典: ai.google.dev/gemini-api/docs/pricing（2026-10-19 確認） */
