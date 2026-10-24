@@ -567,8 +567,8 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
   };
 
   /**
-   * @param original 元の支出。大項目（category）を変えるときに渡すと、元の支出が中項目
-   *   （subCategory）を持っていれば中項目を消す（buildExpenseUpdate）。
+   * @param original 元の支出。渡すと、大項目（category）を変える更新で中項目（subCategory）
+   *   も消す（buildExpenseUpdate）。
    */
   const updateExpense = async (
     id: string,

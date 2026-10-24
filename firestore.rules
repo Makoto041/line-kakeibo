@@ -128,8 +128,9 @@ service cloud.firestore {
     // web から編集できるフィールド（許可リスト）。
     //   - 編集ドロワー（web/app/expenses/page.tsx の handleEditSave → web/lib/hooks.ts の
     //     updateExpense）: amount / description / date / category / includeInTotal /
-    //     payerId / payerDisplayName / updatedAt。大項目（category）を変えるとき、元の支出が
-    //     中項目（subCategory）を持っていれば subCategory を削除する
+    //     payerId / payerDisplayName / updatedAt。大項目（category）を変えるときは、中項目
+    //     （subCategory）の削除も常に送る（中項目を持たない支出では変化が無いので、
+    //     affectedKeys に入らない）
     //   - 合計に含めるトグル: includeInTotal / updatedAt
     //   - レシート添付（web/app/attach/page.tsx）: receiptUrl / updatedAt
     // lineId / groupId / lineGroupId / createdAt / inputSource / status / advanceBy /

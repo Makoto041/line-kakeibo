@@ -111,17 +111,20 @@ export function hasEditChanges(update: Partial<EditForm>): boolean {
 type SubCategoryFields = Partial<Pick<Expense, 'category' | 'subCategory'>>;
 
 /**
- * この更新で、元の支出の中項目（subCategory）を消すか。
- * 大項目（category）を変える更新で、元の支出が中項目を持つときだけ消す
- * （古い中項目が新しい大項目と食い違わないように）。中項目を持たない支出には削除を送らない
- * （不要な書き込みをしない。更新内容は中項目を足す前と同じ）。
- * 更新が中項目を自分で指定しているときは、それに任せる。
+ * この更新で、中項目（subCategory）を消すか。
+ * 大項目（category）を変える更新では、古い中項目が新しい大項目と食い違わないよう、常に消す。
+ * 元の支出が中項目を持つかは見ない: Web の一覧は 1 回きりの読み込みなので、読み込んだ後に
+ * bot が中項目を書いた支出では、手元の一覧が「中項目なし」のままになっている。
+ * 中項目を持たない支出への削除は、保存される結果が変わらない（ルールでも許可される）。
+ * - 大項目は、正規化した後の値で比べる（別名が同じ大項目になる入力では消さない）
+ * - 更新が中項目を自分で指定しているときは、それに任せる
+ * - 元の支出が渡されない更新（合計に含めるトグルなど）では消さない
  */
 export function shouldClearSubCategory(
   update: SubCategoryFields,
   original: SubCategoryFields | null | undefined
 ): boolean {
-  if (!original || original.subCategory === undefined) return false;
+  if (!original) return false;
   if (update.subCategory !== undefined) return false;
   return update.category !== undefined && update.category !== original.category;
 }

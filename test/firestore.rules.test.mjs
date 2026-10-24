@@ -95,13 +95,22 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'expenses/expSub'), { ...lunch, subCategory: '外食' });
   await setDoc(doc(db, 'expenses/expSubDel'), { ...lunch, subCategory: '外食' });
   await setDoc(doc(db, 'expenses/expSubCat'), { ...lunch, subCategory: '外食' });
+  // web は大項目を変えるとき、中項目を持たない支出にも削除を送る
+  await setDoc(doc(db, 'expenses/expNoSubCat'), lunch);
+  // 他の項目と組み合わせた削除の確認用（拒否されるだけなので書き換わらない）
+  await setDoc(doc(db, 'expenses/expSubPair'), {
+    ...lunch, subCategory: '外食', updatedAt: new Date('2026-08-05T00:00:00Z'),
+    receiptUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/receipts%2FexpSubPair%2Fa.jpg?alt=media&token=t',
+  });
   // 既存データに上限を超える中項目が残っているケース
   await setDoc(doc(db, 'expenses/expSubLong'), { ...lunch, subCategory: 'x'.repeat(60) });
-  // 中項目を持つ精算済みの支出
-  await setDoc(doc(db, 'expenses/expSettledSub'), {
+  // 精算済みの支出（中項目あり・なし）
+  const settledLunch = {
     lineId: 'B', ...group, amount: 1000, date: '2026-08-01', description: '立替',
-    category: '食費', subCategory: '外食', status: 'advance_settled', advanceBy: 'B', includeInTotal: true,
-  });
+    category: '食費', status: 'advance_settled', advanceBy: 'B', includeInTotal: true,
+  };
+  await setDoc(doc(db, 'expenses/expSettledSub'), { ...settledLunch, subCategory: '外食' });
+  await setDoc(doc(db, 'expenses/expSettledNoSub'), settledLunch);
 
   await setDoc(doc(db, 'groups/G2'), { createdBy: 'C', inviteCode: 'INV999', lineGroupId: 'L2' });
   // 別の世帯（G2）の有効なメンバー E。G1 のデータには触れないこと（世帯をまたぐ権限の確認）
@@ -371,9 +380,15 @@ await test('★ subCategory: 51 文字・文字列以外には更新できない
 await test('subCategory: 中項目の削除（deleteField）は許可される', async () => {
   await assertSucceeds(updateDoc(doc(userA, 'expenses/expSubDel'), { subCategory: deleteField(), updatedAt: new Date() }));
 });
-// web の編集ドロワーが、中項目を持つ支出の大項目を変えるときの送信形
-await test('subCategory: 大項目の変更と中項目の削除を一緒に送れる（web の送信形）', async () => {
+// web の編集ドロワーが大項目を変えるときの送信形。手元の一覧に中項目が無くても削除を送る
+// （読み込んだ後に bot が中項目を書いた支出に、古い中項目を残さないため）
+await test('subCategory: 大項目の変更と中項目の削除を一緒に送れる（web の送信形。中項目を持つ支出）', async () => {
   await assertSucceeds(updateDoc(doc(userA, 'expenses/expSubCat'), {
+    category: '日用品', subCategory: deleteField(), updatedAt: new Date(),
+  }));
+});
+await test('subCategory: 中項目を持たない支出にも、大項目の変更と中項目の削除を送れる（web の送信形）', async () => {
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expNoSubCat'), {
     category: '日用品', subCategory: deleteField(), updatedAt: new Date(),
   }));
 });
@@ -389,8 +404,16 @@ await test('既存データの上限超え subCategory に触れない編集は�
 await test('★ subCategory: 許可リストに無いキー・他の検証対象の削除は従来どおり拒否', async () => {
   await assertFails(updateDoc(doc(userA, 'expenses/expSub'), { subcategory: '外食' }));
   await assertFails(updateDoc(doc(userA, 'expenses/expSub'), { subCategoryId: 'x' }));
-  await assertFails(updateDoc(doc(userA, 'expenses/expSub'), { subCategory: '外食', inputSource: 'gmail_auto' }));
+  // subCategory を実際に変える（変更キーに入る）値と、不変のキーの組み合わせ
+  await assertFails(updateDoc(doc(userA, 'expenses/expSub'), { subCategory: 'カフェ', inputSource: 'gmail_auto' }));
   await assertFails(updateDoc(doc(userA, 'expenses/expSub'), { category: deleteField() }));
+});
+// 削除を通すのは subCategory だけ（!('subCategory' in d) の書き方が他のフィールドに広がらないこと）
+await test('★ subCategory: 他のフィールドの削除は、単独でも中項目の削除と組み合わせても拒否', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expSubPair'), { receiptUrl: deleteField() }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expSubPair'), { subCategory: deleteField(), description: deleteField() }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expSubPair'), { subCategory: deleteField(), receiptUrl: deleteField() }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expSubPair'), { subCategory: deleteField(), updatedAt: deleteField() }));
 });
 await test('★ subCategory: 他人の支出は中項目でも更新・削除できない', async () => {
   await assertFails(updateDoc(doc(userA, 'expenses/expB'), { subCategory: '外食' })); // 他人の個人支出
@@ -406,9 +429,12 @@ await test('★ subCategory: 精算済みの支出の制限は従来どおり（
   await assertFails(updateDoc(doc(userB, 'expenses/expSettledSub'), { payerId: 'A', subCategory: 'カフェ' }));
   await assertFails(deleteDoc(doc(userB, 'expenses/expSettledSub')));
 });
-await test('精算済み: 中項目の変更・大項目の変更と中項目の削除は許可される', async () => {
+await test('精算済み: 中項目の変更・大項目の変更と中項目の削除は許可される（中項目あり・なし）', async () => {
   await assertSucceeds(updateDoc(doc(userA, 'expenses/expSettledSub'), { subCategory: 'カフェ', updatedAt: new Date() }));
   await assertSucceeds(updateDoc(doc(userA, 'expenses/expSettledSub'), {
+    category: '日用品', subCategory: deleteField(), updatedAt: new Date(),
+  }));
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expSettledNoSub'), {
     category: '日用品', subCategory: deleteField(), updatedAt: new Date(),
   }));
 });

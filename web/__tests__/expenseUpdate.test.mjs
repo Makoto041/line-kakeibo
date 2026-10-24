@@ -53,38 +53,43 @@ test('大項目を変える: 元の支出が中項目を持つなら、中項目
   assert.deepEqual(both, { description: '洗剤', category: '日用品', subCategory: DELETE });
 });
 
-test('大項目を変える: 元の支出が中項目を持たないなら、更新内容は今と同じ（削除を送らない）', () => {
+// 一覧は 1 回きりの読み込みなので、読み込んだ後に bot が中項目を書いた支出でも、手元では
+// 「中項目なし」に見える。大項目を変えるときは、手元の一覧に中項目が無くても削除を送る
+test('大項目を変える: 元の支出が中項目を持たなくても、中項目の削除を足す', () => {
   const original = expense();
   const del = fakeDeleteField();
-  const { update, write } = save(original, { category: '日用品' }, del.fn);
-  assert.deepEqual(write, { category: '日用品' });
-  assert.deepEqual(write, update);
-  assert.equal('subCategory' in write, false);
-  assert.equal(del.calls(), 0);
-  assert.equal(shouldClearSubCategory({ category: '日用品' }, original), false);
+  const { write } = save(original, { category: '日用品' }, del.fn);
+  assert.deepEqual(write, { category: '日用品', subCategory: DELETE });
+  assert.equal(del.calls(), 1);
+  assert.equal(shouldClearSubCategory({ category: '日用品' }, original), true);
 });
 
-test('大項目を変えない: 中項目には触れない', () => {
-  const original = expense({ subCategory: '外食' });
-  const del = fakeDeleteField();
+test('大項目を変えない: 中項目には触れない（更新内容は今と同じ）', () => {
+  for (const original of [expense({ subCategory: '外食' }), expense()]) {
+    const del = fakeDeleteField();
 
-  const { update, write } = save(original, { description: 'ランチ（修正）', amount: 1200 }, del.fn);
-  assert.deepEqual(write, { amount: 1200, description: 'ランチ（修正）' });
-  assert.deepEqual(write, update);
+    const { update, write } = save(original, { description: 'ランチ（修正）', amount: 1200 }, del.fn);
+    assert.deepEqual(write, { amount: 1200, description: 'ランチ（修正）' });
+    assert.deepEqual(write, update);
 
-  // 合計に含めるトグル（category を送らない）
-  assert.deepEqual(buildExpenseUpdate({ includeInTotal: false }, original, del.fn), { includeInTotal: false });
+    // 合計に含めるトグル（category を送らない）
+    assert.deepEqual(buildExpenseUpdate({ includeInTotal: false }, original, del.fn), { includeInTotal: false });
 
-  // 同じ大項目を送っても（変化なし）消さない
-  assert.deepEqual(buildExpenseUpdate({ category: '食費' }, original, del.fn), { category: '食費' });
-  assert.equal(del.calls(), 0);
+    // 同じ大項目を送っても（変化なし）消さない。別名を正規化した結果が元と同じ大項目になる場合もこれ
+    assert.deepEqual(buildExpenseUpdate({ category: '食費' }, original, del.fn), { category: '食費' });
+    assert.equal(del.calls(), 0);
+  }
 });
 
 test('精算済みの支出: 大項目の変更と中項目の削除だけを送る（金額・日付・支払者は送らない）', () => {
-  const original = expense({ status: 'advance_settled', subCategory: '外食' });
-  const del = fakeDeleteField();
-  const { write } = save(original, { amount: 9999, date: '2026-01-01', category: '旅行' }, del.fn);
-  assert.deepEqual(write, { category: '旅行', subCategory: DELETE });
+  for (const original of [
+    expense({ status: 'advance_settled', subCategory: '外食' }),
+    expense({ status: 'advance_settled' }),
+  ]) {
+    const del = fakeDeleteField();
+    const { write } = save(original, { amount: 9999, date: '2026-01-01', category: '旅行' }, del.fn);
+    assert.deepEqual(write, { category: '旅行', subCategory: DELETE });
+  }
 });
 
 test('元の支出が無い・更新が中項目を自分で指定しているときは、削除を足さない', () => {
@@ -92,10 +97,11 @@ test('元の支出が無い・更新が中項目を自分で指定している�
   assert.deepEqual(buildExpenseUpdate({ category: '日用品' }, undefined, del.fn), { category: '日用品' });
   assert.deepEqual(buildExpenseUpdate({ category: '日用品' }, null, del.fn), { category: '日用品' });
 
-  const original = expense({ subCategory: '外食' });
-  assert.deepEqual(
-    buildExpenseUpdate({ category: '日用品', subCategory: '洗剤' }, original, del.fn),
-    { category: '日用品', subCategory: '洗剤' }
-  );
+  for (const original of [expense({ subCategory: '外食' }), expense()]) {
+    assert.deepEqual(
+      buildExpenseUpdate({ category: '日用品', subCategory: '洗剤' }, original, del.fn),
+      { category: '日用品', subCategory: '洗剤' }
+    );
+  }
   assert.equal(del.calls(), 0);
 });
