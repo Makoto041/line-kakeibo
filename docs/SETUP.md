@@ -157,8 +157,9 @@ cd /path/to/line-kakeibo && ln -s /tmp/rules-tools/node_modules node_modules   #
 CI のデプロイには GitHub の `production-bot` environment に `GCP_SA_KEY`（Firebase Admin / Cloud Functions Developer 等を持つ
 サービスアカウントの JSON）が必要。詳細は `.github/README.md`。
 
-手元からのデプロイは `.gitignore` を見ないため、評価データ（`*.local.json`、`scripts/eval/results`）、鍵ファイル（`kakeibo_service.json`、`vision-key.json`、`*.b64`）、
-デバッグログ（`*-debug.log`）は `firebase.json` の `functions.ignore` で Functions のソースから除外している。実データを含むファイルは `*.local.json` の名前にすること。
+`firebase deploy` は `.gitignore` を見ないため、手元からのデプロイでは gitignore 済みのファイルも Functions のソースの zip に入る。
+そのため `firebase.json` の `functions.ignore` で、評価データ（`*.local.json`、`scripts/eval/results`）、鍵ファイル（`kakeibo_service.json`、`vision-key.json`、`*.b64`）、
+デバッグログ（`*-debug.log`）、デプロイで読まれない `.env.local`・`.env.production` を除外している（`.env`・`.env.<projectId>`・`.env.<alias>` は読まれるので除外しない）。実データを含むファイルは `*.local.json` の名前にすること。
 
 ## 8. 運用メモ
 

@@ -15,7 +15,9 @@
         "kakeibo_service.json",
         "vision-key.json",
         "*.b64",
-        "*-debug.log"
+        "*-debug.log",
+        ".env.local",
+        ".env.production"
       ]
     }
   ],
