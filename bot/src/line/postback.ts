@@ -13,12 +13,12 @@ import { webhook, messagingApi } from '@line/bot-sdk';
 type PostbackEvent = webhook.PostbackEvent;
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { PostbackActionData } from '../gmail/types';
-import { ExpenseStatusType } from '../firestore';
 import {
   applyExpenseChange,
   decideClearAdvance,
   decideConfirm,
   decideSetAdvance,
+  decideSetCategory,
   decideSetPayer,
   SETTLED_REJECTION,
   type ExpenseDecider,
@@ -428,27 +428,8 @@ async function handleSetCategory(
   // set_advance と同じく確認済みにする。カテゴリだけ更新して未確認のままにすると、
   // LINE手入力（includeInTotal: false で保存される）はカード上でカテゴリが直った
   // ように見えるのに合計にはずっと入らない。
-  const result = await applyExpenseChange(expenseId, (data) => {
-    const status = data.status as ExpenseStatusType | undefined;
-    const isPending = !status || status === 'pending';
-
-    // 未確認のときだけ共同費へ昇格させる。個人費や立替を設定済みの支出は触らない。
-    return isPending
-      ? {
-          update: {
-            category,
-            confirmed: true,
-            status: 'shared',
-            includeInTotal: true,
-            updatedAt: new Date(),
-          },
-          cardPatch: { category, status: 'shared', includeInTotal: true },
-        }
-      : {
-          update: { category, confirmed: true, updatedAt: new Date() },
-          cardPatch: { category },
-        };
-  });
+  // カルーセルの旧名（医療費・娯楽費など）は正準名に揃えて保存する（decideSetCategory）。
+  const result = await applyExpenseChange(expenseId, decideSetCategory(category));
 
   if (!result) return;
   if ('reject' in result) {
@@ -456,7 +437,7 @@ async function handleSetCategory(
     return;
   }
 
-  console.log(`Expense ${expenseId} category updated to ${category}`);
+  console.log('Expense category updated', { expense: maskId(expenseId), category: result.record.category });
 
   await replyUpdatedCard(event, expenseId, result.record, '設定を更新しました');
 }

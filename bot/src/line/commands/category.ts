@@ -2,6 +2,7 @@
  * 「カテゴリー」コマンド: デフォルトカテゴリーの表示・設定
  */
 
+import { toCanonicalCategoryName } from "../../categoryNormalization";
 import { getUserSettings, saveUserSettings } from "../../firestore";
 import { replyText } from "../client";
 
@@ -10,6 +11,7 @@ import { replyText } from "../client";
  *
  * Web / Gemini の正準カテゴリー（categoryNormalization.CANONICAL_CATEGORIES）とは
  * 別の、LINE コマンドの案内に出してきた一覧。返信文が変わるため揃えていない。
+ * 保存する値は正準名に揃える（「医療費」→ 医療・健康。toCanonicalCategoryName。#243）。
  */
 const LINE_DEFAULT_CATEGORIES = [
   "食費",
@@ -67,7 +69,8 @@ export async function handleCategoryCommand(event: any, text: string): Promise<b
   }
 
   try {
-    await saveUserSettings(event.source.userId, category);
+    // 返信は選んだ名前のまま、保存は正準名
+    await saveUserSettings(event.source.userId, toCanonicalCategoryName(category));
 
     await replyText(event.replyToken, `デフォルトカテゴリーを「${category}」に設定しました！\n\n今後の支出入力は自動的に「${category}」カテゴリーになります。\n\n変更するには「カテゴリー [新しいカテゴリー]」と送信してください。`);
   } catch (error) {

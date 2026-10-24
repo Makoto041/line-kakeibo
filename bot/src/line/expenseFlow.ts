@@ -5,6 +5,7 @@
  * 登録カード（Flex Message）を replyToken で返信する（失敗時だけ push）。
  */
 
+import { toCanonicalCategoryName } from "../categoryNormalization";
 import { findLineGroupId, getUserGroups, getUserSettings, saveExpense } from "../firestore";
 import { classifyExpenseWithGemini } from "../geminiCategoryClassifier";
 import type { GeminiClassificationResult } from "../geminiCategoryClassifier";
@@ -123,13 +124,15 @@ const CLASSIFY_MIN_CONFIDENCE = 0.4;
  * - それでも「その他」なら、利用者の既定カテゴリがあればそれにする（default）。無ければ「その他」（unclassified）
  *
  * classified は分類が失敗（rejected）したら null、defaultCategory は設定を読めなかったら渡さない。
+ * 指定と既定カテゴリは LINE の旧名（医療費・娯楽費など）のことがあるので、正準名に揃えて返す
+ * （toCanonicalCategoryName。#243）。分類の結果は正準名なのでそのまま。
  */
 export function decideTextExpenseCategory(input: {
   specified?: string;
   classified?: GeminiClassificationResult | null;
   defaultCategory?: string | null;
 }): { category: string; origin?: CategoryOrigin } {
-  if (input.specified) return { category: input.specified, origin: "specified" };
+  if (input.specified) return { category: toCanonicalCategoryName(input.specified), origin: "specified" };
 
   let category = "その他";
   let origin: CategoryOrigin | undefined = "unclassified";
@@ -142,7 +145,7 @@ export function decideTextExpenseCategory(input: {
 
   // 分類できない（Jev・Gemini とも失敗し辞書にも無い）または low confidence の場合、ユーザーデフォルトを使用
   if (category === "その他" && input.defaultCategory) {
-    category = input.defaultCategory;
+    category = toCanonicalCategoryName(input.defaultCategory);
     origin = "default";
   }
 
@@ -318,7 +321,7 @@ export async function processExpenseInBackground(
     // カテゴリの決定
     //
     // 本人が「光熱費 28727」のようにカテゴリ名を書いていれば、それが最も確かな指定なので
-    // 推定を挟まずそのまま使う。以前は parseTextExpense が返す category を捨てて
+    // 推定を挟まずに使う（「医療費」のような旧名は正準名に揃える）。以前は parseTextExpense が返す category を捨てて
     // 説明文（この場合は残りが無いためフォールバックの「支出」）を Gemini に投げており、
     // 低信頼→デフォルトカテゴリへ倒れて毎回カード上で付け直す必要があった。
     // 判定元（categoryOrigin）は最初のカードの括弧に出すだけで、保存しない。
