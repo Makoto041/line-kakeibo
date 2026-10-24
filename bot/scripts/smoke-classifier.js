@@ -52,6 +52,7 @@ async function main() {
   geminiReply = { category: '娯楽', confidence: 0.9 };
   let r = await classifyExpenseWithGemini('U_text', 'ランチ');
   check('ランチ → 食費（辞書）', r.category === '食費', JSON.stringify(r));
+  check('判定元は dictionary', r.provider === 'dictionary', JSON.stringify(r));
   check('Gemini は呼ばれない', geminiCalls.length === 0);
 
   console.log('\n# LINE の入力（text）: 辞書で決まらなければ Gemini');
@@ -59,6 +60,7 @@ async function main() {
   geminiReply = { category: '娯楽', confidence: 0.8 };
   r = await classifyExpenseWithGemini('U_text', 'ボルダリング');
   check('Gemini の結果を採用', r.category === '娯楽', JSON.stringify(r));
+  check('判定元は gemini', r.provider === 'gemini', JSON.stringify(r));
   check('Gemini を 1 回呼ぶ', geminiCalls.length === 1);
   check('スキーマで一覧に限定', Array.isArray(geminiCalls[0]?.options?.schema?.properties?.category?.enum));
 
@@ -76,6 +78,7 @@ async function main() {
   geminiReply = null;
   r = await classifyExpenseWithGemini('gmail-auto-system', 'ﾛｰｿﾝ ローソン', { source: 'merchant' });
   check('辞書でローソン → 食費', r.category === '食費', JSON.stringify(r));
+  check('判定元は dictionary', r.provider === 'dictionary', JSON.stringify(r));
   geminiReply = { category: '日用品', confidence: 0.7 };
   r = await classifyExpenseWithGemini('gmail-auto-system', 'ﾛｰｿﾝ ローソン', { source: 'merchant' });
   check('復旧後は Gemini で判定し直す', r.category === '日用品', JSON.stringify(r));
@@ -84,6 +87,7 @@ async function main() {
   geminiReply = { category: '謎カテゴリ', confidence: 0.9 };
   r = await classifyExpenseWithGemini('gmail-auto-system', 'XYZ SHOP', { source: 'merchant' });
   check('採用しない（呼び出し側で「その他」）', r.category === null, JSON.stringify(r));
+  check('判定元は無い', r.provider === undefined, JSON.stringify(r));
 
   console.log('\n# GEMINI_API_KEY が無いとき');
   delete process.env.GEMINI_API_KEY;

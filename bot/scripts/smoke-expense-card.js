@@ -9,7 +9,11 @@ const {
   buildTextExpenseFlexMessage,
   buildExpenseCardFromRecord,
   buildExpenseEditUrl,
+  CATEGORY_ORIGIN_LABELS,
 } = require('../dist/line/flexMessage');
+// どちらも LINE クライアント・Firestore・Gmail のクライアントは最初に使うときに作るので、読み込むだけなら外部に接続しない
+const { decideTextExpenseCategory } = require('../dist/line/expenseFlow');
+const { merchantCategoryOf } = require('../dist/gmail/handler');
 
 let failed = 0;
 
@@ -336,6 +340,125 @@ function common(name, msg) {
     });
     const url = settingsRows(msg)[3].contents[0].url;
     check(`${category} → ${key}`, url.endsWith(`/${key}.png`), url);
+  }
+}
+
+// ------------------------------------------- カテゴリの判定元（最初のカードだけ）
+{
+  console.log('\n[カテゴリの判定元]');
+  const base = {
+    expenseId: 'exp_origin',
+    description: 'ランチ',
+    amount: 500,
+    category: '食費',
+    categoryEmoji: '🍽',
+    date: '2026-08-11',
+    paymentMethod: '現金',
+    payerName: 'まこと',
+    includeInTotal: false,
+    editUrl: buildExpenseEditUrl('exp_origin', 'U1'),
+  };
+  const expected = {
+    dictionary: '（辞書）',
+    jev: '（Jev）',
+    gemini: '（Gemini）',
+    specified: '（指定）',
+    default: '（既定）',
+    unclassified: '（未判定）',
+  };
+  check('判定元は 6 つ', Object.keys(CATEGORY_ORIGIN_LABELS).sort().join(',') === Object.keys(expected).sort().join(','), Object.keys(CATEGORY_ORIGIN_LABELS).join(','));
+
+  const plain = buildTextExpenseFlexMessage(base);
+  const plainRows = settingsRows(plain);
+  check('判定元が無ければ カテゴリ：食費（括弧なし）', rowText(plainRows[3]) === 'カテゴリ：食費', rowText(plainRows[3]));
+  const postbackData = (msg) =>
+    walk(msg.contents)
+      .filter((n) => n.action && n.action.type === 'postback')
+      .map((n) => n.action.data);
+  /** カテゴリの行の 3 つ目の span（判定元）を外したもの */
+  function withoutNote(msg) {
+    const copy = JSON.parse(JSON.stringify(msg));
+    const textNode = settingsRows(copy)[3].contents.find((c) => c.type === 'text' && Array.isArray(c.contents));
+    textNode.contents = textNode.contents.slice(0, 2);
+    return copy;
+  }
+
+  for (const [origin, note] of Object.entries(expected)) {
+    const msg = buildTextExpenseFlexMessage({ ...base, categoryOrigin: origin });
+    const rows = settingsRows(msg);
+    check(`${origin} → カテゴリ：食費${note}`, rowText(rows[3]) === `カテゴリ：食費${note}`, rowText(rows[3]));
+    const spans = rows[3].contents.find((c) => c.type === 'text' && Array.isArray(c.contents)).contents;
+    const noteSpan = spans[2];
+    check(
+      `${origin} → 括弧は xs・灰色（#64748B）・太字でない span`,
+      spans.length === 3 && noteSpan.type === 'span' && noteSpan.text === note &&
+        noteSpan.size === 'xs' && noteSpan.color === '#64748B' && noteSpan.weight === undefined,
+      JSON.stringify(noteSpan)
+    );
+    check(
+      `${origin} → 支出区分・支払った人・立替の 3 行は変わらない`,
+      JSON.stringify(rows.slice(0, 3)) === JSON.stringify(plainRows.slice(0, 3))
+    );
+    check(
+      `${origin} → postback の data と altText は判定元が無いときと同じ`,
+      JSON.stringify(postbackData(msg)) === JSON.stringify(postbackData(plain)) && msg.altText === plain.altText &&
+        !postbackData(msg).join(' ').includes(CATEGORY_ORIGIN_LABELS[origin]) && !msg.altText.includes(note)
+    );
+    check(`${origin} → 違いはカテゴリの括弧だけ`, JSON.stringify(withoutNote(msg)) === JSON.stringify(plain));
+  }
+
+  // Gmail のカード利用通知
+  const gmailBase = { expenseId: 'exp_gmail_origin', merchant: 'SHOP', amount: 100, categoryEmoji: '', date: '8/1', status: 'shared', includeInTotal: true };
+  const gmailJev = settingsRows(buildCardUsageFlexMessage({ ...gmailBase, category: '食費', categoryOrigin: 'jev' }))[3];
+  check('Gmail: jev → カテゴリ：食費（Jev）', rowText(gmailJev) === 'カテゴリ：食費（Jev）', rowText(gmailJev));
+  const gmailNone = settingsRows(buildCardUsageFlexMessage({ ...gmailBase, category: 'その他', categoryOrigin: 'unclassified' }))[3];
+  check('Gmail: unclassified → カテゴリ：その他（未判定）', rowText(gmailNone) === 'カテゴリ：その他（未判定）', rowText(gmailNone));
+  const gmailPlain = settingsRows(buildCardUsageFlexMessage({ ...gmailBase, category: '食費' }))[3];
+  check('Gmail: 判定元が無ければ括弧なし', rowText(gmailPlain) === 'カテゴリ：食費', rowText(gmailPlain));
+
+  // postback で作り直したカード（保存した値から組み立てる）には出ない
+  for (const inputSource of ['line_text', 'gmail_auto']) {
+    const rebuilt = settingsRows(buildExpenseCardFromRecord('e', { category: '食費', status: 'shared', inputSource }))[3];
+    check(`作り直したカード（${inputSource}）のカテゴリ行に括弧が入らない`, rowText(rebuilt) === 'カテゴリ：食費' && !rowText(rebuilt).includes('（'), rowText(rebuilt));
+  }
+}
+
+// ------------------------------------- LINE の入力のカテゴリと判定元の決め方
+{
+  console.log('\n[decideTextExpenseCategory]');
+  const jev = (category, confidence) => ({ category, confidence, reasoning: 'Jev classification', provider: 'jev' });
+  const cases = [
+    ['指定 → 指定', { specified: '食費' }, '食費', 'specified'],
+    ['指定があれば分類・既定より優先', { specified: '光熱費', classified: jev('食費', 0.9), defaultCategory: '日用品' }, '光熱費', 'specified'],
+    ['辞書 0.8 → dictionary', { classified: { category: '食費', confidence: 0.8, reasoning: 'Fast local keyword matching', provider: 'dictionary' } }, '食費', 'dictionary'],
+    ['Jev 0.4 ちょうど → jev', { classified: jev('娯楽', 0.4), defaultCategory: '日用品' }, '娯楽', 'jev'],
+    ['Gemini 0.7 → gemini', { classified: { category: '娯楽', confidence: 0.7, reasoning: 'Gemini classification', provider: 'gemini' } }, '娯楽', 'gemini'],
+    ['Jev 0.39・既定あり → 既定のカテゴリ・default', { classified: jev('娯楽', 0.39), defaultCategory: '日用品' }, '日用品', 'default'],
+    ['Jev 0.39・既定なし → その他・unclassified', { classified: jev('娯楽', 0.39) }, 'その他', 'unclassified'],
+    ['「その他」0.9・既定あり → default', { classified: jev('その他', 0.9), defaultCategory: '日用品' }, '日用品', 'default'],
+    ['「その他」0.9・既定なし → その他・jev', { classified: jev('その他', 0.9) }, 'その他', 'jev'],
+    ['分類が失敗（null）・既定あり → default', { classified: null, defaultCategory: '日用品' }, '日用品', 'default'],
+    ['分類が失敗（null）・既定なし → その他・unclassified', { classified: null, defaultCategory: undefined }, 'その他', 'unclassified'],
+    ['決まらない（category: null）・既定あり → default', { classified: { category: null, confidence: 0 }, defaultCategory: '日用品' }, '日用品', 'default'],
+    ['category はあるが provider が無い → origin は undefined', { classified: { category: '食費', confidence: 0.9 } }, '食費', undefined],
+  ];
+  for (const [name, input, category, origin] of cases) {
+    const r = decideTextExpenseCategory(input);
+    check(name, r.category === category && r.origin === origin, JSON.stringify(r));
+  }
+}
+
+// ------------------------------------- カード利用通知の店名のカテゴリと判定元
+{
+  console.log('\n[merchantCategoryOf]');
+  const cases = [
+    ['jev → そのカテゴリ・jev', { category: '食費', confidence: 0.2, reasoning: 'Jev classification', provider: 'jev' }, '食費', 'jev'],
+    ['dictionary → そのカテゴリ・dictionary', { category: '食費', confidence: 0.8, reasoning: 'Fast local keyword matching', provider: 'dictionary' }, '食費', 'dictionary'],
+    ['category: null → その他・unclassified', { category: null, confidence: 0 }, 'その他', 'unclassified'],
+  ];
+  for (const [name, input, category, origin] of cases) {
+    const r = merchantCategoryOf(input);
+    check(name, r.category === category && r.origin === origin, JSON.stringify(r));
   }
 }
 

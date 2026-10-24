@@ -95,6 +95,7 @@ export async function classifyWithJev(
       category: answer.choice,
       confidence: Math.max(0, Math.min(1, confidence)),
       reasoning: 'Jev classification',
+      provider: 'jev',
     };
   } catch (error) {
     // SDK のエラー文は API の応答本文から作られるので出さない（種類と HTTP ステータスだけ）

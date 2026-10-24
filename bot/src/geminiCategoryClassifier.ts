@@ -5,10 +5,15 @@ import { generateJson, isGeminiConfigured, Type, type Schema } from './geminiCli
 import { classifyWithJev, isJevConfigured } from './jevCategoryClassifier';
 import { maskId } from './logSafe';
 
+/** カテゴリがどこで決まったか（キーワード辞書・Jev・Gemini） */
+export type ClassificationProvider = 'dictionary' | 'jev' | 'gemini';
+
 export interface GeminiClassificationResult {
   category: string | null;
   confidence: number; // 0-1の信頼度
   reasoning?: string; // 分類の理由（デバッグ用）
+  /** 判定元。カテゴリが決まったときだけ入る。キャッシュから返すときは最初に決まったときの値 */
+  provider?: ClassificationProvider;
 }
 
 // デフォルトカテゴリリスト（Firestoreからの取得に失敗した場合のフォールバック）
@@ -253,6 +258,7 @@ async function classifyWithGemini(
     category: normalized,
     confidence: Math.max(0, Math.min(1, confidence)),
     reasoning: 'Gemini classification',
+    provider: 'gemini',
   };
 }
 
@@ -311,7 +317,12 @@ export async function classifyExpenseWithGemini(
   const byKeyword = (): GeminiClassificationResult | null => {
     const local = fastLocalClassification(description);
     return local.category
-      ? { category: local.category, confidence: local.confidence, reasoning: 'Fast local keyword matching' }
+      ? {
+          category: local.category,
+          confidence: local.confidence,
+          reasoning: 'Fast local keyword matching',
+          provider: 'dictionary',
+        }
       : null;
   };
 

@@ -6,6 +6,7 @@
 
 import { messagingApi } from '@line/bot-sdk';
 import { ExpenseStatusType } from '../firestore';
+import type { ClassificationProvider } from '../geminiCategoryClassifier';
 import { getPaymentMethodLabel, PaymentMethod } from '../textParser';
 import { maskId } from '../logSafe';
 import { getLineClient, replyWithPushFallback } from './client';
@@ -13,6 +14,31 @@ import { getLineClient, replyWithPushFallback } from './client';
 type FlexMessage = messagingApi.FlexMessage;
 type FlexBubble = messagingApi.FlexBubble;
 type FlexComponent = messagingApi.FlexComponent;
+
+// ============================================
+// カテゴリの判定元（最初のカードのカテゴリの後ろに括弧で出す）
+// ============================================
+
+/**
+ * カテゴリがどこで決まったか。分類の判定元（辞書・Jev・Gemini）に加えて、
+ * 入力で指定した（specified）・既定のカテゴリを使った（default）・決まらず「その他」（unclassified）
+ */
+export type CategoryOrigin = ClassificationProvider | 'specified' | 'default' | 'unclassified';
+
+/** 判定元の表示名。文言を変えるときはここだけを直す */
+export const CATEGORY_ORIGIN_LABELS: Record<CategoryOrigin, string> = {
+  dictionary: '辞書',
+  jev: 'Jev',
+  gemini: 'Gemini',
+  specified: '指定',
+  default: '既定',
+  unclassified: '未判定',
+};
+
+/** カテゴリの後ろに付ける「（辞書）」などの注記。判定元が無ければ undefined（何も付けない） */
+export function categoryOriginNote(origin?: CategoryOrigin): string | undefined {
+  return origin ? `（${CATEGORY_ORIGIN_LABELS[origin]}）` : undefined;
+}
 
 // ============================================
 // アイコン（lucide風の静的PNGをWebから配信）
@@ -328,6 +354,8 @@ function settingRow(opts: {
   iconUrl: string;
   label: string;
   value: string;
+  /** 値の後ろに小さく添える注記（カテゴリの判定元「（辞書）」など） */
+  note?: string;
   action?: Record<string, unknown>;
   /** ボタン表記（既定: 変更） */
   buttonLabel?: string;
@@ -351,6 +379,7 @@ function settingRow(opts: {
         contents: [
           { type: 'span', text: `${opts.label}：`, color: '#64748B' },
           { type: 'span', text: opts.value, color: '#0F172A', weight: 'bold' },
+          ...(opts.note ? [{ type: 'span', text: opts.note, size: 'xs', color: '#64748B' }] : []),
         ],
       },
       ...(opts.action
@@ -373,11 +402,13 @@ function buildCurrentSettingsSection(opts: {
   expenseId: string;
   source: ExpenseCardSource;
   category: string;
+  /** カテゴリの判定元（最初のカードだけ。カテゴリの行に括弧で出す） */
+  categoryOrigin?: CategoryOrigin;
   status?: ExpenseStatusType;
   advanceFull?: boolean;
   payer: string;
 }): FlexComponent {
-  const { expenseId, source, category, status, advanceFull, payer } = opts;
+  const { expenseId, source, category, categoryOrigin, status, advanceFull, payer } = opts;
   const derived = deriveExpenseSettings(status, advanceFull);
 
   return {
@@ -453,6 +484,7 @@ function buildCurrentSettingsSection(opts: {
         iconUrl: categoryIconUrl(category),
         label: 'カテゴリ',
         value: category,
+        note: categoryOriginNote(categoryOrigin),
         action: {
           type: 'postback',
           label: 'カテゴリを変更',
@@ -481,6 +513,8 @@ function buildExpenseCard(opts: {
   amount: number;
   date: string;
   category: string;
+  /** カテゴリの判定元（最初のカードだけ渡す。作り直したカードでは渡さない） */
+  categoryOrigin?: CategoryOrigin;
   source: ExpenseCardSource;
   status?: ExpenseStatusType;
   /** 立替を全額で返す扱いか（立替の行の表示） */
@@ -500,6 +534,7 @@ function buildExpenseCard(opts: {
     amount,
     date,
     category,
+    categoryOrigin,
     source,
     status,
     advanceFull,
@@ -570,7 +605,7 @@ function buildExpenseCard(opts: {
         },
         ...detailRows,
         // 現在の設定（値の表示と操作ボタンを分離）
-        buildCurrentSettingsSection({ expenseId, source, category, status, advanceFull, payer }),
+        buildCurrentSettingsSection({ expenseId, source, category, categoryOrigin, status, advanceFull, payer }),
       ],
       paddingAll: 'lg',
     },
@@ -660,6 +695,8 @@ export interface CardUsageInfo {
   merchant: string;
   amount: number;
   category: string;
+  /** カテゴリの判定元。最初のカードだけに出す（保存しない） */
+  categoryOrigin?: CategoryOrigin;
   categoryEmoji: string;
   date: string;
   remainingBudget?: number;
@@ -673,7 +710,7 @@ export interface CardUsageInfo {
  * カード利用通知のFlex Messageを生成
  */
 export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
-  const { expenseId, merchant, amount, category, date, remainingBudget, status } = info;
+  const { expenseId, merchant, amount, category, categoryOrigin, date, remainingBudget, status } = info;
 
   // 残り予算の表示
   const detailRows = [];
@@ -696,6 +733,7 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
     amount,
     date,
     category,
+    categoryOrigin,
     source: 'gmail',
     status,
     payer: 'カード',
@@ -725,6 +763,8 @@ export interface TextExpenseInfo {
   description: string;
   amount: number;
   category: string;
+  /** カテゴリの判定元。最初のカードだけに出す（保存しない） */
+  categoryOrigin?: CategoryOrigin;
   categoryEmoji: string;
   date: string;
   paymentMethod?: string;
@@ -746,6 +786,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     description,
     amount,
     category,
+    categoryOrigin,
     date,
     paymentMethod,
     payerName,
@@ -772,6 +813,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     amount,
     date,
     category,
+    categoryOrigin,
     source: 'text',
     status,
     payer: payerName || 'メンバー',

@@ -23,10 +23,20 @@ import {
 } from './types';
 import { saveGmailExpenseAtomic } from '../firestore';
 import { classifyExpenseWithGemini } from '../geminiCategoryClassifier';
+import type { GeminiClassificationResult } from '../geminiCategoryClassifier';
 import { sendCardUsageNotification } from '../line/flexMessage';
+import type { CategoryOrigin } from '../line/flexMessage';
 
 // システム用のLINE ID（Gmail自動取得用）
 const GMAIL_SYSTEM_LINE_ID = 'gmail-auto-system';
+
+/**
+ * 店名の分類結果から、カテゴリとその判定元（最初のカードの括弧に出す）を決める。
+ * 店名は確信度に関係なく採用し、既定のカテゴリも使わない。決まらなければ「その他」（unclassified）
+ */
+export function merchantCategoryOf(r: GeminiClassificationResult): { category: string; origin?: CategoryOrigin } {
+  return r.category ? { category: r.category, origin: r.provider } : { category: 'その他', origin: 'unclassified' };
+}
 
 // デフォルトのグループID（環境変数から取得）
 const getDefaultGroupId = (): string | undefined => {
@@ -252,7 +262,8 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       parsed.merchant,
       { source: 'merchant' }
     );
-    const category = categoryResult.category || 'その他';
+    // 判定元は通知のカードに出すだけで、保存しない
+    const { category, origin: categoryOrigin } = merchantCategoryOf(categoryResult);
 
     // グループIDを取得（グループベースの集計に必要）
     const groupId = getDefaultGroupId();
@@ -295,6 +306,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
         merchant: parsed.merchant,
         amount: parsed.amount,
         category,
+        categoryOrigin,
         categoryEmoji: getCategoryEmoji(category),
         date: formatJST(parsed.usedAt, 'M/D'),
         // 保存時の値と揃える（Gmail自動取得は共同費として確定で入る）
@@ -476,7 +488,8 @@ export async function forceProcessMessage(messageId: string): Promise<{
       parsed.merchant,
       { source: 'merchant' }
     );
-    const category = categoryResult.category || 'その他';
+    // 判定元は通知のカードに出すだけで、保存しない
+    const { category, origin: categoryOrigin } = merchantCategoryOf(categoryResult);
 
     // グループIDを取得
     const groupId = getDefaultGroupId();
@@ -521,6 +534,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
         merchant: parsed.merchant,
         amount: parsed.amount,
         category,
+        categoryOrigin,
         categoryEmoji: getCategoryEmoji(category),
         date: formatJST(parsed.usedAt, 'M/D'),
         // 保存時の値と揃える（Gmail自動取得は共同費として確定で入る）

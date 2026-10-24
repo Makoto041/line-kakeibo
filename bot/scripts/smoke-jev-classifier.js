@@ -108,6 +108,7 @@ async function main() {
   geminiReply = { category: '食費', confidence: 0.9 };
   let r = await classify('U_text', 'ボルダリング');
   check('Jev の結果を採用', r.category === '娯楽' && r.reasoning === 'Jev classification', JSON.stringify(r));
+  check('判定元は jev', r.provider === 'jev', JSON.stringify(r));
   check('信頼度はそのまま', r.confidence === 0.92, JSON.stringify(r));
   check('Jev を 1 回呼ぶ', jevCalls.length === 1);
   check('Gemini は呼ばれない', geminiCalls.length === 0);
@@ -128,11 +129,13 @@ async function main() {
   reset();
   r = await classify('U_text', 'ボルダリング');
   check('同じ入力は API を呼ばない', r.category === '娯楽' && jevCalls.length === 0 && geminiCalls.length === 0);
+  check('キャッシュから返しても判定元は jev のまま', r.provider === 'jev', JSON.stringify(r));
 
   console.log('\n# text: 辞書で決まれば Jev も呼ばない');
   reset();
   r = await classify('U_text', 'ランチ');
   check('ランチ → 食費（辞書）', r.category === '食費' && r.reasoning === 'Fast local keyword matching', JSON.stringify(r));
+  check('判定元は dictionary', r.provider === 'dictionary', JSON.stringify(r));
   check('Jev は呼ばれない', jevCalls.length === 0);
 
   console.log('\n# (a) merchant: 辞書より Jev を優先');
@@ -189,6 +192,11 @@ async function main() {
   const timeoutLog = logs.find((l) => l.args[0] === 'Jev classification failed');
   check('失敗はエラーの種類だけをログに出す', timeoutLog?.args[1]?.error === 'APITimeoutError' && Object.keys(timeoutLog.args[1]).sort().join(',') === 'error,status', JSON.stringify(timeoutLog?.args));
   check('提供元のログ（gemini）', lastProviderLog()?.provider === 'gemini', JSON.stringify(lastProviderLog()));
+  check('判定元は gemini', r.provider === 'gemini', JSON.stringify(r));
+  reset();
+  r = await classify('U_text', 'スカッシュ');
+  check('同じ入力をもう一度: キャッシュから返し、判定元は gemini のまま', r.category === '娯楽' && r.provider === 'gemini', JSON.stringify(r));
+  check('同じ入力をもう一度: API を呼ばない', jevCalls.length === 0 && geminiCalls.length === 0);
 
   console.log('\n# (b) Jev が API エラー（429）→ Gemini');
   reset();
@@ -207,6 +215,7 @@ async function main() {
   geminiReply = { category: '娯楽', confidence: 0.7 };
   r = await classify('U_text', 'ダーツバー');
   check('Gemini の結果を採用', r.category === '娯楽' && r.reasoning === 'Gemini classification', JSON.stringify(r));
+  check('判定元は gemini', r.provider === 'gemini', JSON.stringify(r));
   check('Jev は呼ばれない', jevCalls.length === 0);
   process.env.TYPESAFE_API_KEY = 'test-key';
 
@@ -245,6 +254,7 @@ async function main() {
   geminiReply = null;
   r = await classify('U_text', 'ネジ');
   check('どちらも失敗なら null', r.category === null, JSON.stringify(r));
+  check('どちらも失敗なら判定元は無い', r.provider === undefined, JSON.stringify(r));
   check('提供元のログは出さない', lastProviderLog() === undefined);
   reset();
   jevBehavior = jevAnswer('日用品', 0.8);
@@ -258,10 +268,12 @@ async function main() {
   geminiReply = null;
   r = await classify('gmail-auto-system', 'ﾛｰｿﾝ ローソン', { source: 'merchant' });
   check('merchant: どちらも失敗なら辞書（ローソン → 食費）', r.category === '食費' && r.reasoning === 'Fast local keyword matching', JSON.stringify(r));
+  check('merchant: 辞書で決めたら判定元は dictionary', r.provider === 'dictionary', JSON.stringify(r));
   reset();
   jevBehavior = jevAnswer('日用品', 0.7);
   r = await classify('gmail-auto-system', 'ﾛｰｿﾝ ローソン', { source: 'merchant' });
   check('merchant: 復旧後は Jev で判定し直す', r.category === '日用品' && r.reasoning === 'Jev classification' && jevCalls.length === 1, JSON.stringify(r));
+  check('merchant: 復旧後の判定元は jev', r.provider === 'jev', JSON.stringify(r));
 
   console.log('\n# どちらも使えないとき');
   reset();
