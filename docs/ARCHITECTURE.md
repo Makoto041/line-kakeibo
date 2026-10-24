@@ -252,7 +252,7 @@ line-kakeibo/
 │  │  ├─ webOrigins.ts       # Web オリジンの許可リスト（/auth/line と /household で共用）
 │  │  ├─ adminAuth.ts        # ADMIN_SECRET の定数時間比較
 │  │  ├─ logSafe.ts / time.ts # ログのマスク・JST 日付
-│  │  ├─ geminiCategoryClassifier.ts / categoryNormalization.ts
+│  │  ├─ geminiCategoryClassifier.ts / categoryGuide.ts / categoryNormalization.ts
 │  │  ├─ linkUserResolver.ts / syncUserLinks.ts
 │  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue
 │  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）

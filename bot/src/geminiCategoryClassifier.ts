@@ -1,5 +1,6 @@
 import { getAllUserCategories, CategoryMaster, UserCustomCategory } from './firestore';
 import { CANONICAL_CATEGORIES, normalizeCategoryName } from './categoryNormalization';
+import { CATEGORY_GUIDE } from './categoryGuide';
 import { generateJson, isGeminiConfigured, Type, type Schema } from './geminiClient';
 import { maskId } from './logSafe';
 
@@ -143,29 +144,6 @@ export interface ClassifyOptions {
 
 const GEMINI_TIMEOUT_MS = 8000;
 
-/** 各カテゴリの判断基準（プロンプト用）。CANONICAL_CATEGORIES にあるものは全て説明する */
-const CATEGORY_GUIDE: Record<string, string> = {
-  '食費': '食材、外食、カフェ、コンビニ・スーパーでの買い物、飲み物、デリバリー',
-  '交通費': '電車、バス、タクシー、新幹線、ガソリン、駐車場、高速料金(ETC)、レンタカー',
-  '日用品': '洗剤、ティッシュ、シャンプーなどの消耗品、ドラッグストア・100円ショップ・ホームセンターの買い物',
-  '娯楽': '映画、ゲーム、書籍、漫画、おもちゃ、カラオケ、ライブ、趣味用品',
-  '衣服': '服、靴、バッグ、アクセサリー、クリーニング',
-  '医療・健康': '病院、歯科、薬、サプリ、ジム、整体',
-  '教育': '学費、塾、習い事、参考書、講座、資格試験',
-  '光熱費': '電気、ガス、水道',
-  '住居費': '家賃、管理費、家具、家電、修繕',
-  '保険': '生命保険、医療保険、自動車保険、火災保険',
-  '税金': '住民税、所得税、自動車税、年金、ふるさと納税',
-  '美容': '美容院、ネイル、化粧品、エステ、脱毛',
-  '通信費': '携帯電話料金、インターネット回線、プロバイダ',
-  'サブスク': '月額の動画・音楽配信やクラウドサービス（Netflix、Spotify、Amazon プライム会費、iCloud など）',
-  'プレゼント': '贈り物、お祝い、お土産、ご祝儀',
-  '旅行': 'ホテル・旅館などの宿泊、ツアー、旅行予約サイト',
-  'ペット': 'ペットフード、ペット用品、動物病院、トリミング',
-  '貯金': '貯金、積立、投資',
-  'その他': 'どれにも当てはまらない、または店名だけでは判断できないもの',
-};
-
 const TEXT_EXAMPLES = `入力: "ランチ" → {"category":"食費","confidence":0.95}
 入力: "洗剤" → {"category":"日用品","confidence":0.95}
 入力: "電車賃" → {"category":"交通費","confidence":0.95}
@@ -247,12 +225,11 @@ async function categoriesFor(lineId: string): Promise<string[]> {
 
 /** Gemini で分類する。使えない・失敗・一覧に無いカテゴリを返したときは null */
 async function classifyWithGemini(
-  lineId: string,
+  categoryNames: string[],
   description: string,
   source: ClassificationSource
 ): Promise<GeminiClassificationResult | null> {
   if (!isGeminiConfigured()) return null;
-  const categoryNames = await categoriesFor(lineId);
   const parsed = await generateJson<{ category?: unknown; confidence?: unknown }>(
     buildClassificationPrompt(description, categoryNames, source),
     { schema: classificationSchema(categoryNames), timeoutMs: GEMINI_TIMEOUT_MS }
@@ -271,6 +248,18 @@ async function classifyWithGemini(
     confidence: Math.max(0, Math.min(1, confidence)),
     reasoning: 'Gemini classification',
   };
+}
+
+/** モデルで分類する（モデルを差し替える境目）。使えない・失敗・一覧に無いカテゴリのときは null */
+async function classifyWithModels(
+  lineId: string,
+  description: string,
+  source: ClassificationSource
+): Promise<GeminiClassificationResult | null> {
+  // 使えないときは Firestore（カテゴリ一覧）も読まない（従来と同じ順序）
+  if (!isGeminiConfigured()) return null;
+  const categoryNames = await categoriesFor(lineId);
+  return classifyWithGemini(categoryNames, description, source);
 }
 
 /**
@@ -307,8 +296,8 @@ export async function classifyExpenseWithGemini(
   };
 
   if (source === 'merchant') {
-    const gemini = await classifyWithGemini(lineId, description, source);
-    if (gemini) return remember(gemini);
+    const byModel = await classifyWithModels(lineId, description, source);
+    if (byModel) return remember(byModel);
     const local = byKeyword();
     // Gemini が使えなかった結果はキャッシュしない（復旧後に Gemini で判定し直せるように）
     return local ?? { category: null, confidence: 0 };
@@ -316,8 +305,8 @@ export async function classifyExpenseWithGemini(
 
   const local = byKeyword();
   if (local) return remember(local);
-  const gemini = await classifyWithGemini(lineId, description, source);
-  return gemini ? remember(gemini) : { category: null, confidence: 0 };
+  const byModel = await classifyWithModels(lineId, description, source);
+  return byModel ? remember(byModel) : { category: null, confidence: 0 };
 }
 
 /**
