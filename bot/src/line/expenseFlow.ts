@@ -7,6 +7,7 @@
 
 import { findLineGroupId, getUserGroups, getUserSettings, saveExpense } from "../firestore";
 import { classifyExpenseWithGemini } from "../geminiCategoryClassifier";
+import type { GeminiClassificationResult } from "../geminiCategoryClassifier";
 import { getCategoryEmoji } from "../gmail/types";
 import { resolveExpenseGroupScope } from "../expenseGroupScope";
 import { resolveAppUidForExpense } from "../linkUserResolver";
@@ -14,6 +15,7 @@ import { errorMessage, maskId } from "../logSafe";
 import { getPaymentMethodLabel, PaymentMethod } from "../textParser";
 import { getLineClient, replyText, replyWithPushFallback } from "./client";
 import { buildExpenseEditUrl, sendTextExpenseNotification, TextExpenseInfo } from "./flexMessage";
+import type { CategoryOrigin } from "./flexMessage";
 
 // 支出を紐づけるグループを選ぶ。
 //   - LINE グループでの発言: 発言元の LINE グループに紐づくグループだけを返す（無ければ null）。
@@ -108,6 +110,43 @@ async function fetchIndividualProfile(userId: string): Promise<ProfileResult> {
     console.warn("All profile fetch attempts failed for individual chat");
     return { type: "profile", error: new Error("All retries failed"), data: null };
   }
+}
+
+/** 分類の結果を採用する確信度の下限（辞書・Jev・Gemini のどれで決まっても同じ） */
+const CLASSIFY_MIN_CONFIDENCE = 0.4;
+
+/**
+ * LINE の入力のカテゴリと、その判定元（最初のカードの括弧に出す）を決める。
+ *
+ * - 入力でカテゴリを指定していればそれを使う（specified）
+ * - 無ければ分類の結果を確信度 0.4 以上のときだけ採用する（判定元は分類の provider）
+ * - それでも「その他」なら、利用者の既定カテゴリがあればそれにする（default）。無ければ「その他」（unclassified）
+ *
+ * classified は分類が失敗（rejected）したら null、defaultCategory は設定を読めなかったら渡さない。
+ */
+export function decideTextExpenseCategory(input: {
+  specified?: string;
+  classified?: GeminiClassificationResult | null;
+  defaultCategory?: string | null;
+}): { category: string; origin?: CategoryOrigin } {
+  if (input.specified) return { category: input.specified, origin: "specified" };
+
+  let category = "その他";
+  let origin: CategoryOrigin | undefined = "unclassified";
+
+  const classified = input.classified;
+  if (classified && classified.category && classified.confidence >= CLASSIFY_MIN_CONFIDENCE) {
+    category = classified.category;
+    origin = classified.provider;
+  }
+
+  // 分類できない（Jev・Gemini とも失敗し辞書にも無い）または low confidence の場合、ユーザーデフォルトを使用
+  if (category === "その他" && input.defaultCategory) {
+    category = input.defaultCategory;
+    origin = "default";
+  }
+
+  return { category, origin };
 }
 
 export async function processExpenseInBackground(
@@ -282,10 +321,11 @@ export async function processExpenseInBackground(
     // 推定を挟まずそのまま使う。以前は parseTextExpense が返す category を捨てて
     // 説明文（この場合は残りが無いためフォールバックの「支出」）を Gemini に投げており、
     // 低信頼→デフォルトカテゴリへ倒れて毎回カード上で付け直す必要があった。
-    let finalCategory = "その他";
+    // 判定元（categoryOrigin）は最初のカードの括弧に出すだけで、保存しない。
+    let decided: { category: string; origin?: CategoryOrigin };
 
     if (parsed.category) {
-      finalCategory = parsed.category;
+      decided = decideTextExpenseCategory({ specified: parsed.category });
     } else {
       // カテゴリ分類を並列実行（辞書・モデル〔Jev → 失敗時 Gemini〕 + ユーザーデフォルト）
       const [geminiResult, userSettingsResult] = await Promise.allSettled([
@@ -293,22 +333,17 @@ export async function processExpenseInBackground(
         getUserSettings(event.source.userId)
       ]);
 
-      // 分類結果を優先使用（閾値0.4で精度向上）
-      if (geminiResult.status === 'fulfilled') {
-        const result = geminiResult.value;
-        if (result && result.category && result.confidence >= 0.4) {
-          finalCategory = result.category;
-        }
-      }
-
-      // 分類できない（Jev・Gemini とも失敗し辞書にも無い）またはlow confidenceの場合、ユーザーデフォルトを使用
-      if (finalCategory === "その他" && userSettingsResult.status === 'fulfilled') {
-        const userSettings = userSettingsResult.value;
-        if (userSettings?.defaultCategory) {
-          finalCategory = userSettings.defaultCategory;
-        }
-      }
+      // 分類結果を優先使用（閾値0.4で精度向上）。決まらなければユーザーデフォルト（decideTextExpenseCategory）
+      decided = decideTextExpenseCategory({
+        classified: geminiResult.status === 'fulfilled' ? geminiResult.value : null,
+        defaultCategory: userSettingsResult.status === 'fulfilled'
+          ? userSettingsResult.value?.defaultCategory
+          : undefined,
+      });
     }
+
+    const finalCategory = decided.category;
+    const categoryOrigin = decided.origin;
 
     // グループ所属の決定。発言元の LINE グループに紐づくグループの有効なメンバーで
     // なければ lineGroupId も付けず個人支出にする（LINE 集計・精算への混入防止）。
@@ -358,6 +393,8 @@ export async function processExpenseInBackground(
         description: parsed.description,
         amount: parsed.amount,
         category: finalCategory,
+        // 最初のカードだけに出す（保存しない。postback で作り直したカードには出ない）
+        categoryOrigin,
         categoryEmoji: getCategoryEmoji(finalCategory),
         date: parsed.date,
         paymentMethod: parsed.paymentMethod !== 'unknown'
