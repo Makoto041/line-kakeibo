@@ -2,7 +2,7 @@
  * カテゴリ判定（geminiCategoryClassifier）のスモークテスト
  *
  * Gemini API と Firestore は呼ばずに、判定の順序（キーワード辞書と Gemini のどちらを先に使うか）、
- * Gemini が使えないときのフォールバック、プロンプトの中身を検証する。
+ * Gemini が使えないときのフォールバック、プロンプトの中身を検証する（Jev の鍵は消し、Jev は使わない）。
  *   node bot/scripts/smoke-classifier.js
  */
 const geminiClient = require('../dist/geminiClient');
@@ -17,6 +17,9 @@ function check(name, cond, detail) {
     console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`);
   }
 }
+
+// ここでは Jev を使わない（鍵が環境にあっても本物の Jev を呼ばない。Jev → Gemini は smoke-jev-classifier.js）
+delete process.env.TYPESAFE_API_KEY;
 
 // Gemini と Firestore を差し替える（classifier は呼び出し時に exports を参照する）
 let geminiCalls = [];

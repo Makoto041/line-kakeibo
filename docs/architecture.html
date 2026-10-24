@@ -76,14 +76,14 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.7.0 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.8.0 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
       <span class="chip">Web: Next.js 16 on Vercel（PWA）</span>
       <span class="chip">Bot: Firebase Functions gen2 / Node 22</span>
       <span class="chip">Data: Firestore + Cloud Storage</span>
-      <span class="chip">AI: Gemini 3.5 Flash-Lite</span>
+      <span class="chip">AI: Jev（分類）+ Gemini 3.5 Flash-Lite</span>
       <span class="chip">世帯: 2 名固定</span>
     </div>
   </header>
@@ -104,7 +104,9 @@ flowchart LR
   API -->|精算サマリー（手動）| LINE
   WEB -->|読み取り（ルールで制限）| FS[("Firestore")]
   WEB -->|レシート| ST[("Cloud Storage")]
-  WH --> GEM["Gemini"]
+  WH -->|分類| JEV["Jev（TypeSafe AI）"]
+  GM -->|分類| JEV
+  WH --> GEM["Gemini<br/>分類の退避先"]
   GM --> GEM
   WH --> FS
   GM --> FS
@@ -145,7 +147,7 @@ flowchart LR
           <ol>
             <li>「6/29 4800 家賃」を受信、署名を検証</li>
             <li>金額・日付・支払方法・内容を解析</li>
-            <li>カテゴリを分類（下の 3 段）</li>
+            <li>カテゴリを分類（下の 4 段）</li>
             <li>支出を保存し確認カードで返信</li>
             <li>カードの OK / 修正 / 自分が払った / 自分が立替 / 除外で更新</li>
           </ol>
@@ -217,14 +219,15 @@ flowchart LR
   </section>
 
   <section id="classify">
-    <aside><h2>カテゴリ分類</h2><p>LINE の入力は費用のかからない方法から試す。カードの店名は取り違えやすいので Gemini を先に使う。19 カテゴリ。</p></aside>
+    <aside><h2>カテゴリ分類</h2><p>LINE の入力は費用のかからない方法から試す。カードの店名は取り違えやすいのでモデル（Jev → Gemini）を先に使う。19 カテゴリ。</p></aside>
     <div class="body">
       <div class="pipeline">
         <div class="stage"><b>1. キャッシュ</b><span>関数のメモリ上に残っている同じ内容の分類結果を再利用</span><span class="cost">費用 0</span></div>
         <div class="stage"><b>2. キーワード辞書</b><span>「ランチ」→ 食費 など全カテゴリの辞書</span><span class="cost">費用 0</span></div>
-        <div class="stage"><b>3. Gemini</b><span>それでも決まらないものだけ問い合わせ（3.5 Flash-Lite、思考は最小、カテゴリ一覧の中から選ばせる。使うのは Flash-Lite だけ。一番新しい Flash-Lite を自動で選び、終了したら次の Flash-Lite に切り替え）</span><span class="cost">API 呼び出し</span></div>
+        <div class="stage"><b>3. Jev</b><span>それでも決まらないものを TypeSafe AI の Jev に問い合わせ（カテゴリ一覧から 1 つ選ばせる。モデルは jev-1.13.0 に固定、3 秒で打ち切り）</span><span class="cost">API 呼び出し</span></div>
+        <div class="stage"><b>4. Gemini</b><span>Jev が失敗したとき（鍵なし・エラー・タイムアウト・一覧に無いカテゴリ）だけ問い合わせ。信頼度が低いだけでは回さない（3.5 Flash-Lite、思考は最小、カテゴリ一覧の中から選ばせる。使うのは Flash-Lite だけ。一番新しい Flash-Lite を自動で選び、終了したら次の Flash-Lite に切り替え）</span><span class="cost">API 呼び出し</span></div>
       </div>
-      <p>上は LINE の入力（「500 ランチ」の「ランチ」）の順序。<b>カード利用メールの店名</b>（「ｾﾌﾞﾝ-ｲﾚﾌﾞﾝ」「AMAZON.CO.JP」など）は、辞書の部分一致だと「au」「etc」「パン」などが店名の一部に当たって取り違えるため、<b>キャッシュ → Gemini → 辞書</b>の順にしている。Gemini が使えないときは辞書だけで動き、分類できなければ「その他」になる。</p>
+      <p>上は LINE の入力（「500 ランチ」の「ランチ」）の順序。<b>カード利用メールの店名</b>（「ｾﾌﾞﾝ-ｲﾚﾌﾞﾝ」「AMAZON.CO.JP」など）は、辞書の部分一致だと「au」「etc」「パン」などが店名の一部に当たって取り違えるため、<b>キャッシュ → Jev → Gemini → 辞書</b>の順にしている。Jev と Gemini のどちらも使えないときは辞書だけで動き、分類できなければ「その他」になる。失敗した結果はキャッシュしないので、復旧すればモデルで判定し直す。</p>
     </div>
   </section>
 
@@ -238,7 +241,7 @@ flowchart LR
         <li><b>/household API</b>: ID トークンを検証し、世帯メンバーかを確認。レート制限と CORS の許可リストあり。</li>
         <li><b>LINE のボタン</b>: 精算の金額が変わる［自分が払った］［自分が立替］［取り消す］は、世帯の有効メンバーだけが押せる。立替の項目（<code>status</code>・<code>advanceBy</code>・<code>advanceFull</code>）はクライアントから書けない。</li>
         <li><b>世帯は 2 名固定</b>: メンバーの追加・無効化は bot ではなく管理スクリプト <code>scripts/manage-group-members.mjs</code> で行う。</li>
-        <li><b>シークレット</b>: LINE のトークンなどは Secret Manager に置き、関数は宣言した名前だけを読む。</li>
+        <li><b>シークレット</b>: LINE のトークンや Jev・Gemini の API キーなどは Secret Manager に置き、関数は宣言した名前だけを読む（宣言した名前が Secret Manager に無いとデプロイが失敗する）。</li>
       </ul>
     </div>
   </section>

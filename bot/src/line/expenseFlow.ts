@@ -287,13 +287,13 @@ export async function processExpenseInBackground(
     if (parsed.category) {
       finalCategory = parsed.category;
     } else {
-      // カテゴリ分類を並列実行（Gemini + ユーザーデフォルト）
+      // カテゴリ分類を並列実行（辞書・モデル〔Jev → 失敗時 Gemini〕 + ユーザーデフォルト）
       const [geminiResult, userSettingsResult] = await Promise.allSettled([
         classifyExpenseWithGemini(event.source.userId, parsed.description),
         getUserSettings(event.source.userId)
       ]);
 
-      // Gemini結果を優先使用（閾値0.4で精度向上）
+      // 分類結果を優先使用（閾値0.4で精度向上）
       if (geminiResult.status === 'fulfilled') {
         const result = geminiResult.value;
         if (result && result.category && result.confidence >= 0.4) {
@@ -301,7 +301,7 @@ export async function processExpenseInBackground(
         }
       }
 
-      // Geminiが失敗またはlow confidenceの場合、ユーザーデフォルトを使用
+      // 分類できない（Jev・Gemini とも失敗し辞書にも無い）またはlow confidenceの場合、ユーザーデフォルトを使用
       if (finalCategory === "その他" && userSettingsResult.status === 'fulfilled') {
         const userSettings = userSettingsResult.value;
         if (userSettings?.defaultCategory) {

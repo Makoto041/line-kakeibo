@@ -60,6 +60,8 @@ const THRESHOLDS = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
 const usageLog = [];
 
 function setupGemini() {
+  // 本番の分類は Jev を先に呼ぶので、鍵を消して Gemini だけを測る（Jev のクォータも使わない）
+  delete process.env.TYPESAFE_API_KEY;
   // 本番のコードは変えずに、SDK の呼び出しをラップしてトークン数を拾う
   const genai = require('@google/genai');
   const Original = genai.GoogleGenAI;

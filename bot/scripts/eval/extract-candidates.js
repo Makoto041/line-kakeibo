@@ -38,7 +38,8 @@ if (credFile) {
   delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
   console.log('credentials: gcloud application-default');
 }
-// 辞書だけで判定させるため、Gemini は使えない状態にする（キーはこのプロセスの中だけで消す）
+// 辞書だけで判定させるため、Jev と Gemini は使えない状態にする（キーはこのプロセスの中だけで消す）
+delete process.env.TYPESAFE_API_KEY;
 delete process.env.GEMINI_API_KEY;
 
 const { initializeApp } = require('firebase-admin/app');

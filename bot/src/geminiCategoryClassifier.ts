@@ -2,6 +2,7 @@ import { getAllUserCategories, CategoryMaster, UserCustomCategory } from './fire
 import { CANONICAL_CATEGORIES, normalizeCategoryName } from './categoryNormalization';
 import { CATEGORY_GUIDE } from './categoryGuide';
 import { generateJson, isGeminiConfigured, Type, type Schema } from './geminiClient';
+import { classifyWithJev, isJevConfigured } from './jevCategoryClassifier';
 import { maskId } from './logSafe';
 
 export interface GeminiClassificationResult {
@@ -143,6 +144,11 @@ export interface ClassifyOptions {
 }
 
 const GEMINI_TIMEOUT_MS = 8000;
+/**
+ * モデル（Jev・Gemini）に送る文字列の上限（文字数）。分類には支出の内容や店名の先頭で足りる。
+ * 長い入力をそのまま送ると、1 件ごとの入力トークン（費用・無料枠の消費）が入力の長さに比例して増えるため切る
+ */
+const MODEL_INPUT_MAX_CHARS = 100;
 
 const TEXT_EXAMPLES = `入力: "ランチ" → {"category":"食費","confidence":0.95}
 入力: "洗剤" → {"category":"日用品","confidence":0.95}
@@ -250,24 +256,38 @@ async function classifyWithGemini(
   };
 }
 
-/** モデルで分類する（モデルを差し替える境目）。使えない・失敗・一覧に無いカテゴリのときは null */
+/**
+ * モデルで分類する。Jev（メイン）で決まらなかったときだけ Gemini（退避先）を使う。
+ * 「決まらない」は鍵が無い・エラー・タイムアウト・一覧に無いカテゴリのとき。信頼度が低いだけでは Gemini に回さない
+ * （評価で Gemini に回しても正解率が上がらなかったため）。どちらでも決まらなければ null
+ */
 async function classifyWithModels(
   lineId: string,
   description: string,
   source: ClassificationSource
 ): Promise<GeminiClassificationResult | null> {
-  // 使えないときは Firestore（カテゴリ一覧）も読まない（従来と同じ順序）
-  if (!isGeminiConfigured()) return null;
+  // どちらも使えないときは Firestore（カテゴリ一覧）も読まない
+  if (!isJevConfigured() && !isGeminiConfigured()) return null;
+  // 文字単位（サロゲートペアを割らない）で切る
+  const input = Array.from(description).slice(0, MODEL_INPUT_MAX_CHARS).join('');
+  const started = Date.now();
   const categoryNames = await categoriesFor(lineId);
-  return classifyWithGemini(categoryNames, description, source);
+  const jev = await classifyWithJev(categoryNames, input, source);
+  const result = jev ?? (await classifyWithGemini(categoryNames, input, source));
+  if (result) {
+    // どちらで決まったか（Jev の失敗で Gemini に回った割合を見る）。入力・店名・利用者 ID は出さない。
+    // ms はカテゴリ一覧の取得（Firestore。通常は 30 分キャッシュ）を含む分類全体の時間
+    console.log('Category classified', { provider: jev ? 'jev' : 'gemini', source, ms: Date.now() - started });
+  }
+  return result;
 }
 
 /**
- * 支出のカテゴリを判定する（キャッシュ + キーワード辞書 + Gemini）。
+ * 支出のカテゴリを判定する（キャッシュ + キーワード辞書 + Jev → Gemini）。
  *
- * - source='text'（LINE の入力）: キャッシュ → キーワード辞書 → Gemini の順。辞書で決まれば API を呼ばない
- * - source='merchant'（カード利用通知の店名）: キャッシュ → Gemini → キーワード辞書の順。
- *   店名は辞書の部分一致で取り違えやすいため Gemini を優先し、Gemini が使えないときだけ辞書に頼る
+ * - source='text'（LINE の入力）: キャッシュ → キーワード辞書 → Jev → Gemini の順。辞書で決まれば API を呼ばない
+ * - source='merchant'（カード利用通知の店名）: キャッシュ → Jev → Gemini → キーワード辞書の順。
+ *   店名は辞書の部分一致で取り違えやすいためモデルを優先し、どちらも使えないときだけ辞書に頼る
  *
  * どれでも決まらなければ { category: null }（呼び出し側で「その他」にする）。
  */
@@ -299,7 +319,7 @@ export async function classifyExpenseWithGemini(
     const byModel = await classifyWithModels(lineId, description, source);
     if (byModel) return remember(byModel);
     const local = byKeyword();
-    // Gemini が使えなかった結果はキャッシュしない（復旧後に Gemini で判定し直せるように）
+    // モデルが使えなかった結果はキャッシュしない（復旧後にモデルで判定し直せるように）
     return local ?? { category: null, confidence: 0 };
   }
 

@@ -197,18 +197,21 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 正準カテゴリは **19種**（`bot/src/categoryNormalization.ts` / `web/lib/categoryNormalization.ts`）。エイリアス・キーワード・正規表現で表記ゆれを正準化。
 
-分類はキャッシュ・キーワード辞書・Gemini を組み合わせる（`bot/src/geminiCategoryClassifier.ts`）。入力の種類で順序が違う:
+分類はキャッシュ・キーワード辞書・Jev・Gemini を組み合わせる（`bot/src/geminiCategoryClassifier.ts`）。モデルは Jev（TypeSafe AI）がメインで、Gemini は Jev が失敗したときだけ使う。入力の種類で順序が違う:
 
 | 入力 | 順序 | 理由 |
 |---|---|---|
-| LINE のテキスト（`source: 'text'`） | 分類結果キャッシュ（15分）→ キーワード辞書（確信度 0.8）→ Gemini | 「ランチ」のような短い日本語は辞書でほぼ決まり、API を呼ばずに済む |
-| カード利用通知の店名（`source: 'merchant'`、Gmail 取込） | 分類結果キャッシュ → **Gemini** → キーワード辞書（Gemini が使えないときだけ） | 店名は半角カナ・ローマ字・略称が多く、部分一致の辞書は取り違えやすい（例: `au` `gu` `etc` `sim` `パン` が店名の一部に一致する） |
+| LINE のテキスト（`source: 'text'`） | 分類結果キャッシュ（15分）→ キーワード辞書（確信度 0.8）→ Jev → Gemini | 「ランチ」のような短い日本語は辞書でほぼ決まり、API を呼ばずに済む |
+| カード利用通知の店名（`source: 'merchant'`、Gmail 取込） | 分類結果キャッシュ → **Jev → Gemini** → キーワード辞書（どちらも使えないときだけ） | 店名は半角カナ・ローマ字・略称が多く、部分一致の辞書は取り違えやすい（例: `au` `gu` `etc` `sim` `パン` が店名の一部に一致する） |
 
-- **使うモデルは Flash-Lite 系だけ**（Flash 系は無料枠から外れるため）。メインは「利用できる Flash-Lite の安定版のうち一番新しいもの」で、モデル一覧 API で調べて 24 時間キャッシュする（上位の Flash-Lite が出れば自動でメインになる）。予備はその次に新しい Flash-Lite。一覧を取れないときは既知の順（`gemini-3.5-flash-lite` → `gemini-3.1-flash-lite`）。`-preview` / `-image` などの派生と Flash（Lite でないもの）は使わない
+- **Jev**（`bot/src/jevCategoryClassifier.ts`、`@typesafe-ai/sdk`）: System One の `choice` 質問で、カテゴリ一覧（利用者のカスタムカテゴリを含む）から 1 つ選ばせる。選択肢の説明は Gemini と同じ判断基準（`CATEGORY_GUIDE`）で、食費・娯楽だけ Jev 用に書き足したもの。説明の無いカスタムカテゴリは説明なし（`null`）で渡す。モデルは `jev-1.13.0` に固定、3 秒で打ち切り、再試行なし。Jev・Gemini に送るのは入力・店名の先頭 100 文字だけ（費用・無料枠の消費を抑える）
+- Jev が「失敗」したときだけ Gemini に回す。失敗 = 鍵（`TYPESAFE_API_KEY`）が無い・エラー・タイムアウト・一覧に無いカテゴリ。**信頼度が低いだけでは Gemini に回さない**（評価で効果が無かったため）。どちらで決まったかは `Category classified` のログ（`provider`・`source`・`ms`。入力・店名は出さない）で見られる
+- Jev も Gemini と同じく、LINE のテキストでは確信度 0.4 未満なら採用しない（`expenseFlow.ts`。その場合は利用者の既定カテゴリか「その他」）。店名（Gmail 取込）は確信度に関係なく採用する
+- **Gemini（退避先）で使うモデルは Flash-Lite 系だけ**（Flash 系は無料枠から外れるため）。メインは「利用できる Flash-Lite の安定版のうち一番新しいもの」で、モデル一覧 API で調べて 24 時間キャッシュする（上位の Flash-Lite が出れば自動でメインになる）。予備はその次に新しい Flash-Lite。一覧を取れないときは既知の順（`gemini-3.5-flash-lite` → `gemini-3.1-flash-lite`）。`-preview` / `-image` などの派生と Flash（Lite でないもの）は使わない
 - メインが終了・提供停止（404、または「deprecated / no longer available」などの 400・403）になったときは予備の Flash-Lite に自動で切り替え、以後 1 時間はそのインスタンスで予備を直接使う。思考レベルを受け付けない 400 のときは思考の設定なしで同じモデルに送り直す。レート制限（429）やスキーマ誤りでは切り替えない
 - Gemini は `@google/genai` SDK 経由（`bot/src/geminiClient.ts`）。環境変数 `GEMINI_MODEL` でメインを固定できる（Flash-Lite 以外は無視）。思考は `MINIMAL`（フィードバック解析は `LOW`）、8 秒で打ち切り。SDK の再試行は 1 回に抑え、打ち切り時間を超えないようにしている。`GEMINI_MODEL` に 2.5 系を指定した場合は思考の設定を送らない
-- 応答は構造化出力（JSON スキーマで `category` をカテゴリ一覧の enum に限定）。カテゴリ一覧は Firestore から取得し 30 分キャッシュ
-- Gemini が使えなかった店名の結果はキャッシュしない（復旧後に Gemini で判定し直す）
+- Gemini の応答は構造化出力（JSON スキーマで `category` をカテゴリ一覧の enum に限定）。カテゴリ一覧は Firestore から取得し 30 分キャッシュ（Jev と Gemini で同じ一覧を使う）
+- Jev・Gemini の失敗はキャッシュしない（どちらも使えず辞書で決めた店名の結果も、復旧後にモデルで判定し直す）。成功した結果は提供元に関わらずキャッシュする
 
 ユーザーの修正は `categoryFeedback` コレクションに記録される。
 
@@ -330,7 +333,8 @@ Storage: `receipts/{expenseId}/{fileName}` — cross-service rules で支出を�
 | `LINE_CHANNEL_TOKEN` / `LINE_CHANNEL_SECRET` | LINE Messaging API |
 | `LINE_LIFF_CHANNEL_ID` | `/auth/line` での LIFF ID トークン検証（`aud`） |
 | `WEB_ORIGINS` | `/auth/line` と `/household` の CORS 許可オリジン（任意。既定は本番 Vercel と localhost） |
-| `GEMINI_API_KEY` | カテゴリ分類・フィードバック解析 |
+| `TYPESAFE_API_KEY` | カテゴリ分類のメイン（TypeSafe AI の Jev） |
+| `GEMINI_API_KEY` | カテゴリ分類の退避先（Jev が失敗したとき）・フィードバック解析 |
 | `FIREBASE_PROJECT_ID` | 既定 `line-kakeibo-0410` |
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REDIRECT_URI` | Gmail OAuth |
 | `DEFAULT_GROUP_ID` / `LINE_GROUP_ID` | Gmail 自動登録・通知先 |

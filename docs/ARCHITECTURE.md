@@ -1,6 +1,6 @@
 # LINE家計簿 アーキテクチャ概要
 
-最終更新: 2026-09-28（コードベース実装準拠）
+最終更新: 2026-10-24（コードベース実装準拠）
 
 機能仕様は [SPECIFICATION.md](./SPECIFICATION.md)、認証・セキュリティルール・世帯メンバーの運用は [SECURITY_OPERATIONS.md](./SECURITY_OPERATIONS.md)、初期セットアップは [SETUP.md](./SETUP.md) を参照。
 
@@ -38,19 +38,22 @@ flowchart LR
     subgraph External["外部サービス"]
         LMA["LINE Messaging API"]
         LLogin["LINE Login (LIFF)"]
-        Gemini["Gemini 3.5 Flash-Lite"]
+        Jev["TypeSafe AI Jev<br/>(カテゴリ分類のメイン)"]
+        Gemini["Gemini 3.5 Flash-Lite<br/>(分類の退避先・フィードバック解析)"]
         Gmail["Gmail API"]
         GH["GitHub API<br/>(Issue起票)"]
     end
 
     LINE -->|webhook| LMA -->|POST /webhook| webhook
     webhook -->|reply/push Flex| LMA
+    webhook --> Jev
     webhook --> Gemini
     webhook --> GH
     webhook --> FS
     webhook --> Auth
     Gmail -->|push通知| PS --> gmailHandler
     gmailHandler --> Gmail
+    gmailHandler --> Jev
     gmailHandler --> Gemini
     gmailHandler --> FS
     gmailHandler -->|Flex通知| LMA
@@ -102,7 +105,7 @@ flowchart LR
 LINEテキスト → webhook(署名検証)
   → parseTextExpense()（金額必須・日付/支払方法/カテゴリ/摘要を抽出）
   → 並列: プロフィール取得(15分cache) / appUid解決(匿名Auth) / カテゴリ分類
-  → カテゴリ分類: キャッシュ → キーワードマップ → Gemini（確信度≥0.4で採用）
+  → カテゴリ分類: キャッシュ → キーワードマップ → Jev（失敗時のみ Gemini）。確信度≥0.4で採用
   → グループ所属の決定（expenseGroupScope.ts: 発言元 LINE グループに紐づく世帯の有効メンバーなら groupId+lineGroupId、それ以外は個人支出）
   → expenses 保存 (confirmed:false, includeInTotal:false, inputSource:'line_text')
   → 確認Flex返信（現在の設定4行〔支出区分・支払った人・立替・カテゴリ〕＋ボタン / OK / 修正 / レシート添付 / 家計簿一覧を見る）
@@ -116,7 +119,7 @@ LINEテキスト → webhook(署名検証)
 ```text
 SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
   → history API差分取得 → SMBCフィルタ → 利用先/金額/利用日時パース
-  → カテゴリ分類（店名なので Gemini を優先。使えないときだけキーワードマップ）
+  → カテゴリ分類（店名なので Jev → Gemini を優先。どちらも使えないときだけキーワードマップ）
   → Firestoreトランザクションでアトミック保存（status: 'shared'・confirmed: true。自動で入るので要確認にしない）
      （gmailMessageId ＋ date+amount+店舗名の類似+usedAt±1分 の二重チェックで重複排除）
   → LINEグループへFlex通知（テキスト入力と同じ登録・編集カード）
@@ -181,19 +184,30 @@ viewport-fit=cover: ノッチ・ホームバーは env(safe-area-inset-*) で避
 LINE のテキスト（source: 'text'）
   ├─ 1. 結果キャッシュ（関数インスタンスのメモリ内。15分TTL）── ヒット→終了
   ├─ 2. FAST_KEYWORD_MAP（メモリ内・即時・conf 0.8）── ヒット→終了
-  └─ 3. Gemini
+  ├─ 3. Jev ── 成功→終了
+  └─ 4. Gemini（Jev が失敗したときだけ）
 
 カード利用通知の店名（source: 'merchant'、Gmail 取込）
   ├─ 1. 結果キャッシュ ── ヒット→終了
-  ├─ 2. Gemini ── 成功→終了
-  └─ 3. FAST_KEYWORD_MAP（Gemini が使えないときだけ。店名は部分一致で取り違えやすいため後回し）
+  ├─ 2. Jev ── 成功→終了
+  ├─ 3. Gemini（Jev が失敗したときだけ）── 成功→終了
+  └─ 4. FAST_KEYWORD_MAP（Jev・Gemini のどちらも使えないときだけ。店名は部分一致で取り違えやすいため後回し）
 
-Gemini: @google/genai 経由、Flash-Lite 系だけを使う（Flash 系は無料枠外のため。geminiClient.ts）
+Jev の「失敗」= TYPESAFE_API_KEY が無い・エラー・タイムアウト・カテゴリ一覧に無いカテゴリ。信頼度が低いだけでは Gemini に回さない。
+Jev・Gemini の失敗はキャッシュしない。どちらで決まったかは「Category classified」ログの provider（jev / gemini）
+
+Jev: @typesafe-ai/sdk 経由の System One（jevCategoryClassifier.ts）
+  ・モデルは jev-1.13.0 に固定（上げるときは bot/scripts/eval/eval-classifier.js で評価してから）
+  ・3s タイムアウト・再試行なし（失敗したら Gemini に回すほうが早い）
+  ・choice 質問。選択肢はカテゴリ一覧（カスタムカテゴリ含む）、説明は CATEGORY_GUIDE（categoryGuide.ts。食費・娯楽だけ Jev 用に差し替え。説明の無いカスタムカテゴリは null）
+  ・Jev・Gemini に送るのは入力・店名の先頭 100 文字だけ（長い入力でトークンを増やさない）
+
+Gemini（退避先）: @google/genai 経由、Flash-Lite 系だけを使う（Flash 系は無料枠外のため。geminiClient.ts）
   ・メイン = モデル一覧 API で見つかった一番新しい Flash-Lite の安定版（24h キャッシュ。現在 gemini-3.5-flash-lite）
   ・予備 = 次に新しい Flash-Lite（現在 gemini-3.1-flash-lite）。メインが終了・提供停止なら自動で切り替え
   ・GEMINI_MODEL でメインを固定可（Flash-Lite 以外は無視）
   ・思考 MINIMAL・8s タイムアウト・構造化出力（category をカテゴリ一覧の enum に限定）
-  ・候補のカテゴリ一覧は Firestore から読み 30分キャッシュ
+  ・候補のカテゴリ一覧は Firestore から読み 30分キャッシュ（Jev と同じ一覧）
   └─ 出力を categoryNormalization で正準19カテゴリに正規化
 ```
 
@@ -228,7 +242,7 @@ Web のアクセス制御は **LIFF ログイン → Firebase カスタムトー
 - **デプロイの担当**:
   - Web（Vercel）→ **Vercel の Git 連携**が実行する（PR ごとにプレビュー、`master` へのマージで本番）。GitHub Actions 側にデプロイジョブは持たない。ロールバックは Vercel ダッシュボードから
   - Bot / Firestore ルール・インデックス / Storage ルール → `ci-cd.yml` の `deploy-bot`。`master` への push で `bot/**` やルール類に変更があるとき、または `master` 上での `workflow_dispatch`（再デプロイ用）に実行。Storage の cross-service rules に必要な IAM ロールを事前確認し、確認できない場合は `storage` を除外してデプロイする（SECURITY_OPERATIONS.md §4）。成功後に `post-deploy-check` が webhook の `/health` を確認し Slack へ通知
-- **`deploy-bot` の前提**: GitHub の `production-bot` Environment に **`GCP_SA_KEY`**（Firebase プロジェクトのサービスアカウント JSON）が必要。`onRequest({ secrets: [...] })` を使う関数をデプロイするため、Cloud Functions / Cloud Run のデプロイ権限に加えて **Secret Manager の参照権限**も要る。`FIREBASE_PROJECT_ID` は任意（未設定時は `line-kakeibo-0410`）、`SLACK_WEBHOOK_URL` は任意
+- **`deploy-bot` の前提**: GitHub の `production-bot` Environment に **`GCP_SA_KEY`**（Firebase プロジェクトのサービスアカウント JSON）が必要。`onRequest({ secrets: [...] })` を使う関数をデプロイするため、Cloud Functions / Cloud Run のデプロイ権限に加えて **Secret Manager の参照権限**も要る。`secrets` に宣言した名前（`TYPESAFE_API_KEY` など）が Secret Manager に無いとデプロイが失敗するので、新しい Secret を足す PR はマージ前に `firebase functions:secrets:set` で登録しておく。`FIREBASE_PROJECT_ID` は任意（未設定時は `line-kakeibo-0410`）、`SLACK_WEBHOOK_URL` は任意
 - **GitHub Actions**: `ci-cd.yml`（changes → install-deps → lint / build-and-test → security（PR のみ）→ deploy-bot → post-deploy-check）と `pr-checks.yml`（`rules-tests`）。詳細は `.github/README.md`
 - **テスト**: `npm -w web test`（`node --test __tests__/*.test.mjs`）、`npm -w bot test`（ビルド＋スモークスクリプト）、`npm -w bot run test:emulator`（`/household` API と固定費を Firestore / Auth エミュレータで検証）、ルールテスト（上記）。`build-and-test` ジョブが web / bot の `npm test` を実行する
 - **ローカル開発**: `web` は `npm -w web run dev`（:3000）、`bot` は `npm -w bot run dev`（`ts-node-dev`）＋ Firebase Emulator（`NEXT_PUBLIC_USE_FIREBASE_EMULATOR`）。環境変数の準備は [SETUP.md](./SETUP.md)
@@ -252,7 +266,8 @@ line-kakeibo/
 │  │  ├─ webOrigins.ts       # Web オリジンの許可リスト（/auth/line と /household で共用）
 │  │  ├─ adminAuth.ts        # ADMIN_SECRET の定数時間比較
 │  │  ├─ logSafe.ts / time.ts # ログのマスク・JST 日付
-│  │  ├─ geminiCategoryClassifier.ts / categoryGuide.ts / categoryNormalization.ts
+│  │  ├─ geminiCategoryClassifier.ts # カテゴリ分類（キャッシュ・辞書・Jev → Gemini の順序）
+│  │  ├─ jevCategoryClassifier.ts / geminiClient.ts / categoryGuide.ts / categoryNormalization.ts # Jev・Gemini の呼び出し、カテゴリの説明、カテゴリ正規化
 │  │  ├─ linkUserResolver.ts / syncUserLinks.ts
 │  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue
 │  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）

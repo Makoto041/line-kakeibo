@@ -287,7 +287,8 @@ bot/src/
 |-------|------|
 | LINE_CHANNEL_TOKEN | LINE Bot アクセストークン |
 | LINE_CHANNEL_SECRET | LINE チャンネルシークレット |
-| GEMINI_API_KEY | Gemini API キー |
+| TYPESAFE_API_KEY | TypeSafe AI（Jev）の API キー。カテゴリ分類のメイン |
+| GEMINI_API_KEY | Gemini API キー。カテゴリ分類の退避先（Jev が失敗したとき）・フィードバック解析 |
 | FIREBASE_PROJECT_ID | Firebase プロジェクト ID |
 
 ### 8.2 Gmail 連携で追加
