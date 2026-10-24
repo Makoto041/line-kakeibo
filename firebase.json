@@ -9,7 +9,15 @@
         "node_modules",
         ".git",
         "firebase-debug.log",
-        "firebase-debug.*.log"
+        "firebase-debug.*.log",
+        "*.local.json",
+        "**/scripts/eval/results",
+        "kakeibo_service.json",
+        "vision-key.json",
+        "*.b64",
+        "*-debug.log",
+        ".env.local",
+        ".env.production"
       ]
     }
   ],
