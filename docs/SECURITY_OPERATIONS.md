@@ -1,4 +1,4 @@
-# セキュリティ運用メモ（世帯メンバー・ルール・Storage）
+# セキュリティ運用メモ（世帯メンバー・ルール・Storage・外部送信）
 
 家計簿の Web アクセス権は Firestore の `groupMembers/{groupId}_{lineId}` の `isActive == true` で決まる
 （`firestore.rules` / `storage.rules` の両方がこれを見る）。この文書は、その運用と一度だけ必要な設定をまとめる。
@@ -222,3 +222,34 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
 - `receiptUrl` は `https://firebasestorage.googleapis.com/` から始まる URL だけを許可する。ローカルの Storage エミュレータが
   返す URL（`http://127.0.0.1:9199/...`）は拒否されるため、レシート添付の導線を端から端まで確認するときは本番（または
   実バケットのある検証用プロジェクト）で行う。
+
+## 7. 外部への送信（カテゴリ分類）
+
+支出のカテゴリを決めるため、bot は外部の API（TypeSafe AI の Jev）に次のものを送る
+（`bot/src/jevCategoryClassifier.ts`・`bot/src/geminiCategoryClassifier.ts`）。
+
+- 送るもの: 入力の先頭 100 文字、質問文、選択肢、モデル名。
+  - 入力は、LINE のテキストなら金額・日付・支払方法を除いた支出の内容（`textParser.ts` の `description`）、
+    カード利用通知なら店名。
+  - 選択肢は、カテゴリ名（利用者のカスタムカテゴリ名を含む）と、既定のカテゴリの説明（コードに持つ固定の文）。
+    カスタムカテゴリの説明は送らない（説明なしで渡す）。
+- 送らないもの: 利用者 ID・世帯 ID・金額・日付・メール本文。
+- Jev が失敗したとき（SPECIFICATION.md §4）は、同じ入力とカテゴリ一覧（既定のカテゴリの説明つき）を Gemini にも送る（従来どおり）。
+- Jev の接続先とログレベル（`warn`）はコードで固定している（環境変数 `TYPESAFE_BASE_URL` / `TYPESAFE_LOG_LEVEL` では変わらない）。
+  Jev の呼び出しでは、ログに入力・店名・利用者 ID・API の応答本文を出さない（失敗時はエラーの種類と HTTP ステータスだけ）。
+- 鍵（`TYPESAFE_API_KEY`）は Firebase の Secret Manager で管理し、`firebase functions:secrets:set TYPESAFE_API_KEY` で登録する。
+  コード・ログ・`.env.example` に値を書かない。
+
+### 提供元（TypeSafe AI）の扱い
+
+公式の文書の要約に基づく（**原文との照合は未了**。取得日 2026-10-24）。
+
+- サービスは米国でホストされる。
+- API の入力・応答の保持期間と、ログ保存の有無は、公式の記載が見つかっていない。
+- プライバシーポリシーは、入力でモデルの学習・ファインチューニングをしないと書く。一方、利用契約（MCA）は、
+  Telemetry を改善のために無制限に処理できると定める。
+- 早期アクセスで、SLA の記載はない。
+
+出典: https://typesafe.ai/legal/privacy-policy 、https://typesafe.ai/legal/mca 、https://typesafe.ai/legal/data-processing
+
+**未確認事項**: 保持期間・Telemetry の範囲・サブプロセッサ・処理地域。原文と照合したら、この節を更新する。

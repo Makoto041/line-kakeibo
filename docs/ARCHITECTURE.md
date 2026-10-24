@@ -197,7 +197,7 @@ Jev の「失敗」= TYPESAFE_API_KEY が無い・エラー・タイムアウト
 Jev・Gemini の失敗はキャッシュしない。どちらで決まったかは「Category classified」ログの provider（jev / gemini）
 
 Jev: @typesafe-ai/sdk 経由の System One（jevCategoryClassifier.ts）
-  ・モデルは jev-1.13.0 に固定（上げるときは bot/scripts/eval/eval-classifier.js で評価してから）
+  ・モデルは jev-1.13.0 に固定（モデルや SDK の版を上げるときは、評価してから）
   ・3s タイムアウト・再試行なし（失敗したら Gemini に回すほうが早い）
   ・choice 質問。選択肢はカテゴリ一覧（カスタムカテゴリ含む）、説明は CATEGORY_GUIDE（categoryGuide.ts。食費・娯楽だけ Jev 用に差し替え。説明の無いカスタムカテゴリは null）
   ・Jev・Gemini に送るのは入力・店名の先頭 100 文字だけ（長い入力でトークンを増やさない）

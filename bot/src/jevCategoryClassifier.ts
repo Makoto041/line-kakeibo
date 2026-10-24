@@ -7,15 +7,15 @@ import type { ClassificationSource, GeminiClassificationResult } from './geminiC
 /**
  * Jev（TypeSafe AI の System One 決定モデル）によるカテゴリ分類。分類のメイン。
  * 失敗したら呼び出し側（geminiCategoryClassifier.ts）が Gemini に回す。
- * 質問文と選択肢の説明は bot/scripts/eval/eval-classifier.js の v3 で評価したもの（v3 はこのモジュールの値を使う）。
+ * 質問文と選択肢の説明は、評価で選んだもの。
  */
 
 /**
  * モデルは固定する（SDK の既定 jev-latest のように自動で変わる名前は使わない）。
- * 版が変わると分類の傾向も変わるため、上げるときは eval-classifier.js で評価してから変える
+ * 版が変わると分類の傾向も変わるため、モデルや SDK の版を上げるときは評価してから変える
  */
 export const JEV_MODEL = 'jev-1.13.0';
-// 打ち切り時間。LINE の返信がこの分遅れ、失敗時はさらに Gemini（最大 8 秒）を待つので短くする。
+// 打ち切り時間。LINE の返信とカード利用通知がこの分遅れ、失敗時はさらに Gemini（最大 8 秒）を待つので短くする。
 // 再試行しない（待って再試行するより Gemini に回すほうが早い）
 const JEV_TIMEOUT_MS = 3000;
 
