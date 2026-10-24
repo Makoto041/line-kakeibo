@@ -38,16 +38,27 @@ export default function PrivacyPolicy() {
           </section>
 
           <section>
-            <h2 className="mb-2 text-base font-semibold text-fg">4. データの保護</h2>
-            <p>お客様のデータは、Firebase/Google Cloudの安全なインフラストラクチャで保護されています。</p>
+            <h2 className="mb-2 text-base font-semibold text-fg">4. 外部のAIサービスへの送信</h2>
+            <p>支出のカテゴリを自動で判定するため、以下の情報を外部のAIサービス（Google Gemini API、およびTypeSafe AI）に送信します：</p>
+            <ul className="list-disc list-inside mt-2 space-y-1">
+              <li>LINEで送られた支出の内容の一部（先頭100文字まで）</li>
+              <li>カード利用通知メールに記載された店名</li>
+              <li>カテゴリ名（追加したカテゴリ名を含む）</li>
+            </ul>
+            <p className="mt-2">LINEのユーザーID・表示名は送信しません。送信先での取り扱いは、各社の規約に従います。</p>
           </section>
 
           <section>
-            <h2 className="mb-2 text-base font-semibold text-fg">5. お問い合わせ</h2>
+            <h2 className="mb-2 text-base font-semibold text-fg">5. データの保護</h2>
+            <p>本アプリケーションが保存するデータは、Firebase/Google Cloudの安全なインフラストラクチャで保護されています（前項の外部のAIサービスへの送信を除く）。</p>
+          </section>
+
+          <section>
+            <h2 className="mb-2 text-base font-semibold text-fg">6. お問い合わせ</h2>
             <p>プライバシーに関するお問い合わせは、LINEボットを通じてご連絡ください。</p>
           </section>
 
-          <p className="mt-8 text-sm text-muted">最終更新日: 2024年1月</p>
+          <p className="mt-8 text-sm text-muted">最終更新日: 2026年10月24日</p>
         </div>
       </div>
     </div>
