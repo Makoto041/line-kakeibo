@@ -5,7 +5,7 @@
  *   node bot/scripts/eval/eval-classifier.js --provider gemini
  *
  * オプション:
- *   --provider gemini            評価する分類器（gemini = いまの本番の分類処理そのもの）
+ *   --provider gemini            評価する分類器（gemini = 本番の分類処理から Jev を外したもの。キャッシュ・辞書・Gemini。TYPESAFE_API_KEY を消して呼ぶ）
  *   --source text|merchant|all   評価する経路（既定 all）
  *   --limit N                    各経路の先頭 N 件だけ（試運転用）
  *   --delay-ms N                 1 件ごとに N ミリ秒待つ（Gemini の無料枠の 429 を避ける。既定 4000。待ちは計測に含めない）
@@ -60,6 +60,8 @@ const THRESHOLDS = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
 const usageLog = [];
 
 function setupGemini() {
+  // 本番の分類は Jev を先に呼ぶので、鍵を消して Gemini だけを測る（Jev のクォータも使わない）
+  delete process.env.TYPESAFE_API_KEY;
   // 本番のコードは変えずに、SDK の呼び出しをラップしてトークン数を拾う
   const genai = require('@google/genai');
   const Original = genai.GoogleGenAI;

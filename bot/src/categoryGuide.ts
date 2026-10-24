@@ -1,4 +1,4 @@
-/** 各カテゴリの判断基準（プロンプト用）。CANONICAL_CATEGORIES にあるものは全て説明する */
+/** 各カテゴリの判断基準。Gemini のプロンプトと Jev の選択肢の説明に使う。CANONICAL_CATEGORIES にあるものは全て説明する */
 export const CATEGORY_GUIDE: Record<string, string> = {
   '食費': '食材、外食、カフェ、コンビニ・スーパーでの買い物、飲み物、デリバリー',
   '交通費': '電車、バス、タクシー、新幹線、ガソリン、駐車場、高速料金(ETC)、レンタカー',

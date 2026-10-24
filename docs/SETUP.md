@@ -12,6 +12,7 @@
 | CLI | `firebase-tools`（Functions / ルールのデプロイ、エミュレータ）、`gcloud`（IAM・管理スクリプトの認証） |
 | Firebase | プロジェクト `line-kakeibo-0410`（Firestore / Storage / Authentication / Functions gen2） |
 | LINE Developers | Messaging API チャネル（bot）と LINE Login チャネル（LIFF。Web のログイン用） |
+| TypeSafe AI | API キー（Jev。カテゴリ分類のメイン。§4「Jev（TypeSafe AI）」） |
 | Gemini | API キー（[Google AI Studio](https://aistudio.google.com/app/apikey)） |
 | Vercel | プロジェクト `line-kakeibo`（Git 連携でデプロイ） |
 | Gmail 自動取込（任意） | Google Cloud の OAuth クライアントと Pub/Sub。詳細は [GMAIL_AUTO_SPEC.md](GMAIL_AUTO_SPEC.md) |
@@ -52,7 +53,8 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 | `LINE_CHANNEL_SECRET` / `LINE_CHANNEL_TOKEN` | Messaging API チャネルのシークレットと長期アクセストークン |
 | `LINE_LIFF_CHANNEL_ID` | LINE Login チャネルの ID（`/auth/line` で ID トークンの `aud` を検証する） |
 | `ADMIN_SECRET` | 管理 API（`/gmail/*`）の Bearer トークン |
-| `GEMINI_API_KEY` | カテゴリ分類・フィードバック解析 |
+| `TYPESAFE_API_KEY` | カテゴリ分類のメイン（TypeSafe AI の Jev） |
+| `GEMINI_API_KEY` | カテゴリ分類の退避先（Jev が失敗したとき）・フィードバック解析 |
 | `GEMINI_MODEL` | 任意。メインのモデルを固定する（Flash-Lite のみ。未設定なら利用できる一番新しい Flash-Lite） |
 | `GITHUB_TOKEN` | 「要望 / 不具合」からの Issue 自動起票 |
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REDIRECT_URI` | Gmail 自動取込の OAuth |
@@ -86,12 +88,26 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
   firebase functions:secrets:prune --project line-kakeibo-0410                       # 参照されていない古い版を消す
   ```
 
+### Jev（TypeSafe AI）
+
+カテゴリ分類のメイン。API キーを `TYPESAFE_API_KEY` に入れる（本番は `firebase functions:secrets:set TYPESAFE_API_KEY`。
+関数の `secrets` に宣言しているので、Secret Manager に無いとデプロイが失敗する）。モデルは `jev-1.13.0` に固定している
+（`bot/src/jevCategoryClassifier.ts`）。鍵なし・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリのときは Gemini で分類する。
+
+**止めるとき（ロールバック）**: Jev を導入したコミットを `revert:` の PR で戻す（patch のタグが付く）。これを推奨する。
+環境変数などで切り替える仕組みは無い。鍵を無効な値に差し替えて再デプロイ（`ci-cd.yml` を master 上で `workflow_dispatch`）すれば Gemini に回るが、
+毎回失敗のログと 401 が出るので推奨しない（Firebase の Secret は、新しい版を入れても再デプロイするまで反映されない）。
+Secret `TYPESAFE_API_KEY` は消さない。コードが参照している間に消すと新しいインスタンスの起動に失敗する可能性があり、`secrets` に宣言したまま無ければデプロイが失敗する。
+revert 後に Secret が残っていても害はない。`firebase functions:secrets:prune` は、revert のデプロイが済んでから実行する。
+初回のマージ前に `firebase functions:secrets:prune` を実行しない（まだどの関数も参照していない版が対象になりうる）。
+
 ### Gemini
 
-API キーを `GEMINI_API_KEY` に入れる。モデルは **Flash-Lite 系だけ**を使い（Flash 系は無料枠から外れるため）、
+API キーを `GEMINI_API_KEY` に入れる。カテゴリ分類の退避先（Jev が失敗したとき）とフィードバック解析に使う。
+モデルは **Flash-Lite 系だけ**を使い（Flash 系は無料枠から外れるため）、
 利用できる一番新しい Flash-Lite を自動で選ぶ（現在は `gemini-3.5-flash-lite`、予備は `gemini-3.1-flash-lite`。`bot/src/geminiClient.ts`）。
 環境変数 `GEMINI_MODEL` でメインを固定できる（Flash-Lite 以外の名前は無視する）。
-分類の順序は入力の種類で違い、Gmail の店名は Gemini を優先する（SPECIFICATION.md §4）。Gemini が使えないときは辞書だけで動く。
+分類の順序は入力の種類で違い、Gmail の店名は辞書より Jev → Gemini を優先する（SPECIFICATION.md §4）。Jev と Gemini のどちらも使えないときは辞書だけで動く。
 
 ### Vercel
 

@@ -57,8 +57,8 @@ export const webhook = onRequest(
     // メモリは据え置き（下げる場合はコールドスタート時の使用量を計測してから）。
     memory: "512MiB",
     // 1 回の配信に含まれるイベントは直列に処理して待つ。1 イベントの最悪ケースは
-    // プロフィール取得のリトライ（最大 ~30 秒）+ Gemini 分類（8 秒で打ち切り）+ Firestore
-    // + 返信で ~40 秒。LINE API 劣化時に数イベントの配信が来ても途中で打ち切られて
+    // プロフィール取得のリトライ（最大 ~30 秒）+ カテゴリ分類（Jev 3 秒 + 失敗時の Gemini 8 秒で打ち切り）
+    // + Firestore + 返信で ~45 秒。LINE API 劣化時に数イベントの配信が来ても途中で打ち切られて
     // 残りのイベントが保存されない、ということが無いよう 300 秒の余裕を持たせる
     // （540 秒はハング時の課金を 9 分まで伸ばすだけなので下げる）。
     timeoutSeconds: 300,
@@ -67,7 +67,8 @@ export const webhook = onRequest(
     maxInstances: 10,
     invoker: "public",
     // GITHUB_TOKEN: LINEフィードバックGitHub Issue自動作成に使用（issueCreator）。
-    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "GITHUB_TOKEN"],
+    // TYPESAFE_API_KEY: カテゴリ分類のメイン（Jev）。GEMINI_API_KEY は分類の退避先とフィードバック解析。
+    secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "TYPESAFE_API_KEY", "GEMINI_API_KEY", "GITHUB_TOKEN"],
   },
   app
 );
@@ -114,6 +115,7 @@ export const gmailPubSubHandler = onMessagePublished(
     secrets: [
       "LINE_CHANNEL_TOKEN",
       "LINE_CHANNEL_SECRET",
+      "TYPESAFE_API_KEY",
       "GEMINI_API_KEY",
       "GMAIL_CLIENT_ID",
       "GMAIL_CLIENT_SECRET",
@@ -205,7 +207,7 @@ gmailApp.use("/auth", authRouter);
 gmailApp.use("/household", householdRouter, householdErrorHandler);
 
 // Gmail API を Firebase Functions としてエクスポート（LINE webhook とは分離）
-// LINE通知を送信するためLINE認証情報、カテゴリ分類のためGEMINI_API_KEYも必要
+// LINE通知を送信するためLINE認証情報、カテゴリ分類のためTYPESAFE_API_KEY（Jev）とGEMINI_API_KEY（退避先）も必要
 // LINE_LIFF_CHANNEL_ID は /auth/line の ID トークン検証に使用
 export const api = onRequest(
   {
@@ -213,7 +215,7 @@ export const api = onRequest(
     // 管理 API と LIFF ログイン用。cpu 未指定（1 vCPU 未満）のため同時実行は 1/インスタンスで、
     // 同時に処理できるリクエストは最大 5（家計簿の利用規模では十分）。
     maxInstances: 5,
-    secrets: ["ADMIN_SECRET", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "GEMINI_API_KEY", "LINE_LIFF_CHANNEL_ID"],
+    secrets: ["ADMIN_SECRET", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "TYPESAFE_API_KEY", "GEMINI_API_KEY", "LINE_LIFF_CHANNEL_ID"],
   },
   gmailApp
 );

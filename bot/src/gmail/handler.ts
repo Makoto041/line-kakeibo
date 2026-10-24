@@ -246,7 +246,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       return;
     }
 
-    // カテゴリを判定（店名なので Gemini を優先。geminiCategoryClassifier.ts 参照）
+    // カテゴリを判定（店名なので辞書よりモデル〔Jev → 失敗時 Gemini〕を優先。geminiCategoryClassifier.ts 参照）
     const categoryResult = await classifyExpenseWithGemini(
       GMAIL_SYSTEM_LINE_ID,
       parsed.merchant,
@@ -470,7 +470,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
       };
     }
 
-    // カテゴリを判定（店名なので Gemini を優先。geminiCategoryClassifier.ts 参照）
+    // カテゴリを判定（店名なので辞書よりモデル〔Jev → 失敗時 Gemini〕を優先。geminiCategoryClassifier.ts 参照）
     const categoryResult = await classifyExpenseWithGemini(
       GMAIL_SYSTEM_LINE_ID,
       parsed.merchant,

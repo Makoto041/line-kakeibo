@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 LINE にメッセージを送るだけで支出を記録できる、ふたり暮らし向けの家計簿アプリです。
-`500 ランチ` のようなテキストを送ると Gemini がカテゴリを自動分類して登録し、クレジットカードの利用通知メールも自動で取り込みます。
+`500 ランチ` のようなテキストを送ると AI がカテゴリを自動分類して登録し、クレジットカードの利用通知メールも自動で取り込みます。
 Web では予算の進捗、支出の確認・編集、ふたりの精算、家賃・光熱費などの固定費を扱います。
 
 > 📖 機能仕様は [docs/SPECIFICATION.md](docs/SPECIFICATION.md)、システム構成は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)、
@@ -23,7 +23,7 @@ Web では予算の進捗、支出の確認・編集、ふたりの精算、家�
 
 ### 集計と精算
 
-- 🤖 **AI カテゴリ分類**: キャッシュ・キーワード辞書・Gemini（Flash-Lite 系のみ。現在 3.5 Flash-Lite）を組み合わせ、コストを抑えつつ 19 カテゴリに分類
+- 🤖 **AI カテゴリ分類**: キャッシュ・キーワード辞書・Jev（TypeSafe AI）を組み合わせ、コストを抑えつつ 19 カテゴリに分類。Jev が失敗したときは Gemini（Flash-Lite 系のみ。現在 3.5 Flash-Lite）に回す
 - 📈 **ホーム**: 月次の支出・予算の進捗・カテゴリ別・日別推移・前月比。要確認の支出があれば案内
 - 🧾 **支出**: すべて / 要確認 / 立替 の絞り込み、検索、確認ボタン（LINE の OK と同じ処理）
 - 🤝 **精算**: 期間の支出を折半して「誰が誰にいくら送金するか」を出す。誰が払ったかは支出の「支払った人」で数え、立替は折半せず全額をその期間の精算に加算する。毎月の起算日に LINE グループへ精算額を通知（設定から今すぐ送ることもできる）
@@ -57,7 +57,8 @@ flowchart LR
     LINE["LINE アプリ"] -->|webhook| Bot["Firebase Functions gen2<br/>(bot/ Node.js 22 + Express)"]
     Gmail["Gmail API"] -->|Pub/Sub push| Bot
     Cron["Cloud Scheduler"] -->|固定費の計上 / watch 更新| Bot
-    Bot --> Gemini["Gemini 3.5 Flash-Lite"]
+    Bot -->|カテゴリ分類| Jev["Jev（TypeSafe AI）"]
+    Bot -->|分類の退避先 / フィードバック解析| Gemini["Gemini 3.5 Flash-Lite"]
     Bot --> FS[("Firestore")]
     Browser["ブラウザ /<br/>LINE 内ブラウザ (LIFF)"] --> Web["Next.js 16 (web/)<br/>Vercel"]
     Web -->|LIFF → カスタムトークン| Bot
@@ -77,7 +78,7 @@ flowchart LR
 | Frontend | Next.js 16（App Router）+ React 19 + TypeScript + Tailwind CSS 4 + Recharts + framer-motion |
 | Backend | Node.js 22 + TypeScript + Express 5 + `@line/bot-sdk` v11（Firebase Functions gen2） |
 | Data | Firestore + Cloud Storage（ルールでアクセス制御） |
-| AI | Gemini 3.5 Flash-Lite（`@google/genai`。カテゴリ分類・フィードバック解析） |
+| AI | Jev（TypeSafe AI、`@typesafe-ai/sdk`。カテゴリ分類）+ Gemini 3.5 Flash-Lite（`@google/genai`。分類の退避先・フィードバック解析） |
 | 外部連携 | LINE Messaging API / LIFF / Gmail API + Pub/Sub / GitHub API |
 | Hosting / CI | Vercel（Web）+ Firebase（Bot・ルール）/ GitHub Actions |
 
@@ -112,7 +113,7 @@ npm -w web run dev                # http://localhost:3000
 npm -w bot run dev
 ```
 
-外部サービス（LINE / Firebase / Gemini / Vercel）の設定と本番のシークレットの扱いは [docs/SETUP.md](docs/SETUP.md) を参照。
+外部サービス（LINE / Firebase / TypeSafe AI / Gemini / Vercel）の設定と本番のシークレットの扱いは [docs/SETUP.md](docs/SETUP.md) を参照。
 
 ## 🔧 開発
 

@@ -1,6 +1,6 @@
 # LINE家計簿（ぶちこむ家計簿）機能仕様書
 
-最終更新: 2026-09-28（コードベース実装準拠）
+最終更新: 2026-10-24（コードベース実装準拠）
 
 > 本書はリポジトリの**現行実装**をリバースエンジニアリングしてまとめた仕様書です。実際のコードを正とします。
 > システム構成・技術選定は [ARCHITECTURE.md](./ARCHITECTURE.md)、認証・ルール・世帯メンバーの運用は [SECURITY_OPERATIONS.md](./SECURITY_OPERATIONS.md) を参照してください。
@@ -52,18 +52,18 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | 金額 | `^\d+円?$`（カンマ許容） | ✅ | `500` `1,200円` |
 | 日付 | `YYYY-MM-DD` / `M/D` / `MM/DD` / `M月D日` | −（省略時は当日） | `6/29` `6月29日` |
 | 支払方法 | 現金/げんきん/キャッシュ→`cash`、paypay/ペイペイ→`paypay`、カード/クレカ/クレジット→`card` | −（省略時 `unknown`） | `現金` |
-| カテゴリ | 正準19カテゴリ名と完全一致（※パーサは抽出するが**現行の登録処理では未使用** — §2.3参照） | − | `食費` |
+| カテゴリ | `textParser.ts` の `VALID_CATEGORIES` と完全一致したときだけ、分類より優先して使う（§2.3参照）。正準19カテゴリとは別のリストで、`娯楽費` `衣服費` `医療費` `教育費` `貯蓄` `投資` `趣味` `交際費` などを含み、`娯楽` `衣服` `医療・健康` `教育` `サブスク` `旅行` `プレゼント` `貯金` は含まない | − | `食費` |
 | 摘要 | 残りトークンを結合 | −（省略時 `支出`） | `ランチ` |
 
 入力例: `500 ランチ` / `6/29 4800 家賃` / `1500 現金 ドラッグストア`
 
-> ⚠️ **カテゴリトークンは現状指定しても反映されない**: `parseTextExpense()` はカテゴリを抽出するものの、登録処理（`processExpenseInBackground`）は `parsed.category` を参照せず、常に Gemini 分類／ユーザーデフォルトからカテゴリを決定します。カテゴリの変更は登録後の「カテゴリ変更」ボタンで行います。
+> **カテゴリトークンを指定すると、そのカテゴリで登録する**: 登録処理（`processExpenseInBackground`）は `parsed.category` があればそのまま使い、分類（§4）は呼びません。指定が無いときは、分類（辞書 → Jev → Gemini）の結果かユーザーデフォルトからカテゴリを決定します。カテゴリの変更は登録後の「カテゴリ変更」ボタンで行います。
 
 ### 2.3 支出登録フロー（`processExpenseInBackground`, `bot/src/line/expenseFlow.ts`)
 
 1. LINE プロフィール取得（リトライ＋15分メモリキャッシュ）
 2. `appUid` 解決（LINE userId → Firebase Auth 匿名ユーザーを作成/取得。`linkUserResolver.ts`）
-3. カテゴリ分類（§4）とユーザーデフォルトカテゴリを並列取得。Gemini の確信度 ≥ 0.4 なら採用、なければデフォルト、それも無ければ `その他`
+3. カテゴリの決定: カテゴリトークン（§2.2）があればそれを使う。無ければカテゴリ分類（§4。辞書 → Jev → Gemini）とユーザーデフォルトカテゴリを並列取得し、分類結果の確信度 ≥ 0.4 なら採用（辞書・Jev・Gemini のどれで決まっても同じ閾値）、なければデフォルト、それも無ければ `その他`
 4. グループ所属の決定（`expenseGroupScope.ts`）: 発言元の LINE グループに紐づく世帯（`groups.lineGroupId` が一致）の有効メンバーなら `groupId` と `lineGroupId` を付ける。それ以外（第三者・脱退済み・紐づく世帯なし）は**どちらも付けず個人支出**として保存し、Web 一覧にも LINE の集計・精算にも入れない
 5. `expenses` に保存（`confirmed: false`, `includeInTotal: false`, `inputSource: 'line_text'`）
 6. 確認用 Flex メッセージを送信（§2.4 の登録・編集カード）
@@ -153,7 +153,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 ### 3.1 Gmail 連携（三井住友カード利用通知）
 
 - Gmail API（`gmail.readonly` スコープのみ）＋ **Pub/Sub push 通知**（topic: `gmail-notifications`）
-- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → Gemini でカテゴリ分類 → **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 4 行＋ボタン）
+- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → カテゴリ分類（§4。Jev → Gemini → 辞書。確信度に関係なく採用）→ **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 4 行＋ボタン）
 - 保存フィールド: `lineId`/`payerId` はシステムユーザー `gmail-auto-system`、`inputSource: 'gmail_auto'`, `status: 'shared'`, `confirmed: true`（自動で入るので要確認にしない）, `includeInTotal: true`, `usedAt`（カード利用日時）、`groupId`（`DEFAULT_GROUP_ID`）/ `lineGroupId`（`LINE_GROUP_ID`）
 - watch は7日で失効するため、**6日ごとの cron**（`renewGmailWatch`）で更新
 - 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。認証は `ADMIN_SECRET` を **`Authorization: Bearer` ヘッダーでのみ**受け付け、定数時間で比較する（`requireAdminAuth`）＋レートリミット（OAuth callback のみ CSRF state 検証）。`?adminSecret=` クエリ渡しはアクセスログ等に秘密値が残るため廃止した。詳細は [GMAIL_AUTO_SPEC.md](./GMAIL_AUTO_SPEC.md)
@@ -197,18 +197,21 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 正準カテゴリは **19種**（`bot/src/categoryNormalization.ts` / `web/lib/categoryNormalization.ts`）。エイリアス・キーワード・正規表現で表記ゆれを正準化。
 
-分類はキャッシュ・キーワード辞書・Gemini を組み合わせる（`bot/src/geminiCategoryClassifier.ts`）。入力の種類で順序が違う:
+分類はキャッシュ・キーワード辞書・Jev・Gemini を組み合わせる（`bot/src/geminiCategoryClassifier.ts`）。モデルは Jev（TypeSafe AI）がメインで、Gemini は Jev が失敗したときだけ使う。入力の種類で順序が違う:
 
 | 入力 | 順序 | 理由 |
 |---|---|---|
-| LINE のテキスト（`source: 'text'`） | 分類結果キャッシュ（15分）→ キーワード辞書（確信度 0.8）→ Gemini | 「ランチ」のような短い日本語は辞書でほぼ決まり、API を呼ばずに済む |
-| カード利用通知の店名（`source: 'merchant'`、Gmail 取込） | 分類結果キャッシュ → **Gemini** → キーワード辞書（Gemini が使えないときだけ） | 店名は半角カナ・ローマ字・略称が多く、部分一致の辞書は取り違えやすい（例: `au` `gu` `etc` `sim` `パン` が店名の一部に一致する） |
+| LINE のテキスト（`source: 'text'`） | 分類結果キャッシュ（15分）→ キーワード辞書（確信度 0.8）→ Jev → Gemini | 「ランチ」のような短い日本語は辞書でほぼ決まり、API を呼ばずに済む |
+| カード利用通知の店名（`source: 'merchant'`、Gmail 取込） | 分類結果キャッシュ → **Jev → Gemini** → キーワード辞書（どちらも使えないときだけ） | 店名は半角カナ・ローマ字・略称が多く、部分一致の辞書は取り違えやすい（例: `au` `gu` `etc` `sim` `パン` が店名の一部に一致する） |
 
-- **使うモデルは Flash-Lite 系だけ**（Flash 系は無料枠から外れるため）。メインは「利用できる Flash-Lite の安定版のうち一番新しいもの」で、モデル一覧 API で調べて 24 時間キャッシュする（上位の Flash-Lite が出れば自動でメインになる）。予備はその次に新しい Flash-Lite。一覧を取れないときは既知の順（`gemini-3.5-flash-lite` → `gemini-3.1-flash-lite`）。`-preview` / `-image` などの派生と Flash（Lite でないもの）は使わない
+- **Jev**（`bot/src/jevCategoryClassifier.ts`、`@typesafe-ai/sdk`）: System One の `choice` 質問で、カテゴリ一覧（利用者のカスタムカテゴリを含む）から 1 つ選ばせる。選択肢の説明は Gemini と同じ判断基準（`CATEGORY_GUIDE`）で、食費・娯楽だけ Jev 用に書き足したもの。説明の無いカスタムカテゴリは説明なし（`null`）で渡す。モデルは `jev-1.13.0` に固定、3 秒で打ち切り、再試行なし。Jev・Gemini に送るのは入力・店名の先頭 100 文字だけ（費用・無料枠の消費を抑える）
+- Jev が「失敗」したときだけ Gemini に回す。失敗 = 鍵なし（`TYPESAFE_API_KEY` が無い）・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリ。**信頼度が低いだけでは Gemini に回さない**（評価で効果が無かったため）。どちらで決まったかは `Category classified` のログ（`provider`・`source`・`ms`。入力・店名は出さない）で見られる
+- Jev も Gemini と同じく、LINE のテキストでは確信度 0.4 未満なら採用しない（`expenseFlow.ts`。その場合は利用者の既定カテゴリか「その他」）。店名（Gmail 取込）は確信度に関係なく採用する
+- **Gemini（退避先）で使うモデルは Flash-Lite 系だけ**（Flash 系は無料枠から外れるため）。メインは「利用できる Flash-Lite の安定版のうち一番新しいもの」で、モデル一覧 API で調べて 24 時間キャッシュする（上位の Flash-Lite が出れば自動でメインになる）。予備はその次に新しい Flash-Lite。一覧を取れないときは既知の順（`gemini-3.5-flash-lite` → `gemini-3.1-flash-lite`）。`-preview` / `-image` などの派生と Flash（Lite でないもの）は使わない
 - メインが終了・提供停止（404、または「deprecated / no longer available」などの 400・403）になったときは予備の Flash-Lite に自動で切り替え、以後 1 時間はそのインスタンスで予備を直接使う。思考レベルを受け付けない 400 のときは思考の設定なしで同じモデルに送り直す。レート制限（429）やスキーマ誤りでは切り替えない
 - Gemini は `@google/genai` SDK 経由（`bot/src/geminiClient.ts`）。環境変数 `GEMINI_MODEL` でメインを固定できる（Flash-Lite 以外は無視）。思考は `MINIMAL`（フィードバック解析は `LOW`）、8 秒で打ち切り。SDK の再試行は 1 回に抑え、打ち切り時間を超えないようにしている。`GEMINI_MODEL` に 2.5 系を指定した場合は思考の設定を送らない
-- 応答は構造化出力（JSON スキーマで `category` をカテゴリ一覧の enum に限定）。カテゴリ一覧は Firestore から取得し 30 分キャッシュ
-- Gemini が使えなかった店名の結果はキャッシュしない（復旧後に Gemini で判定し直す）
+- Gemini の応答は構造化出力（JSON スキーマで `category` をカテゴリ一覧の enum に限定）。カテゴリ一覧は Firestore から取得し 30 分キャッシュ（Jev と Gemini で同じ一覧を使う）
+- Jev・Gemini の失敗はキャッシュしない（どちらも使えず辞書で決めた店名の結果も、復旧後にモデルで判定し直す）。成功した結果は提供元に関わらずキャッシュする
 
 ユーザーの修正は `categoryFeedback` コレクションに記録される。
 
@@ -330,7 +333,8 @@ Storage: `receipts/{expenseId}/{fileName}` — cross-service rules で支出を�
 | `LINE_CHANNEL_TOKEN` / `LINE_CHANNEL_SECRET` | LINE Messaging API |
 | `LINE_LIFF_CHANNEL_ID` | `/auth/line` での LIFF ID トークン検証（`aud`） |
 | `WEB_ORIGINS` | `/auth/line` と `/household` の CORS 許可オリジン（任意。既定は本番 Vercel と localhost） |
-| `GEMINI_API_KEY` | カテゴリ分類・フィードバック解析 |
+| `TYPESAFE_API_KEY` | カテゴリ分類のメイン（TypeSafe AI の Jev） |
+| `GEMINI_API_KEY` | カテゴリ分類の退避先（Jev が失敗したとき）・フィードバック解析 |
 | `FIREBASE_PROJECT_ID` | 既定 `line-kakeibo-0410` |
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REDIRECT_URI` | Gmail OAuth |
 | `DEFAULT_GROUP_ID` / `LINE_GROUP_ID` | Gmail 自動登録・通知先 |
