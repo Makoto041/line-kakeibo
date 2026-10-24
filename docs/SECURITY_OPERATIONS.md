@@ -248,6 +248,7 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
   コード・ログ・`.env.example` に値を書かない。止めるときの手順は SETUP.md §4「Jev（TypeSafe AI）」。
 - 開発者の手元で評価スクリプト（`bot/scripts/eval/eval-classifier.js --provider jev`）を実行するときは、評価データ（実際の支出の説明文・店名。
   リポジトリには含めない）を、先頭 100 文字に切らずに Jev に送る。接続先とログレベルは本番と同じ値に固定している。
+  階層化の評価（`--scheme stage2`）は 1 件につき最大 2 回（2 回目は中項目を選ばせる要求）送る。`--scheme stage2|flat` は Gemini には送らない。
   `--provider gemini` でも、評価データを本番の処理を通して（先頭 100 文字に切って）Gemini に送る。評価用の Gemini の鍵は、
   本番と別の Google プロジェクトのものを使う（過去に本番の無料枠を使い切った）。
 
