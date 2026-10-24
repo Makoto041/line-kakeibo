@@ -259,7 +259,7 @@ line-kakeibo/
 │  │  ├─ line/               # webhookApp.ts（署名検証・イベント振り分け・/health）/ textMessage.ts / commands/*.ts（家計簿・要望・カテゴリー・グループ・立替/精算〔期間の折半の案内だけ〕）
 │  │  │                      # / expenseFlow.ts（テキスト入力の支出登録）/ groupEvents.ts / client.ts（LINE クライアント・返信）/ flexMessage.ts / postback.ts
 │  │  └─ gmail/              # auth.ts / watch.ts / parser.ts / handler.ts / types.ts / adminRouter.ts（/gmail/* 管理 API）/ index.ts
-│  ├─ scripts/               # smoke-*.js（npm test）/ emulator-*.js（test:emulator）/ firebase.emulator.json
+│  ├─ scripts/               # smoke-*.js（npm test）/ emulator-*.js（test:emulator）/ firebase.emulator.json / eval/（分類の評価。実データは *.local.json でコミットしない）
 │  └─ .env.example
 ├─ web/                      # Next.js 16 (Vercel)
 │  ├─ app/                   # / , /expenses , /settlement , /settings , /attach , /link , /dashboard , /terms , /privacy
