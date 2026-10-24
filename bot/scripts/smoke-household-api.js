@@ -11,6 +11,7 @@ const {
   decideClearAdvance,
   decideConfirm,
   decideSetAdvance,
+  decideSetCategory,
   decideSetPayer,
   decideSettleLegacyAdvance,
   isPendingStatus,
@@ -156,6 +157,59 @@ console.log('\ndecideSettleLegacyAdvance（全額にする前の立替を精算�
   check('advanceFull の無い立替 → advance_settled・精算日時', d.update.status === 'advance_settled' && d.update.advanceSettledAt === now);
   check('全額の立替は対象外（期間の精算で返す）', 'reject' in decideSettleLegacyAdvance(now)({ status: 'advance_pending', advanceFull: true }));
   check('立替でなければ対象外', 'reject' in decideSettleLegacyAdvance(now)({ status: 'shared' }) && 'reject' in decideSettleLegacyAdvance(now)({ status: 'advance_settled' }));
+}
+
+// ------------------------------------------------------------
+console.log('\ndecideSetCategory（LINE のカテゴリ選択。postback の set_category）');
+{
+  /** 切り出す前の postback.ts handleSetCategory のクロージャ（比較用の写し。カテゴリはそのまま保存していた） */
+  function legacySetCategory(category, data) {
+    const status = data.status;
+    const isPending = !status || status === 'pending';
+    return isPending
+      ? {
+          update: { category, confirmed: true, status: 'shared', includeInTotal: true, updatedAt: new Date() },
+          cardPatch: { category, status: 'shared', includeInTotal: true },
+        }
+      : {
+          update: { category, confirmed: true, updatedAt: new Date() },
+          cardPatch: { category },
+        };
+  }
+
+  // 正準名・揃えられない名前（趣味・カスタム名）は、切り出す前と同じ更新内容
+  for (const category of ['食費', '通信費', 'その他', '医療・健康', '趣味', '推し活']) {
+    for (const status of statuses) {
+      const data = { status, amount: 1000, includeInTotal: false };
+      const actual = decideSetCategory(category)(data);
+      check(
+        `${category}・status=${JSON.stringify(status)} は従来と同じ更新内容`,
+        !('reject' in actual) && deepEqual(comparable(actual), comparable(legacySetCategory(category, data))),
+        JSON.stringify(actual)
+      );
+    }
+  }
+
+  // カルーセルの旧名は正準名で保存する（それ以外は従来と同じ）
+  const legacyNames = [
+    ['医療費', '医療・健康'],
+    ['娯楽費', '娯楽'],
+    ['衣服費', '衣服'],
+    ['教育費', '教育'],
+  ];
+  for (const [label, canonical] of legacyNames) {
+    for (const status of statuses) {
+      const data = { status, amount: 1000, includeInTotal: false };
+      const actual = decideSetCategory(label)(data);
+      check(
+        `${label}・status=${JSON.stringify(status)} → ${canonical} で保存（ほかは従来と同じ）`,
+        !('reject' in actual) && deepEqual(comparable(actual), comparable(legacySetCategory(canonical, data))) &&
+          actual.update.category === canonical && actual.cardPatch.category === canonical,
+        JSON.stringify(actual)
+      );
+    }
+  }
+  check('精算済みでもカテゴリは変えられる（拒否しない）', !('reject' in decideSetCategory('医療費')({ status: 'advance_settled' })));
 }
 
 const ts = (ms) => ({ toMillis: () => ms });

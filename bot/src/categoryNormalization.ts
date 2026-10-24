@@ -247,6 +247,26 @@ export function normalizeCategoryName(
   return pickAvailable('その他', safeAvailable);
 }
 
+/**
+ * LINE で指定・選択したカテゴリ名を、保存する前に正準名へ揃える（#243）
+ *
+ * LINE の入力・「カテゴリー」コマンド・カテゴリ選択のカルーセルは「医療費」「娯楽費」のような
+ * 旧名を使うため、正準名（医療・健康、娯楽）と別の名前で保存され、集計が 2 行に分かれていた。
+ *
+ * 完全一致だけを見る: 正準名はそのまま、エイリアス（ALIAS_TO_CANONICAL のキー）は正準名にする。
+ * それ以外（「趣味」「貯蓄」や利用者のカスタム名）は変えずに返す。normalizeCategoryName は
+ * 部分一致・キーワードで寄せ（「本田」→ 教育）、一覧に無い名前を「その他」にするので、保存には使わない。
+ */
+export function toCanonicalCategoryName(name: string): string {
+  if (typeof name !== 'string') return name;
+  const trimmed = name.trim();
+  if (CANONICAL_CATEGORIES.includes(trimmed)) return trimmed;
+  if (Object.prototype.hasOwnProperty.call(ALIAS_TO_CANONICAL, trimmed)) {
+    return ALIAS_TO_CANONICAL[trimmed];
+  }
+  return name;
+}
+
 function pickAvailable(target: string, available?: string[]): string {
   if (!available || available.length === 0) return target;
   if (available.includes(target)) return target;

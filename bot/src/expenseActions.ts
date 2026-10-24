@@ -7,6 +7,7 @@
  */
 
 import { FieldValue, getFirestore, type DocumentData, type Transaction } from 'firebase-admin/firestore';
+import { toCanonicalCategoryName } from './categoryNormalization';
 import type { ExpenseStatusType } from './firestore';
 
 /**
@@ -146,6 +147,27 @@ export function decideClearAdvance(): ExpenseDecider {
       cardPatch: { status: 'shared', includeInTotal: true, advanceBy: undefined, advanceFull: undefined },
     };
   };
+}
+
+/**
+ * カテゴリを変える（LINE のカテゴリ選択のカルーセル。postback の set_category）
+ *
+ * カルーセルの選択肢は「医療費」「娯楽費」のような旧名なので、保存する前に正準名に揃える
+ * （toCanonicalCategoryName。#243）。選び直す操作は「この支出でよい」という確認でもあるため確認済みにし、
+ * 未確認のときだけ共同費へ昇格させる（個人費や立替を設定済みの支出は触らない）。カテゴリ変更は精算後も可能。
+ */
+export function decideSetCategory(category: string): ExpenseDecider {
+  const canonical = toCanonicalCategoryName(category);
+  return (data) =>
+    isPendingStatus(data.status)
+      ? {
+          update: { category: canonical, confirmed: true, status: 'shared', includeInTotal: true, updatedAt: new Date() },
+          cardPatch: { category: canonical, status: 'shared', includeInTotal: true },
+        }
+      : {
+          update: { category: canonical, confirmed: true, updatedAt: new Date() },
+          cardPatch: { category: canonical },
+        };
 }
 
 /**

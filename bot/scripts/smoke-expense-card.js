@@ -9,8 +9,11 @@ const {
   buildTextExpenseFlexMessage,
   buildExpenseCardFromRecord,
   buildExpenseEditUrl,
+  buildCategorySelectCarousel,
   CATEGORY_ORIGIN_LABELS,
 } = require('../dist/line/flexMessage');
+const { CANONICAL_CATEGORIES, normalizeCategoryName, toCanonicalCategoryName } = require('../dist/categoryNormalization');
+const { parseTextExpense } = require('../dist/textParser');
 // どちらも LINE クライアント・Firestore・Gmail のクライアントは最初に使うときに作るので、読み込むだけなら外部に接続しない
 const { decideTextExpenseCategory } = require('../dist/line/expenseFlow');
 const { merchantCategoryOf } = require('../dist/gmail/handler');
@@ -445,6 +448,138 @@ function common(name, msg) {
   for (const [name, input, category, origin] of cases) {
     const r = decideTextExpenseCategory(input);
     check(name, r.category === category && r.origin === origin, JSON.stringify(r));
+  }
+}
+
+// ------------------------------------- LINE の旧名を正準名に揃える（#243）
+//
+// 下の 2 つの一覧は textParser.ts の VALID_CATEGORIES と commands/category.ts の LINE_DEFAULT_CATEGORIES の写し
+// （どちらも変えない）。カルーセルの選択肢は組み立てたメッセージから取り出す。
+const LINE_INPUT_CATEGORIES = [
+  '食費', '日用品', '交通費', '医療費', '娯楽費', '衣服費', '教育費', '通信費', '光熱費', '住居費',
+  '保険', '税金', '貯蓄', '投資', '美容', 'ペット', '趣味', '交際費', 'その他',
+];
+const LINE_COMMAND_CATEGORIES = ['食費', '日用品', '交通費', '医療費', '娯楽費', '衣服費', '教育費', '通信費', 'その他'];
+const CAROUSEL_LABELS = ['食費', '日用品', '交通費', '医療費', '娯楽費', '衣服費', '教育費', '通信費', '光熱費', 'その他'];
+/** 旧名 → 正準名（正準名と、揃えられない「貯蓄」「趣味」は載せない） */
+const LEGACY_TO_CANONICAL = {
+  医療費: '医療・健康',
+  娯楽費: '娯楽',
+  衣服費: '衣服',
+  教育費: '教育',
+  投資: '貯金',
+  交際費: '娯楽',
+};
+const expectedCanonical = (name) => LEGACY_TO_CANONICAL[name] ?? name;
+
+{
+  console.log('\n[toCanonicalCategoryName]');
+  check('正準名はそのまま', CANONICAL_CATEGORIES.every((c) => toCanonicalCategoryName(c) === c));
+  for (const [legacy, canonical] of Object.entries(LEGACY_TO_CANONICAL)) {
+    check(`${legacy} → ${canonical}`, toCanonicalCategoryName(legacy) === canonical, toCanonicalCategoryName(legacy));
+    check(`${legacy}: normalizeCategoryName と同じ正準名`, toCanonicalCategoryName(legacy) === normalizeCategoryName(legacy));
+  }
+  check('前後の空白は無視する', toCanonicalCategoryName(' 医療費 ') === '医療・健康');
+  // normalizeCategoryName は「その他」や部分一致で寄せるが、保存ではカスタム名などを変えない
+  for (const name of ['貯蓄', '趣味', '推し活', '本田', 'ジム代', '日用品費', '', ' 推し活 ', 'constructor', '__proto__', 'toString']) {
+    check(`揃えられない名前は変えない: ${JSON.stringify(name)}`, toCanonicalCategoryName(name) === name, JSON.stringify(toCanonicalCategoryName(name)));
+  }
+  check('（参考）normalizeCategoryName なら「本田」は教育・「趣味」はその他になる', normalizeCategoryName('本田') === '教育' && normalizeCategoryName('趣味') === 'その他');
+
+  check(
+    '「カテゴリー」コマンドの選択肢はすべて正準名に揃う',
+    LINE_COMMAND_CATEGORIES.every((c) => CANONICAL_CATEGORIES.includes(toCanonicalCategoryName(c))),
+    LINE_COMMAND_CATEGORIES.map(toCanonicalCategoryName).join(',')
+  );
+  check(
+    '入力で指定できる名前は「貯蓄」「趣味」以外すべて正準名に揃う',
+    LINE_INPUT_CATEGORIES.every((c) => ['貯蓄', '趣味'].includes(c) || CANONICAL_CATEGORIES.includes(toCanonicalCategoryName(c))),
+    LINE_INPUT_CATEGORIES.map(toCanonicalCategoryName).join(',')
+  );
+}
+
+{
+  console.log('\n[LINE の入力・既定カテゴリ → 保存するカテゴリ]');
+  const jev = (category, confidence) => ({ category, confidence, reasoning: 'Jev classification', provider: 'jev' });
+
+  // (a) 「500 医療費」のような入力。入力として受け付ける名前は今まで通り
+  for (const name of LINE_INPUT_CATEGORIES) {
+    const parsed = parseTextExpense(`500 ${name}`);
+    const r = decideTextExpenseCategory({ specified: parsed && parsed.category });
+    check(
+      `「500 ${name}」→ ${expectedCanonical(name)}（指定）`,
+      parsed && parsed.category === name && r.category === expectedCanonical(name) && r.origin === 'specified',
+      JSON.stringify({ parsed: parsed && parsed.category, r })
+    );
+  }
+
+  // (b)(d)(e) 既定カテゴリが旧名、正準名・カスタム名は変わらない、判定元・閾値は従来どおり
+  const cases = [
+    ['指定が旧名でも分類・既定より優先', { specified: '娯楽費', classified: jev('食費', 0.9), defaultCategory: '日用品' }, '娯楽', 'specified'],
+    ['既定が旧名・Jev 0.39 → 正準名・default', { classified: jev('食費', 0.39), defaultCategory: '娯楽費' }, '娯楽', 'default'],
+    ['既定が旧名・分類が「その他」0.9 → 正準名・default', { classified: jev('その他', 0.9), defaultCategory: '娯楽費' }, '娯楽', 'default'],
+    ['既定が旧名・分類が失敗（null）→ 正準名・default', { classified: null, defaultCategory: '医療費' }, '医療・健康', 'default'],
+    ['既定が旧名でも Jev 0.4 ちょうどなら分類を採用', { classified: jev('食費', 0.4), defaultCategory: '娯楽費' }, '食費', 'jev'],
+    ['既定が正準名はそのまま', { classified: null, defaultCategory: '娯楽' }, '娯楽', 'default'],
+    ['既定がカスタム名はそのまま', { classified: null, defaultCategory: '推し活' }, '推し活', 'default'],
+    ['既定が旧名・既定を使わない（分類 0.9）→ 分類のまま', { classified: jev('交通費', 0.9), defaultCategory: '医療費' }, '交通費', 'jev'],
+  ];
+  for (const [name, input, category, origin] of cases) {
+    const r = decideTextExpenseCategory(input);
+    check(name, r.category === category && r.origin === origin, JSON.stringify(r));
+  }
+  // 「カテゴリー」コマンドで保存済みの旧名（移行しない既存データ）も、使うときに正準名になる
+  for (const name of LINE_COMMAND_CATEGORIES) {
+    const r = decideTextExpenseCategory({ classified: null, defaultCategory: name });
+    check(`保存済みの既定「${name}」→ ${expectedCanonical(name)}（既定）`, r.category === expectedCanonical(name) && r.origin === 'default', JSON.stringify(r));
+  }
+}
+
+{
+  console.log('\n[カテゴリ選択のカルーセル]');
+  const carousel = (currentCategory) =>
+    buildCategorySelectCarousel({ expenseId: 'exp_cat', currentCategory, source: 'text', merchant: 'SHOP', amount: 500 });
+  const bubbles = (msg) => msg.contents.contents;
+  const label = (b) => b.body.contents[1].text;
+  const action = (b) => walk(b.footer).find((n) => n.action && n.action.type === 'postback').action;
+  const selected = (msg) => bubbles(msg).filter((b) => b.body.backgroundColor === '#ECFDF5').map(label);
+
+  // 画面の選択肢（ボタンの文言・postback の値）は変えない
+  const msg = carousel('食費');
+  check('選択肢の文言は従来どおり', JSON.stringify(bubbles(msg).map(label)) === JSON.stringify(CAROUSEL_LABELS), bubbles(msg).map(label).join(','));
+  check(
+    'postback の値は選択肢の文言のまま（保存するときに揃える）',
+    bubbles(msg).every((b) => JSON.parse(action(b).data).category === label(b) && JSON.parse(action(b).data).action === 'set_category')
+  );
+  // (c) カルーセルの値はすべて正準名で保存される
+  check(
+    'カルーセルの値はすべて正準名に揃う',
+    bubbles(msg).every((b) => CANONICAL_CATEGORIES.includes(toCanonicalCategoryName(JSON.parse(action(b).data).category)))
+  );
+
+  // 選択中: 正準名で保存された値も、旧名のままの既存データも、対応する選択肢を選択中にする
+  const highlightCases = [
+    ['医療・健康', ['医療費']],
+    ['医療費', ['医療費']],
+    ['娯楽', ['娯楽費']],
+    ['娯楽費', ['娯楽費']],
+    ['交際費', ['娯楽費']],
+    ['衣服', ['衣服費']],
+    ['教育', ['教育費']],
+    ['食費', ['食費']],
+    ['その他', ['その他']],
+    ['サブスク', []],
+    ['趣味', []],
+  ];
+  for (const [current, expected] of highlightCases) {
+    const m = carousel(current);
+    const sel = selected(m);
+    const labels = bubbles(m).filter((b) => action(b).label === '選択中').map(label);
+    check(
+      `保存値「${current}」→ 選択中は ${expected.join(',') || 'なし'}`,
+      JSON.stringify(sel) === JSON.stringify(expected) && JSON.stringify(labels) === JSON.stringify(expected),
+      JSON.stringify({ sel, labels })
+    );
   }
 }
 

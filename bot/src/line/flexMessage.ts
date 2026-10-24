@@ -5,6 +5,7 @@
  */
 
 import { messagingApi } from '@line/bot-sdk';
+import { toCanonicalCategoryName } from '../categoryNormalization';
 import { ExpenseStatusType } from '../firestore';
 import type { ClassificationProvider } from '../geminiCategoryClassifier';
 import { getPaymentMethodLabel, PaymentMethod } from '../textParser';
@@ -1369,7 +1370,9 @@ export function buildCategorySelectCarousel(info: CategorySelectInfo): FlexMessa
 
   // 各カテゴリのbubbleを生成
   const bubbles: FlexBubble[] = CATEGORIES.map((categoryName) => {
-    const isCurrentCategory = categoryName === currentCategory;
+    // 選択肢は旧名（医療費など）、保存値は正準名（医療・健康）なので、正準名どうしで比べる
+    const isCurrentCategory =
+      toCanonicalCategoryName(categoryName) === toCanonicalCategoryName(currentCategory);
 
     return {
       type: 'bubble',
