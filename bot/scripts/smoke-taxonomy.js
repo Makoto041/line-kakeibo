@@ -3,6 +3,7 @@
  *
  * 架空のデータだけを使う。評価データ（bot/scripts/eval/*.local.json）は読まない・書かない
  * （保存・バックアップの確認は、OS の一時フォルダーに作った架空のファイルで行い、最後に消す）。
+ * 架空のサンプル bot/scripts/eval/golden.sample.json は読む（形と中身を確かめる。書き換えない）。
  *   node bot/scripts/smoke-taxonomy.js
  */
 const fs = require('fs');
@@ -186,6 +187,79 @@ try {
     threw = true;
   }
   check('同じ名前のバックアップは上書きしない', threw && fs.readFileSync(backup, 'utf8') === expected);
+
+  console.log('\n# golden.sample.json（架空のサンプル）');
+  const sampleText = fs.readFileSync(path.join(__dirname, 'eval', 'golden.sample.json'), 'utf8');
+  let sample = null;
+  try {
+    sample = JSON.parse(sampleText);
+  } catch (e) {
+    check('JSON として読める', false, e.message);
+  }
+  if (sample) {
+    const si = sample.items;
+    check('トップレベルのキーは meta・items', Object.keys(sample).join(',') === 'meta,items', Object.keys(sample).join(','));
+    check(
+      'meta に updatedAt と経路ごとの lastCounts',
+      typeof sample.meta.updatedAt === 'string' &&
+        ['text', 'merchant'].every((s) =>
+          ['fetched', 'unique', 'alreadyHave', 'addable', 'added'].every((k) => Number.isInteger(sample.meta.lastCounts?.[s]?.[k]))
+        )
+    );
+    check('items が 1 件以上', Array.isArray(si) && si.length > 0);
+    const ALLOWED = ['id', 'source', 'description', 'saved', 'label', 'reviewed', 'excluded', 'subLabel'];
+    const REQUIRED = ['id', 'source', 'description', 'saved', 'label', 'reviewed'];
+    const bad = (pred) => si.filter((it) => !pred(it)).map((it) => it.id).join(',');
+    const extraKeys = bad((it) => Object.keys(it).every((k) => ALLOWED.includes(k)));
+    check('各件のキーは評価データのキーだけ', extraKeys === '', extraKeys);
+    check('各件に必須のキーがある', bad((it) => REQUIRED.every((k) => Object.prototype.hasOwnProperty.call(it, k))) === '');
+    check('id が一意', new Set(si.map((it) => it.id)).size === si.length);
+    check('id は <経路>-NNN', bad((it) => /^(text|merchant)-\d{3}$/.test(it.id) && it.id.startsWith(`${it.source}-`)) === '');
+    check('label・saved は正準のカテゴリ名', bad((it) => CANONICAL_CATEGORIES.includes(it.label) && CANONICAL_CATEGORIES.includes(it.saved)) === '');
+    check('reviewed・excluded は真偽値', bad((it) => typeof it.reviewed === 'boolean' && (it.excluded === undefined || typeof it.excluded === 'boolean')) === '');
+    check(
+      '未見直しの件は取り出したときの形（label = saved、excluded・subLabel なし）',
+      bad((it) => it.reviewed || (it.label === it.saved && !('excluded' in it) && !('subLabel' in it))) === ''
+    );
+    check('文字列の subLabel は、いまの大項目の中項目の一覧にある', bad((it) => typeof it.subLabel !== 'string' || validSubLabel(it)) === '');
+    check('subLabel は文字列・null・キーなしのどれか', bad((it) => it.subLabel === undefined || it.subLabel === null || typeof it.subLabel === 'string') === '');
+    // 実データを混ぜていない目印: 説明文・店名はすべて「サンプル」「架空」「SAMPLE」を含む（半角カナは NFKC で全角にしてから見る）
+    const MARK = /サンプル|架空|SAMPLE/i;
+    const unmarked = bad((it) => typeof it.description === 'string' && MARK.test(it.description.normalize('NFKC')));
+    check('説明文・店名はすべて架空の目印つき', unmarked === '', unmarked);
+
+    // 種類がそろっている（お手本として、各ケースを 1 件以上）
+    const has = (pred) => si.some(pred);
+    check('text と merchant の両方', has((it) => it.source === 'text') && has((it) => it.source === 'merchant'));
+    check('見直しで直した件（label ≠ saved）', has((it) => it.reviewed && it.label !== it.saved));
+    check('未見直し・除外の件', has((it) => !it.reviewed) && has((it) => it.excluded === true));
+    check(
+      'subLabel が文字列・null・キーなしの件',
+      has((it) => typeof it.subLabel === 'string') && has((it) => it.subLabel === null) && has((it) => !('subLabel' in it) && subCategoriesOf(it.label).length > 0)
+    );
+    check('中項目の一覧が無い大項目の件', has((it) => it.reviewed && subCategoriesOf(it.label).length === 0));
+
+    // 評価スクリプトでの扱い
+    q = itemsToLabelSub(si);
+    check('--sub の対象は、見直し済み・未除外・中項目のある大項目で subLabel 未設定の件', ids(q) === 'text-002', ids(q));
+    q = itemsToLabelSub(si, { redo: true });
+    check(
+      '--sub --redo の対象（除外・未見直し・中項目の無い大項目は入らない）',
+      ids(q) === 'text-001,text-002,text-004,merchant-001,merchant-002,merchant-003,merchant-004',
+      ids(q)
+    );
+    const used = si.filter((it) => !it.excluded && it.reviewed);
+    check(
+      'eval-classifier が使う件（見直し済み・未除外）が経路ごとに 1 件以上',
+      used.some((it) => it.source === 'text') && used.some((it) => it.source === 'merchant'),
+      String(used.length)
+    );
+
+    // 書式は saveGolden と同じ（review-golden で保存しても、形が変わらない）
+    const sampleCopy = path.join(dir, 'golden.sample-copy.local.json');
+    saveGolden(sampleCopy, sample);
+    check('saveGolden の書式のとおり', fs.readFileSync(sampleCopy, 'utf8') === sampleText);
+  }
 } finally {
   fs.writeFileSync = realWrite;
   fs.renameSync = realRename;

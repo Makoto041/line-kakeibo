@@ -1,0 +1,21 @@
+{
+  "meta": {"note":"架空のサンプル（形を示すためのお手本。実データではない）。実データは golden.local.json など *.local.json の名前にする","updatedAt":"2026-01-01T00:00:00.000Z","lastCounts":{"text":{"fetched":20,"unique":18,"alreadyHave":0,"addable":8,"added":8},"merchant":{"fetched":20,"unique":16,"alreadyHave":0,"addable":8,"added":8}}},
+  "items": [
+    {"id":"text-001","source":"text","description":"サンプル書店の文庫","saved":"娯楽","label":"娯楽","reviewed":true,"excluded":false,"subLabel":"本・漫画"},
+    {"id":"text-002","source":"text","description":"架空ベーグル屋で朝ごはん","saved":"食費","label":"食費","reviewed":true,"excluded":false},
+    {"id":"text-003","source":"text","description":"サンプル雑貨店の詰め替えボトル","saved":"日用品","label":"日用品","reviewed":true,"excluded":false},
+    {"id":"text-004","source":"text","description":"架空銭湯の回数券","saved":"その他","label":"娯楽","reviewed":true,"excluded":false,"subLabel":"銭湯・サウナ"},
+    {"id":"text-005","source":"text","description":"サンプル商店街の福引き","saved":"娯楽","label":"その他","reviewed":true,"excluded":false},
+    {"id":"text-006","source":"text","description":"架空の手みやげ（中身不明）","saved":"プレゼント","label":"プレゼント","reviewed":true,"excluded":true},
+    {"id":"text-007","source":"text","description":"サンプル町のシェアサイクル","saved":"交通費","label":"交通費","reviewed":true,"excluded":false},
+    {"id":"text-008","source":"text","description":"架空の差し入れ","saved":"食費","label":"食費","reviewed":false},
+    {"id":"merchant-001","source":"merchant","description":"ｻﾝﾌﾟﾙｽｰﾊﾟｰ ﾐﾅﾐﾃﾝ","saved":"食費","label":"食費","reviewed":true,"excluded":false,"subLabel":"食料品（スーパー）"},
+    {"id":"merchant-002","source":"merchant","description":"KAKUU CAFE SAMPLE","saved":"食費","label":"食費","reviewed":true,"excluded":false,"subLabel":"カフェ"},
+    {"id":"merchant-003","source":"merchant","description":"ｶｸｳｼﾈﾏ ｻﾝﾌﾟﾙ","saved":"その他","label":"娯楽","reviewed":true,"excluded":false,"subLabel":"映画"},
+    {"id":"merchant-004","source":"merchant","description":"SAMPLE ENTERTAINMENT","saved":"娯楽","label":"娯楽","reviewed":true,"excluded":false,"subLabel":null},
+    {"id":"merchant-005","source":"merchant","description":"ｻﾝﾌﾟﾙﾄﾞﾗｯｸﾞ ｶｸｳﾃﾝ","saved":"日用品","label":"日用品","reviewed":true,"excluded":false},
+    {"id":"merchant-006","source":"merchant","description":"SAMPLE PAY *KAKUU","saved":"その他","label":"その他","reviewed":true,"excluded":true},
+    {"id":"merchant-007","source":"merchant","description":"SAMPLE MOBILE","saved":"通信費","label":"通信費","reviewed":true,"excluded":false},
+    {"id":"merchant-008","source":"merchant","description":"ｶｸｳﾍﾞﾝﾄｰ ｻﾝﾌﾟﾙﾃﾝ","saved":"食費","label":"食費","reviewed":false}
+  ]
+}

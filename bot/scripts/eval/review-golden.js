@@ -9,6 +9,9 @@
  *               （ファイル名は *.local.json にしてコミットしない）
  *     --golden  評価データ（既定 bot/scripts/eval/golden.local.json。別のファイルにするときも *.local.json の名前にする）
  *
+ * 形は架空のサンプル golden.sample.json を見る。試すときは、実データの golden.local.json を上書きしないよう別の *.local.json の名前
+ * （例: golden.try.local.json）にコピーして --golden で指定する（このスクリプトはファイルを書き換えるので、golden.sample.json は直接指定しない）。
+ *
  * 10 件ずつ「いまのラベル」を見せる。
  *   Enter          … 10 件すべて正しい
  *   3=日用品 7=衣服 … 番号のラベルを直す（カテゴリ名は一覧のとおりに）
