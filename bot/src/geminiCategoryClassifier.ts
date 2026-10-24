@@ -222,6 +222,8 @@ async function categoriesFor(lineId: string): Promise<string[]> {
       user: maskId(lineId),
       error: (error as Error)?.message,
     });
+    // 失敗したときの一覧はキャッシュしない（Firestore の復旧後、次の呼び出しで読み直す）
+    return [...DEFAULT_CATEGORIES];
   }
   if (names.length === 0) names = [...DEFAULT_CATEGORIES];
   const unique = [...new Set(names)];

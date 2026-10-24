@@ -726,15 +726,10 @@ export async function getAllUserCategories(lineId: string): Promise<Array<Catego
 
     return [...defaultCategories, ...customCategories];
   } catch (error) {
+    // 失敗は呼び出し側に伝える（categoriesFor が既定の 19 カテゴリを使い、キャッシュしない）。
+    // 一部のカテゴリだけの一覧を返すと、それが分類の選択肢として 30 分キャッシュされてしまう
     console.error('Error getting all user categories:', error);
-    // Return basic default categories on error
-    return [
-      { id: 'food', name: '食費', icon: '🍱', isDefault: true },
-      { id: 'transport', name: '交通費', icon: '🚃', isDefault: true },
-      { id: 'daily', name: '日用品', icon: '🧻', isDefault: true },
-      { id: 'entertainment', name: '娯楽', icon: '🎮', isDefault: true },
-      { id: 'other', name: 'その他', icon: '📝', isDefault: true }
-    ];
+    throw error;
   }
 }
 

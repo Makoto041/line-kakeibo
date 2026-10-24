@@ -2,7 +2,8 @@
  * カテゴリ判定（geminiCategoryClassifier）のスモークテスト
  *
  * Gemini API と Firestore は呼ばずに、判定の順序（キーワード辞書と Gemini のどちらを先に使うか）、
- * Gemini が使えないときのフォールバック、プロンプトの中身を検証する（Jev の鍵は消し、Jev は使わない）。
+ * Gemini が使えないときのフォールバック、カテゴリ一覧の読み取りに失敗したときの扱い、プロンプトの中身を検証する
+ * （Jev の鍵は消し、Jev は使わない）。
  *   node bot/scripts/smoke-classifier.js
  */
 const geminiClient = require('../dist/geminiClient');
@@ -28,9 +29,12 @@ geminiClient.generateJson = async (prompt, options) => {
   geminiCalls.push({ prompt, options });
   return geminiReply;
 };
+// 本物は Firestore の読み取りに失敗したときの確認に使う（このスクリプトは Firebase を初期化しないので、読み取りは必ず失敗する）
+const realGetAllUserCategories = firestore.getAllUserCategories;
 firestore.getAllUserCategories = async () => [];
 
 const { classifyExpenseWithGemini, buildClassificationPrompt } = require('../dist/geminiCategoryClassifier');
+const { CANONICAL_CATEGORIES } = require('../dist/categoryNormalization');
 
 async function main() {
   console.log('\n# 既定モデル');
@@ -84,6 +88,48 @@ async function main() {
   geminiReply = { category: '謎カテゴリ', confidence: 0.9 };
   r = await classifyExpenseWithGemini('gmail-auto-system', 'XYZ SHOP', { source: 'merchant' });
   check('採用しない（呼び出し側で「その他」）', r.category === null, JSON.stringify(r));
+
+  console.log('\n# カテゴリ一覧: Firestore の読み取りに失敗したら既定の 19 カテゴリ（キャッシュしない）');
+  // lineId は一覧がまだキャッシュされていないもの。入力は辞書に当たらず、分類結果のキャッシュにも当たらないように毎回変える
+  let firestoreCalls = 0;
+  firestore.getAllUserCategories = async (lineId) => {
+    firestoreCalls++;
+    return realGetAllUserCategories(lineId);
+  };
+  geminiCalls = [];
+  geminiReply = { category: '娯楽', confidence: 0.8 };
+  const warns = [];
+  const original = { warn: console.warn, error: console.error };
+  console.warn = (...args) => warns.push(args);
+  console.error = () => {};
+  try {
+    r = await classifyExpenseWithGemini('U_fs_fail', 'ボルダリング');
+  } finally {
+    Object.assign(console, original);
+  }
+  let enumNames = geminiCalls[0]?.options?.schema?.properties?.category?.enum || [];
+  check('Firestore を 1 回読む', firestoreCalls === 1, `${firestoreCalls} 回`);
+  check('選択肢は既定の 19 カテゴリ（一部に縮退しない）', JSON.stringify(enumNames) === JSON.stringify(CANONICAL_CATEGORIES), enumNames.join(','));
+  check('分類は続ける', r.category === '娯楽', JSON.stringify(r));
+  const failWarn = warns.find((w) => w[0] === 'Failed to get categories from Firestore, using default categories');
+  check('失敗を warn で出す（利用者 ID は伏せる）', Boolean(failWarn) && !JSON.stringify(warns).includes('U_fs_fail'), JSON.stringify(warns));
+
+  firestore.getAllUserCategories = async () => {
+    firestoreCalls++;
+    return [{ name: '食費' }, { name: '推し活' }, { name: 'その他' }];
+  };
+  geminiCalls = [];
+  geminiReply = { category: '推し活', confidence: 0.8 };
+  r = await classifyExpenseWithGemini('U_fs_fail', 'アクスタ');
+  enumNames = geminiCalls[0]?.options?.schema?.properties?.category?.enum || [];
+  check('復旧後の次の呼び出しで読み直す', firestoreCalls === 2, `${firestoreCalls} 回`);
+  check('読み直した一覧を使う', enumNames.join(',') === '食費,推し活,その他', enumNames.join(','));
+
+  geminiCalls = [];
+  geminiReply = { category: 'その他', confidence: 0.5 };
+  r = await classifyExpenseWithGemini('U_fs_fail', 'ペタンク');
+  check('成功した一覧はキャッシュする（読み直さない）', firestoreCalls === 2 && geminiCalls.length === 1, `${firestoreCalls} 回`);
+  firestore.getAllUserCategories = async () => [];
 
   console.log('\n# GEMINI_API_KEY が無いとき');
   delete process.env.GEMINI_API_KEY;
