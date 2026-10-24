@@ -386,7 +386,8 @@ function ExpensesPageContent() {
     if (savingEdit) return;
     setSavingEdit(true);
     try {
-      await updateExpense(id, { ...update, updatedAt: new Date() });
+      // original を渡す: 大項目を変えたとき、元の支出が中項目を持っていれば中項目を消す
+      await updateExpense(id, { ...update, updatedAt: new Date() }, original);
       invalidateStatsCache();
       setEditError(null);
       setEditingExpense(null);

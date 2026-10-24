@@ -106,6 +106,40 @@ export function hasEditChanges(update: Partial<EditForm>): boolean {
   return Object.keys(update).length > 0;
 }
 
+// ---- 大項目を変えたときの中項目 ---------------------------------------------------
+
+type SubCategoryFields = Partial<Pick<Expense, 'category' | 'subCategory'>>;
+
+/**
+ * この更新で、元の支出の中項目（subCategory）を消すか。
+ * 大項目（category）を変える更新で、元の支出が中項目を持つときだけ消す
+ * （古い中項目が新しい大項目と食い違わないように）。中項目を持たない支出には削除を送らない
+ * （不要な書き込みをしない。更新内容は中項目を足す前と同じ）。
+ * 更新が中項目を自分で指定しているときは、それに任せる。
+ */
+export function shouldClearSubCategory(
+  update: SubCategoryFields,
+  original: SubCategoryFields | null | undefined
+): boolean {
+  if (!original || original.subCategory === undefined) return false;
+  if (update.subCategory !== undefined) return false;
+  return update.category !== undefined && update.category !== original.category;
+}
+
+/**
+ * Firestore に送る更新内容。shouldClearSubCategory のときだけ、subCategory の削除を足す。
+ * deleteField は firebase/firestore の deleteField（node --test から差し替えられるよう引数で受ける）。
+ * 消さないときは update をそのまま返す。
+ */
+export function buildExpenseUpdate<T extends SubCategoryFields, D>(
+  update: T,
+  original: SubCategoryFields | null | undefined,
+  deleteField: () => D
+): T | (Omit<T, 'subCategory'> & { subCategory: D }) {
+  if (!shouldClearSubCategory(update, original)) return update;
+  return { ...update, subCategory: deleteField() };
+}
+
 // ---- 支払い者の候補・表示名 ---------------------------------------------------
 
 export interface KnownUser {
