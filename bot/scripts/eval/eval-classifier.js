@@ -42,8 +42,9 @@
  *   --sub-desc on|off            stage2 / flat のみ。中項目の選択肢に説明（categoryTaxonomy.ts の SUB_CATEGORY_DESCRIPTIONS。仮）を
  *                                付けるか（既定 off = 説明なし）。説明の無い中項目は説明なしで送る（その個数を画面と summary に出す）
  *   --stage2-major pred|gold     stage2 のみ。2 回目に使う大項目（既定 pred = 1 回目の答え / gold = 正解の大項目。2 回目だけの精度を
- *                                切り分ける用。gold でも 1 回目は送る）
- *   --decode argmax|sum          flat のみ。argmax = Jev の答え（choice）をそのまま使う（既定）/ sum = probabilities を大項目ごとに
+ *                                切り分ける用。gold でも 1 回目は送る。--show-errors では 1 回目の大項目と、正解の大項目の下で選んだ
+ *                                中項目を分けて出す）
+ *   --decode argmax|sum         flat のみ。argmax = Jev の答え（choice）をそのまま使う（既定）/ sum = probabilities を大項目ごとに
  *                                合計して大項目を決め、その大項目の中で確率の最も高い中項目を選ぶ（同点は選択肢の並び順で先のもの）
  *   - 対象は、中項目の正解がある件だけ（review-golden.js の validSubLabel が true。subLabel が、いまの大項目の中項目の一覧にある件）。
  *     tune / hold の振り分けは major と同じ（振り分けた後で対象を絞る）。--limit は絞った後の各経路の先頭 N 件。
@@ -267,6 +268,18 @@ function scoreHierarchical(item, pred) {
   const majorCorrect = typeof pred.major === 'string' && pred.major === item.label;
   const subCorrect = typeof pred.sub === 'string' && pred.subMajor === item.label && pred.sub === item.subLabel;
   return { majorCorrect, subCorrect, bothCorrect: majorCorrect && subCorrect };
+}
+
+/**
+ * --show-errors の 1 行（stage2 / flat。説明文・店名を含む）。
+ * pred・flat は「大項目/中項目」が 1 つの予測なので並べて出す。stage2 の gold は、1 回目の大項目と、
+ * 正解の大項目の下で選んだ中項目が別の予測なので、分けて出す（1 つの予測に見えないように）
+ */
+function hierarchyErrorLine(r, gold) {
+  const predicted = gold
+    ? `大項目 ${r.pred ?? 'null'} ${r.confidence} | 中項目 ${r.label}/${r.predSub ?? 'null'}（正解の大項目の下で選んだ）`
+    : `${r.pred ?? 'null'}/${r.predSub ?? 'null'} ${r.confidence}`;
+  return `${r.id} [${r.label}/${r.subLabel} → ${predicted}] ${r.description}`;
 }
 
 // ---- 分類器（provider ごとに classify(item) => { category, confidence, via, probabilities? } を用意する） ----
@@ -680,9 +693,8 @@ async function main() {
     console.log('\n-- 間違い --');
     if (hierarchical) {
       // 説明文・店名（利用者の入力）を書式文字列にしない（% を含んでもそのまま出す）
-      for (const r of rows.filter((x) => !x.bothCorrect)) {
-        console.log('%s', `${r.id} [${r.label}/${r.subLabel} → ${r.pred ?? 'null'}/${r.predSub ?? 'null'} ${r.confidence}] ${r.description}`);
-      }
+      const gold = SCHEME === 'stage2' && STAGE2_MAJOR === 'gold';
+      for (const r of rows.filter((x) => !x.bothCorrect)) console.log('%s', hierarchyErrorLine(r, gold));
     } else {
       for (const r of rows.filter((x) => !x.correct)) console.log(`${r.id} [${r.label} → ${r.pred ?? 'null'} ${r.confidence}] ${r.description}`);
     }
@@ -704,6 +716,7 @@ module.exports = {
   decodeFlat,
   scoreHierarchical,
   summarizeHierarchy,
+  hierarchyErrorLine,
 };
 
 if (require.main === module) {

@@ -18,6 +18,7 @@ const {
   decodeFlat,
   scoreHierarchical,
   summarizeHierarchy,
+  hierarchyErrorLine,
 } = require('./eval/eval-classifier');
 const { validSubLabel } = require('./eval/review-golden');
 const { SUB_CATEGORIES, SUB_CATEGORY_DESCRIPTIONS, subCategoriesOf } = require('../dist/categoryTaxonomy');
@@ -162,6 +163,17 @@ check('中項目なし（null）', same(scoreHierarchical(item, { major: '食費
 check('別の大項目の下で同じ名前の中項目は不正解', scoreHierarchical(item, { major: '娯楽', sub: '外食', subMajor: '娯楽' }).subCorrect === false);
 check('gold: 大項目は外れ、正解の大項目の下で中項目は正解', same(scoreHierarchical(item, { major: '娯楽', sub: '外食', subMajor: '食費' }), { majorCorrect: false, subCorrect: true, bothCorrect: false }));
 check('答えなし', same(scoreHierarchical(item, { major: null, sub: null, subMajor: null }), { majorCorrect: false, subCorrect: false, bothCorrect: false }));
+
+console.log('\n# hierarchyErrorLine（--show-errors の行）');
+// gold: 1 回目は 交通費（外れ）、2 回目は正解の大項目 食費 の下で 食料品（スーパー）を選んだ
+const wrong = { id: 'x1', label: '食費', subLabel: '外食', pred: '交通費', predSub: food[0], subMajor: '食費', confidence: 0.6, description: '架空の説明' };
+check('pred / flat: 「大項目/中項目」を 1 つの予測として並べる',
+  hierarchyErrorLine(wrong, false) === `x1 [食費/外食 → 交通費/${food[0]} 0.6] 架空の説明`, hierarchyErrorLine(wrong, false));
+const goldLine = hierarchyErrorLine(wrong, true);
+check('gold: 1 回目の大項目と、正解の大項目の下で選んだ中項目を分けて出す',
+  goldLine === `x1 [食費/外食 → 大項目 交通費 0.6 | 中項目 食費/${food[0]}（正解の大項目の下で選んだ）] 架空の説明`, goldLine);
+check('gold: 「交通費/中項目」の形にしない', !goldLine.includes(`交通費/${food[0]}`));
+check('答えなしは null', hierarchyErrorLine({ ...wrong, pred: null, predSub: null, confidence: 0 }, true).includes('大項目 null 0 | 中項目 食費/null'));
 
 console.log('\n# summarizeHierarchy（手計算と比べる）');
 const call = (stage, ms, inTok, model = 'jev-1.13.0', error = false) => ({ stage, ms, error, inTok, outTok: 0, model: error ? null : model });
