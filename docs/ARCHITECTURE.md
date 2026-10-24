@@ -193,7 +193,7 @@ LINE のテキスト（source: 'text'）
   ├─ 3. Gemini（Jev が失敗したときだけ）── 成功→終了
   └─ 4. FAST_KEYWORD_MAP（Jev・Gemini のどちらも使えないときだけ。店名は部分一致で取り違えやすいため後回し）
 
-Jev の「失敗」= TYPESAFE_API_KEY が無い・エラー・タイムアウト・カテゴリ一覧に無いカテゴリ。信頼度が低いだけでは Gemini に回さない。
+Jev の「失敗」= 鍵なし（TYPESAFE_API_KEY が無い）・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリ。信頼度が低いだけでは Gemini に回さない。
 Jev・Gemini の失敗はキャッシュしない。どちらで決まったかは「Category classified」ログの provider（jev / gemini）
 
 Jev: @typesafe-ai/sdk 経由の System One（jevCategoryClassifier.ts）

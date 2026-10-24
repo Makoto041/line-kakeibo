@@ -64,7 +64,7 @@ function getClient(): TypeSafeClient {
 }
 
 /**
- * Jev で分類する。使えない・エラー・タイムアウト・一覧に無いカテゴリを返したときは null（例外は投げない）。
+ * Jev で分類する。鍵なし・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリのときは null（例外は投げない）。
  * 入力と応答本文は利用者の入力を含むためログに出さない。失敗はエラーの種類だけを出す
  */
 export async function classifyWithJev(

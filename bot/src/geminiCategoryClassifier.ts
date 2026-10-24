@@ -258,7 +258,7 @@ async function classifyWithGemini(
 
 /**
  * モデルで分類する。Jev（メイン）で決まらなかったときだけ Gemini（退避先）を使う。
- * 「決まらない」は鍵が無い・エラー・タイムアウト・一覧に無いカテゴリのとき。信頼度が低いだけでは Gemini に回さない
+ * 「決まらない」は鍵なし・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリのとき。信頼度が低いだけでは Gemini に回さない
  * （評価で Gemini に回しても正解率が上がらなかったため）。どちらでも決まらなければ null
  */
 async function classifyWithModels(

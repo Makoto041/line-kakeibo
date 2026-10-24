@@ -228,7 +228,7 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
 支出のカテゴリを決めるため、bot は外部の API（TypeSafe AI の Jev）に次のものを送る
 （`bot/src/jevCategoryClassifier.ts`・`bot/src/geminiCategoryClassifier.ts`）。
 
-送るのはモデルで分類するときだけ。キャッシュで決まったとき、LINE のテキストでカテゴリ名を書いたときやキーワード辞書で決まったときは送らない
+送るのはモデルで分類するときだけ。キャッシュで決まったとき、LINE のテキストで `textParser.ts` がカテゴリとして認識した名前を書いたときやキーワード辞書で決まったときは送らない
 （カード利用通知の店名は辞書より先にモデルに送る）。
 
 - 送るもの: 入力の先頭 100 文字、質問文、選択肢、モデル名、リクエストのヘッダー。
@@ -278,8 +278,10 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
 - Cloud Logging のログベース指標で `Jev classification failed` を数え、(a) 15 分で N 件以上（N は運用で決める）、
   (b) `status` が 401・402・403 のものが 1 件でもあれば（鍵・残高の問題は自然に回復しない）通知する。
 - Jev の失敗率 = `Jev classification failed` の件数 ÷（その件数 + `provider` が `jev` の `Category classified` の件数）。
-  退避の頻度 = `provider` が `gemini` の `Category classified` の件数。答えなし・一覧外は別の警告
+  退避の頻度 = `provider` が `gemini` の `Category classified` の件数。答えなし・選択肢にないカテゴリは別の警告
   （`Jev returned no category` / `Jev suggested a category outside the list`）で出るため、この式には入らない。
+- bot は `firebase-functions/logger` を使わず `console.warn('…', {…})` で出すので、Cloud Logging では `textPayload` の 1 行になる。
+  ログベース指標で `status` や `provider` を絞るには、`textPayload =~ "…"` の正規表現が要る。
 - マージ後に、辞書に無い語を LINE で送り、`Category classified` の `provider` が `jev` になることを確かめる。
 - 費用の天井: TypeSafe のクレジットは前払いで、自動リフィルを切る（または上限を決める）と、費用に天井ができる
   （単価・上限の公式な記載は確認できていない）。

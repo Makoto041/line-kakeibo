@@ -92,12 +92,14 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 
 カテゴリ分類のメイン。API キーを `TYPESAFE_API_KEY` に入れる（本番は `firebase functions:secrets:set TYPESAFE_API_KEY`。
 関数の `secrets` に宣言しているので、Secret Manager に無いとデプロイが失敗する）。モデルは `jev-1.13.0` に固定している
-（`bot/src/jevCategoryClassifier.ts`）。鍵が無い・エラー・タイムアウト（3 秒）・一覧外のカテゴリのときは Gemini で分類する。
+（`bot/src/jevCategoryClassifier.ts`）。鍵なし・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリのときは Gemini で分類する。
 
-**止めるとき（ロールバック）**: Jev を導入したコミットを `revert:` の PR で戻す（patch のタグが付く）。
-コードを変えずに切り替える手段（環境変数・Secret の差し替え）は無い。Firebase の Secret は、新しい版を入れても参照する関数を再デプロイするまで反映されないため。
-Secret `TYPESAFE_API_KEY` は消さない。コードが参照している間に消すと実行時に黙って失敗し、`secrets` に宣言したまま無ければデプロイが失敗する。
+**止めるとき（ロールバック）**: Jev を導入したコミットを `revert:` の PR で戻す（patch のタグが付く）。これを推奨する。
+環境変数などで切り替える仕組みは無い。鍵を無効な値に差し替えて再デプロイ（`ci-cd.yml` を master 上で `workflow_dispatch`）すれば Gemini に回るが、
+毎回失敗のログと 401 が出るので推奨しない（Firebase の Secret は、新しい版を入れても再デプロイするまで反映されない）。
+Secret `TYPESAFE_API_KEY` は消さない。コードが参照している間に消すと新しいインスタンスの起動に失敗する可能性があり、`secrets` に宣言したまま無ければデプロイが失敗する。
 revert 後に Secret が残っていても害はない。`firebase functions:secrets:prune` は、revert のデプロイが済んでから実行する。
+初回のマージ前に `firebase functions:secrets:prune` を実行しない（まだどの関数も参照していない版が対象になりうる）。
 
 ### Gemini
 
