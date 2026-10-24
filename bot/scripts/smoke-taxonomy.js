@@ -9,7 +9,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { SUB_CATEGORIES, subCategoriesOf } = require('../dist/categoryTaxonomy');
+const { SUB_CATEGORIES, SUB_CATEGORY_DESCRIPTIONS, subCategoriesOf } = require('../dist/categoryTaxonomy');
 const { CANONICAL_CATEGORIES } = require('../dist/categoryNormalization');
 const { SUB_NULL_KEY, applySubLabel, itemsToLabelSub, validSubLabel, saveGolden, backupGolden } = require('./eval/review-golden');
 
@@ -35,6 +35,16 @@ for (const [major, list] of Object.entries(SUB_CATEGORIES)) {
   );
   check(`${major}: 中項目名が 50 文字以内`, list.every((s) => s.length <= 50));
   check(`${major}: 中項目名が CLI のキー（番号・s・q）と重ならない`,list.every((s) => !/^\d+$/.test(s) && s !== 's' && s !== 'q'));
+}
+
+console.log('\n# 中項目の説明（SUB_CATEGORY_DESCRIPTIONS。評価の --sub-desc on で使う）');
+for (const [major, descs] of Object.entries(SUB_CATEGORY_DESCRIPTIONS)) {
+  const list = SUB_CATEGORIES[major] || [];
+  check(`${major}: 中項目の一覧がある大項目`, list.length > 0);
+  for (const [sub, text] of Object.entries(descs)) {
+    check(`${major}/${sub}: 一覧にある中項目`, list.includes(sub));
+    check(`${major}/${sub}: 説明が空でない文字列`, typeof text === 'string' && text.trim() !== '');
+  }
 }
 
 console.log('\n# subCategoriesOf');

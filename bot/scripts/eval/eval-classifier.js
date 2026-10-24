@@ -29,8 +29,39 @@
  *   --include-unreviewed         reviewed でない件も使う（動作確認用。数字の報告には使わない）
  *   --show-errors                間違えた件を画面に出す（説明文・店名が出る。人に見せる画面では使わない）
  *
+ * 階層化（大項目 / 中項目。#235）の評価:
+ *   node bot/scripts/eval/eval-classifier.js --provider jev --variant v3 --scheme stage2 --limit 5          # 試運転
+ *   node bot/scripts/eval/eval-classifier.js --provider jev --variant v3 --scheme stage2 --subset tune
+ *   node bot/scripts/eval/eval-classifier.js --provider jev --variant v3 --scheme flat --decode sum --subset tune
+ *
+ *   --scheme major|stage2|flat   major = 大項目だけを測る（既定。今までどおり）。stage2 / flat は --provider jev のときだけ
+ *                                （Jev だけで判定する。辞書は通さず、Gemini には送らない）。
+ *                                stage2 = 1 回目は major と同じ要求（同じ --variant。本番と同じにするなら --variant v3）。
+ *                                  1 回目で決まった大項目に中項目の一覧（bot/src/categoryTaxonomy.ts の subCategoriesOf。仮）が
+ *                                  あるときだけ、2 回目の要求（その大項目の中項目から 1 つを選ぶ choice の質問 1 問。質問文は SUB_QUESTIONS）を送る。
+ *                                flat = 大項目と中項目を並べた 1 回の要求。選択肢は、中項目のある大項目は「大項目/中項目」、
+ *                                  中項目の無い大項目は大項目名（説明は --variant のとおり）。質問文は major と同じ。
+ *   --sub-desc on|off            stage2 / flat のみ。中項目の選択肢に説明（categoryTaxonomy.ts の SUB_CATEGORY_DESCRIPTIONS。仮）を
+ *                                付けるか（既定 off = 説明なし）。説明の無い中項目は説明なしで送る（その個数を画面と summary に出す）
+ *   --stage2-major pred|gold     stage2 のみ。2 回目に使う大項目（既定 pred = 1 回目の答え / gold = 正解の大項目。2 回目だけの精度を
+ *                                切り分ける用。gold でも 1 回目は送る。--show-errors では 1 回目の大項目と、正解の大項目の下で選んだ
+ *                                中項目を分けて出す）
+ *   --decode argmax|sum         flat のみ。argmax = Jev の答え（choice）をそのまま使う（既定）/ sum = probabilities を大項目ごとに
+ *                                合計して大項目を決め、その大項目の中で確率の最も高い中項目を選ぶ（同点は選択肢の並び順で先のもの）
+ *   - 対象は、中項目の正解がある件だけ（review-golden.js の validSubLabel が true。subLabel が、いまの大項目の中項目の一覧にある件）。
+ *     tune / hold の振り分けは major と同じ（振り分けた後で対象を絞る）。--limit は絞った後の各経路の先頭 N 件。
+ *   - 集計: 既存の項目（正解率 = 大項目の正解率、レイテンシ = 1 件の段の合計、トークン・コスト = 段の合計）はそのまま。
+ *     summary.bySource.*.hierarchy に、大項目が正解の件の中での中項目の正解率、大項目と中項目の両方が正解の割合、
+ *     中項目の正解率（全件。gold では 2 回目だけの精度）、1 件あたりの呼び出し回数、1 件のレイテンシの p50 / p95、
+ *     段ごとの呼び出し回数・トークン・レイテンシ・コスト（stage2 は 1 回目に対する倍率も）を足す。
+ *   - データと費用: 評価データ（実際の支出の説明文・店名）を、切らずに Jev に送る（stage2 は 1 件につき最大 2 回）。
+ *     鍵は本番と別のもの（評価用に作った TYPESAFE_API_KEY）を使う。費用の目安は、1 回 119 件で、stage2 は major の約 1.2〜1.4 倍の見込み
+ *     （major は 1 回で 1 セント未満。実測で置き換える）。flat は選択肢が増える分だけ増える。
+ *     評価の対象は中項目のある大項目の件だけなので、ほぼ全件で 2 回目を送る。本番の倍率は、2 回目を送る件の割合で変わる。
+ *
  * 出力: bot/scripts/eval/results/<tag>-<時刻>.local.json（`*.local.json` は .gitignore 済み。
- *   tag = gemini / jev-<variant>〔既定以外のモデルは -<model>〕。--subset tune|hold なら末尾に -tune / -hold）
+ *   tag = gemini / jev-<variant>〔既定以外のモデルは -<model>〕。stage2 は -stage2-subdesc-<on|off>-major-<pred|gold>、
+ *   flat は -flat-subdesc-<on|off>-<argmax|sum> を足す。--subset tune|hold なら末尾に -tune / -hold）
  *   - items: 1 件ごとの結果（説明文・店名を含む。commit しない）
  *   - summary: 集計だけ（説明文を含まない。Issue に貼ってよい）
  * 画面には集計だけを出す。
@@ -45,9 +76,6 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '../../..');
-const dotenv = require('dotenv');
-dotenv.config({ path: path.join(ROOT, '.env'), quiet: true });
-dotenv.config({ path: path.join(ROOT, 'bot/.env'), quiet: true });
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
@@ -63,6 +91,10 @@ const SOURCE = arg('source', 'all');
 const LIMIT = arg('limit') ? Number(arg('limit')) : Infinity;
 const DELAY_MS = Number(arg('delay-ms', PROVIDER === 'gemini' ? 4000 : 0));
 const GOLDEN = arg('golden', path.join(__dirname, 'golden.local.json'));
+const SCHEME = arg('scheme', 'major');
+const SUB_DESC = arg('sub-desc', 'off');
+const DECODE = arg('decode', 'argmax');
+const STAGE2_MAJOR = arg('stage2-major', 'pred');
 
 /** USD / 100 万トークン。出典: ai.google.dev/gemini-api/docs/pricing、docs.typesafe.ai/models.md（2026-10-19 確認） */
 const PRICES = {
@@ -96,8 +128,166 @@ const JEV_V2 = {
   },
 };
 
+// ---- 階層化（#235）の方式 ----
+const SCHEMES = ['major', 'stage2', 'flat'];
+const SUB_DESCS = ['on', 'off'];
+const DECODES = ['argmax', 'sum'];
+const STAGE2_MAJORS = ['pred', 'gold'];
+/** flat の選択肢名で、大項目と中項目をつなぐ文字（「食費/外食」） */
+const FLAT_SEP = '/';
+
+/**
+ * stage2 の 2 回目の質問文（仮。#235 の評価用）。state は 1 回目と同じ { input } で、決まった大項目は質問文に入れる。
+ * 入力の説明は 1 回目（本番の JEV_QUESTIONS）にそろえ、経路（text / merchant）で変える
+ */
+const SUB_QUESTIONS = {
+  text: (major) => `\`input\` は家計簿アプリに利用者が入力した支出の内容。この支出は「${major}」に分類された。「${major}」のうち、どの中項目？`,
+  merchant: (major) =>
+    `\`input\` はクレジットカードの利用明細に載った店名（半角カナ・ローマ字・略称が混ざる）。この支出は「${major}」に分類された。店の業態から、「${major}」のうち、どの中項目？`,
+};
+
+const shown = (v) => (v === undefined || v.startsWith('--') ? '値なし' : v);
+
+/**
+ * --scheme と、方式ごとのオプションを確かめる。合わなければ投げる（評価データを読む前・API を呼ぶ前・結果を書く前に呼ぶ）。
+ * given: そのオプションがコマンドラインにあるか（方式に合わないオプションを黙って無視しないため）
+ */
+function checkSchemeOptions({ provider, scheme, subDesc, decode, stage2Major, given = {} }) {
+  if (!SCHEMES.includes(scheme)) throw new Error(`--scheme は major / stage2 / flat（指定: ${shown(scheme)}）`);
+  if (!SUB_DESCS.includes(subDesc)) throw new Error(`--sub-desc は on / off（指定: ${shown(subDesc)}）`);
+  if (!DECODES.includes(decode)) throw new Error(`--decode は argmax / sum（指定: ${shown(decode)}）`);
+  if (!STAGE2_MAJORS.includes(stage2Major)) throw new Error(`--stage2-major は pred / gold（指定: ${shown(stage2Major)}）`);
+  if (scheme !== 'major' && provider !== 'jev') throw new Error(`--scheme ${scheme} は --provider jev のときだけ（Gemini には送らない）`);
+  if (given.subDesc && scheme === 'major') throw new Error('--sub-desc は --scheme stage2 / flat のときだけ');
+  if (given.decode && scheme !== 'flat') throw new Error('--decode は --scheme flat のときだけ');
+  if (given.stage2Major && scheme !== 'stage2') throw new Error('--stage2-major は --scheme stage2 のときだけ');
+}
+
+/** 結果の tag に足す方式の部分（major は空） */
+function schemeTag({ scheme, subDesc, decode, stage2Major }) {
+  if (scheme === 'stage2') return `-stage2-subdesc-${subDesc}-major-${stage2Major}`;
+  if (scheme === 'flat') return `-flat-subdesc-${subDesc}-${decode}`;
+  return '';
+}
+
+/**
+ * 評価する件を選ぶ。経路ごとに、tune / hold の 1 件おきの振り分け → keep（中項目の正解がある件だけ、など）→ 先頭 limit 件。
+ * keep を振り分けの後にするのは、方式を変えても各件の tune / hold が変わらないようにするため（hold を調整に使わない）
+ */
+function pickItems(items, { sources, subset, limit, keep = null }) {
+  return sources.flatMap((s) =>
+    items
+      .filter((it) => it.source === s)
+      .filter((_, i) => subset === 'all' || (subset === 'tune' ? i % 2 === 0 : i % 2 === 1))
+      .filter((it) => !keep || keep(it))
+      .slice(0, limit)
+  );
+}
+
+/** 中項目の説明（無ければ null） */
+function describeSub(descriptions, major, sub) {
+  const own = (o, k) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
+  return own(descriptions, major) && own(descriptions[major], sub) && typeof descriptions[major][sub] === 'string'
+    ? descriptions[major][sub]
+    : null;
+}
+
+/** 説明のある中項目の数（--sub-desc on のときに出す） */
+function countDescribed(subCategories, descriptions) {
+  const all = Object.entries(subCategories).flatMap(([major, list]) => list.map((sub) => [major, sub]));
+  return { described: all.filter(([major, sub]) => describeSub(descriptions, major, sub) !== null).length, total: all.length };
+}
+
+/** stage2 の 2 回目の選択肢（中項目名 → 説明。descriptions が null なら説明なし） */
+function subCriteria(subs, major, descriptions) {
+  return Object.fromEntries(subs.map((sub) => [sub, describeSub(descriptions, major, sub)]));
+}
+
+/**
+ * flat の選択肢。majorCriteria（大項目名 → 説明。並び順のまま）の大項目ごとに、中項目があれば「大項目/中項目」（説明は
+ * descriptions の中項目の説明か null）、無ければ大項目名（説明は majorCriteria のまま）。
+ * index は選択肢名 → { major, sub }（中項目の無い大項目は sub: null）。選択肢名を文字で分けずに、ここから引く
+ */
+function flatChoices(majorCriteria, subsOf, descriptions) {
+  const criteria = {};
+  const index = new Map();
+  const add = (name, description, major, sub) => {
+    if (index.has(name)) throw new Error(`flat の選択肢の名前が重なる: ${name}`);
+    criteria[name] = description;
+    index.set(name, { major, sub });
+  };
+  for (const [major, description] of Object.entries(majorCriteria)) {
+    const subs = subsOf(major);
+    if (subs.length === 0) add(major, description, major, null);
+    else for (const sub of subs) add(`${major}${FLAT_SEP}${sub}`, describeSub(descriptions, major, sub), major, sub);
+  }
+  return { criteria, index };
+}
+
+/**
+ * flat の答えから大項目と中項目を決める。answer は Jev の choice の答え（{ choice, confidence, probabilities }）。
+ *   argmax: answer.choice をそのまま使う（confidence は Jev の confidence）
+ *   sum:    probabilities を大項目ごとに合計し、最も高い大項目を選び、その中で確率の最も高い中項目を選ぶ（中項目の無い大項目は sub: null）。
+ *           confidence は大項目の合計。同点は index の並び順（大項目の並び → 中項目の並び）で先のもの
+ * 決められない（答えなし・選択肢に無い名前・確率が無い）ときは null
+ */
+function decodeFlat(answer, decode, index) {
+  if (!answer || typeof answer !== 'object') return null;
+  if (decode === 'argmax') {
+    const hit = typeof answer.choice === 'string' ? index.get(answer.choice) : undefined;
+    if (!hit) return null;
+    const confidence = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? answer.confidence : 0;
+    return { major: hit.major, sub: hit.sub, confidence };
+  }
+  const probs = answer.probabilities;
+  if (!probs || typeof probs !== 'object') return null;
+  const byMajor = new Map();
+  let seen = false;
+  for (const [name, { major, sub }] of index) {
+    const m = byMajor.get(major) ?? { total: 0, sub: null, best: -Infinity };
+    const p = probs[name];
+    if (typeof p === 'number' && Number.isFinite(p)) {
+      seen = true;
+      m.total += p;
+      if (sub !== null && p > m.best) {
+        m.best = p;
+        m.sub = sub;
+      }
+    }
+    byMajor.set(major, m);
+  }
+  if (!seen) return null;
+  let pick = null;
+  for (const [major, m] of byMajor) if (pick === null || m.total > pick.total) pick = { major, sub: m.sub, total: m.total };
+  return { major: pick.major, sub: pick.sub, confidence: Math.min(1, pick.total) };
+}
+
+/**
+ * 1 件の階層の正誤。pred = { major, sub, subMajor }（subMajor = 中項目を選んだときの大項目。stage2 の gold では正解の大項目）。
+ * 中項目は、正解の大項目の下で正解の中項目を選んだときだけ正解（大項目が違えば、同じ名前の中項目でも不正解）
+ */
+function scoreHierarchical(item, pred) {
+  const majorCorrect = typeof pred.major === 'string' && pred.major === item.label;
+  const subCorrect = typeof pred.sub === 'string' && pred.subMajor === item.label && pred.sub === item.subLabel;
+  return { majorCorrect, subCorrect, bothCorrect: majorCorrect && subCorrect };
+}
+
+/**
+ * --show-errors の 1 行（stage2 / flat。説明文・店名を含む）。
+ * pred・flat は「大項目/中項目」が 1 つの予測なので並べて出す。stage2 の gold は、1 回目の大項目と、
+ * 正解の大項目の下で選んだ中項目が別の予測なので、分けて出す（1 つの予測に見えないように）
+ */
+function hierarchyErrorLine(r, gold) {
+  const predicted = gold
+    ? `大項目 ${r.pred ?? 'null'} ${r.confidence} | 中項目 ${r.label}/${r.predSub ?? 'null'}（正解の大項目の下で選んだ）`
+    : `${r.pred ?? 'null'}/${r.predSub ?? 'null'} ${r.confidence}`;
+  return `${r.id} [${r.label}/${r.subLabel} → ${predicted}] ${r.description}`;
+}
+
 // ---- 分類器（provider ごとに classify(item) => { category, confidence, via, probabilities? } を用意する） ----
 const usageLog = [];
+/** --sub-desc on のとき、説明のある中項目の数（setupJev が入れる） */
+let subDescribed = null;
 
 function setupGemini() {
   // 本番の分類は Jev を先に呼ぶので、鍵を消して Gemini だけを測る（Jev のクォータも使わない）
@@ -153,19 +343,97 @@ function setupJev() {
     VARIANT === 'none' ? null : VARIANT === 'v2' ? (JEV_V2.descriptions[name] ?? CATEGORY_GUIDE[name] ?? null) : (CATEGORY_GUIDE[name] ?? null);
   const criteria =
     VARIANT === 'v3' ? jevCriteria(CANONICAL_CATEGORIES) : Object.fromEntries(CANONICAL_CATEGORIES.map((name) => [name, describe(name)]));
-  // 質問文は本番の JEV_QUESTIONS（v2 の店名だけ JEV_V2.merchant）。仮の文なので、Ch5 で自分の言葉に決め直す
+  // 質問文は本番の JEV_QUESTIONS（v2 の店名だけ JEV_V2.merchant）
+  const questionText = { text: JEV_QUESTIONS.text, merchant: VARIANT === 'v2' ? JEV_V2.merchant : JEV_QUESTIONS.merchant };
   const questions = {
-    text: choice(JEV_QUESTIONS.text, criteria),
-    merchant: choice(VARIANT === 'v2' ? JEV_V2.merchant : JEV_QUESTIONS.merchant, criteria),
+    text: choice(questionText.text, criteria),
+    merchant: choice(questionText.merchant, criteria),
+  };
+  if (SCHEME === 'major') {
+    return async (item) => {
+      const { answers, model, usage } = await client.systemOne({
+        state: { input: item.description },
+        questions: { category: questions[item.source] },
+      });
+      usageLog.push({ model, input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0, nullUsage: usage.input_tokens === null });
+      const a = answers.category;
+      return { category: a.choice, confidence: a.confidence, via: 'jev', probabilities: a.probabilities };
+    };
+  }
+
+  // ---- stage2 / flat（Jev だけ。失敗しても Gemini には回さない） ----
+  const { SUB_CATEGORIES, SUB_CATEGORY_DESCRIPTIONS, subCategoriesOf } = require('../../dist/categoryTaxonomy');
+  // 説明が dist に無い（古い dist など）ときは、説明なしで送る
+  const descriptions = SUB_DESC === 'on' ? (SUB_CATEGORY_DESCRIPTIONS ?? null) : null;
+  if (SUB_DESC === 'on') {
+    subDescribed = countDescribed(SUB_CATEGORIES, descriptions);
+    if (subDescribed.described < subDescribed.total) {
+      console.warn(`--sub-desc on: 中項目 ${subDescribed.total} 個のうち ${subDescribed.total - subDescribed.described} 個は説明が無いので、説明なしで送る`);
+    }
+  }
+  /** 1 問を送る（1 回の要求）。失敗しても投げずに answer: null。トークンは段の番号つきで usageLog にも入れる */
+  const ask = async (stage, item, name, question) => {
+    const t0 = Date.now();
+    try {
+      const { answers, model, usage } = await client.systemOne({ state: { input: item.description }, questions: { [name]: question } });
+      const used = { stage, model, input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0, nullUsage: usage.input_tokens === null };
+      usageLog.push(used);
+      return { answer: answers[name] ?? null, call: { stage, ms: Date.now() - t0, error: false, inTok: used.input, outTok: used.output, model } };
+    } catch {
+      return { answer: null, call: { stage, ms: Date.now() - t0, error: true, inTok: 0, outTok: 0, model: null } };
+    }
+  };
+
+  if (SCHEME === 'stage2') {
+    return async (item) => {
+      // 1 回目は major と同じ要求（同じ質問オブジェクト・同じ問いの名前）
+      const first = await ask(1, item, 'category', questions[item.source]);
+      const a = first.answer;
+      const major = typeof a?.choice === 'string' ? a.choice : null;
+      const subMajor = STAGE2_MAJOR === 'gold' ? item.label : major;
+      const subs = typeof subMajor === 'string' ? subCategoriesOf(subMajor) : [];
+      const stages = [first.call];
+      let sub = null;
+      let subConfidence = null;
+      if (subs.length > 0) {
+        const second = await ask(2, item, 'subcategory', choice(SUB_QUESTIONS[item.source](subMajor), subCriteria(subs, subMajor, descriptions)));
+        stages.push(second.call);
+        if (typeof second.answer?.choice === 'string') {
+          sub = second.answer.choice;
+          subConfidence = second.answer.confidence ?? null;
+        }
+      }
+      return {
+        category: major,
+        confidence: a?.confidence ?? 0,
+        via: first.call.error ? 'error' : 'jev',
+        probabilities: a?.probabilities,
+        sub,
+        subMajor: sub === null ? null : subMajor,
+        subConfidence,
+        stages,
+      };
+    };
+  }
+
+  const flat = flatChoices(criteria, subCategoriesOf, descriptions);
+  const flatQuestions = {
+    text: choice(questionText.text, flat.criteria),
+    merchant: choice(questionText.merchant, flat.criteria),
   };
   return async (item) => {
-    const { answers, model, usage } = await client.systemOne({
-      state: { input: item.description },
-      questions: { category: questions[item.source] },
-    });
-    usageLog.push({ model, input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0, nullUsage: usage.input_tokens === null });
-    const a = answers.category;
-    return { category: a.choice, confidence: a.confidence, via: 'jev', probabilities: a.probabilities };
+    const only = await ask(1, item, 'category', flatQuestions[item.source]);
+    const d = decodeFlat(only.answer, DECODE, flat.index);
+    return {
+      category: d ? d.major : null,
+      confidence: d ? d.confidence : 0,
+      via: only.call.error ? 'error' : 'jev',
+      probabilities: only.answer?.probabilities,
+      sub: d ? d.sub : null,
+      subMajor: d && d.sub !== null ? d.major : null,
+      subConfidence: null,
+      stages: [only.call],
+    };
   };
 }
 
@@ -221,6 +489,70 @@ function summarize(rows) {
   };
 }
 
+/**
+ * 階層化の集計（summarize に足す分）。rows は stage2 / flat の行（correct = 大項目の正誤、subCorrect・bothCorrect、
+ * stages = 呼び出しごとの { stage, ms, error, inTok, outTok, model }、ms = 1 件の合計）。stageNumbers は集計する段（stage2 は [1, 2]、flat は [1]）。
+ * コストは段ごとに、呼び出しのモデルの単価で計算する（失敗した呼び出しはモデル名なしで 0。単価の無いモデルがあれば null）
+ */
+function summarizeHierarchy(rows, stageNumbers, prices = PRICES) {
+  const n = rows.length;
+  if (n === 0) return null;
+  const count = (pred) => rows.filter(pred).length;
+  const majorCorrect = count((r) => r.correct);
+  const bothCorrect = count((r) => r.bothCorrect);
+  const subCorrect = count((r) => r.subCorrect);
+  const calls = rows.flatMap((r) => r.stages || []);
+  const ms = rows.map((r) => r.ms).sort((a, b) => a - b);
+  const stages = {};
+  const costs = {};
+  for (const st of stageNumbers) {
+    const these = calls.filter((c) => c.stage === st);
+    let usd = 0;
+    let known = true;
+    for (const c of these) {
+      const p = prices[c.model];
+      if (!p) {
+        if (c.model) known = false;
+        continue;
+      }
+      usd += (c.inTok * p.input + c.outTok * p.output) / 1e6;
+    }
+    costs[st] = known ? usd : null;
+    const input = these.reduce((s, c) => s + c.inTok, 0);
+    const output = these.reduce((s, c) => s + c.outTok, 0);
+    const succeeded = these.filter((c) => !c.error).length;
+    const stMs = these.map((c) => c.ms).sort((a, b) => a - b);
+    stages[`stage${st}`] = {
+      calls: these.length,
+      errors: these.length - succeeded,
+      // inputPerCall は成功した呼び出し 1 回あたり（1 回の要求の大きさ）。inputPerItem は全件で割る（既存の inputPerItem と同じ）
+      tokens: { input, output, inputPerCall: succeeded ? round(input / succeeded, 0) : null, inputPerItem: round(input / n, 0) },
+      latencyMs: { p50: percentile(stMs, 0.5), p95: percentile(stMs, 0.95) },
+      costUsdPaidRate: known ? round(usd, 6) : null,
+      costUsdPer1000: known ? round((usd / n) * 1000, 4) : null,
+    };
+  }
+  const h = {
+    n,
+    majorCorrect,
+    majorAccuracy: round(majorCorrect / n),
+    subAccuracyAmongMajorCorrect: majorCorrect ? round(bothCorrect / majorCorrect) : null,
+    bothCorrect,
+    bothCorrectRate: round(bothCorrect / n),
+    subCorrect,
+    subAccuracy: round(subCorrect / n),
+    callsPerItem: round(calls.length / n, 2),
+    latencyTotalMs: { p50: percentile(ms, 0.5), p95: percentile(ms, 0.95) },
+    stages,
+  };
+  if (stageNumbers.includes(2)) {
+    // 2 段の合計が、1 回目（major と同じ要求）だけの何倍か
+    const total = Object.values(costs).every((c) => c !== null) ? Object.values(costs).reduce((s, c) => s + c, 0) : null;
+    h.costRatioToStage1 = total !== null && costs[1] ? round(total / costs[1], 2) : null;
+  }
+  return h;
+}
+
 function print(title, s) {
   if (!s) return;
   console.log(`\n== ${title} (n=${s.n}) ==`);
@@ -231,6 +563,23 @@ function print(title, s) {
   console.log(`コスト（有料単価で計算）${s.costUsdPaidRate === null ? '単価不明のモデルあり' : `$${s.costUsdPaidRate}（1,000 件あたり $${s.costUsdPer1000}）`}`);
   console.log('信頼度帯ごとの正解率: ' + s.byConfidenceBin.map((b) => `${b.range}: ${b.accuracy ?? '-'}（${b.n}件）`).join(' | '));
   console.log('閾値ごと（採用率 / 採用した中の正解率）: ' + s.byThreshold.map((t) => `${t.threshold}: ${t.adoptedRate} / ${t.accuracyAmongAdopted ?? '-'}`).join(' | '));
+  if (s.hierarchy) printHierarchy(s.hierarchy);
+}
+
+function printHierarchy(h) {
+  console.log(
+    `中項目: 大項目が正解の件の中での正解率 ${h.subAccuracyAmongMajorCorrect ?? '-'}（${h.bothCorrect}/${h.majorCorrect}）` +
+      ` | 大項目と中項目の両方が正解 ${h.bothCorrectRate}（${h.bothCorrect}/${h.n}）| 中項目の正解率（全件）${h.subAccuracy}（${h.subCorrect}/${h.n}）`
+  );
+  console.log(`1 件あたりの呼び出し ${h.callsPerItem} 回 | レイテンシ（1 件の合計）p50 ${h.latencyTotalMs.p50}ms / p95 ${h.latencyTotalMs.p95}ms`);
+  for (const [name, st] of Object.entries(h.stages)) {
+    const cost = st.costUsdPaidRate === null ? '単価不明のモデルあり' : `$${st.costUsdPaidRate}（1,000 件あたり $${st.costUsdPer1000}）`;
+    console.log(
+      `  ${name === 'stage1' ? '1 回目' : '2 回目'}: 呼び出し ${st.calls} 回（失敗 ${st.errors}）| 入力 ${st.tokens.input}（成功した 1 回 ${st.tokens.inputPerCall ?? '-'}）/ 出力 ${st.tokens.output}` +
+        ` | レイテンシ p50 ${st.latencyMs.p50 ?? '-'}ms / p95 ${st.latencyMs.p95 ?? '-'}ms | コスト ${cost}`
+    );
+  }
+  if ('costRatioToStage1' in h) console.log(`  コストは 1 回目（major と同じ要求）だけの ${h.costRatioToStage1 ?? '-'} 倍`);
 }
 
 async function main() {
@@ -244,16 +593,25 @@ async function main() {
     const given = JEV_MODEL === undefined || JEV_MODEL.startsWith('--') ? '値なし' : JEV_MODEL;
     throw new Error(`--model は jev- で始まるモデル名（指定: ${given}）`);
   }
+  checkSchemeOptions({
+    provider: PROVIDER,
+    scheme: SCHEME,
+    subDesc: SUB_DESC,
+    decode: DECODE,
+    stage2Major: STAGE2_MAJOR,
+    given: { subDesc: flag('sub-desc'), decode: flag('decode'), stage2Major: flag('stage2-major') },
+  });
+  const hierarchical = SCHEME !== 'major';
   const golden = JSON.parse(fs.readFileSync(GOLDEN, 'utf8'));
   let items = golden.items.filter((it) => !it.excluded && (it.reviewed || flag('include-unreviewed')));
   if (!flag('include-unreviewed') && items.length === 0) throw new Error('reviewed な件が 0 件。review-golden.js で見直すか、--include-unreviewed を付ける');
   const sources = SOURCE === 'all' ? ['text', 'merchant'] : [SOURCE];
-  items = sources.flatMap((s) =>
-    items
-      .filter((it) => it.source === s)
-      .filter((_, i) => SUBSET === 'all' || (SUBSET === 'tune' ? i % 2 === 0 : i % 2 === 1))
-      .slice(0, LIMIT)
-  );
+  // stage2 / flat は中項目の正解がある件だけ（review-golden.js の validSubLabel。dist の中項目の一覧を読む）
+  const keep = hierarchical ? require('./review-golden').validSubLabel : null;
+  items = pickItems(items, { sources, subset: SUBSET, limit: LIMIT, keep });
+  if (hierarchical && items.length === 0) {
+    throw new Error('中項目の正解（subLabel）が使える件が 0 件。review-golden.js --sub で付ける（--source / --subset / --limit も確かめる）');
+  }
 
   const classify = PROVIDER === 'jev' ? setupJev() : setupGemini();
   // 初回の接続・モデル一覧の取得を測定に含めないため、1 回空打ちする
@@ -272,7 +630,7 @@ async function main() {
     }
     const ms = Date.now() - t0;
     const used = usageLog.slice(before);
-    rows.push({
+    const row = {
       id: item.id,
       source: item.source,
       description: item.description,
@@ -286,15 +644,44 @@ async function main() {
       outTok: used.reduce((s, u) => s + u.output, 0),
       model: used.length ? used[used.length - 1].model : null,
       probabilities: result.probabilities,
-    });
+    };
+    if (hierarchical) {
+      const pred = { major: result.category ?? null, sub: result.sub ?? null, subMajor: result.subMajor ?? null };
+      const score = scoreHierarchical(item, pred);
+      Object.assign(row, {
+        subLabel: item.subLabel,
+        predSub: pred.sub,
+        subMajor: pred.subMajor,
+        subConfidence: result.subConfidence ?? null,
+        subCorrect: score.subCorrect,
+        bothCorrect: score.bothCorrect,
+        stages: result.stages ?? [],
+      });
+    }
+    rows.push(row);
     if (DELAY_MS > 0) await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
   }
 
-  const tag = (PROVIDER === 'jev' ? `jev-${VARIANT}${JEV_MODEL === 'jev-1.13.0' ? '' : `-${JEV_MODEL}`}` : 'gemini') + (SUBSET === 'all' ? '' : `-${SUBSET}`);
-  const summary = { tag, provider: PROVIDER, variant: PROVIDER === 'jev' ? VARIANT : null, createdAt: new Date().toISOString(), bySource: {} };
+  const tag =
+    (PROVIDER === 'jev' ? `jev-${VARIANT}${JEV_MODEL === 'jev-1.13.0' ? '' : `-${JEV_MODEL}`}` : 'gemini') +
+    schemeTag({ scheme: SCHEME, subDesc: SUB_DESC, decode: DECODE, stage2Major: STAGE2_MAJOR }) +
+    (SUBSET === 'all' ? '' : `-${SUBSET}`);
+  const schemeInfo = hierarchical
+    ? {
+        scheme: SCHEME,
+        subDesc: SUB_DESC,
+        stage2Major: SCHEME === 'stage2' ? STAGE2_MAJOR : null,
+        decode: SCHEME === 'flat' ? DECODE : null,
+        subDescribed,
+        note: 'Jev だけで判定（辞書は通さず、Gemini には送らない）。対象は中項目の正解（validSubLabel）がある件だけ。中項目の一覧は仮（categoryTaxonomy.ts）',
+      }
+    : {};
+  const summary = { tag, provider: PROVIDER, variant: PROVIDER === 'jev' ? VARIANT : null, ...schemeInfo, createdAt: new Date().toISOString(), bySource: {} };
+  if (hierarchical) console.log(`\n${SCHEME}: Jev だけで判定（Gemini には送らない）。対象は中項目の正解がある ${rows.length} 件`);
   for (const s of [...sources, 'all']) {
     const subset = s === 'all' ? rows : rows.filter((r) => r.source === s);
     summary.bySource[s] = summarize(subset);
+    if (hierarchical && summary.bySource[s]) summary.bySource[s].hierarchy = summarizeHierarchy(subset, SCHEME === 'stage2' ? [1, 2] : [1]);
     if (s !== 'all' || sources.length > 1) print(`${tag} / ${s}`, summary.bySource[s]);
   }
 
@@ -306,14 +693,43 @@ async function main() {
 
   if (flag('show-errors')) {
     console.log('\n-- 間違い --');
-    for (const r of rows.filter((x) => !x.correct)) console.log(`${r.id} [${r.label} → ${r.pred ?? 'null'} ${r.confidence}] ${r.description}`);
+    if (hierarchical) {
+      // 説明文・店名（利用者の入力）を書式文字列にしない（% を含んでもそのまま出す）
+      const gold = SCHEME === 'stage2' && STAGE2_MAJOR === 'gold';
+      for (const r of rows.filter((x) => !x.bothCorrect)) console.log('%s', hierarchyErrorLine(r, gold));
+    } else {
+      for (const r of rows.filter((x) => !x.correct)) console.log(`${r.id} [${r.label} → ${r.pred ?? 'null'} ${r.confidence}] ${r.description}`);
+    }
   }
 }
 
-main().then(
-  () => process.exit(0),
-  (e) => {
-    console.error('eval failed:', e && e.message ? e.message : e);
-    process.exit(1);
-  }
-);
+module.exports = {
+  PRICES,
+  SCHEMES,
+  FLAT_SEP,
+  SUB_QUESTIONS,
+  checkSchemeOptions,
+  schemeTag,
+  pickItems,
+  describeSub,
+  countDescribed,
+  subCriteria,
+  flatChoices,
+  decodeFlat,
+  scoreHierarchical,
+  summarizeHierarchy,
+  hierarchyErrorLine,
+};
+
+if (require.main === module) {
+  const dotenv = require('dotenv');
+  dotenv.config({ path: path.join(ROOT, '.env'), quiet: true });
+  dotenv.config({ path: path.join(ROOT, 'bot/.env'), quiet: true });
+  main().then(
+    () => process.exit(0),
+    (e) => {
+      console.error('eval failed:', e && e.message ? e.message : e);
+      process.exit(1);
+    }
+  );
+}
