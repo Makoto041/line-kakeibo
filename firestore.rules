@@ -104,11 +104,15 @@ service cloud.firestore {
     }
     // 変更されたキー（create は全キー）だけを検証する。既存データに上限を超える
     // 値が残っていても、そのフィールドに触れない編集は通す。
+    // subCategory（中項目。任意）だけは削除を許す: 変更キーには削除したキーも入るため、
+    // 「変更後に無い」場合を通す（web は大項目を変えたとき、古い中項目を消す）。
+    // 他のフィールドの削除は、従来どおり検証で拒否される。
     function expenseFieldsValid(d, changed) {
       return (!('amount' in changed) || validAmount(d.amount))
           && (!('date' in changed) || validDate(d.date))
           && (!('description' in changed) || validStr(d.description, 500))
           && (!('category' in changed) || validStr(d.category, 50))
+          && (!('subCategory' in changed) || !('subCategory' in d) || validStr(d.subCategory, 50))
           && (!('includeInTotal' in changed) || d.includeInTotal is bool)
           && (!('payerId' in changed) || (validStr(d.payerId, 128) && d.payerId.size() > 0))
           && (!('payerDisplayName' in changed) || validStr(d.payerDisplayName, 100))
@@ -124,14 +128,16 @@ service cloud.firestore {
     // web から編集できるフィールド（許可リスト）。
     //   - 編集ドロワー（web/app/expenses/page.tsx の handleEditSave → web/lib/hooks.ts の
     //     updateExpense）: amount / description / date / category / includeInTotal /
-    //     payerId / payerDisplayName / updatedAt
+    //     payerId / payerDisplayName / updatedAt。大項目（category）を変えるときは、中項目
+    //     （subCategory）の削除も常に送る（中項目を持たない支出では変化が無いので、
+    //     affectedKeys に入らない）
     //   - 合計に含めるトグル: includeInTotal / updatedAt
     //   - レシート添付（web/app/attach/page.tsx）: receiptUrl / updatedAt
     // lineId / groupId / lineGroupId / createdAt / inputSource / status / advanceBy /
     // advanceSettledAt / gmailMessageId / appUid などは不変（変更は bot = Admin SDK だけ）。
     // web で編集対象を増やすときは、ここと test/firestore.rules.test.mjs を更新すること。
     function editableExpenseKeys() {
-      return ['amount', 'description', 'date', 'category', 'includeInTotal',
+      return ['amount', 'description', 'date', 'category', 'subCategory', 'includeInTotal',
               'payerId', 'payerDisplayName', 'receiptUrl', 'updatedAt'];
     }
     // クライアントが作成時に書けるフィールド。inputSource / gmailMessageId / advanceBy /
@@ -139,7 +145,7 @@ service cloud.firestore {
     // クライアントに偽装させない）。
     function creatableExpenseKeys() {
       return ['lineId', 'groupId', 'lineGroupId', 'userDisplayName', 'amount',
-              'description', 'date', 'category', 'includeInTotal', 'status',
+              'description', 'date', 'category', 'subCategory', 'includeInTotal', 'status',
               'payerId', 'payerDisplayName', 'paymentMethod', 'createdAt', 'updatedAt'];
     }
     // 精算済み（立替を精算した）支出か。精算額が後から変わらないよう、

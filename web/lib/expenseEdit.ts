@@ -106,6 +106,43 @@ export function hasEditChanges(update: Partial<EditForm>): boolean {
   return Object.keys(update).length > 0;
 }
 
+// ---- 大項目を変えたときの中項目 ---------------------------------------------------
+
+type SubCategoryFields = Partial<Pick<Expense, 'category' | 'subCategory'>>;
+
+/**
+ * この更新で、中項目（subCategory）を消すか。
+ * 大項目（category）を変える更新では、古い中項目が新しい大項目と食い違わないよう、常に消す。
+ * 元の支出が中項目を持つかは見ない: Web の一覧は 1 回きりの読み込みなので、読み込んだ後に
+ * bot が中項目を書いた支出では、手元の一覧が「中項目なし」のままになっている。
+ * 中項目を持たない支出への削除は、保存される結果が変わらない（ルールでも許可される）。
+ * - 大項目は、正規化した後の値で比べる（別名が同じ大項目になる入力では消さない）
+ * - 更新が中項目を自分で指定しているときは、それに任せる
+ * - 元の支出が渡されない更新（合計に含めるトグルなど）では消さない
+ */
+export function shouldClearSubCategory(
+  update: SubCategoryFields,
+  original: SubCategoryFields | null | undefined
+): boolean {
+  if (!original) return false;
+  if (update.subCategory !== undefined) return false;
+  return update.category !== undefined && update.category !== original.category;
+}
+
+/**
+ * Firestore に送る更新内容。shouldClearSubCategory のときだけ、subCategory の削除を足す。
+ * deleteField は firebase/firestore の deleteField（node --test から差し替えられるよう引数で受ける）。
+ * 消さないときは update をそのまま返す。
+ */
+export function buildExpenseUpdate<T extends SubCategoryFields, D>(
+  update: T,
+  original: SubCategoryFields | null | undefined,
+  deleteField: () => D
+): T | (Omit<T, 'subCategory'> & { subCategory: D }) {
+  if (!shouldClearSubCategory(update, original)) return update;
+  return { ...update, subCategory: deleteField() };
+}
+
 // ---- 支払い者の候補・表示名 ---------------------------------------------------
 
 export interface KnownUser {

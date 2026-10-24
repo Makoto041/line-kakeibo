@@ -11,6 +11,7 @@ import {
   doc,
   updateDoc,
   deleteDoc,
+  deleteField,
   FirestoreError
 } from 'firebase/firestore';
 import { onAuthStateChanged, type User } from 'firebase/auth';
@@ -20,6 +21,7 @@ import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
 import { getCached, setCached, hasCached, clearCached, updateCachedByPrefix } from './swrCache';
 import { timestampToMillis } from './expenseState';
+import { buildExpenseUpdate, shouldClearSubCategory } from './expenseEdit';
 import {
   fetchLegacyAdvances,
   householdErrorCode,
@@ -72,6 +74,7 @@ export interface Expense {
   description: string;
   date: string;             // YYYY-MM-DD format
   category: string;
+  subCategory?: string;     // 中項目。任意。category（大項目）とは別
   confirmed?: boolean;      // 確認済みフラグ
   includeInTotal: boolean;  // 合計に含めるかどうか
   status?: ExpenseStatus;   // 支出ステータス（確認待ち、共同費、立替など）
@@ -563,15 +566,23 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
     setResultKey(expensesCacheKey);
   };
 
-  const updateExpense = async (id: string, updates: Partial<Expense>) => {
+  /**
+   * @param original 元の支出。渡すと、大項目（category）を変える更新で中項目（subCategory）
+   *   も消す（buildExpenseUpdate）。
+   */
+  const updateExpense = async (
+    id: string,
+    updates: Partial<Expense>,
+    original?: Pick<Expense, 'category' | 'subCategory'>
+  ) => {
     if (!checkFirebaseConnection()) {
       throw new Error('Firebase接続エラー: データベースが利用できません');
     }
-    
+
     if (!db) {
       throw new Error('Firestoreデータベースが初期化されていません');
     }
-    
+
     try {
       // category は渡されたときだけ正規化する（差分だけの保存で category を消さない）
       const normalizedUpdates: Partial<Expense> = {
@@ -583,16 +594,23 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
       const cleanUpdates = Object.fromEntries(
         Object.entries(normalizedUpdates).filter(([, value]) => value !== undefined)
       ) as Partial<Expense>;
+      const clearSubCategory = shouldClearSubCategory(cleanUpdates, original);
 
       expensesWriteGen += 1;
       await updateDoc(doc(db, 'expenses', id), {
-        ...cleanUpdates,
+        ...buildExpenseUpdate(cleanUpdates, original, deleteField),
         updatedAt: new Date()
       });
-      
-      // Update local state（キャッシュも同期して再訪時の巻き戻りを防ぐ）
+
+      // Update local state（キャッシュも同期して再訪時の巻き戻りを防ぐ）。
+      // 消した中項目は、削除の印（deleteField の値）ではなくキーごと取り除く
       applyLocal(list =>
-        list.map(expense => (expense.id === id ? { ...expense, ...cleanUpdates } : expense))
+        list.map(expense => {
+          if (expense.id !== id) return expense;
+          const next = { ...expense, ...cleanUpdates };
+          if (clearSubCategory) delete next.subCategory;
+          return next;
+        })
       );
     } catch (err) {
       const errorMessage = handleFirestoreError(err);
