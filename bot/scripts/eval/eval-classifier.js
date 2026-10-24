@@ -7,13 +7,18 @@
  *
  * オプション:
  *   --provider gemini|jev        評価する分類器（gemini = 本番の分類処理から Jev を外したもの。キャッシュ・辞書・Gemini。TYPESAFE_API_KEY を消して呼ぶ。
- *                                jev = Jev だけ。辞書・Gemini は通さない）
+ *                                jev = Jev だけ。辞書・Gemini は通さない。jev は入力を切らずに送る。本番は先頭 100 文字に切ってから送るので、
+ *                                100 文字を超える件だけ --variant v3 と本番の条件が少しずれる）
  *   --variant none|guide|v2|v3   jev のみ。選択肢の説明: none = 説明なし / guide = CATEGORY_GUIDE の一文 / v3 = 本番の Jev の説明
  *                                （bot/src/jevCategoryClassifier.ts。guide の食費・娯楽だけ JEV_V2 の説明にしたもの。「その他」は元のまま） / v2 = 「その他」への逃げを抑えた質問文と説明（JEV_V2）。
  *                                質問文は v2 の店名以外、本番の JEV_QUESTIONS
  *   --subset tune|hold|all       各経路を 1 件おきに「調整用（tune）」と「最終確認用（hold）」に分け、片方だけ使う（既定 all）。
- *                                調整は tune だけで行い、hold は最後に 1 回だけ測る
- *   --model ID                   jev のみ。モデル（既定 jev-1.13.0。プレビューは jev-1.14.0）
+ *                                調整は tune だけで行い、hold は最後に 1 回だけ測る。
+ *                                振り分けは、除外・未見直しを外した後の並び順で 1 件おき。実行の間に review-golden.js で除外したり
+ *                                見直したりすると、同じ経路の後ろの件で tune と hold が入れ替わる。tune で調整を始めた後は除外・見直しを
+ *                                変えない（変えたら tune と hold をやり直す）
+ *   --model ID                   jev のみ。モデル（jev- で始まる名前。既定 jev-1.13.0。プレビューは jev-1.14.0）。
+ *                                値が無い・形が合わないときは止める
  *   --source text|merchant|all   評価する経路（既定 all）
  *   --limit N                    各経路の先頭 N 件だけ（試運転用）
  *   --delay-ms N                 1 件ごとに N ミリ秒待つ（Gemini の無料枠の 429 を避ける。既定 gemini=4000 / jev=0。待ちは計測に含めない）
@@ -231,6 +236,12 @@ async function main() {
   if (!['gemini', 'jev'].includes(PROVIDER)) throw new Error(`--provider は gemini か jev（指定: ${PROVIDER}）`);
   if (!['none', 'guide', 'v2', 'v3'].includes(VARIANT)) throw new Error(`--variant は none / guide / v2 / v3（指定: ${VARIANT}）`);
   if (!['tune', 'hold', 'all'].includes(SUBSET)) throw new Error(`--subset は tune / hold / all（指定: ${SUBSET}）`);
+  if (!['text', 'merchant', 'all'].includes(SOURCE)) throw new Error(`--source は text / merchant / all（指定: ${SOURCE}）`);
+  // モデル名は結果のファイル名にも入る。値が無いと SDK が環境変数 TYPESAFE_DEFAULT_MODEL か jev-latest を使うので止める
+  if (typeof JEV_MODEL !== 'string' || !/^jev-[\w.-]+$/.test(JEV_MODEL)) {
+    const given = JEV_MODEL === undefined || JEV_MODEL.startsWith('--') ? '値なし' : JEV_MODEL;
+    throw new Error(`--model は jev- で始まるモデル名（指定: ${given}）`);
+  }
   const golden = JSON.parse(fs.readFileSync(GOLDEN, 'utf8'));
   let items = golden.items.filter((it) => !it.excluded && (it.reviewed || flag('include-unreviewed')));
   if (!flag('include-unreviewed') && items.length === 0) throw new Error('reviewed な件が 0 件。review-golden.js で見直すか、--include-unreviewed を付ける');
