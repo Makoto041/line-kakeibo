@@ -27,8 +27,14 @@
  *   s    … スキップ（何も書かない）
  *   q    … 終了（1 件ごとに保存するので、それまでの分は保存済み）
  * 書き換えるのは subLabel だけ（label・reviewed・excluded は変えない）。大項目を直すときは --sub なしで実行する。
- * 大項目を直して、いまの subLabel がその一覧に無くなった件は、--redo なしでも対象にする。
+ * 対象の件があるときは、書き換える前に評価データのコピー（<名前>.sub-backup-<時刻>.local.json。同じフォルダー）を作り、パスを出す。
  *
+ * 古い subLabel の扱い: 大項目を --sub なしで直しても、subLabel は自動では消えない。
+ *   - 直した先の大項目に中項目の一覧があり、subLabel がその一覧に無ければ、--redo なしでも --sub の対象になる
+ *   - 中項目の一覧が無い大項目（例: 日用品）に直した件は、--sub の対象に出ない（古い subLabel が残る）
+ *   そのため、中項目を評価するときは validSubLabel(item) が true の件（subLabel がいまの大項目の一覧にある件）だけを数える。
+ *
+ * 保存は、同じフォルダーの一時ファイル（<名前>.tmp.local.json）に書いてから置き換える（途中で失敗しても元のファイルは壊れない）。
  * 画面に説明文・店名（実データ）が出る。人に見せる画面では実行しないこと。
  */
 const fs = require('fs');
@@ -46,9 +52,40 @@ const argOf = (argv, name) => {
   return i >= 0 ? argv[i + 1] : null;
 };
 
+/** file と同じフォルダーの <名前>.<tag>.local.json（*.local.json は .gitignore 済み） */
+function siblingPath(file, tag) {
+  const base = path.basename(file).replace(/\.local\.json$/, '');
+  return path.join(path.dirname(file), `${base}.${tag}.local.json`);
+}
+
+/** 一時ファイルに書いてから置き換える。失敗したら一時ファイルを消して投げ直す（元のファイルはそのまま） */
 function saveGolden(file, data) {
   const body = data.items.map((it) => '    ' + JSON.stringify(it)).join(',\n');
-  fs.writeFileSync(file, `{\n  "meta": ${JSON.stringify(data.meta)},\n  "items": [\n${body}\n  ]\n}\n`);
+  const text = `{\n  "meta": ${JSON.stringify(data.meta)},\n  "items": [\n${body}\n  ]\n}\n`;
+  const tmp = siblingPath(file, 'tmp');
+  try {
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch (_e) {
+      // 一時ファイルができていない
+    }
+    throw e;
+  }
+}
+
+/** 評価データのコピーを <名前>.sub-backup-<時刻>.local.json に作り、そのパスを返す（同名があれば上書きせずに投げる） */
+function backupGolden(file, now = new Date()) {
+  const backup = siblingPath(file, `sub-backup-${now.toISOString().replace(/[-:.]/g, '')}`);
+  fs.copyFileSync(file, backup, fs.constants.COPYFILE_EXCL);
+  return backup;
+}
+
+/** 中項目の正解として使えるか（subLabel が、いまの大項目の中項目の一覧にある）。null（決められない）や古い subLabel は false */
+function validSubLabel(item) {
+  return typeof item.subLabel === 'string' && subCategoriesOf(item.label).includes(item.subLabel);
 }
 
 /**
@@ -81,10 +118,9 @@ function itemsToLabelSub(items, opts = {}) {
     if (ids && !ids.has(it.id)) return false;
     if (opts.label && it.label !== opts.label) return false;
     if (opts.source && it.source !== opts.source) return false;
-    const list = subCategoriesOf(it.label);
-    if (list.length === 0) return false;
+    if (subCategoriesOf(it.label).length === 0) return false;
     if (opts.redo || it.subLabel === undefined) return true;
-    return it.subLabel !== null && !list.includes(it.subLabel);
+    return it.subLabel !== null && !validSubLabel(it);
   });
 }
 
@@ -151,7 +187,10 @@ async function reviewSubLabels({ file, data, hints, label, source, redo }) {
 
   console.log('中項目の一覧（仮。bot/src/categoryTaxonomy.ts）:');
   for (const [major, list] of Object.entries(SUB_CATEGORIES)) console.log(`  ${major}: ${list.join(' / ')}`);
-  console.log(`中項目を付ける件数: ${queue.length}（全 ${data.items.length} 件、subLabel あり ${data.items.filter((i) => i.subLabel !== undefined).length} 件）\n`);
+  console.log(`中項目を付ける件数: ${queue.length}（全 ${data.items.length} 件、subLabel あり ${data.items.filter((i) => i.subLabel !== undefined).length} 件）`);
+  // 書き換える前に 1 回だけ、評価データのコピーを作る（書き換える件が無ければ作らない）
+  if (queue.length > 0) console.log(`バックアップ: ${backupGolden(file)}`);
+  console.log('');
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   // rl.question は、まとめて届いた行（パイプからの入力など）を取りこぼすので、行を順に読む。入力が終わったら q と同じ
@@ -194,10 +233,9 @@ async function reviewSubLabels({ file, data, hints, label, source, redo }) {
   }
   rl.close();
   const eligible = itemsToLabelSub(data.items, { redo: true });
-  const done = eligible.filter((i) => i.subLabel !== undefined);
   console.log(
-    `中項目を付けられる件: ${eligible.length}、うち subLabel あり ${done.length}（決められない ${done.filter((i) => i.subLabel === null).length}）。` +
-      `今回 付けた ${labeled} 件、スキップ ${skipped} 件`
+    `中項目を付けられる件: ${eligible.length}、うち正解として使える ${eligible.filter(validSubLabel).length}・` +
+      `決められない ${eligible.filter((i) => i.subLabel === null).length}。今回 付けた ${labeled} 件、スキップ ${skipped} 件`
   );
 }
 
@@ -216,7 +254,7 @@ async function main(argv) {
   return reviewLabels({ ...opts, redo: argv.includes('--all') });
 }
 
-module.exports = { SUB_NULL_KEY, applySubLabel, itemsToLabelSub };
+module.exports = { SUB_NULL_KEY, applySubLabel, itemsToLabelSub, validSubLabel, saveGolden, backupGolden };
 
 if (require.main === module) {
   main(process.argv);

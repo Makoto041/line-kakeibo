@@ -1,12 +1,16 @@
 /**
  * 中項目の定義（categoryTaxonomy）と、評価データに中項目を付ける道具（eval/review-golden.js --sub）のスモークテスト
  *
- * 架空のデータだけを使う。評価データ（*.local.json）は読まない・書かない。
+ * 架空のデータだけを使う。評価データ（bot/scripts/eval/*.local.json）は読まない・書かない
+ * （保存・バックアップの確認は、OS の一時フォルダーに作った架空のファイルで行い、最後に消す）。
  *   node bot/scripts/smoke-taxonomy.js
  */
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { SUB_CATEGORIES, subCategoriesOf } = require('../dist/categoryTaxonomy');
 const { CANONICAL_CATEGORIES } = require('../dist/categoryNormalization');
-const { SUB_NULL_KEY, applySubLabel, itemsToLabelSub } = require('./eval/review-golden');
+const { SUB_NULL_KEY, applySubLabel, itemsToLabelSub, validSubLabel, saveGolden, backupGolden } = require('./eval/review-golden');
 
 let failed = 0;
 function check(name, cond, detail) {
@@ -93,6 +97,101 @@ check('label で絞る', ids(q) === 'b,h', ids(q));
 q = itemsToLabelSub(items, { source: 'text' });
 check('source で絞る', ids(q) === 'a', ids(q));
 check('元の items は変えない', items.length === 8 && items[5].subLabel === food[0] && items[6].subLabel === null);
+
+console.log('\n# validSubLabel（評価で中項目の正解として使えるか）');
+check('いまの大項目の一覧にある', validSubLabel({ label: '食費', subLabel: food[1] }) === true);
+check('別名の大項目（外食 → 食費）でも一覧で見る', validSubLabel({ label: '外食', subLabel: food[1] }) === true);
+check('決められない（null）は使わない', validSubLabel({ label: '食費', subLabel: null }) === false);
+check('subLabel が無い', validSubLabel({ label: '食費' }) === false);
+check('大項目を直して一覧から外れた subLabel（娯楽に食費の中項目）', validSubLabel({ label: '娯楽', subLabel: food[0] }) === false);
+check('一覧の無い大項目に直した件（日用品）', validSubLabel({ label: '日用品', subLabel: food[0] }) === false);
+check('文字列でない subLabel', validSubLabel({ label: '食費', subLabel: 1 }) === false);
+
+console.log('\n# saveGolden / backupGolden（OS の一時フォルダーの架空のファイル）');
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-taxonomy-'));
+const file = path.join(dir, 'golden.local.json');
+const listDir = () => fs.readdirSync(dir).sort().join(',');
+const fixture = {
+  meta: { note: '架空' },
+  items: [
+    { id: 'a', source: 'text', description: '架空1', label: '食費', reviewed: true, subLabel: food[1] },
+    { id: 'b', source: 'merchant', description: '架空2', label: '娯楽', reviewed: false, subLabel: null },
+  ],
+};
+// 変更前の review-golden.js と同じ書式（1 件 1 行、末尾に改行）
+const expected =
+  '{\n  "meta": {"note":"架空"},\n  "items": [\n' +
+  `    {"id":"a","source":"text","description":"架空1","label":"食費","reviewed":true,"subLabel":"${food[1]}"},\n` +
+  '    {"id":"b","source":"merchant","description":"架空2","label":"娯楽","reviewed":false,"subLabel":null}\n  ]\n}\n';
+const realWrite = fs.writeFileSync;
+const realRename = fs.renameSync;
+try {
+  saveGolden(file, fixture);
+  check('保存した内容が従来の書式のとおり', fs.readFileSync(file, 'utf8') === expected);
+  check('一時ファイルが残らない', listDir() === 'golden.local.json', listDir());
+  saveGolden(file, { ...fixture, items: [fixture.items[0]] });
+  check('既存のファイルを置き換える', JSON.parse(fs.readFileSync(file, 'utf8')).items.length === 1);
+  saveGolden(file, fixture);
+
+  // 一時ファイルへの書き込みが途中で失敗（空き容量不足など）
+  fs.writeFileSync = (p, text) => {
+    realWrite(p, String(text).slice(0, 10));
+    throw new Error('simulated write failure');
+  };
+  let threw = false;
+  try {
+    saveGolden(file, { ...fixture, items: [] });
+  } catch (_e) {
+    threw = true;
+  }
+  fs.writeFileSync = realWrite;
+  check('書き込みの失敗は投げる', threw);
+  check('書き込みに失敗しても元のファイルはそのまま', fs.readFileSync(file, 'utf8') === expected);
+  check('書き込みに失敗したら一時ファイルを消す', listDir() === 'golden.local.json', listDir());
+
+  // 置き換え（rename）が失敗
+  fs.renameSync = () => {
+    throw new Error('simulated rename failure');
+  };
+  threw = false;
+  try {
+    saveGolden(file, { ...fixture, items: [] });
+  } catch (_e) {
+    threw = true;
+  }
+  fs.renameSync = realRename;
+  check('置き換えの失敗は投げる', threw);
+  check('置き換えに失敗しても元のファイルはそのまま', fs.readFileSync(file, 'utf8') === expected);
+  check('置き換えに失敗したら一時ファイルを消す', listDir() === 'golden.local.json', listDir());
+
+  // 書き込み先のフォルダーが無い
+  threw = false;
+  try {
+    saveGolden(path.join(dir, 'no-such-dir', 'golden.local.json'), fixture);
+  } catch (_e) {
+    threw = true;
+  }
+  check('存在しないフォルダーへの保存は投げる', threw);
+  check('存在しないフォルダーへの保存で何も作らない', listDir() === 'golden.local.json', listDir());
+
+  const at = new Date('2026-10-24T01:02:03.004Z');
+  const backup = backupGolden(file, at);
+  check('バックアップの名前', path.basename(backup) === 'golden.sub-backup-20261024T010203004Z.local.json', backup);
+  check('バックアップは同じフォルダー・*.local.json', path.dirname(backup) === dir && backup.endsWith('.local.json'));
+  check('バックアップは元と同じ内容', fs.readFileSync(backup, 'utf8') === expected);
+  threw = false;
+  try {
+    backupGolden(file, at);
+  } catch (_e) {
+    threw = true;
+  }
+  check('同じ名前のバックアップは上書きしない', threw && fs.readFileSync(backup, 'utf8') === expected);
+} finally {
+  fs.writeFileSync = realWrite;
+  fs.renameSync = realRename;
+  for (const name of fs.readdirSync(dir)) fs.unlinkSync(path.join(dir, name));
+  fs.rmdirSync(dir);
+}
 
 if (failed > 0) {
   console.log(`\n${failed} 件失敗`);
