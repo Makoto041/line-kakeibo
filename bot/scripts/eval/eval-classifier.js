@@ -22,7 +22,9 @@
  *   --source text|merchant|all   評価する経路（既定 all）
  *   --limit N                    各経路の先頭 N 件だけ（試運転用）
  *   --delay-ms N                 1 件ごとに N ミリ秒待つ（Gemini の無料枠の 429 を避ける。既定 gemini=4000 / jev=0。待ちは計測に含めない）
- *   --golden PATH                評価データ（既定 bot/scripts/eval/golden.local.json）
+ *   --golden PATH                評価データ（既定 bot/scripts/eval/golden.local.json）。形は架空のサンプル golden.sample.json を見る。
+ *                                サンプルで試すときは *.local.json の名前（例: golden.try.local.json）にコピーして指定する
+ *                                （golden.local.json は実データなので上書きしない。実データは必ず *.local.json の名前にする）
  *   --out-dir PATH               結果の出力先（既定 bot/scripts/eval/results）
  *   --include-unreviewed         reviewed でない件も使う（動作確認用。数字の報告には使わない）
  *   --show-errors                間違えた件を画面に出す（説明文・店名が出る。人に見せる画面では使わない）
