@@ -228,28 +228,58 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
 支出のカテゴリを決めるため、bot は外部の API（TypeSafe AI の Jev）に次のものを送る
 （`bot/src/jevCategoryClassifier.ts`・`bot/src/geminiCategoryClassifier.ts`）。
 
-- 送るもの: 入力の先頭 100 文字、質問文、選択肢、モデル名。
-  - 入力は、LINE のテキストなら金額・日付・支払方法を除いた支出の内容（`textParser.ts` の `description`）、
-    カード利用通知なら店名。
+送るのはモデルで分類するときだけ。キャッシュで決まったとき、LINE のテキストでカテゴリ名を書いたときやキーワード辞書で決まったときは送らない
+（カード利用通知の店名は辞書より先にモデルに送る）。
+
+- 送るもの: 入力の先頭 100 文字、質問文、選択肢、モデル名、リクエストのヘッダー。
+  - 入力は、カード利用通知なら店名。LINE のテキストなら、`textParser.ts` が金額・日付・支払方法・カテゴリとして取り出した
+    トークン（それぞれ最初の 1 つ）を除いた残り。2 つ目以降の数字、認識できない形の日付（例: 曜日付き、「昨日」）、
+    実在しない日付は説明に残り、そのまま送られる。
   - 選択肢は、カテゴリ名（利用者のカスタムカテゴリ名を含む）と、既定のカテゴリの説明（コードに持つ固定の文）。
     カスタムカテゴリの説明は送らない（説明なしで渡す）。
-- 送らないもの: 利用者 ID・世帯 ID・金額・日付・メール本文。
-- Jev が失敗したとき（SPECIFICATION.md §4）は、同じ入力とカテゴリ一覧（既定のカテゴリの説明つき）を Gemini にも送る（従来どおり）。
+  - ヘッダーは `Authorization`（鍵）、`User-Agent` / `X-TypeSafe-SDK`（`typesafe-sdk/<版>`）、
+    `X-TypeSafe-Runtime`（`node/<版> (<OS>; <arch>)`）など。個人情報は含まない。
+- 送らないもの: 利用者 ID・世帯 ID・メール本文。
+- Jev が失敗したとき（SPECIFICATION.md §4）は、同じ入力とカテゴリ一覧（既定のカテゴリの説明つき）を Gemini にも送る。
+  入力は先頭 100 文字に切る（従来は切らずに送っていた）。
 - Jev の接続先とログレベル（`warn`）はコードで固定している（環境変数 `TYPESAFE_BASE_URL` / `TYPESAFE_LOG_LEVEL` では変わらない）。
   Jev の呼び出しでは、ログに入力・店名・利用者 ID・API の応答本文を出さない（失敗時はエラーの種類と HTTP ステータスだけ）。
 - 鍵（`TYPESAFE_API_KEY`）は Firebase の Secret Manager で管理し、`firebase functions:secrets:set TYPESAFE_API_KEY` で登録する。
-  コード・ログ・`.env.example` に値を書かない。
+  コード・ログ・`.env.example` に値を書かない。止めるときの手順は SETUP.md §4「Jev（TypeSafe AI）」。
 
 ### 提供元（TypeSafe AI）の扱い
 
-公式の文書の要約に基づく（**原文との照合は未了**。取得日 2026-10-24）。
+公式ページの記載に基づく（取得日 2026-10-24。WebFetch 経由で取得した内容で、**ブラウザでの原文確認は未了**）。
 
-- サービスは米国でホストされる。
-- API の入力・応答の保持期間と、ログ保存の有無は、公式の記載が見つかっていない。
-- プライバシーポリシーは、入力でモデルの学習・ファインチューニングをしないと書く。一方、利用契約（MCA）は、
-  Telemetry を改善のために無制限に処理できると定める。
-- 早期アクセスで、SLA の記載はない。
+- プライバシーポリシー（https://typesafe.ai/legal/privacy-policy 、最終更新 2025-11-19）:
+  - サービスは米国でホストされる。
+  - 入力でモデルの学習・ファインチューニングをしない。入力はサービス提供者以外の第三者に開示しない。
+  - 保持は「サービス提供に合理的に必要な期間」とだけ書かれ、具体的な期間はない。
+- 利用契約（MCA。https://typesafe.ai/legal/mca 、最終更新 2026-09-23）:
+  - 入力と出力が Customer Data。モデルの重みを変える学習に Customer Data を使うには、顧客の事前同意が要る。
+  - 一方、Customer Data から生成した Telemetry（技術ログ、ハッシュ、要約統計、分類結果、指標など）は、
+    サービス改善を含めて制限なく処理できる。
+  - Customer Data を保存・保持する義務はなく、いつでも削除しうる。
+  - 稼働を保証しない（SLA なし）。課金は前払いのクレジットで、自動リフィルはオプトイン。準拠法はカリフォルニア州法。
+- DPA（https://typesafe.ai/legal/data-processing 、最終更新 2026-04-24）:
+  - 保持は「処理の目的に照らして必要な期間」。
+  - サブプロセッサの一覧は https://trust.typesafe.ai/subprocessors を参照と書かれているが、ページ本文を取得できなかった。
+- 単価・レート制限・支出上限の公式な記載は確認できなかった。
 
-出典: https://typesafe.ai/legal/privacy-policy 、https://typesafe.ai/legal/mca 、https://typesafe.ai/legal/data-processing
+**未確認事項**（原文を確認したら、この節を更新する）:
 
-**未確認事項**: 保持期間・Telemetry の範囲・サブプロセッサ・処理地域。原文と照合したら、この節を更新する。
+- API の入力・応答の具体的な保持期間。
+- サブプロセッサの実名と地域。
+
+あわせて、Telemetry に入力文そのものが含まれるかも未確認（定義に「分類結果」「ハッシュ」などは含まれるが、入力文が含まれるかは読み取れない）。
+
+### 運用（マージ後に行う）
+
+- Cloud Logging のログベース指標で `Jev classification failed` を数え、(a) 15 分で N 件以上（N は運用で決める）、
+  (b) `status` が 401・402・403 のものが 1 件でもあれば（鍵・残高の問題は自然に回復しない）通知する。
+- Jev の失敗率 = `Jev classification failed` の件数 ÷（その件数 + `provider` が `jev` の `Category classified` の件数）。
+  退避の頻度 = `provider` が `gemini` の `Category classified` の件数。答えなし・一覧外は別の警告
+  （`Jev returned no category` / `Jev suggested a category outside the list`）で出るため、この式には入らない。
+- マージ後に、辞書に無い語を LINE で送り、`Category classified` の `provider` が `jev` になることを確かめる。
+- 費用の天井: TypeSafe のクレジットは前払いで、自動リフィルを切る（または上限を決める）と、費用に天井ができる
+  （単価・上限の公式な記載は確認できていない）。

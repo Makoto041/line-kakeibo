@@ -15,7 +15,7 @@
 |-----|------|-------------|
 | テキスト入力 | 「500 ランチ」形式で LINE から手動登録 | `textParser.ts` / `line/expenseFlow.ts` |
 | カテゴリ設定 | 「カテゴリー 食費」でデフォルトカテゴリ変更 | `line/commands/category.ts` |
-| Gemini 分類 | キーワード + AI による自動カテゴリ分類 | `geminiCategoryClassifier.ts` |
+| カテゴリ分類 | キーワード + AI（Jev。失敗時は Gemini）による自動カテゴリ分類 | `geminiCategoryClassifier.ts` / `jevCategoryClassifier.ts` |
 | グループ機能 | LINE グループに紐づく世帯（2 名固定）での共同家計簿 | `firestore.ts` / `expenseGroupScope.ts` |
 | 固定費 | 毎月の固定費を引き落とし日に自動計上 | `recurringExpenses.ts` |
 | Web ダッシュボード | 支出一覧・編集・精算・統計表示 | `web/` |
@@ -53,8 +53,8 @@ Gmail API watch → Pub/Sub（gmail-notifications）
 Firebase Functions
 gmailPubSubHandler（asia-northeast1）
     ↓ history API で差分取得 → SMBC フィルタ → パース
-既存の Gemini 分類
-geminiCategoryClassifier.ts
+既存のカテゴリ分類（Jev → 失敗時 Gemini → 辞書）
+geminiCategoryClassifier.ts / jevCategoryClassifier.ts
     ↓
 Firestore 保存（トランザクション・重複排除）
 firestore.ts (saveGmailExpenseAtomic)
@@ -272,7 +272,8 @@ bot/src/
 ├── index.ts                      # Function エクスポート（gmailPubSubHandler / renewGmailWatch / api）
 ├── firestore.ts                  # saveGmailExpenseAtomic（重複排除つき保存）
 ├── expenseActions.ts             # postback / Web の確認で共用する状態遷移
-├── geminiCategoryClassifier.ts   # Gemini 分類
+├── geminiCategoryClassifier.ts   # カテゴリ分類の入口（キャッシュ・辞書・Jev → Gemini の順序。Gemini の呼び出しもここ。ファイル名は従来のまま）
+├── jevCategoryClassifier.ts      # Jev（分類のメイン）の呼び出し
 ├── categoryNormalization.ts      # カテゴリ正規化
 └── adminAuth.ts                  # ADMIN_SECRET の定数時間比較
 ```
@@ -409,7 +410,7 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 ### 11.1 既存機能への影響
 
 - Gmail 自動取得は**追加機能**として実装し、LINE テキスト入力の経路は変えない
-- 保存は `saveGmailExpenseAtomic`（重複排除つき）、分類は既存の Gemini 分類器を再利用
+- 保存は `saveGmailExpenseAtomic`（重複排除つき）、分類は既存の分類器（`classifyExpenseWithGemini`。Jev がメイン、Gemini は退避先）を再利用
 - 確認カードとボタン後の状態遷移はテキスト入力と共通（`expenseActions.ts`）
 
 ### 11.2 Gmail Watch 制約

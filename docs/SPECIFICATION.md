@@ -52,18 +52,18 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | 金額 | `^\d+円?$`（カンマ許容） | ✅ | `500` `1,200円` |
 | 日付 | `YYYY-MM-DD` / `M/D` / `MM/DD` / `M月D日` | −（省略時は当日） | `6/29` `6月29日` |
 | 支払方法 | 現金/げんきん/キャッシュ→`cash`、paypay/ペイペイ→`paypay`、カード/クレカ/クレジット→`card` | −（省略時 `unknown`） | `現金` |
-| カテゴリ | 正準19カテゴリ名と完全一致（※パーサは抽出するが**現行の登録処理では未使用** — §2.3参照） | − | `食費` |
+| カテゴリ | 正準19カテゴリ名と完全一致（指定すると分類より優先 — §2.3参照） | − | `食費` |
 | 摘要 | 残りトークンを結合 | −（省略時 `支出`） | `ランチ` |
 
 入力例: `500 ランチ` / `6/29 4800 家賃` / `1500 現金 ドラッグストア`
 
-> ⚠️ **カテゴリトークンは現状指定しても反映されない**: `parseTextExpense()` はカテゴリを抽出するものの、登録処理（`processExpenseInBackground`）は `parsed.category` を参照せず、常に Gemini 分類／ユーザーデフォルトからカテゴリを決定します。カテゴリの変更は登録後の「カテゴリ変更」ボタンで行います。
+> **カテゴリトークンを指定すると、そのカテゴリで登録する**: 登録処理（`processExpenseInBackground`）は `parsed.category` があればそのまま使い、分類（§4）は呼びません。指定が無いときは、分類（辞書 → Jev → Gemini）の結果かユーザーデフォルトからカテゴリを決定します。カテゴリの変更は登録後の「カテゴリ変更」ボタンで行います。
 
 ### 2.3 支出登録フロー（`processExpenseInBackground`, `bot/src/line/expenseFlow.ts`)
 
 1. LINE プロフィール取得（リトライ＋15分メモリキャッシュ）
 2. `appUid` 解決（LINE userId → Firebase Auth 匿名ユーザーを作成/取得。`linkUserResolver.ts`）
-3. カテゴリ分類（§4）とユーザーデフォルトカテゴリを並列取得。Gemini の確信度 ≥ 0.4 なら採用、なければデフォルト、それも無ければ `その他`
+3. カテゴリの決定: カテゴリトークン（§2.2）があればそれを使う。無ければカテゴリ分類（§4。辞書 → Jev → Gemini）とユーザーデフォルトカテゴリを並列取得し、分類結果の確信度 ≥ 0.4 なら採用（辞書・Jev・Gemini のどれで決まっても同じ閾値）、なければデフォルト、それも無ければ `その他`
 4. グループ所属の決定（`expenseGroupScope.ts`）: 発言元の LINE グループに紐づく世帯（`groups.lineGroupId` が一致）の有効メンバーなら `groupId` と `lineGroupId` を付ける。それ以外（第三者・脱退済み・紐づく世帯なし）は**どちらも付けず個人支出**として保存し、Web 一覧にも LINE の集計・精算にも入れない
 5. `expenses` に保存（`confirmed: false`, `includeInTotal: false`, `inputSource: 'line_text'`）
 6. 確認用 Flex メッセージを送信（§2.4 の登録・編集カード）
@@ -153,7 +153,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 ### 3.1 Gmail 連携（三井住友カード利用通知）
 
 - Gmail API（`gmail.readonly` スコープのみ）＋ **Pub/Sub push 通知**（topic: `gmail-notifications`）
-- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → Gemini でカテゴリ分類 → **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 4 行＋ボタン）
+- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → カテゴリ分類（§4。Jev → Gemini → 辞書。確信度に関係なく採用）→ **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 4 行＋ボタン）
 - 保存フィールド: `lineId`/`payerId` はシステムユーザー `gmail-auto-system`、`inputSource: 'gmail_auto'`, `status: 'shared'`, `confirmed: true`（自動で入るので要確認にしない）, `includeInTotal: true`, `usedAt`（カード利用日時）、`groupId`（`DEFAULT_GROUP_ID`）/ `lineGroupId`（`LINE_GROUP_ID`）
 - watch は7日で失効するため、**6日ごとの cron**（`renewGmailWatch`）で更新
 - 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。認証は `ADMIN_SECRET` を **`Authorization: Bearer` ヘッダーでのみ**受け付け、定数時間で比較する（`requireAdminAuth`）＋レートリミット（OAuth callback のみ CSRF state 検証）。`?adminSecret=` クエリ渡しはアクセスログ等に秘密値が残るため廃止した。詳細は [GMAIL_AUTO_SPEC.md](./GMAIL_AUTO_SPEC.md)

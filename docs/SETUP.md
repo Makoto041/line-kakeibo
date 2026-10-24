@@ -12,6 +12,7 @@
 | CLI | `firebase-tools`（Functions / ルールのデプロイ、エミュレータ）、`gcloud`（IAM・管理スクリプトの認証） |
 | Firebase | プロジェクト `line-kakeibo-0410`（Firestore / Storage / Authentication / Functions gen2） |
 | LINE Developers | Messaging API チャネル（bot）と LINE Login チャネル（LIFF。Web のログイン用） |
+| TypeSafe AI | API キー（Jev。カテゴリ分類のメイン。§4「Jev（TypeSafe AI）」） |
 | Gemini | API キー（[Google AI Studio](https://aistudio.google.com/app/apikey)） |
 | Vercel | プロジェクト `line-kakeibo`（Git 連携でデプロイ） |
 | Gmail 自動取込（任意） | Google Cloud の OAuth クライアントと Pub/Sub。詳細は [GMAIL_AUTO_SPEC.md](GMAIL_AUTO_SPEC.md) |
@@ -92,6 +93,11 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 カテゴリ分類のメイン。API キーを `TYPESAFE_API_KEY` に入れる（本番は `firebase functions:secrets:set TYPESAFE_API_KEY`。
 関数の `secrets` に宣言しているので、Secret Manager に無いとデプロイが失敗する）。モデルは `jev-1.13.0` に固定している
 （`bot/src/jevCategoryClassifier.ts`）。鍵が無い・エラー・タイムアウト（3 秒）・一覧外のカテゴリのときは Gemini で分類する。
+
+**止めるとき（ロールバック）**: Jev を導入したコミットを `revert:` の PR で戻す（patch のタグが付く）。
+コードを変えずに切り替える手段（環境変数・Secret の差し替え）は無い。Firebase の Secret は、新しい版を入れても参照する関数を再デプロイするまで反映されないため。
+Secret `TYPESAFE_API_KEY` は消さない。コードが参照している間に消すと実行時に黙って失敗し、`secrets` に宣言したまま無ければデプロイが失敗する。
+revert 後に Secret が残っていても害はない。`firebase functions:secrets:prune` は、revert のデプロイが済んでから実行する。
 
 ### Gemini
 
