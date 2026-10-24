@@ -1,10 +1,12 @@
 /**
  * 評価データの正解ラベルを、ターミナルで素早く見直す
  *
- *   node bot/scripts/eval/review-golden.js [--all] [--label カテゴリ名] [--source text|merchant]
+ *   node bot/scripts/eval/review-golden.js [--all] [--label カテゴリ名] [--source text|merchant] [--ids PATH]
  *     --all     見直し済みの件も、もう一度見る（除外した件は出さない）
  *     --label   そのラベルが付いている件だけ見る（例: --all --label その他）
  *     --source  その経路の件だけ見る
+ *     --ids     JSON { "<id>": "<モデルの答え>" } に載っている件だけ、見直し済みでも見る。モデルの答えを横に出す
+ *               （ファイル名は *.local.json にしてコミットしない）
  *
  * 10 件ずつ「いまのラベル」を見せる。
  *   Enter          … 10 件すべて正しい
@@ -28,9 +30,11 @@ const argOf = (name) => {
 };
 const onlyLabel = argOf('label');
 const onlySource = argOf('source');
+const idsFile = argOf('ids');
+const hints = idsFile ? JSON.parse(fs.readFileSync(idsFile, 'utf8')) : null;
 const queue = data.items.filter(
   (it) =>
-    (redo || !it.reviewed) &&
+    (hints ? Object.prototype.hasOwnProperty.call(hints, it.id) : redo || !it.reviewed) &&
     !it.excluded &&
     (!onlyLabel || it.label === onlyLabel) &&
     (!onlySource || it.source === onlySource)
@@ -53,7 +57,8 @@ async function main() {
     const batch = queue.slice(start, start + BATCH);
     batch.forEach((it, i) => {
       const tag = it.source === 'merchant' ? '店名' : '入力';
-      console.log(`${String(i + 1).padStart(2)}  [${it.label}]  (${tag}) ${it.description}`);
+      const hint = hints ? `  ← モデル: ${hints[it.id]}` : '';
+      console.log(`${String(i + 1).padStart(2)}  [${it.label}]  (${tag}) ${it.description}${hint}`);
     });
     const answer = (await ask('\nEnter=すべて正しい / 番号=カテゴリ / x番号=除外 / q=終了 > ')).trim();
     if (answer === 'q') break;

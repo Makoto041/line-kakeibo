@@ -7,12 +7,12 @@ import type { ClassificationSource, GeminiClassificationResult } from './geminiC
 /**
  * Jev（TypeSafe AI の System One 決定モデル）によるカテゴリ分類。分類のメイン。
  * 失敗したら呼び出し側（geminiCategoryClassifier.ts）が Gemini に回す。
- * 質問文と選択肢の説明は、評価で選んだもの。
+ * 質問文と選択肢の説明は、評価で選んだもの（評価スクリプト eval-classifier.js の --variant v3 はこのモジュールの値を使う）。
  */
 
 /**
  * モデルは固定する（SDK の既定 jev-latest のように自動で変わる名前は使わない）。
- * 版が変わると分類の傾向も変わるため、モデルや SDK の版を上げるときは評価してから変える
+ * 版が変わると分類の傾向も変わるため、モデルや SDK の版を上げるときは eval-classifier.js で評価してから変える
  */
 export const JEV_MODEL = 'jev-1.13.0';
 // 打ち切り時間。LINE の返信とカード利用通知がこの分遅れ、失敗時はさらに Gemini（最大 8 秒）を待つので短くする。
@@ -44,7 +44,9 @@ export function isJevConfigured(): boolean {
 }
 
 /** SDK の既定の接続先。環境変数 TYPESAFE_BASE_URL で変わらないよう固定する */
-const JEV_BASE_URL = 'https://api.typesafe.ai';
+export const JEV_BASE_URL = 'https://api.typesafe.ai';
+/** ログの詳しさ。環境変数 TYPESAFE_LOG_LEVEL で変わらないよう固定する（接続先とともに eval-classifier.js も使う） */
+export const JEV_LOG_LEVEL = 'warn';
 
 let client: TypeSafeClient | null = null;
 
@@ -58,7 +60,7 @@ function getClient(): TypeSafeClient {
     defaultModel: JEV_MODEL,
     timeout: JEV_TIMEOUT_MS,
     retry: { maxRetries: 0 },
-    logLevel: 'warn',
+    logLevel: JEV_LOG_LEVEL,
   });
   return client;
 }

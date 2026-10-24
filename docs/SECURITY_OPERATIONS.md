@@ -246,6 +246,8 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
   Jev の呼び出しでは、ログに入力・店名・利用者 ID・API の応答本文を出さない（失敗時はエラーの種類と HTTP ステータスだけ）。
 - 鍵（`TYPESAFE_API_KEY`）は Firebase の Secret Manager で管理し、`firebase functions:secrets:set TYPESAFE_API_KEY` で登録する。
   コード・ログ・`.env.example` に値を書かない。止めるときの手順は SETUP.md §4「Jev（TypeSafe AI）」。
+- 開発者の手元で評価スクリプト（`bot/scripts/eval/eval-classifier.js --provider jev`）を実行するときは、評価データ（実際の支出の説明文・店名。
+  リポジトリには含めない）を、先頭 100 文字に切らずに Jev に送る。接続先とログレベルは本番と同じ値に固定している。
 
 ### 提供元（TypeSafe AI）の扱い
 
