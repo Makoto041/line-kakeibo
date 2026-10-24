@@ -9,7 +9,9 @@
         "node_modules",
         ".git",
         "firebase-debug.log",
-        "firebase-debug.*.log"
+        "firebase-debug.*.log",
+        "*.local.json",
+        "**/scripts/eval/results"
       ]
     }
   ],

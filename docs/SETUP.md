@@ -157,6 +157,9 @@ cd /path/to/line-kakeibo && ln -s /tmp/rules-tools/node_modules node_modules   #
 CI のデプロイには GitHub の `production-bot` environment に `GCP_SA_KEY`（Firebase Admin / Cloud Functions Developer 等を持つ
 サービスアカウントの JSON）が必要。詳細は `.github/README.md`。
 
+手元からのデプロイは `.gitignore` を見ないため、評価データ（`*.local.json`、`scripts/eval/results`）は `firebase.json` の `functions.ignore` で
+Functions のソースから除外している。実データを含むファイルは `*.local.json` の名前にすること。
+
 ## 8. 運用メモ
 
 - **シークレットの差し替え**: LINE コンソールで再発行 → `functions:secrets:set` → 関数を再デプロイ → 署名なし 401 と LINE の Webhook 検証で確認。
