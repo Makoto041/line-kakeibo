@@ -94,6 +94,7 @@ Flex Message 通知（line/flexMessage.ts）
   - From のアドレス部（表示名は見ない）のドメインが `vpass.ne.jp` または `smbc-card.com`（サブドメイン可。`evilvpass.ne.jp` のような文字列一致は不可）
   - 本文に「三井住友ゴールドＶＩＳＡ（ＮＬ）」（半角・括弧半角の表記ゆれも可）を含む
 - **他カードの通知メールは無視**
+- **店名の抽出**（`parseSMBCCardEmail`）: 「ご利用店名：」「◇利用先：」の後ろを行末まで取る。text/html しか無いメールは改行が空白になるため、次の項目のラベル（`◇利用取引：` `ご利用金額：` など、ラベルの直後にコロン）の手前で切り、100 文字（モデルに送る上限と同じ）で打ち切る。空なら「不明な店舗」
 - **重複チェック**: `gmailMessageId` に加え、`date + amount` が同じ `gmail_auto` 支出のうち店舗名が類似（一致または包含）し `usedAt` が ±1 分のものも弾く（`saveGmailExpenseAtomic`。Firestore トランザクション内で判定）
 - **失敗時の扱い**: 1 通でも処理に失敗したら `historyId` を進めず Pub/Sub の再送に委ねる。同じメッセージが 3 回失敗したら諦めて先へ進む（`system/gmailFailures` に試行回数を記録）
 - **Gmail Watch の有効期限**: 7 日 → `renewGmailWatch`（6 日ごと 3:00 JST）で自動更新
