@@ -8,6 +8,8 @@ const {
   isSMBCGoldVISANL,
   extractSenderAddress,
   getFromAddress,
+  decodeEmailBody,
+  MERCHANT_MAX_CHARS,
 } = require('../dist/gmail/parser');
 const { toJSTDateString, formatJST } = require('../dist/time');
 
@@ -63,6 +65,132 @@ check('時刻が無ければ 00:00 として当日になる', dateOnly && toJSTD
   dateOnly && toJSTDateString(dateOnly.usedAt));
 
 check('金額が無いメールは null', parseSMBCCardEmail('msg-5', 'ご利用日時：2026/03/14 19:20') === null);
+
+// ------------------------------------------------------------
+// 店名の切り方（#244）
+// text/html しか無いメールは改行が空白になり、店名が本文の残りまで伸びうる。
+// 次のラベルの手前で切り、長さに上限を設ける。文面はすべて架空。
+// ------------------------------------------------------------
+console.log('\nparseSMBCCardEmail (merchant cut)');
+
+// ◇ 書式の行（店名の後ろに ◇利用取引・◇利用金額 が続く）
+function altLines(merchant) {
+  return [
+    'ご利用カード：三井住友ゴールドＶＩＳＡ（ＮＬ）',
+    '◇利用日：2026/03/14 19:20',
+    `◇利用先：${merchant}`,
+    '◇利用取引：買物',
+    '◇利用金額：1,200円',
+    'ご利用内容の詳細は会員サイトでご確認ください。',
+  ];
+}
+
+// text/html のパートだけを持つ multipart（decodeEmailBody がタグを除いて改行を空白にする経路）
+function htmlOnlyPayload(html) {
+  return {
+    mimeType: 'multipart/alternative',
+    parts: [{ mimeType: 'text/html', body: { data: Buffer.from(html, 'utf-8').toString('base64') } }],
+  };
+}
+
+function isAltJst(parsed) {
+  return parsed && parsed.amount === 1200 && parsed.usedAt.toISOString() === '2026-03-14T10:20:00.000Z';
+}
+
+// (a) 改行のある通常のメールは今と同じ
+const altNewline = parseSMBCCardEmail('msg-m1', altLines('SAMPLE MART EKIMAE').join('\n'));
+check('改行あり（◇ 書式）: 店名は行末まで', altNewline && altNewline.merchant === 'SAMPLE MART EKIMAE', JSON.stringify(altNewline));
+const altCrlf = parseSMBCCardEmail('msg-m2', altLines('SAMPLE MART EKIMAE').join('\r\n'));
+check('改行あり（CRLF）: 店名は行末まで', altCrlf && altCrlf.merchant === 'SAMPLE MART EKIMAE', JSON.stringify(altCrlf));
+
+// (b) 改行が空白になった 1 行の本文
+const altOneLine = parseSMBCCardEmail('msg-m3', altLines('SAMPLE MART EKIMAE').join(' '));
+check('1 行（◇ 書式）: ◇利用取引 の手前で切る', altOneLine && altOneLine.merchant === 'SAMPLE MART EKIMAE', JSON.stringify(altOneLine));
+// (f) 金額・日時は変わらない
+check('1 行（◇ 書式）: 金額・日時は今と同じ', isAltJst(altOneLine), JSON.stringify(altOneLine));
+
+const goriyoOneLine = parseSMBCCardEmail('msg-m4',
+  buildBody('2026/03/14 19:20', 'テスト食堂 駅前店', '3,240').replace(/\n/g, ' '));
+check('1 行（ご利用 書式）: ご利用金額 の手前で切る',
+  goriyoOneLine && goriyoOneLine.merchant === 'テスト食堂 駅前店', JSON.stringify(goriyoOneLine));
+check('1 行（ご利用 書式）: 金額・日時は今と同じ',
+  goriyoOneLine && goriyoOneLine.amount === 3240 && goriyoOneLine.usedAt.toISOString() === '2026-03-14T10:20:00.000Z',
+  JSON.stringify(goriyoOneLine));
+
+// 半角コロンのラベル、◇利用日 が店名の直後に来る並び
+const halfColon = parseSMBCCardEmail('msg-m5', '◇利用先:SAMPLE MART ◇利用日:2026/03/14 19:20 ◇利用金額:1,200円');
+check('1 行（半角コロン）: ◇利用日 の手前で切る', halfColon && halfColon.merchant === 'SAMPLE MART', JSON.stringify(halfColon));
+check('1 行（半角コロン）: 金額・日時は今と同じ', isAltJst(halfColon), JSON.stringify(halfColon));
+
+// ご利用カード・カード番号（下4桁）が店名の直後に来る並び
+const cardLabel = parseSMBCCardEmail('msg-m6', 'ご利用店名：テスト食堂 ご利用カード：三井住友ゴールドＶＩＳＡ（ＮＬ） ご利用金額：500円');
+check('1 行: ご利用カード の手前で切る', cardLabel && cardLabel.merchant === 'テスト食堂', JSON.stringify(cardLabel));
+const cardNumber = parseSMBCCardEmail('msg-m7', 'ご利用店名：テスト食堂 カード番号（下4桁）：1234 ご利用金額：500円');
+check('1 行: カード番号（下4桁） の手前で切る', cardNumber && cardNumber.merchant === 'テスト食堂', JSON.stringify(cardNumber));
+
+// text/html だけのメールを decodeEmailBody に通してから読む
+const htmlBody = decodeEmailBody(htmlOnlyPayload([
+  '<html><body><table>',
+  '<tr><td>ご利用カード：三井住友ゴールドＶＩＳＡ（ＮＬ）</td></tr>',
+  '<tr><td>◇利用日：2026/03/14 19:20</td></tr>',
+  '<tr><td>◇利用先：SAMPLE MART EKIMAE</td></tr>',
+  '<tr><td>◇利用取引：買物</td></tr>',
+  '<tr><td>◇利用金額：1,200円</td></tr>',
+  '</table><p>ご利用内容の詳細は<br>会員サイトでご確認ください。</p>',
+  '</body></html>',
+].join('\n')));
+check('HTML のみ: 本文は 1 行になる（前提の確認）', !/[\r\n]/.test(htmlBody), JSON.stringify(htmlBody));
+const htmlParsed = parseSMBCCardEmail('msg-m8', htmlBody);
+check('HTML のみ: ◇利用取引 の手前で切る', htmlParsed && htmlParsed.merchant === 'SAMPLE MART EKIMAE', JSON.stringify(htmlParsed));
+check('HTML のみ: 金額・日時は今と同じ', isAltJst(htmlParsed), JSON.stringify(htmlParsed));
+
+// (c) 店名が空になる場合は「不明な店舗」
+const emptyOneLine = parseSMBCCardEmail('msg-m9', altLines('').join(' '));
+check('1 行: 店名が空なら「不明な店舗」', emptyOneLine && emptyOneLine.merchant === '不明な店舗', JSON.stringify(emptyOneLine));
+check('1 行: 店名が空でも金額・日時は読む', isAltJst(emptyOneLine), JSON.stringify(emptyOneLine));
+// 改行ありで店名の行が空のとき、以前は次の行（「ご利用金額：…」）を店名にしていた
+const emptyNewline = parseSMBCCardEmail('msg-m10', buildBody('2026/03/14 19:20', '', '3,240'));
+check('改行あり: 店名の行が空なら次の行を店名にせず「不明な店舗」',
+  emptyNewline && emptyNewline.merchant === '不明な店舗' && emptyNewline.amount === 3240, JSON.stringify(emptyNewline));
+const blankAtEnd = parseSMBCCardEmail('msg-m11', 'ご利用金額：500円\nご利用店名：   ');
+check('店名が空白だけなら「不明な店舗」', blankAtEnd && blankAtEnd.merchant === '不明な店舗', JSON.stringify(blankAtEnd));
+
+// (d) 長さの上限
+check('上限は 100 文字', MERCHANT_MAX_CHARS === 100, String(MERCHANT_MAX_CHARS));
+const exact = 'A'.repeat(MERCHANT_MAX_CHARS);
+const exactParsed = parseSMBCCardEmail('msg-m12', altLines(exact).join('\n'));
+check('ちょうど上限の店名は変えない', exactParsed && exactParsed.merchant === exact, JSON.stringify(exactParsed));
+const longParsed = parseSMBCCardEmail('msg-m13', altLines('B'.repeat(MERCHANT_MAX_CHARS + 50)).join('\n'));
+check('上限を超える店名は先頭から上限まで',
+  longParsed && longParsed.merchant === 'B'.repeat(MERCHANT_MAX_CHARS), longParsed && longParsed.merchant.length);
+const wideParsed = parseSMBCCardEmail('msg-m14', altLines('店'.repeat(MERCHANT_MAX_CHARS + 1)).join('\n'));
+check('全角も 1 文字として数える',
+  wideParsed && wideParsed.merchant === '店'.repeat(MERCHANT_MAX_CHARS), wideParsed && wideParsed.merchant.length);
+const astralParsed = parseSMBCCardEmail('msg-m15', altLines('𠮷'.repeat(MERCHANT_MAX_CHARS + 1)).join('\n'));
+check('サロゲートペアを割らない',
+  astralParsed && Array.from(astralParsed.merchant).length === MERCHANT_MAX_CHARS &&
+    astralParsed.merchant === '𠮷'.repeat(MERCHANT_MAX_CHARS),
+  astralParsed && astralParsed.merchant.length);
+// ラベルで切れない続き（店名の後ろが案内文だけ）は上限で止まる
+const trailing = parseSMBCCardEmail('msg-m16',
+  `◇利用日：2026/03/14 19:20 ◇利用金額：1,200円 ◇利用先：SAMPLE MART ${'お問い合わせは会員サイトへ。'.repeat(20)}`);
+check('ラベルが無い続きは上限で切る',
+  trailing && Array.from(trailing.merchant).length === MERCHANT_MAX_CHARS && trailing.merchant.startsWith('SAMPLE MART '),
+  trailing && trailing.merchant.length);
+check('ラベルが無い続きでも金額・日時は今と同じ', isAltJst(trailing), JSON.stringify(trailing));
+
+// (e) 店名の途中の「ご利用」（コロンが続かない）では切らない
+const guideNewline = parseSMBCCardEmail('msg-m17', altLines('ご利用ガイド食堂').join('\n'));
+check('改行あり: 「ご利用ガイド食堂」をそのまま読む', guideNewline && guideNewline.merchant === 'ご利用ガイド食堂', JSON.stringify(guideNewline));
+const guideOneLine = parseSMBCCardEmail('msg-m18', altLines('ご利用ガイド食堂').join(' '));
+check('1 行: 「ご利用ガイド食堂」で止め、店名の中では切らない',
+  guideOneLine && guideOneLine.merchant === 'ご利用ガイド食堂', JSON.stringify(guideOneLine));
+const guideGoriyo = parseSMBCCardEmail('msg-m19',
+  buildBody('2026/03/14 19:20', 'ご利用ガイド食堂 ご利用者さま感謝店', '3,240').replace(/\n/g, ' '));
+check('1 行（ご利用 書式）: 店名の中の「ご利用」では切らない',
+  guideGoriyo && guideGoriyo.merchant === 'ご利用ガイド食堂 ご利用者さま感謝店', JSON.stringify(guideGoriyo));
+const colonInName = parseSMBCCardEmail('msg-m20', altLines('SAMPLE:MART EKIMAE').join(' '));
+check('1 行: ラベルでないコロンでは切らない', colonInName && colonInName.merchant === 'SAMPLE:MART EKIMAE', JSON.stringify(colonInName));
 
 // ------------------------------------------------------------
 // 送信元（From ヘッダー）の判定

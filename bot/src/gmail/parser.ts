@@ -159,6 +159,37 @@ export function isSMBCGoldVISANL(from: string, body: string): boolean {
 }
 
 /**
+ * 店名の後ろに続きうる項目のラベル（コロンまで）。
+ * text/html しか無いメールは改行が空白に置き換わり、店名の正規表現が改行で止まらないため、
+ * 取れた店名の中にこれが現れたら、その手前で切る。
+ * - `◇` で始まるラベル（◇利用日・◇利用取引・◇利用金額 など）
+ * - `ご利用` で始まるラベル（ご利用日時・ご利用金額・ご利用カード など）
+ * - `カード番号（下4桁）`
+ * ラベルの直後に全角・半角のコロンがあるときだけラベルとみなす（「ご利用ガイド食堂」のような店名の一部では切らない）。
+ */
+const MERCHANT_NEXT_LABEL_PATTERN =
+  /◇[^\s◇：:]{1,10}[：:]|ご利用[^\s◇：:]{1,6}[：:]|カード番号[^\s◇：:]{0,8}[：:]/;
+
+/**
+ * 店名の長さの上限（文字数）。ラベルで切れなかったときの安全弁。
+ * モデル（Jev・Gemini）に送る上限（geminiCategoryClassifier.ts の MODEL_INPUT_MAX_CHARS）と同じにして、
+ * 保存する説明とモデルへの入力を揃える
+ */
+export const MERCHANT_MAX_CHARS = 100;
+
+/**
+ * 正規表現で取れた店名を整える。次のラベルの手前で切り、前後の空白を除き、上限の文字数で切り詰める。
+ * 空になったら「不明な店舗」
+ */
+function normalizeMerchant(raw: string): string {
+  const labelAt = raw.search(MERCHANT_NEXT_LABEL_PATTERN);
+  const beforeLabel = labelAt === -1 ? raw : raw.slice(0, labelAt);
+  // 文字単位（サロゲートペアを割らない）で切る
+  const limited = Array.from(beforeLabel.trim()).slice(0, MERCHANT_MAX_CHARS).join('').trim();
+  return limited || '不明な店舗';
+}
+
+/**
  * 三井住友カード利用通知メールをパース
  *
  * メール本文の例:
@@ -191,11 +222,12 @@ export function parseSMBCCardEmail(
     // 店舗名を抽出
     // パターン1: 「ご利用店名：イオン〇〇店」形式
     // パターン2: 「◇利用先：NIKUNOHANAMASAPURASU NE」形式
+    // 改行が無い本文（text/html から取った本文）では行末で止まらないため、normalizeMerchant で切る
     const merchantMatch = body.match(
       /(?:ご利用店名|◇利用先)[：:]\s*(.+?)(?:\n|\r|$)/
     );
     const merchant = merchantMatch
-      ? merchantMatch[1].trim()
+      ? normalizeMerchant(merchantMatch[1])
       : '不明な店舗';
 
     // 利用日時を抽出
