@@ -1,8 +1,8 @@
 "use client";
 
 import type React from "react";
-import { Save, X, CreditCard } from "lucide-react";
-import type { EditForm, PayerOption } from "../../lib/expenseEdit";
+import { Save, X, CreditCard, Info } from "lucide-react";
+import type { EditForm, PayerOption, SubCategoryOption } from "../../lib/expenseEdit";
 import BodyPortal from "../BodyPortal";
 
 interface Props {
@@ -12,6 +12,10 @@ interface Props {
   /** 精算済み（金額・日付・支払い者を変えられない） */
   settled: boolean;
   categories: string[];
+  /** 中項目の選択肢（buildSubCategoryOptions）。空なら中項目の欄を出さない */
+  subCategoryOptions: SubCategoryOption[];
+  /** 大項目を変えたので、中項目を「中項目なし」に戻した（注記を出す） */
+  subCategoryReset: boolean;
   payerOptions: PayerOption[];
   error: string | null;
   saving: boolean;
@@ -27,6 +31,8 @@ export default function EditDrawer({
   form,
   settled,
   categories,
+  subCategoryOptions,
+  subCategoryReset,
   payerOptions,
   error,
   saving,
@@ -113,6 +119,46 @@ export default function EditDrawer({
                   ))}
                 </select>
               </div>
+
+              {/* 中項目: 一覧のある大項目（食費・娯楽）だけ。選択肢は選んだ大項目の中項目だけ */}
+              {subCategoryOptions.length > 0 && (
+                <div>
+                  <label htmlFor="edit-subcategory" className="mb-2 block text-sm font-medium text-fg">中項目</label>
+                  <select
+                    id="edit-subcategory"
+                    name="subCategory"
+                    value={form.subCategory}
+                    onChange={onChange}
+                    aria-describedby="edit-subcategory-hint"
+                    className={`w-full rounded-lg border border-line bg-card px-4 py-3 text-base focus:border-transparent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${form.subCategory === "" ? "text-muted" : "text-fg"}`}
+                  >
+                    {subCategoryOptions.map(({ value, label }) => (
+                      <option key={value} value={value} className="text-fg">
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  {/* 注記の要素は常に置き、中身だけを差し替える（後から差し込んだ要素は読み上げない環境があるため） */}
+                  <p
+                    id="edit-subcategory-hint"
+                    aria-live="polite"
+                    className={
+                      subCategoryReset
+                        ? "mt-1 flex items-start gap-1 text-xs text-amber-700 dark:text-amber-300"
+                        : "mt-1 text-xs text-muted"
+                    }
+                  >
+                    {subCategoryReset ? (
+                      <>
+                        <Info className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        <span>大項目を変えたので「中項目なし」に戻しました</span>
+                      </>
+                    ) : (
+                      "選択肢は、選んだ大項目の中項目だけ"
+                    )}
+                  </p>
+                </div>
+              )}
 
               <div className="sm:col-span-2">
                 <label className="mb-2 flex items-center gap-1.5 text-sm font-medium text-fg">
