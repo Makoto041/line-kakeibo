@@ -8,6 +8,8 @@
  * - 個人チャット: 所属なし・自作グループ（lineGroupId なし）だけなら辞書だけ（決まらなければ既定カテゴリか「その他」）
  * - LINE グループ: 発言元の LINE グループに紐づく世帯の有効メンバーなら従来どおり。非メンバー・紐づく世帯なしは辞書だけ
  * - 世帯の確認（getUserGroups・findLineGroupId）が失敗したらモデルを呼ぶ。個人チャットの失敗はキャッシュに残さない
+ * - 個人チャットのキャッシュの期限は取得した時点から 15 分で、キャッシュに当たっても延びない
+ * - lineGroupId を持つ、世帯ではないグループのメンバーは、現状はメンバーとみなされモデルを呼ぶ（判定の定義は未決）
  * - ログに利用者 ID・入力を出さない
  *   node bot/scripts/smoke-expense-flow-member-guard.js
  */
@@ -94,6 +96,12 @@ const cards = [];
 flexMessage.sendTextExpenseNotification = async (targetId, info) => {
   cards.push({ targetId, info });
 };
+
+// 時計（キャッシュの期限のケースで進める）。expenseFlow はキャッシュの期限を Date.now() で判定する
+const MINUTE = 60 * 1000;
+const realDateNow = Date.now;
+let clockOffset = 0;
+Date.now = () => realDateNow() + clockOffset;
 
 const { processExpenseInBackground } = require('../dist/line/expenseFlow');
 
@@ -192,6 +200,23 @@ async function main() {
   r = await post({ userId: 'U_fail1', description: 'ヨット' });
   check('成功した結果はキャッシュする（読み直さない）', getUserGroupsCalls === 0 && jevCalls.length === 0, `${getUserGroupsCalls} 回`);
 
+  console.log('\n# 個人チャット: キャッシュの期限は取得した時点から 15 分（キャッシュに当たっても延ばさない）');
+  reset();
+  groupsByUser.U_ttl1 = [household];
+  r = await post({ userId: 'U_ttl1', description: 'ボルダリング' });
+  check('最初の入力で所属を読む', getUserGroupsCalls === 1, `${getUserGroupsCalls} 回`);
+  reset();
+  clockOffset = 10 * MINUTE;
+  r = await post({ userId: 'U_ttl1', description: 'カヌー' });
+  check('10 分後はキャッシュに当たる（読まない。世帯メンバーのまま）', getUserGroupsCalls === 0 && jevCalls.length === 1, `${getUserGroupsCalls} 回 / jev ${jevCalls.length}`);
+  reset();
+  clockOffset = 16 * MINUTE;
+  groupsByUser.U_ttl1 = []; // 管理スクリプトで無効化した想定
+  r = await post({ userId: 'U_ttl1', description: 'ヨット' });
+  check('取得から 16 分後（キャッシュに当たった回からは 6 分後）は読み直す', getUserGroupsCalls === 1, `${getUserGroupsCalls} 回`);
+  check('読み直した結果（無効化）が反映され、モデルを呼ばず個人支出になる', jevCalls.length === 0 && geminiCalls === 0 && r.expense?.groupId === undefined, `jev ${jevCalls.length} / gemini ${geminiCalls} / ${JSON.stringify(r.expense)}`);
+  clockOffset = 0;
+
   console.log('\n# LINE グループ: 世帯の有効メンバー → 従来どおり Jev');
   reset();
   groupsByUser.U_member2 = [household];
@@ -218,6 +243,23 @@ async function main() {
   r = await post({ userId: 'U_member3', lineGroupId: 'L_flaky', description: 'ボルダリング' });
   check('Jev を呼ぶ', jevCalls.length === 1, `jev ${jevCalls.length}`);
   check('確認の失敗を warn に出す', failOpenLog()?.level === 'warn', JSON.stringify(failOpenLog()?.args));
+
+  // isHouseholdMember は「lineGroupId を持つどれかのグループの有効メンバー」をメンバーとみなす。以前に bot が
+  // LINE グループごとに自動で作ったグループが残っていて作成者が有効なままなら、世帯でなくてもモデルを呼べる。
+  // 世帯の groupId に限るかは未決（PR #258。本番データの確認とあわせてユーザーの判断待ち）。ここでは現状の挙動を残す
+  console.log('\n# lineGroupId を持つ、世帯ではないグループのメンバー → 現状はモデルを呼ぶ（判定の定義は未決）');
+  const legacy = { id: 'G_legacy', name: '以前に自動作成されたグループ', lineGroupId: 'L_legacy' };
+  groupIdByLineGroup.L_legacy = 'G_legacy';
+  reset();
+  groupsByUser.U_legacy1 = [legacy];
+  r = await post({ userId: 'U_legacy1', description: 'ボルダリング' });
+  check('個人チャット: Jev を呼ぶ（現状）', jevCalls.length === 1 && r.card?.categoryOrigin === 'jev', `jev ${jevCalls.length} / ${JSON.stringify(r.card)}`);
+  check('個人チャット: 支出はそのグループの支出になる（所属の決め方は変えていない）', r.expense?.groupId === 'G_legacy', JSON.stringify(r.expense));
+  reset();
+  groupsByUser.U_legacy2 = [legacy];
+  r = await post({ userId: 'U_legacy2', lineGroupId: 'L_legacy', description: 'ボルダリング' });
+  check('そのグループの LINE グループでの発言: Jev を呼ぶ（現状）', jevCalls.length === 1 && r.card?.categoryOrigin === 'jev', `jev ${jevCalls.length} / ${JSON.stringify(r.card)}`);
+  check('その LINE グループでの発言: 支出はそのグループの支出になる', r.expense?.groupId === 'G_legacy' && r.expense?.lineGroupId === 'L_legacy', JSON.stringify(r.expense));
 
   console.log('\n# ログ');
   const logged = JSON.stringify(allLogs.map((l) => l.args.map((a) => (a instanceof Error ? a.message : a))));

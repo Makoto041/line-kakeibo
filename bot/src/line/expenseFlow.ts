@@ -181,6 +181,10 @@ export async function processExpenseInBackground(
     // 世帯の確認（getUserGroups・findLineGroupId）が失敗したか。activeGroup が null でも、
     // 「メンバーでない」のか「確認できなかった」のかを分ける（カテゴリ分類でモデルを呼ぶかに使う。#245）
     let membershipLookupFailed = false;
+    // プロフィール（個人チャットは所属グループも）を実際に取得したか（キャッシュに当たらなかったか）。
+    // キャッシュは取得した回だけ書く。当たった回も書き直すと期限が延び、入力を続ける間は
+    // 所属の変更（管理スクリプトでの無効化など）が反映されなくなる
+    let fetchedProfile = false;
 
     // Check if this is from a LINE group
     if (event.source.type === "group") {
@@ -203,6 +207,7 @@ export async function processExpenseInBackground(
         // キャッシュミスまたは名前がない場合 - 並列取得
 
         // プロファイル取得を並列実行（リトライ機能付き）
+        fetchedProfile = true;
         promises.push(fetchGroupPosterProfile(lineGroupId, event.source.userId));
 
         // グループ取得は後で（プロファイル取得後に実行）
@@ -219,6 +224,7 @@ export async function processExpenseInBackground(
         userDisplayName = cached.profile?.displayName;
       } else {
         // 個人チャットの場合もプロファイルを取得（リトライ機能付き）
+        fetchedProfile = true;
         promises.push(fetchIndividualProfile(event.source.userId));
 
         promises.push(
@@ -269,9 +275,10 @@ export async function processExpenseInBackground(
         }
       });
 
-      // キャッシュ更新。所属グループの読み取り（個人チャットの getUserGroups）に失敗したときは残さない。
+      // キャッシュ更新。取得した回だけ書き、期限は取得した時点から CACHE_TTL（キャッシュに当たった回は延ばさない）。
+      // 所属グループの読み取り（個人チャットの getUserGroups）に失敗したときは残さない。
       // 失敗を「所属なし」として 15 分残すと、その間はメンバーの入力でもモデルを呼ばず、個人支出にもなるため
-      if (!membershipLookupFailed) {
+      if (fetchedProfile && !membershipLookupFailed) {
         const cacheKey = event.source.type === "group"
           ? `${event.source.userId}_${lineGroupId}`
           : event.source.userId;
