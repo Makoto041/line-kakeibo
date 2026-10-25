@@ -158,6 +158,8 @@ export function decideClearAdvance(): ExpenseDecider {
  * usedAtHasClockTime で時刻の有無を見る（JST の 00:00:00.000 ちょうどは時刻なし）。
  * Timestamp でないもの（Date・数値・文字列を含む）・変換できないもの（toDate が投げる・Date を返さない）・
  * 時刻なしは undefined（時刻を当てない）。
+ * 制限: 日時の無いカード利用通知は処理した時刻が usedAt に入るため、ここでは時刻ありとして扱い、その処理時刻で判定される
+ * （登録時は日時の無いメールに時刻ルールを当てないため、結果が食い違いうる。件数はごく少ない）。
  */
 function storedUsedAtWithClockTime(usedAt: unknown): Date | undefined {
   try {

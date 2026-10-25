@@ -244,6 +244,10 @@ console.log('\ndecideSetCategory の中項目（#235。大項目が変わると�
     check('旧名を選んでも、正準名どうしで同じなら触らない（医療・健康 → 医療費）', !hasSubKey(alias) && alias.update.category === '医療・健康', JSON.stringify(alias));
     const storedLegacy = decide('娯楽', { category: '娯楽費', description: 'ランチ', subCategory: '映画', status: 'shared' });
     check('保存済みが旧名（娯楽費）で同じ大項目（娯楽）を選んでも触らない', !hasSubKey(storedLegacy) && storedLegacy.update.category === '娯楽', JSON.stringify(storedLegacy));
+    const padded = decide('食費', { category: ' 食費 ', description: 'ランチ', subCategory: 'カフェ', status: 'shared' });
+    check('保存済みの大項目の前後に空白があっても（「 食費 」→ 食費）同じ大項目として触らない', !hasSubKey(padded) && padded.update.category === '食費', JSON.stringify(padded));
+    const storedMedical = decide('医療・健康', { category: '医療費', description: '病院', subCategory: 'x', status: 'shared' });
+    check('保存済みが旧名（医療費）で正準名（医療・健康）を選んでも触らない', !hasSubKey(storedMedical) && storedMedical.update.category === '医療・健康', JSON.stringify(storedMedical));
   }
 
   // 大項目が変わり、辞書で決まる
