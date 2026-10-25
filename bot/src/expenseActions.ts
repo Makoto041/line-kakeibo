@@ -9,6 +9,8 @@
 import { FieldValue, getFirestore, type DocumentData, type Transaction } from 'firebase-admin/firestore';
 import { toCanonicalCategoryName } from './categoryNormalization';
 import type { ExpenseStatusType } from './firestore';
+import { errorMessage } from './logSafe';
+import { resolveSubCategory, usedAtHasClockTime } from './subCategoryRules';
 
 /**
  * 最新のドキュメントを見て、更新内容か拒否理由を決める
@@ -150,24 +152,77 @@ export function decideClearAdvance(): ExpenseDecider {
 }
 
 /**
+ * 保存済みの利用日時のうち、時刻の分かるものだけを Date で返す（中項目の再判定用）
+ *
+ * Firestore から読んだ `usedAt` は Timestamp（toDate を持つ）なので、Date にしてから
+ * usedAtHasClockTime で時刻の有無を見る（JST の 00:00:00.000 ちょうどは時刻なし）。
+ * Timestamp でないもの（Date・数値・文字列を含む）・変換できないもの（toDate が投げる・Date を返さない）・
+ * 時刻なしは undefined（時刻を当てない）。
+ */
+function storedUsedAtWithClockTime(usedAt: unknown): Date | undefined {
+  try {
+    if (!usedAt || typeof (usedAt as { toDate?: unknown }).toDate !== 'function') return undefined;
+    const date: unknown = (usedAt as { toDate: () => unknown }).toDate();
+    return date instanceof Date && usedAtHasClockTime(date) ? date : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 大項目を変えたときの中項目の変更（#235 の方式 C。辞書と時刻のルールだけで、モデルは呼ばない）
+ *
+ * - 大項目が同じ（正準名どうしで一致）なら中項目は触らない（`update` にも `cardPatch` にもキーを入れない）。
+ * - 大項目が変わるなら resolveSubCategory で決め直す。説明文（Gmail 取込なら店名）と入力元を渡し、
+ *   時刻は Gmail 取込で保存済みの usedAt に時刻があるときだけ渡す。決まらなければ消す。
+ * - 判定で例外が起きても大項目の変更は止めず、中項目は消す（古い大項目の中項目を残さない）。
+ * - `cardPatch` には必ず `subCategory` のキーを書く（返信カードは `{ ...data, ...cardPatch }` から作るため、
+ *   キーが無いと古い中項目が残る）。
+ */
+function subCategoryChange(
+  data: DocumentData,
+  canonical: string
+): { update: Record<string, unknown>; cardPatch: Record<string, unknown> } {
+  if (toCanonicalCategoryName(data.category) === canonical) return { update: {}, cardPatch: {} };
+
+  let sub: string | null = null;
+  try {
+    const source = data.inputSource === 'gmail_auto' ? 'merchant' : 'text';
+    const usedAt = source === 'merchant' ? storedUsedAtWithClockTime(data.usedAt) : undefined;
+    sub = resolveSubCategory({ major: canonical, text: data.description, source, ...(usedAt ? { usedAt } : {}) });
+  } catch (error) {
+    console.warn('Failed to resolve subCategory; clearing it', { error: errorMessage(error) });
+    sub = null;
+  }
+
+  return sub === null
+    ? { update: { subCategory: FieldValue.delete() }, cardPatch: { subCategory: undefined } }
+    : { update: { subCategory: sub }, cardPatch: { subCategory: sub } };
+}
+
+/**
  * カテゴリを変える（LINE のカテゴリ選択のカルーセル。postback の set_category）
  *
  * カルーセルの選択肢は「医療費」「娯楽費」のような旧名なので、保存する前に正準名に揃える
  * （toCanonicalCategoryName。#243）。選び直す操作は「この支出でよい」という確認でもあるため確認済みにし、
  * 未確認のときだけ共同費へ昇格させる（個人費や立替を設定済みの支出は触らない）。カテゴリ変更は精算後も可能。
+ * 大項目が変わるときは、中項目をサーバーで決め直す（決まらなければ消す。subCategoryChange）。
+ * postback に中項目が入っていても使わない（保存するのはサーバーで決めた値だけ）。
  */
 export function decideSetCategory(category: string): ExpenseDecider {
   const canonical = toCanonicalCategoryName(category);
-  return (data) =>
-    isPendingStatus(data.status)
+  return (data) => {
+    const sub = subCategoryChange(data, canonical);
+    return isPendingStatus(data.status)
       ? {
-          update: { category: canonical, confirmed: true, status: 'shared', includeInTotal: true, updatedAt: new Date() },
-          cardPatch: { category: canonical, status: 'shared', includeInTotal: true },
+          update: { category: canonical, ...sub.update, confirmed: true, status: 'shared', includeInTotal: true, updatedAt: new Date() },
+          cardPatch: { category: canonical, ...sub.cardPatch, status: 'shared', includeInTotal: true },
         }
       : {
-          update: { category: canonical, confirmed: true, updatedAt: new Date() },
-          cardPatch: { category: canonical },
+          update: { category: canonical, ...sub.update, confirmed: true, updatedAt: new Date() },
+          cardPatch: { category: canonical, ...sub.cardPatch },
         };
+  };
 }
 
 /**
