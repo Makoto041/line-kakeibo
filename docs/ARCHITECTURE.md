@@ -261,6 +261,7 @@ Web のアクセス制御は **LIFF ログイン → Firebase カスタムトー
 | LINE のボタン（postback） | 支出を変えるボタン（区分・［自分が払った］［自分が立替］［取り消す］・OK・カテゴリの変更）とカテゴリ選択のカルーセルは、支出の世帯の有効メンバー（世帯の無い個人の支出は登録した本人）だけ。変更のときは同じトランザクション内でメンバー文書を読む（`postback.ts` の `applyAsMember`）。`lineGroupId` だけを持つ旧形式は不可。カテゴリは選択肢の一覧（正準名と、正準名に揃えられる名前。32 文字以内の文字列）にある値だけ |
 | LINE の「家計簿」コマンド | LINE グループでは、発言元の LINE グループに紐づくグループ（`groups.lineGroupId` が一致。`limit(2)` で引く）がちょうど 1 つで、送った人がその有効メンバー（`householdMembers.ts` の `readActiveMember`。`isHouseholdMember` と同じ考え方）のときだけ集計を返す（`line/commands/kakeibo.ts`。送るたびに読み、キャッシュしない。読み取りは 2 回で一定）。メンバーでない人・`userId` の無い発言・紐づくグループが 0 または 2 つ以上・所属の確認の失敗では、支出も予算も読まず、拒否の文と Web のリンク（ID なし）だけを返す。1 対 1 のトークは送った本人の支出（`lineId` で引く）だけを集計し、所属は確かめない。複数人トーク（room）・未知の種類では返さない。返した集計は LINE グループの全員に見えるため、非メンバーは LINE グループから外す運用（SECURITY_OPERATIONS.md §1） |
 | 世帯メンバー | 2 名固定。bot は発言や招待コードでメンバーを自動追加しない（LINE の `参加` コマンドは無効化済み）。非メンバーの発言は個人支出として保存し、カテゴリ分類で Jev・Gemini を呼ばない（`expenseGroupScope.ts`）。LINE グループ退出（`memberLeft`）で `isActive:false`。追加・無効化は `scripts/manage-group-members.mjs` |
+| LINE の要望・不具合などのコマンド | 本文を Gemini で整理し、公開リポジトリに Issue を作る。使えるのは `DEFAULT_GROUP_ID` の世帯グループの有効メンバーだけ（`readActiveMember`。postback の認可と同じ判定。どのトークからでも同じ。読み取りは 1 回で毎回読み、未設定・確認の失敗は拒否）。本文は 1,000 文字まで、同じ人は 10 分に 3 件まで（インスタンスごとのメモリで数える）。満たさなければ Gemini も GitHub も呼ばない。Issue の元の本文はコードブロックに入れ、Gemini の結果はメンション・参照・HTML・リンクを無効にして（角括弧をエスケープし、リンク・画像・参照定義の構文を成立させない）長さを切る（`line/commands/feedback.ts`・`issueCreator.ts`。#260。SECURITY_OPERATIONS.md §8） |
 | Gmail 管理 API | `ADMIN_SECRET`（`Authorization: Bearer` ヘッダーのみ。定数時間比較。クエリ渡しは廃止）＋ レートリミット、OAuth callback は CSRF state |
 | Gmail スコープ | `gmail.readonly` に最小化 |
 
@@ -301,7 +302,7 @@ line-kakeibo/
 │  │  ├─ jevCategoryClassifier.ts / geminiClient.ts / categoryGuide.ts / categoryNormalization.ts # Jev・Gemini の呼び出し、カテゴリの説明、カテゴリ正規化
 │  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧（大項目は正準名の完全一致で引く。web/lib/categoryTaxonomy.ts に同じ一覧）と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。登録時〔LINE の入力・Gmail の取込〕と、LINE で大項目を変えたときに呼ぶ）
 │  │  ├─ linkUserResolver.ts / syncUserLinks.ts
-│  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue
+│  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue（本文 1,000 文字まで。公開 Issue に載せる文の無害化。送れる人と件数の制限は line/commands/feedback.ts）
 │  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）
 │  │  ├─ line/               # webhookApp.ts（署名検証・イベント振り分け・/health）/ textMessage.ts / commands/*.ts（家計簿・要望・カテゴリー・グループ・立替/精算〔期間の折半の案内だけ〕）
 │  │  │                      # / expenseFlow.ts（テキスト入力の支出登録）/ groupEvents.ts / client.ts（LINE クライアント・返信）/ flexMessage.ts / postback.ts

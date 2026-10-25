@@ -60,7 +60,8 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REDIRECT_URI` | Gmail 自動取込の OAuth |
 | `FIREBASE_PROJECT_ID` | 既定 `line-kakeibo-0410` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | ローカルでの Admin SDK 認証（サービスアカウント JSON のパス）。本番では不要 |
-| `LINE_GROUP_ID` / `DEFAULT_GROUP_ID` / `WEB_ORIGINS` | 任意（既定値あり） |
+| `DEFAULT_GROUP_ID` | 要望コマンド（と Gmail 取込）に必須。世帯グループの ID。未設定なら要望コマンドは全員拒否 |
+| `LINE_GROUP_ID` / `WEB_ORIGINS` | 任意（既定値あり） |
 
 ## 4. 外部サービスの設定
 
