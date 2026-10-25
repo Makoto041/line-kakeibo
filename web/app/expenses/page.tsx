@@ -38,7 +38,7 @@ import ExpenseEmptyState from "../../components/expenses/ExpenseEmptyState";
 import ExpenseCard from "../../components/expenses/ExpenseCard";
 import EditDrawer from "../../components/expenses/EditDrawer";
 import ReceiptModal from "../../components/expenses/ReceiptModal";
-import { CANONICAL_CATEGORIES } from "../../lib/categoryNormalization";
+import { CANONICAL_CATEGORIES, normalizeCategoryName } from "../../lib/categoryNormalization";
 import dayjs from "dayjs";
 import { fetchDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
@@ -438,7 +438,8 @@ function ExpensesPageContent() {
     const { name, value, type } = e.target;
     if (name === "category") {
       // 大項目が変わったら、中項目は「中項目なし」に戻す（選択肢も新しい大項目の一覧に替わる）
-      const next = changeEditCategory(editForm, value);
+      // 別名（保存すると同じ大項目になる名前）を選んだだけなら戻さない（保存時と同じ正規化で比べる）
+      const next = changeEditCategory(editForm, value, (category) => normalizeCategoryName(category));
       setEditForm(next.form);
       if (next.reset) setSubCategoryReset(true);
     } else if (name === "subCategory") {

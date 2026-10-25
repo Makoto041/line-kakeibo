@@ -143,11 +143,20 @@ export function buildSubCategoryOptions(list: readonly string[], current: string
 /**
  * 編集画面で大項目を選び直したときの次のフォーム。
  * 大項目が変わったら、中項目は「中項目なし」に戻す（古い中項目が新しい大項目と食い違わないように）。
+ * 大項目は、保存時と同じ正規化（normalize。updateExpense の normalizeCategoryName を渡す）をかけて比べる。
+ * 別名（「外食」など、保存すると食費になる名前）を選んだだけなら大項目は変わらないので、中項目は戻さない
+ * （保存でも shouldClearSubCategory が正規化した後の値で比べ、中項目を消さない）。
  * reset は「中項目を戻した」（大項目が変わり、それまで中項目が選ばれていた）とき true。
  * 画面は reset を覚えておき、利用者が中項目を選び直すまで注記を出す。
+ * normalize は、node --test から直接読めるよう引数で受ける（このモジュールは他のモジュールを読まない）。
  */
-export function changeEditCategory(form: EditForm, category: string): { form: EditForm; reset: boolean } {
+export function changeEditCategory(
+  form: EditForm,
+  category: string,
+  normalize: (category: string) => string
+): { form: EditForm; reset: boolean } {
   if (category === form.category) return { form, reset: false };
+  if (normalize(category) === normalize(form.category)) return { form: { ...form, category }, reset: false };
   return {
     form: { ...form, category, subCategory: NO_SUB_CATEGORY },
     reset: form.subCategory !== NO_SUB_CATEGORY,
@@ -163,7 +172,8 @@ type SubCategoryFields = Partial<Pick<Expense, 'category' | 'subCategory'>>;
  *   元の支出が中項目を持つかは見ない: Web の一覧は 1 回きりの読み込みなので、読み込んだ後に
  *   bot が中項目を書いた支出では、手元の一覧が「中項目なし」のままになっている。
  *   中項目を持たない支出への削除は、保存される結果が変わらない（ルールでも許可される）。
- * - 大項目は、正規化した後の値で比べる（別名が同じ大項目になる入力では消さない）
+ * - 大項目は、正規化した後の値で比べる（別名が同じ大項目になる入力では消さない。編集画面の
+ *   changeEditCategory も同じ正規化で比べ、中項目を「中項目なし」に戻さない）
  * - 更新が中項目（'' 以外）を自分で指定しているときは、それに任せる
  * - 元の支出が渡されない更新（合計に含めるトグルなど）では、大項目を理由には消さない
  */

@@ -123,8 +123,9 @@ export default function EditDrawer({
               {/* 中項目: 一覧のある大項目（食費・娯楽）だけ。選択肢は選んだ大項目の中項目だけ */}
               {subCategoryOptions.length > 0 && (
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-fg">中項目</label>
+                  <label htmlFor="edit-subcategory" className="mb-2 block text-sm font-medium text-fg">中項目</label>
                   <select
+                    id="edit-subcategory"
                     name="subCategory"
                     value={form.subCategory}
                     onChange={onChange}
@@ -137,20 +138,25 @@ export default function EditDrawer({
                       </option>
                     ))}
                   </select>
-                  {subCategoryReset ? (
-                    <p
-                      id="edit-subcategory-hint"
-                      role="status"
-                      className="mt-1 flex items-start gap-1 text-xs text-amber-700 dark:text-amber-300"
-                    >
-                      <Info className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                      <span>大項目を変えたので「中項目なし」に戻しました</span>
-                    </p>
-                  ) : (
-                    <p id="edit-subcategory-hint" className="mt-1 text-xs text-muted">
-                      選択肢は、選んだ大項目の中項目だけ
-                    </p>
-                  )}
+                  {/* 注記の要素は常に置き、中身だけを差し替える（後から差し込んだ要素は読み上げない環境があるため） */}
+                  <p
+                    id="edit-subcategory-hint"
+                    aria-live="polite"
+                    className={
+                      subCategoryReset
+                        ? "mt-1 flex items-start gap-1 text-xs text-amber-700 dark:text-amber-300"
+                        : "mt-1 text-xs text-muted"
+                    }
+                  >
+                    {subCategoryReset ? (
+                      <>
+                        <Info className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        <span>大項目を変えたので「中項目なし」に戻しました</span>
+                      </>
+                    ) : (
+                      "選択肢は、選んだ大項目の中項目だけ"
+                    )}
+                  </p>
                 </div>
               )}
 
