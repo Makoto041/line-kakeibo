@@ -9,7 +9,7 @@
 //   （「判定できない」と「利用者がその他にした」を分けるため）。
 // - #250 の仮の一覧の名前はすべて残している（評価データに付けた中項目のラベルが無効にならないように）。
 // - 中項目名は、大項目の中で一意・空でない・50 文字以内（smoke-taxonomy.js で確かめる）。
-import { normalizeCategoryName } from './categoryNormalization';
+import { toCanonicalCategoryName } from './categoryNormalization';
 
 export const SUB_CATEGORIES: Record<string, readonly string[]> = {
   食費: [
@@ -38,6 +38,7 @@ export const SUB_CATEGORIES: Record<string, readonly string[]> = {
 
 /**
  * 中項目の説明。階層化の評価（eval-classifier.js --sub-desc on）で、Jev の中項目の選択肢に付ける。
+ * 方式 C を採ったため本番では使わない。所感発表での方式 B との比較のために残す。
  * 評価データの説明文・店名は使っていない（中項目の名前から書いた一般的な説明）。
  * 説明の無い中項目は、説明なし（null）で送る。キーは SUB_CATEGORIES の大項目・中項目（smoke-taxonomy.js で確かめる）。
  */
@@ -67,10 +68,12 @@ export const SUB_CATEGORY_DESCRIPTIONS: Record<string, Readonly<Record<string, s
 };
 
 /**
- * 大項目の中項目の一覧。大項目名は normalizeCategoryName で正準名に揃えてから引く（例: 「外食」→ 食費）。
- * 中項目が無い大項目は空配列（一覧に無い名前は normalizeCategoryName が「その他」にするので、これも空配列）。
+ * 大項目の中項目の一覧。大項目名は toCanonicalCategoryName の完全一致で正準名に揃えてから引く（例: 「外食」→ 食費）。
+ * 中項目が無い大項目と、正準名にも別名にも無い名前（利用者のカスタム名「飲食代」など）は空配列
+ * （部分一致・キーワードでは寄せない。resolveSubCategory と同じ見方）。
  */
 export function subCategoriesOf(major: string): readonly string[] {
-  const canonical = normalizeCategoryName(major);
+  if (typeof major !== 'string') return [];
+  const canonical = toCanonicalCategoryName(major);
   return Object.prototype.hasOwnProperty.call(SUB_CATEGORIES, canonical) ? SUB_CATEGORIES[canonical] : [];
 }

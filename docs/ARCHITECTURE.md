@@ -268,7 +268,7 @@ line-kakeibo/
 │  │  ├─ logSafe.ts / time.ts # ログのマスク・JST 日付
 │  │  ├─ geminiCategoryClassifier.ts # カテゴリ分類（キャッシュ・辞書・Jev → Gemini の順序）
 │  │  ├─ jevCategoryClassifier.ts / geminiClient.ts / categoryGuide.ts / categoryNormalization.ts # Jev・Gemini の呼び出し、カテゴリの説明、カテゴリ正規化
-│  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。まだどこからも呼ばない）
+│  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧（大項目は正準名の完全一致で引く）と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。まだどこからも呼ばない）
 │  │  ├─ linkUserResolver.ts / syncUserLinks.ts
 │  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue
 │  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）

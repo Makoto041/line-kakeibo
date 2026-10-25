@@ -21,7 +21,7 @@
  *
  * 中項目（#235）の正解 subLabel を付ける:
  *   node bot/scripts/eval/review-golden.js --sub [--redo] [--label カテゴリ名] [--source text|merchant] [--ids PATH] [--golden PATH]
- *     --sub     見直し済み・除外していない・大項目に中項目の一覧がある件（一覧は bot/src/categoryTaxonomy.ts。仮）のうち、
+ *     --sub     見直し済み・除外していない・大項目に中項目の一覧がある件（一覧は bot/src/categoryTaxonomy.ts。確定）のうち、
  *               subLabel がまだ無い件を 1 件ずつ見る
  *     --redo    subLabel がすでにある件（「決められない」を含む）も、付け直す
  *     --ids     その JSON に載っている件だけに絞る。--sub ではモデルの答えを出さない（先に見ると引きずられるため）
@@ -188,7 +188,7 @@ async function reviewSubLabels({ file, data, hints, label, source, redo }) {
   // --ids は件を絞るだけに使い、モデルの答え（値）は読まない・出さない
   const queue = itemsToLabelSub(data.items, { redo, label, source, ids: hints ? Object.keys(hints) : null });
 
-  console.log('中項目の一覧（仮。bot/src/categoryTaxonomy.ts）:');
+  console.log('中項目の一覧（確定。bot/src/categoryTaxonomy.ts）:');
   for (const [major, list] of Object.entries(SUB_CATEGORIES)) console.log(`  ${major}: ${list.join(' / ')}`);
   console.log(`中項目を付ける件数: ${queue.length}（全 ${data.items.length} 件、subLabel あり ${data.items.filter((i) => i.subLabel !== undefined).length} 件）`);
   // 書き換える前に 1 回だけ、評価データのコピーを作る（書き換える件が無ければ作らない）
