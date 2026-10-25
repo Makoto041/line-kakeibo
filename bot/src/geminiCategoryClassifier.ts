@@ -8,7 +8,7 @@ import { maskId } from './logSafe';
 /** カテゴリがどこで決まったか（キーワード辞書・Jev・Gemini） */
 export type ClassificationProvider = 'dictionary' | 'jev' | 'gemini';
 
-export interface GeminiClassificationResult {
+export interface ClassificationResult {
   category: string | null;
   confidence: number; // 0-1の信頼度
   reasoning?: string; // 分類の理由（デバッグ用）
@@ -24,7 +24,7 @@ const categoryCache = new Map<string, { categories: string[]; timestamp: number 
 const CATEGORY_CACHE_TTL = 30 * 60 * 1000; // 30分
 
 // カテゴリ分類結果キャッシュ（15分TTL）
-const classificationCache = new Map<string, { result: GeminiClassificationResult; timestamp: number }>();
+const classificationCache = new Map<string, { result: ClassificationResult; timestamp: number }>();
 const CLASSIFICATION_CACHE_TTL = 15 * 60 * 1000; // 15分
 
 // 高速ローカル分類のためのキーワードマップ
@@ -241,7 +241,7 @@ async function classifyWithGemini(
   categoryNames: string[],
   description: string,
   source: ClassificationSource
-): Promise<GeminiClassificationResult | null> {
+): Promise<ClassificationResult | null> {
   if (!isGeminiConfigured()) return null;
   const parsed = await generateJson<{ category?: unknown; confidence?: unknown }>(
     buildClassificationPrompt(description, categoryNames, source),
@@ -273,7 +273,7 @@ async function classifyWithModels(
   lineId: string,
   description: string,
   source: ClassificationSource
-): Promise<GeminiClassificationResult | null> {
+): Promise<ClassificationResult | null> {
   // どちらも使えないときは Firestore（カテゴリ一覧）も読まない
   if (!isJevConfigured() && !isGeminiConfigured()) return null;
   // 文字単位（サロゲートペアを割らない）で切る
@@ -299,11 +299,11 @@ async function classifyWithModels(
  *
  * どれでも決まらなければ { category: null }（呼び出し側で「その他」にする）。
  */
-export async function classifyExpenseWithGemini(
+export async function classifyExpense(
   lineId: string,
   description: string,
   options: ClassifyOptions = {}
-): Promise<GeminiClassificationResult> {
+): Promise<ClassificationResult> {
   const source: ClassificationSource = options.source ?? 'text';
   const cacheKey = `${source}_${lineId}_${description.toLowerCase().trim()}`;
 
@@ -312,11 +312,11 @@ export async function classifyExpenseWithGemini(
     return cached.result;
   }
 
-  const remember = (result: GeminiClassificationResult) => {
+  const remember = (result: ClassificationResult) => {
     classificationCache.set(cacheKey, { result, timestamp: Date.now() });
     return result;
   };
-  const byKeyword = (): GeminiClassificationResult | null => {
+  const byKeyword = (): ClassificationResult | null => {
     const local = fastLocalClassification(description);
     return local.category
       ? {

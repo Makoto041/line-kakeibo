@@ -65,7 +65,7 @@ const categoriesByUser = {
 };
 firestore.getAllUserCategories = async (lineId) => categoriesByUser[lineId] ?? [];
 
-const { classifyExpenseWithGemini } = require('../dist/geminiCategoryClassifier');
+const { classifyExpense } = require('../dist/geminiCategoryClassifier');
 const { JEV_MODEL } = require('../dist/jevCategoryClassifier');
 const { CATEGORY_GUIDE } = require('../dist/categoryGuide');
 
@@ -83,7 +83,7 @@ async function classify(lineId, description, options) {
     };
   }
   try {
-    return await classifyExpenseWithGemini(lineId, description, options);
+    return await classifyExpense(lineId, description, options);
   } finally {
     Object.assign(console, original);
   }

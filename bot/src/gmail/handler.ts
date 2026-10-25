@@ -22,8 +22,8 @@ import {
   getCategoryEmoji,
 } from './types';
 import { saveGmailExpenseAtomic } from '../firestore';
-import { classifyExpenseWithGemini } from '../geminiCategoryClassifier';
-import type { GeminiClassificationResult } from '../geminiCategoryClassifier';
+import { classifyExpense } from '../geminiCategoryClassifier';
+import type { ClassificationResult } from '../geminiCategoryClassifier';
 import { sendCardUsageNotification } from '../line/flexMessage';
 import type { CategoryOrigin } from '../line/flexMessage';
 
@@ -34,7 +34,7 @@ const GMAIL_SYSTEM_LINE_ID = 'gmail-auto-system';
  * 店名の分類結果から、カテゴリとその判定元（最初のカードの括弧に出す）を決める。
  * 店名は確信度に関係なく採用し、既定のカテゴリも使わない。決まらなければ「その他」（unclassified）
  */
-export function merchantCategoryOf(r: GeminiClassificationResult): { category: string; origin?: CategoryOrigin } {
+export function merchantCategoryOf(r: ClassificationResult): { category: string; origin?: CategoryOrigin } {
   return r.category ? { category: r.category, origin: r.provider } : { category: 'その他', origin: 'unclassified' };
 }
 
@@ -257,7 +257,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     }
 
     // カテゴリを判定（店名なので辞書よりモデル〔Jev → 失敗時 Gemini〕を優先。geminiCategoryClassifier.ts 参照）
-    const categoryResult = await classifyExpenseWithGemini(
+    const categoryResult = await classifyExpense(
       GMAIL_SYSTEM_LINE_ID,
       parsed.merchant,
       { source: 'merchant' }
@@ -376,7 +376,7 @@ export async function processLatestEmail(): Promise<{
       const parsed = parseSMBCCardEmail(msg.id, body);
       if (!parsed) continue;
 
-      const categoryResult = await classifyExpenseWithGemini(
+      const categoryResult = await classifyExpense(
         GMAIL_SYSTEM_LINE_ID,
         parsed.merchant,
         { source: 'merchant' }
@@ -483,7 +483,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
     }
 
     // カテゴリを判定（店名なので辞書よりモデル〔Jev → 失敗時 Gemini〕を優先。geminiCategoryClassifier.ts 参照）
-    const categoryResult = await classifyExpenseWithGemini(
+    const categoryResult = await classifyExpense(
       GMAIL_SYSTEM_LINE_ID,
       parsed.merchant,
       { source: 'merchant' }

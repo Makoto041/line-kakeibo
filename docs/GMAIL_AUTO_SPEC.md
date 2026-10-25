@@ -238,7 +238,7 @@ OAuth 認可の CSRF 用 state。`/gmail/auth` で発行し、`/gmail/callback` 
 
 ## 6. カテゴリ定義
 
-正準カテゴリは `categoryNormalization.ts` の 19 種で、Gmail 取込も同じ分類器（`classifyExpenseWithGemini`）を使う。ただし店名は部分一致のキーワード辞書で取り違えやすいため、`source: 'merchant'` を渡して **Jev → Gemini の順にモデルを先に使い**、どちらも使えないときだけ辞書で判定する（Jev から Gemini に回す条件も含めて SPECIFICATION.md §4）:
+正準カテゴリは `categoryNormalization.ts` の 19 種で、Gmail 取込も同じ分類器（`classifyExpense`）を使う。ただし店名は部分一致のキーワード辞書で取り違えやすいため、`source: 'merchant'` を渡して **Jev → Gemini の順にモデルを先に使い**、どちらも使えないときだけ辞書で判定する（Jev から Gemini に回す条件も含めて SPECIFICATION.md §4）:
 
 食費 / 交通費 / 日用品 / 娯楽 / 衣服 / 医療・健康 / 教育 / 光熱費 / 住居費 / 保険 / 税金 / 美容 / 通信費 / サブスク / プレゼント / 旅行 / ペット / 貯金 / その他
 
@@ -411,7 +411,7 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 ### 11.1 既存機能への影響
 
 - Gmail 自動取得は**追加機能**として実装し、LINE テキスト入力の経路は変えない
-- 保存は `saveGmailExpenseAtomic`（重複排除つき）、分類は既存の分類器（`classifyExpenseWithGemini`。Jev がメイン、Gemini は退避先）を再利用
+- 保存は `saveGmailExpenseAtomic`（重複排除つき）、分類は既存の分類器（`classifyExpense`。Jev がメイン、Gemini は退避先）を再利用
 - 確認カードとボタン後の状態遷移はテキスト入力と共通（`expenseActions.ts`）
 
 ### 11.2 Gmail Watch 制約
