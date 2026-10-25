@@ -110,10 +110,100 @@ function buildFallbackAnalysis(feedbackText: string): FeedbackAnalysis {
   };
 }
 
+// ============================================
+// 公開 Issue に載せる文字列の無害化（#260）
+//
+// Issue は公開リポジトリに載る。本文（利用者の入力）と、それを元に Gemini が書いた文（プロンプトで誘導できる）で、
+// 他人へのメンション・他の Issue / リポジトリへの参照（相互参照の通知）・HTML コメントでの隠し文・リンク先の偽装を
+// 起こさないようにする。
+// - 元の本文: 本文中のバッククォートの最長の連続より長いフェンスのコードブロックに入れる（中は解釈されない）
+// - Gemini の結果（と、Gemini が使えないときの代わりの文）: HTML コメント・HTML タグ・Markdown のリンク先を除き、
+//   `@` / `#` / `GH-` / `://` / `www.` の直後にゼロ幅スペースを挟む。本文の Markdown では `& < >` を文字参照に、
+//   バッククォート・チルダ・バックスラッシュをエスケープする（コードブロックを開いて元の本文のフェンスを閉じさせない）。
+//   項目ごとに長さの上限を付ける
+// ============================================
+
+/** メンション・参照・自動リンクを切るために挟むゼロ幅スペース */
+const ZWSP = '\u200B';
+
+/** Issue のタイトルの上限（文字数） */
+export const ISSUE_TITLE_MAX_LENGTH = 80;
+const ISSUE_SUMMARY_MAX_LENGTH = 500;
+const ISSUE_DETAILS_MAX_LENGTH = 2000;
+const ISSUE_CRITERION_MAX_LENGTH = 200;
+const ISSUE_CRITERIA_MAX_COUNT = 5;
+/** 無害化してタイトルが空になったときのタイトル */
+const FALLBACK_ISSUE_TITLE = 'LINE からのフィードバック';
+
+/** max 文字（コードポイント）を超えたら切って「…」を付ける */
+function truncateChars(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text;
+}
+
+/** HTML コメント・HTML タグ・Markdown のリンク先（リンクと画像は表示する文字だけ残す）・参照リンクの定義を取り除く */
+function stripHiddenMarkup(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, '') // 閉じていないコメントは末尾まで
+    .replace(/!?\[([^\]\n]*)\]\([^)\n]*\)?/g, '$1')
+    .replace(/^[ \t]*\[[^\]\n]*\]:.*$/gm, '')
+    .replace(/<\/?[A-Za-z][^<>]*>/g, ''); // <https://…> の自動リンクも含む
+}
+
+/** メンション（@user・@org/team・owner/repo@sha）・Issue の参照（#1・owner/repo#1・GH-1）・自動リンク（https://・www.）を切る */
+function neutralizeReferences(text: string): string {
+  return text
+    .replace(/@(?=[A-Za-z0-9_-])/g, `@${ZWSP}`)
+    .replace(/#(?=\d)/g, `#${ZWSP}`)
+    .replace(/\b(GH)-(?=\d)/gi, `$1-${ZWSP}`)
+    .replace(/:\/\//g, `:${ZWSP}//`)
+    .replace(/\b(www)\./gi, `$1${ZWSP}.`);
+}
+
+/** Issue のタイトル（1 行。タイトルは HTML として描画されないので文字参照にはしない） */
+export function sanitizeIssueTitle(text: string): string {
+  const oneLine = stripHiddenMarkup(text).replace(/\s+/g, ' ').trim();
+  return neutralizeReferences(truncateChars(oneLine, ISSUE_TITLE_MAX_LENGTH)) || FALLBACK_ISSUE_TITLE;
+}
+
+/** Issue の本文に Markdown として載せる文 */
+export function sanitizeIssueMarkdown(text: string, maxLength: number, options: { multiline: boolean }): string {
+  const stripped = stripHiddenMarkup(text);
+  const shaped = options.multiline ? stripped.replace(/\n{3,}/g, '\n\n').trim() : stripped.replace(/\s+/g, ' ').trim();
+  const escaped = truncateChars(shaped, maxLength)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/[`~\\]/g, (c) => `\\${c}`);
+  return neutralizeReferences(escaped);
+}
+
+/** 元の本文を、本文中のバッククォートの最長の連続より長いフェンスのコードブロックに入れる */
+export function fencedOriginalText(text: string): string {
+  const longestRun = Array.from(text.matchAll(/`+/g)).reduce((max, m) => Math.max(max, m[0].length), 0);
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+  return `${fence}text\n${text.replace(/\r\n?/g, '\n')}\n${fence}`;
+}
+
+/** 分析結果（Gemini・代わりの文）を、公開 Issue に載せられる形にする（種別はもともと 2 値に限っている） */
+function sanitizeAnalysis(analysis: FeedbackAnalysis): FeedbackAnalysis {
+  return {
+    title: sanitizeIssueTitle(analysis.title),
+    type: analysis.type,
+    summary: sanitizeIssueMarkdown(analysis.summary, ISSUE_SUMMARY_MAX_LENGTH, { multiline: true }),
+    details: sanitizeIssueMarkdown(analysis.details, ISSUE_DETAILS_MAX_LENGTH, { multiline: true }),
+    acceptanceCriteria: analysis.acceptanceCriteria
+      .map((c) => sanitizeIssueMarkdown(c, ISSUE_CRITERION_MAX_LENGTH, { multiline: false }))
+      .filter((c) => c.length > 0)
+      .slice(0, ISSUE_CRITERIA_MAX_COUNT),
+  };
+}
+
 /**
- * Issue本文をMarkdown形式で構築する
+ * Issue本文をMarkdown形式で構築する（analysis は sanitizeAnalysis 済み。元の本文はコードブロックに入れる）
  */
-function buildIssueBody(analysis: FeedbackAnalysis, originalText: string): string {
+export function buildIssueBody(analysis: FeedbackAnalysis, originalText: string): string {
   const criteriaList =
     analysis.acceptanceCriteria.length > 0
       ? analysis.acceptanceCriteria.map((c) => `- [ ] ${c}`).join('\n')
@@ -130,7 +220,7 @@ function buildIssueBody(analysis: FeedbackAnalysis, originalText: string): strin
     analysis.details,
     '',
     '### 元のフィードバック',
-    `> ${originalText}`,
+    fencedOriginalText(originalText),
     '',
     '## 受け入れ条件',
     criteriaList,
@@ -163,10 +253,11 @@ export async function createIssueFromFeedback(
     };
   }
 
-  // Geminiでフィードバックを分析（失敗時はフォールバック）
-  const analysis =
+  // Geminiでフィードバックを分析（失敗時はフォールバック）。どちらも公開 Issue に載せる前に無害化する
+  const analysis = sanitizeAnalysis(
     (await analyzeFeedbackWithGemini(feedbackText)) ||
-    buildFallbackAnalysis(feedbackText);
+    buildFallbackAnalysis(feedbackText)
+  );
 
   try {
     const response = await axios.post(
