@@ -36,8 +36,7 @@ if (!projectId.startsWith('demo-')) {
 initializeApp({ projectId });
 
 const { householdRouter, householdErrorHandler } = require('../dist/householdApi');
-const { applyExpenseChange, decideSetAdvance, decideSetCategory, decideSetPayer } = require('../dist/expenseActions');
-const { readActiveMember } = require('../dist/householdMembers');
+const { applyExpenseChange, decideSetCategory } = require('../dist/expenseActions');
 const lineClient = require('../dist/line/client');
 const { handlePostback } = require('../dist/line/postback');
 
@@ -421,43 +420,69 @@ async function main() {
       check('lineGroupId だけの旧形式は 403（所有者でも）', legacy.status === 403);
     }
 
-    // ---------------- 支払った人を自分にする（LINE の［自分が払った］） ----------------
-    console.log('\n［自分が払った］（postback と同じ applyExpenseChange + decideSetPayer + メンバー確認）');
+    // ---------------- 支払った人・支出区分・立替（LINE の［自分が払った］［除外］［自分が立替］［取り消す］） ----------------
+    console.log('\nLINE の postback（handlePostback）: set_payer・set_split・set_advance は世帯のメンバーだけ');
     {
-      // postback.ts の handleSetPayer と同じ組み立て（authorize でメンバー文書を読み、その名前を使う）
-      const setPayer = async (expenseId, userId) => {
-        let name = '';
-        return applyExpenseChange(expenseId, (data) => decideSetPayer({ lineId: userId, displayName: name || 'User_x' })(data), {
-          authorize: async (data, tx) => {
-            const member = await readActiveMember(db, data.groupId, userId, tx);
-            name = member ? member.displayName : '';
-            return member !== null;
-          },
-        });
-      };
+      const read = async (id) => (await db.doc(`expenses/${id}`).get()).data();
+      const outsiders = [['メンバー外', 'Ustranger'], ['脱退者', 'Uleft']];
       await db.doc('expenses/pay_card').set({ lineId: 'gmail-auto-system', payerId: 'gmail-auto-system', groupId: 'g1', lineGroupId: 'C_line1', amount: 2231, description: 'NIKUNOHANAMASA', date: '2026-09-20', category: '食費', status: 'shared', inputSource: 'gmail_auto', includeInTotal: true, confirmed: true });
-      const byBob = await setPayer('pay_card', 'Ubob');
-      const doc = (await db.doc('expenses/pay_card').get()).data();
-      check('メンバーが押すと支払った人がその人になる（名前はメンバー文書）', byBob && byBob.record && doc.payerId === 'Ubob' && doc.payerDisplayName === 'Bob' && doc.status === 'shared' && doc.amount === 2231, doc);
-      const byStranger = await setPayer('pay_card', 'Ustranger');
-      const byLeft = await setPayer('pay_card', 'Uleft');
-      check('メンバー外・脱退者は forbidden で書かない', byStranger && byStranger.forbidden === true && byLeft && byLeft.forbidden === true && (await db.doc('expenses/pay_card').get()).get('payerId') === 'Ubob');
-      const onAdvance = await setPayer('adv_private', 'Ualice');
-      const advDoc = (await db.doc('expenses/adv_private').get()).data();
-      check('立替なら立て替えた人も押した人にする（立替のまま）', onAdvance && onAdvance.record && advDoc.status === 'advance_pending' && advDoc.advanceBy === 'Ualice' && advDoc.payerId === 'Ualice', advDoc);
 
-      // ［自分が立替］（postback と同じ applyExpenseChange + decideSetAdvance + メンバー確認）
-      const setAdvance = async (expenseId, userId) =>
-        applyExpenseChange(expenseId, (data) => decideSetAdvance({ lineId: userId, displayName: 'Bob' })(data), {
-          authorize: async (data, tx) => (await readActiveMember(db, data.groupId, userId, tx)) !== null,
-        });
-      const advanced = await setAdvance('pay_card', 'Ubob');
-      const fullDoc = (await db.doc('expenses/pay_card').get()).data();
-      check('［自分が立替］で全額の立替になる（押した人が立替・支払い）', advanced && advanced.record && fullDoc.status === 'advance_pending' && fullDoc.advanceFull === true && fullDoc.advanceBy === 'Ubob' && fullDoc.payerId === 'Ubob', fullDoc);
-      const strangerAdvance = await setAdvance('pay_card', 'Ustranger');
-      check('メンバー外は立替にできない', strangerAdvance && strangerAdvance.forbidden === true);
-      const onSettled = await setPayer('e_settled', 'Ualice');
-      check('立替で精算済みは変えない', onSettled && onSettled.reject && (await db.doc('expenses/e_settled').get()).get('payerId') === 'Ubob', onSettled);
+      // ［自分が払った］
+      const byBob = await pressPostback({ action: 'set_payer', expenseId: 'pay_card' }, 'Ubob');
+      const doc = await read('pay_card');
+      check('［自分が払った］メンバーが押すと支払った人がその人になる（名前はメンバー文書の Bob。LINE のプロフィール名ではない）', !!byBob.flex && doc.payerId === 'Ubob' && doc.payerDisplayName === 'Bob' && doc.status === 'shared' && doc.amount === 2231, doc);
+      for (const [who, userId] of outsiders) {
+        const r = await pressPostback({ action: 'set_payer', expenseId: 'pay_card' }, userId);
+        check(`［自分が払った］${who}は「${MEMBERS_ONLY}」で、書かない`, r.text === MEMBERS_ONLY && (await read('pay_card')).payerId === 'Ubob', r.replies);
+      }
+      const legacyPayer = await pressPostback({ action: 'set_payer', expenseId: 'e_legacy' }, 'Ualice');
+      const legacyAfterPayer = await read('e_legacy');
+      check('［自分が払った］lineGroupId だけの旧形式は、登録した本人でも変えられない', legacyPayer.text === MEMBERS_ONLY && legacyAfterPayer.confirmed === false && legacyAfterPayer.status === undefined, legacyPayer.replies);
+      // 作成者のメンバー文書の名前が仮名「作成者」のまま（世帯 g5 の Hana）なら、LINE のプロフィール名を使う
+      await db.doc('expenses/pay_g5').set({ lineId: 'Uivan', payerId: 'Uivan', payerDisplayName: 'Ivan', groupId: 'g5', lineGroupId: 'C_line5', amount: 500, description: 'x', date: '2026-09-20', category: '食費', status: 'shared', includeInTotal: true, confirmed: true });
+      const byHana = await pressPostback({ action: 'set_payer', expenseId: 'pay_g5' }, 'Uhana');
+      const g5Doc = await read('pay_g5');
+      check('［自分が払った］メンバー文書の名前が仮名「作成者」なら、LINE のプロフィール名を使う', !!byHana.flex && g5Doc.payerId === 'Uhana' && g5Doc.payerDisplayName === 'プロフィール名', g5Doc);
+      const onAdvance = await pressPostback({ action: 'set_payer', expenseId: 'adv_private' }, 'Ualice');
+      const advDoc = await read('adv_private');
+      check('［自分が払った］立替なら立て替えた人も押した人にする（立替のまま）', !!onAdvance.flex && advDoc.status === 'advance_pending' && advDoc.advanceBy === 'Ualice' && advDoc.payerId === 'Ualice' && advDoc.payerDisplayName === 'Alice', advDoc);
+
+      // 支出区分（［除外］［戻す］。旧UIの personal も）
+      for (const [who, userId] of outsiders) {
+        const r = await pressPostback({ action: 'set_split', expenseId: 'pay_card', to: 'personal' }, userId);
+        check(`［除外］${who}は「${MEMBERS_ONLY}」で、書かない`, r.text === MEMBERS_ONLY && (await read('pay_card')).status === 'shared', r.replies);
+      }
+      const oldUi = await pressPostback({ action: 'personal', expenseId: 'pay_card' }, 'Ustranger');
+      check(`旧UIの［個人］もメンバー外は「${MEMBERS_ONLY}」で、書かない`, oldUi.text === MEMBERS_ONLY && (await read('pay_card')).status === 'shared', oldUi.replies);
+      const legacySplit = await pressPostback({ action: 'set_split', expenseId: 'e_legacy', to: 'personal' }, 'Ualice');
+      check('［除外］lineGroupId だけの旧形式は、登録した本人でも変えられない', legacySplit.text === MEMBERS_ONLY && (await read('e_legacy')).status === undefined, legacySplit.replies);
+      const split = await pressPostback({ action: 'set_split', expenseId: 'pay_card', to: 'personal' }, 'Ubob');
+      const splitDoc = await read('pay_card');
+      check('［除外］メンバーは除外にできる', !!split.flex && splitDoc.status === 'personal' && splitDoc.includeInTotal === false, splitDoc);
+      const back = await pressPostback({ action: 'set_split', expenseId: 'pay_card', to: 'shared' }, 'Ualice');
+      const backDoc = await read('pay_card');
+      check('［戻す］メンバーは共同費に戻せる', !!back.flex && backDoc.status === 'shared' && backDoc.includeInTotal === true, backDoc);
+
+      // ［自分が立替］［取り消す］
+      const advanced = await pressPostback({ action: 'set_advance', expenseId: 'pay_card', to: 'on' }, 'Ubob');
+      const fullDoc = await read('pay_card');
+      check('［自分が立替］で全額の立替になる（押した人が立替・支払い。名前はメンバー文書）', !!advanced.flex && fullDoc.status === 'advance_pending' && fullDoc.advanceFull === true && fullDoc.advanceBy === 'Ubob' && fullDoc.payerId === 'Ubob' && fullDoc.payerDisplayName === 'Bob', fullDoc);
+      for (const [who, userId] of outsiders) {
+        for (const to of ['on', 'off']) {
+          const r = await pressPostback({ action: 'set_advance', expenseId: 'pay_card', to }, userId);
+          const d = await read('pay_card');
+          check(`［${to === 'on' ? '自分が立替' : '取り消す'}］${who}は「${MEMBERS_ONLY}」で、書かない`, r.text === MEMBERS_ONLY && d.status === 'advance_pending' && d.advanceBy === 'Ubob', r.replies);
+        }
+      }
+      const legacyAdvance = await pressPostback({ action: 'set_advance', expenseId: 'e_legacy', to: 'on' }, 'Ualice');
+      check('［自分が立替］lineGroupId だけの旧形式は、登録した本人でも変えられない', legacyAdvance.text === MEMBERS_ONLY && (await read('e_legacy')).status === undefined, legacyAdvance.replies);
+      const cleared = await pressPostback({ action: 'set_advance', expenseId: 'pay_card', to: 'off' }, 'Ualice');
+      const clearedDoc = await read('pay_card');
+      check('［取り消す］メンバーは立替を取り消せる（共同費に戻し、支払った人は変えない）', !!cleared.flex && clearedDoc.status === 'shared' && !('advanceBy' in clearedDoc) && !('advanceFull' in clearedDoc) && clearedDoc.payerId === 'Ubob', clearedDoc);
+
+      // 精算済み
+      const onSettled = await pressPostback({ action: 'set_payer', expenseId: 'e_settled' }, 'Ualice');
+      check('［自分が払った］立替で精算済みは「精算済みのため変更できません」で、変えない', onSettled.text === '精算済みのため変更できません' && (await read('e_settled')).payerId === 'Ubob', onSettled.replies);
     }
 
     // ---------------- カテゴリの変更（LINE の set_category。中項目を辞書で決め直す） ----------------
@@ -564,6 +589,15 @@ async function main() {
       check('set_category: カルーセルの旧名（医療費）は正準名（医療・健康）で保存する', !!byAlias.flex && (await read('pb_cat')).category === '医療・健康');
       const personalOwner = await pressPostback({ action: 'set_category', expenseId: 'pb_personal', category: '食費' }, 'Ualice');
       check('set_category: 世帯の無い個人の支出は、登録した本人なら変えられる', !!personalOwner.flex && (await read('pb_personal')).category === '食費');
+
+      // 支出 ID が文書 ID として不正なら何もしない（Firestore に渡すと例外になる値。確かめずに渡すと、ここで例外になる）
+      for (const [label, expenseId] of [['a/b/c', 'a/b/c'], ['数値', 123], ['巨大な文字列', 'x'.repeat(100000)]]) {
+        const replyCounts = [];
+        for (const action of ['set_category', 'confirm', 'show_category_select', 'set_payer', 'set_split', 'set_advance', 'edit']) {
+          replyCounts.push((await pressPostback({ action, expenseId, category: '食費', to: 'personal' }, 'Ubob')).replies.length);
+        }
+        check(`支出 ID が ${label} なら、どの action でも返信せず、例外にもならない`, replyCounts.every((n) => n === 0), replyCounts);
+      }
     }
 
     // ---------------- 以前の立替を精算済みにする ----------------

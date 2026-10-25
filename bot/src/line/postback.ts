@@ -14,6 +14,7 @@ type PostbackEvent = webhook.PostbackEvent;
 import { FieldValue, getFirestore, type DocumentData, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { PostbackActionData } from '../gmail/types';
 import { toSelectableCategoryName } from '../categoryNormalization';
+import { isValidDocId } from '../docId';
 import {
   applyExpenseChange,
   decideClearAdvance,
@@ -40,7 +41,12 @@ import { getLineClient, replyWithPushFallback } from './client';
  * 拡張されたPostbackアクションデータ
  */
 interface ExtendedPostbackActionData extends PostbackActionData {
-  source?: 'gmail' | 'text';  // 入力元
+  /**
+   * 入力元（カテゴリ選択のカルーセルのボタンに埋め込む）
+   *
+   * JSON から読んだ値なので 'gmail' / 'text' とは限らない。categorySelectSource で許可リストに揃えてから使う。
+   */
+  source?: unknown;
   /**
    * 設定するカテゴリ（大項目。中項目は受け取らず、サーバーで決める）
    *
@@ -145,8 +151,9 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
       return;
     }
 
-    // 有効なPostbackかチェック
-    if (!actionData.action || !actionData.expenseId) {
+    // 有効なPostbackかチェック。支出 ID は Firestore の文書 ID として安全な文字列だけを受け付ける
+    // （/household API と同じ isValidDocId。不正なら、支出が無いときと同じく何もしない。Firestore も LINE も呼ばない）
+    if (!actionData || typeof actionData !== 'object' || !actionData.action || !isValidDocId(actionData.expenseId)) {
       console.log('Not a valid postback, skipping');
       return;
     }
@@ -190,7 +197,8 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
         break;
 
       default:
-        console.warn('Unknown action:', actionData.action);
+        // 値は利用者の入力なのでログに出さない（型だけ）
+        console.warn('Unknown postback action', { type: typeof actionData.action, expense: maskId(actionData.expenseId) });
     }
   } catch (error) {
     console.error('Failed to handle postback:', error);
@@ -409,6 +417,15 @@ async function handleShowList(event: PostbackEvent): Promise<void> {
 }
 
 /**
+ * カルーセルのボタンに埋め込む入力元（許可リスト。'gmail' / 'text' 以外は既定の 'gmail'）
+ *
+ * postback の値をそのまま埋め込むと、長い値でボタンの data が LINE の上限を超え、カルーセルを送れなくなる。
+ */
+function categorySelectSource(source: unknown): CategorySelectInfo['source'] {
+  return source === 'gmail' || source === 'text' ? source : 'gmail';
+}
+
+/**
  * カテゴリ選択Carouselを表示
  *
  * 選んだあとの set_category でも確かめるが、支出を変えられない人（世帯のメンバーでない人）には
@@ -441,7 +458,7 @@ async function handleShowCategorySelect(
   const carouselInfo: CategorySelectInfo = {
     expenseId,
     currentCategory: data.category || 'その他',
-    source: source || 'gmail',
+    source: categorySelectSource(source),
     merchant: data.description || '不明',
     amount: data.amount || 0,
   };

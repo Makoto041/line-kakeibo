@@ -287,6 +287,7 @@ line-kakeibo/
 │  │  ├─ webOrigins.ts       # Web オリジンの許可リスト（/auth/line と /household で共用）
 │  │  ├─ adminAuth.ts        # ADMIN_SECRET の定数時間比較
 │  │  ├─ logSafe.ts / time.ts # ログのマスク・JST 日付
+│  │  ├─ docId.ts            # Firestore の文書 ID の入力検証 isValidDocId（/household と LINE の postback で共用）
 │  │  ├─ geminiCategoryClassifier.ts # カテゴリ分類（キャッシュ・辞書・Jev → Gemini の順序）
 │  │  ├─ jevCategoryClassifier.ts / geminiClient.ts / categoryGuide.ts / categoryNormalization.ts # Jev・Gemini の呼び出し、カテゴリの説明、カテゴリ正規化
 │  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧（大項目は正準名の完全一致で引く）と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。登録時〔LINE の入力・Gmail の取込〕と、LINE で大項目を変えたときに呼ぶ）

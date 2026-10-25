@@ -56,6 +56,18 @@ function deepEqual(a, b) {
 /** FieldValue.delete() の番兵か */
 const isFieldDelete = (v) => !!v && typeof v === 'object' && !!v.constructor && v.constructor.name.includes('Transform');
 
+/** Flex メッセージに含まれる postback ボタンの data（JSON を解析したもの）をすべて集める */
+function postbacksIn(message) {
+  const found = [];
+  (function collect(node) {
+    if (Array.isArray(node)) return node.forEach(collect);
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'postback' && typeof node.data === 'string') found.push(JSON.parse(node.data));
+    Object.values(node).forEach(collect);
+  })(message);
+  return found;
+}
+
 // ------------------------------------------------------------
 console.log('decideConfirm（LINE の OK と同じ判定）');
 
@@ -547,14 +559,7 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
     // トーク履歴に残っているカルーセルの選択肢は、どれも受け付ける
     const { buildCategorySelectCarousel } = require('../dist/line/flexMessage');
     const carousel = buildCategorySelectCarousel({ expenseId: 'exp_0001', currentCategory: '食費', source: 'gmail', merchant: '店', amount: 100 });
-    const postbacks = [];
-    (function collect(node) {
-      if (Array.isArray(node)) return node.forEach(collect);
-      if (!node || typeof node !== 'object') return;
-      if (node.type === 'postback' && typeof node.data === 'string') postbacks.push(JSON.parse(node.data));
-      Object.values(node).forEach(collect);
-    })(carousel);
-    const choices = postbacks.filter((p) => p.action === 'set_category');
+    const choices = postbacksIn(carousel).filter((p) => p.action === 'set_category');
     check(
       'カルーセルの「これにする」の値は、どれも受け付けて正準名にする',
       choices.length === 10 && choices.every((p) => CANONICAL_CATEGORIES.includes(toSelectableCategoryName(p.category))),
@@ -588,7 +593,16 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
       data: () => (data === undefined ? undefined : { ...data }),
       get: (field) => (data ? data[field] : undefined),
     });
-    const refOf = (name, id) => ({ id, path: `${name}/${id}`, get: async () => snapshotOf(docs.get(`${name}/${id}`)) });
+    /** Firestore の文書を読んだ回数 */
+    let reads = 0;
+    const refOf = (name, id) => ({
+      id,
+      path: `${name}/${id}`,
+      get: async () => {
+        reads++;
+        return snapshotOf(docs.get(`${name}/${id}`));
+      },
+    });
     const fakeDb = {
       collection: (name) => ({ doc: (id) => refOf(name, id) }),
       runTransaction: async (fn) => {
@@ -608,14 +622,18 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
     };
 
     const decisions = [];
-    let calledWithoutAuthorize = 0;
+    /** applyExpenseChange の呼び出し（押した action と、authorize を付けたか） */
+    const applyCalls = [];
+    let pressingAction;
+    /** LINE のプロフィールを取得した回数 */
+    let profileCalls = 0;
     const replies = [];
     const logs = [];
     const warns = [];
 
     firestoreModule.getFirestore = () => fakeDb;
     actions.applyExpenseChange = (expenseId, decide, opts) => {
-      if (!opts || typeof opts.authorize !== 'function') calledWithoutAuthorize++;
+      applyCalls.push({ action: pressingAction, authorized: !!opts && typeof opts.authorize === 'function' });
       return origApply(expenseId, (data) => {
         const decision = decide(data);
         decisions.push(decision);
@@ -627,8 +645,14 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
       return 'reply';
     };
     client.getLineClient = () => ({
-      getProfile: async () => ({ displayName: 'プロフィール名' }),
-      getGroupMemberProfile: async () => ({ displayName: 'プロフィール名' }),
+      getProfile: async () => {
+        profileCalls++;
+        return { displayName: 'プロフィール名' };
+      },
+      getGroupMemberProfile: async () => {
+        profileCalls++;
+        return { displayName: 'プロフィール名' };
+      },
     });
 
     const MEMBERS_ONLY = '変更できるのは、世帯のメンバーだけです';
@@ -647,6 +671,7 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
     /** ボタンを押す。userId を null にすると、押した人が分からないイベントになる */
     const press = async (payload, userId = 'Ubob0001') => {
       const before = { decisions: decisions.length, replies: replies.length, writes: writes.length, warns: warns.length };
+      pressingAction = payload && payload.action;
       console.log = (...args) => logs.push(args);
       console.warn = (...args) => warns.push(args);
       console.error = () => {};
@@ -806,7 +831,119 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
       const showMissing = await press({ ...show, expenseId: 'no_such' }, 'Ubob0001');
       check('存在しない支出には返信しない', showMissing.replies.length === 0 && !showMissing.wrote);
 
-      check('支出を変える postback は、どれも authorize を付けて applyExpenseChange を呼ぶ', calledWithoutAuthorize === 0, String(calledWithoutAuthorize));
+      // ---------------- show_category_select の source（許可リスト） ----------------
+      console.log('  [show_category_select の source は gmail / text だけ（それ以外は gmail）]');
+      const sourcesInCarousel = async (source) => {
+        const payload = { action: 'show_category_select', expenseId: 'exp_show' };
+        if (source !== undefined) payload.source = source;
+        const r = await press(payload, 'Ubob0001');
+        return r.flex ? [...new Set(postbacksIn(r.flex).map((p) => p.source))] : null;
+      };
+      check('source が text なら、カルーセルのボタンにも text を埋め込む', deepEqual(await sourcesInCarousel('text'), ['text']));
+      check('source が gmail・無しなら gmail', deepEqual(await sourcesInCarousel('gmail'), ['gmail']) && deepEqual(await sourcesInCarousel(undefined), ['gmail']));
+      const unexpectedSources = [];
+      for (const source of ['x'.repeat(300), 'TEXT', 123, { a: 1 }, ['text'], null]) {
+        const s = await sourcesInCarousel(source);
+        if (!deepEqual(s, ['gmail'])) unexpectedSources.push([source, s]);
+      }
+      check('許可リストに無い source（長い文字列・大文字・数値・オブジェクト・配列・null）は既定の gmail にする', unexpectedSources.length === 0, JSON.stringify(unexpectedSources));
+
+      // ---------------- set_payer・set_split・set_advance（区分・［自分が払った］［自分が立替］［取り消す］） ----------------
+      console.log('  [set_payer・set_split・set_advance も世帯のメンバーだけ]');
+      for (const [label, payload] of [
+        ['set_payer', { action: 'set_payer' }],
+        ['set_split', { action: 'set_split', to: 'personal' }],
+        ['set_advance', { action: 'set_advance', to: 'on' }],
+        ['旧UIの personal', { action: 'personal' }],
+      ]) {
+        for (const [who, userId, make] of [
+          ['メンバー外', 'Ustranger01', groupExpense],
+          ['脱退者', 'Uleft0001', groupExpense],
+          ['旧形式（lineGroupId だけ）の登録者', 'Ualice0001', legacyExpense],
+        ]) {
+          docs.set('expenses/exp_btn', make({ status: 'shared', includeInTotal: true, confirmed: true, payerId: 'Ualice0001' }));
+          const r = await press({ ...payload, expenseId: 'exp_btn' }, userId);
+          check(`${label}: ${who}は「${MEMBERS_ONLY}」で、書かない`, refused(r, MEMBERS_ONLY) && expense('exp_btn').status === 'shared' && expense('exp_btn').payerId === 'Ualice0001', JSON.stringify(r.replies));
+        }
+      }
+      docs.set('expenses/exp_btn', groupExpense({ status: 'shared', includeInTotal: true, confirmed: true, payerId: 'Ualice0001', payerDisplayName: 'Alice' }));
+      const payer = await press({ action: 'set_payer', expenseId: 'exp_btn' }, 'Ubob0001');
+      check(
+        'set_payer: メンバーが押すと支払った人がその人になる（名前はメンバー文書の Bob。LINE のプロフィール名ではない）',
+        payer.wrote && payer.flex && expense('exp_btn').payerId === 'Ubob0001' && expense('exp_btn').payerDisplayName === 'Bob',
+        JSON.stringify(expense('exp_btn'))
+      );
+      docs.set('groupMembers/g1_Uhana0001', { groupId: 'g1', lineId: 'Uhana0001', displayName: '作成者', isActive: true });
+      const placeholder = await press({ action: 'set_payer', expenseId: 'exp_btn' }, 'Uhana0001');
+      check('set_payer: メンバー文書の名前が仮名「作成者」なら LINE のプロフィール名を使う', placeholder.wrote && expense('exp_btn').payerDisplayName === 'プロフィール名', JSON.stringify(expense('exp_btn')));
+      docs.delete('groupMembers/g1_Uhana0001');
+      const split = await press({ action: 'set_split', expenseId: 'exp_btn', to: 'personal' }, 'Ubob0001');
+      check('set_split: メンバーは除外にできる', split.wrote && expense('exp_btn').status === 'personal' && expense('exp_btn').includeInTotal === false);
+      const advance = await press({ action: 'set_advance', expenseId: 'exp_btn', to: 'on' }, 'Ubob0001');
+      check('set_advance: メンバーは立替にできる（押した人が立替・支払い。名前はメンバー文書）', advance.wrote && expense('exp_btn').status === 'advance_pending' && expense('exp_btn').advanceBy === 'Ubob0001' && expense('exp_btn').payerDisplayName === 'Bob', JSON.stringify(expense('exp_btn')));
+      const clear = await press({ action: 'set_advance', expenseId: 'exp_btn', to: 'off' }, 'Ualice0001');
+      check('set_advance off: メンバーは立替を取り消せる', clear.wrote && expense('exp_btn').status === 'shared' && !('advanceBy' in expense('exp_btn')));
+
+      // ---------------- 支出 ID の形式（最初に確かめ、不正なら何もしない） ----------------
+      console.log('  [支出 ID が文書 ID として不正なら、Firestore も LINE も呼ばずに何もしない]');
+      const badIds = [
+        ['a/b/c', 'a/b/c'],
+        ['数値', 123],
+        ['巨大な文字列', 'x'.repeat(100000)],
+        ['129 文字', 'x'.repeat(129)],
+        ['予約 ID（__x__）', '__x__'],
+        ['..', '..'],
+        ['空文字', ''],
+        ['オブジェクト', { id: 'exp_btn' }],
+      ];
+      for (const [label, expenseId] of badIds) {
+        const touched = [];
+        for (const action of ['set_category', 'confirm', 'show_category_select', 'set_payer', 'set_split', 'set_advance', 'edit']) {
+          const before = { reads, profileCalls, applyCalls: applyCalls.length };
+          const r = await press({ action, expenseId, category: '食費', to: 'personal' }, 'Ubob0001');
+          if (r.replies.length > 0 || r.wrote || r.decided || reads !== before.reads || profileCalls !== before.profileCalls || applyCalls.length !== before.applyCalls) {
+            touched.push(action);
+          }
+        }
+        check(`${label}: どの action でも返信・読み取り・書き込み・プロフィール取得をしない`, touched.length === 0, JSON.stringify(touched));
+      }
+      {
+        const r = await press({ action: 'set_category', expenseId: 'exp_btn', category: '食費' }, 'Ubob0001');
+        check('（比較: 正しい支出 ID なら同じ押し方で書き込む）', r.wrote);
+      }
+      {
+        const before = { reads, replies: replies.length };
+        console.log = () => {};
+        console.error = () => {};
+        try {
+          await handlePostback({ type: 'postback', replyToken: 'reply-token', source: { type: 'group', groupId: 'C_line1', userId: 'Ubob0001' }, postback: { data: 'null' } });
+          await handlePostback({ type: 'postback', replyToken: 'reply-token', source: { type: 'group', groupId: 'C_line1', userId: 'Ubob0001' }, postback: { data: '1' } });
+        } finally {
+          console.log = origLog;
+          console.error = origError;
+        }
+        check('JSON がオブジェクトでない postback（null・数値）は投げずに何もしない', reads === before.reads && replies.length === before.replies);
+      }
+
+      // ---------------- ログ（利用者の入力を書式文字列に埋め込まない） ----------------
+      console.log('  [ログに利用者の入力を書式文字列で埋め込まない]');
+      {
+        const r = await press({ action: 'evil\naction', expenseId: 'exp_btn' }, 'Ubob0001');
+        const w = r.warns.find((x) => x[0] === 'Unknown postback action');
+        check('不明な action は型だけをオブジェクトで出す（値を出さない）', w && w[1].type === 'string' && w[1].expense === '…_btn' && !JSON.stringify(r.warns).includes('evil'), JSON.stringify(r.warns));
+        const m = await press({ action: 'set_category', expenseId: 'no_such_0042', category: '食費' }, 'Ubob0001');
+        const nf = m.warns.find((x) => x[0] === 'Expense not found');
+        check('存在しない支出のログ（applyExpenseChange）は支出 ID を伏せてオブジェクトで出す', nf && nf[1].expense === '…0042' && !JSON.stringify(m.warns).includes('no_such'), JSON.stringify(m.warns));
+      }
+
+      // ---------------- applyExpenseChange は authorize 付きでだけ呼ぶ ----------------
+      const pressedActions = [...new Set(applyCalls.map((c) => c.action))].sort();
+      const expectedActions = ['confirm', 'personal', 'set_advance', 'set_category', 'set_payer', 'set_split'];
+      check(
+        `押した ${expectedActions.join('・')} は、どれも authorize を付けて applyExpenseChange を呼ぶ`,
+        deepEqual(pressedActions, expectedActions) && applyCalls.every((c) => c.authorized),
+        JSON.stringify({ pressedActions, unauthorized: applyCalls.filter((c) => !c.authorized) })
+      );
     } finally {
       firestoreModule.getFirestore = origGetFirestore;
       actions.applyExpenseChange = origApply;
