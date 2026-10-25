@@ -76,7 +76,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.15.2 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.15.4 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
@@ -130,7 +130,7 @@ flowchart LR
             <tr><td class="name">api</td><td>HTTPS</td><td class="region us">us-central1</td><td>LIFF ログイン <code>/auth/line</code>、Web 向け <code>/household/*</code>、Gmail 管理 <code>/gmail/*</code></td></tr>
             <tr><td class="name">gmailPubSubHandler</td><td>Pub/Sub</td><td class="region">asia-northeast1</td><td>カード利用通知メールの取込</td></tr>
             <tr><td class="name">postRecurringExpenses</td><td>毎日 09:10 JST</td><td class="region">asia-northeast1</td><td>毎日のバッチ。引き落とし日を迎えた固定費を支出に計上（同じ月に 2 回は入らない）。期間の起算日には精算サマリーを LINE グループへメンション付きで送る（スケジュールの無料枠を使い切っているため相乗り）</td></tr>
-            <tr><td class="name">renewGmailWatch</td><td>6 日ごと 03:00 JST</td><td class="region">asia-northeast1</td><td>Gmail watch（7 日で失効）の更新</td></tr>
+            <tr><td class="name">renewGmailWatch</td><td>6 日ごと 03:00 JST</td><td class="region">asia-northeast1</td><td>Gmail watch（7 日で失効）の更新。取込の位置（historyId）は変えない</td></tr>
             <tr><td class="name">importMoneyForward</td><td>毎日 05:00 JST</td><td class="region">asia-northeast1</td><td>廃止。旧 MoneyForward CSV 取込（一度も機能していなかった）。消すと CI の非対話デプロイが止まるため、何もしない関数として名前だけ残置</td></tr>
             <tr><td class="name">syncUserLinks</td><td>Firestore onCreate</td><td class="region">asia-northeast1</td><td>何もしない。消すと CI の非対話デプロイが止まるため残置</td></tr>
           </tbody>
