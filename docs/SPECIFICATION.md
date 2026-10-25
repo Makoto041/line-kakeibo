@@ -187,7 +187,8 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」と、メールに時刻が書かれていたか（`usedAtHasTime`。§4.1）を抽出 → カテゴリ分類（§4。Jev → Gemini → 辞書。確信度に関係なく採用）→ 中項目の判定（§4.1。`merchantSubCategoryOf`）→ **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 4 行＋ボタン）
 - 通知の送り直し: 保存と同じトランザクションで送信待ちの印（`system/gmailCardNotice_{messageId}`）を作り、送れたら消す。push の失敗や保存と push の間の中断で印が残ったら、同じメールの再処理（Pub/Sub の再送・`/gmail/force-process/:messageId`）で保存時点のカードを送り直す。メッセージから決まる `X-Line-Retry-Key` を付けて二重に届かないようにし（409 は送れた扱い）、key が効く 24 時間に収まるよう 23 時間を過ぎた印は送らずに消す。印の無い既存の支出には送らない（`gmail/cardNotice.ts`。詳細は [GMAIL_AUTO_SPEC.md](./GMAIL_AUTO_SPEC.md) §3.2）
 - 保存フィールド: `lineId`/`payerId` はシステムユーザー `gmail-auto-system`、`inputSource: 'gmail_auto'`, `status: 'shared'`, `confirmed: true`（自動で入るので要確認にしない）, `includeInTotal: true`, `usedAt`（カード利用日時）、`groupId`（`DEFAULT_GROUP_ID`）/ `lineGroupId`（`LINE_GROUP_ID`）、`subCategory`（中項目が決まったときだけ。手動処理の `/gmail/process-latest`・`/gmail/force-process/:messageId` でも同じ）
-- watch は7日で失効するため、**6日ごとの cron**（`renewGmailWatch`）で更新
+- 失敗時: 1 通でも処理に失敗したら `historyId` を進めずに投げ、Pub/Sub の再送（`gmailPubSubHandler` の `retry: true`。10〜600 秒の間隔で最大 24 時間）で同じ範囲をやり直す。同じメッセージが試行 3 回以上 **かつ** 最初の失敗から 6 時間以上失敗し続けたら、その 1 通は諦めて先へ進む（`system/gmailFailures` の `attempts`・`firstFailedAt`）。消されたメール（`messages.get` の 404）は失敗として数えず読み飛ばす。12 時間より古い通知は処理せずに捨てる（取込は保存してある `historyId` からの全範囲を処理するので、次の新しい通知で拾われる）。詳細は [GMAIL_AUTO_SPEC.md](./GMAIL_AUTO_SPEC.md) §3.2
+- watch は7日で失効するため、**6日ごとの cron**（`renewGmailWatch`）で更新（失敗したら 2 回までやり直す。`retryCount: 2`）
 - 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。認証は `ADMIN_SECRET` を **`Authorization: Bearer` ヘッダーでのみ**受け付け、定数時間で比較する（`requireAdminAuth`）＋レートリミット（OAuth callback のみ CSRF state 検証）。`?adminSecret=` クエリ渡しはアクセスログ等に秘密値が残るため廃止した。詳細は [GMAIL_AUTO_SPEC.md](./GMAIL_AUTO_SPEC.md)
 
 ### 3.2 MoneyForward CSV インポート（廃止）
@@ -342,7 +343,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | `linkTokens/{token}` | `lineId`, `expiresAt`(15分), `used` | クライアントからは読み書き不可 |
 | `userCustomCategories` | `lineId`, `name`, `icon?`, `keywords?[]` | Bot 専用 |
 | `categoryFeedback` | `originalCategory`, `correctedCategory`, `description` | 分類改善用ログ。Bot 専用 |
-| `system/{gmailToken,gmailState,oauthState,gmailFailures}` | Gmail OAuth トークン・historyId / watch 期限・CSRF state・処理失敗の記録 | Bot 専用 |
+| `system/{gmailToken,gmailState,oauthState,gmailFailures}` | Gmail OAuth トークン・historyId / watch 期限・CSRF state・処理失敗の記録（試行回数と最初・最後の失敗の時刻） | Bot 専用 |
 | `system/gmailCardNotice_{messageId}` | `expenseId`, `lineGroupId`, `card`, `createdAt`, `expireAt` | カード利用通知の送信待ちの印（§3.1。支出の保存と同じトランザクションで作り、送れたら消す。23 時間を過ぎた印・支出が消された印・諦めたメール〔historyId を進めたときだけ〕や historyId が古すぎて飛ばしたメールの印は送らずに消す。`expireAt`〔作ってから 24 時間〕は運用で設定する TTL ポリシー用で、未設定でも動作は変わらない）。Bot 専用 |
 | `system/settlementSummary_{groupId}_{YYYY-MM-DD}` | `groupId`, `endDate`, `createdAt`, `sentAt`, `manualSentAt?` | 期間の精算サマリーを送った印（§3.4。同じ期間は 1 回。Web から締まった期間を手動で送ったときは `manualSentAt` を書き、印が無ければ作る。自動で送った `sentAt` は上書きしない）。Bot 専用 |
 

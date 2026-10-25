@@ -10,7 +10,7 @@
  * - 送り直しても二重に届かないよう、メッセージごとに決まる X-Line-Retry-Key を付ける（LINE が受け付け済みなら 409）。
  *   この key は 24 時間しか効かないため、23 時間を過ぎた印は送らずに消す（二重に届くより、届かない方を選ぶ）。
  * - 印の無い既存の支出には送らない（この仕組みより前の支出のカードが一斉に送り直されないように）。
- * - 再処理されなくなったメール（3 回失敗して諦め、historyId を進めた・historyId が古すぎて先へ飛ばした）の印は消す（discardCardNotices）。
+ * - 再処理されなくなったメール（試行 3 回以上かつ最初の失敗から 6 時間以上で諦め、historyId を進めた・historyId が古すぎて先へ飛ばした）の印は消す（discardCardNotices）。
  *   同じ実行に再試行する失敗があって historyId を進めないときは、諦めたメールも次の再送で再処理されるので消さない。
  *   印には店名・金額・日付が入るため。消し損ねた印も expireAt を過ぎたら Firestore の TTL で消える（TTL ポリシーは運用で設定する。
  *   未設定でも動作は変わらない。docs/GMAIL_AUTO_SPEC.md §5.4）。
@@ -42,7 +42,7 @@ export interface CardNotice {
   expireAt: Timestamp;
 }
 
-/** 再処理されなくなった理由。abandoned: 3 回失敗して諦めた / history_skipped: historyId が古すぎて先へ飛ばした */
+/** 再処理されなくなった理由。abandoned: 失敗し続けて諦めた（handler.ts の shouldAbandon） / history_skipped: historyId が古すぎて先へ飛ばした */
 export type CardNoticeDiscardReason = 'abandoned' | 'history_skipped';
 
 /**

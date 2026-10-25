@@ -28,7 +28,7 @@ import type { ClassificationResult } from '../geminiCategoryClassifier';
 import type { CardUsageInfo, CategoryOrigin } from '../line/flexMessage';
 import { subCategoriesOf } from '../categoryTaxonomy';
 import { resolveSubCategory } from '../subCategoryRules';
-import { errorMessage, maskId } from '../logSafe';
+import { errorMessage, errorName, maskId } from '../logSafe';
 import { cardNoticeFor, deliverPendingCardNotice, discardCardNotices } from './cardNotice';
 import type { CardNoticeDelivery } from './cardNotice';
 
@@ -105,6 +105,8 @@ const getDefaultLineGroupId = (): string | undefined => {
 /**
  * Pub/Subメッセージを処理
  * Cloud Functions: onMessagePublished で呼び出される
+ *
+ * 投げると関数が失敗し、Pub/Sub が同じ通知を再送する（index.ts の gmailPubSubHandler は `retry: true`）。
  */
 export async function handleGmailPubSub(data: string): Promise<void> {
   try {
@@ -125,22 +127,105 @@ export async function handleGmailPubSub(data: string): Promise<void> {
 }
 
 /**
- * 同じメッセージで諦めるまでの試行回数
+ * 同じメッセージを諦める条件（`shouldAbandon`）: 試行がこの回数以上で、かつ最初の失敗から MESSAGE_ABANDON_AFTER_MS 以上たったとき
  *
- * 恒久的に処理できないメール（パースできない等）で historyId が永久に止まるのを防ぐ。
+ * 恒久的に処理できないメールで historyId が永久に止まるのを防ぐ。回数だけで決めないのは、関数の失敗を
+ * Pub/Sub が 10〜600 秒の間隔で再送する（index.ts の `retry: true`）うえ、同じ範囲を新しい通知も処理するので、
+ * 3 回は数分で使い切ってしまい、一過性の障害（LINE・Firestore・Gmail API の数分〜数時間の停止）でも諦めてしまうため。
  */
 const MAX_MESSAGE_ATTEMPTS = 3;
 
-/** 失敗したメッセージの記録。`system/gmailFailures` に messageId ごとの試行回数を持つ */
-async function recordMessageFailure(messageId: string, error: unknown): Promise<number> {
+/** 最初の失敗から、諦めてよくなるまでの時間（6 時間） */
+export const MESSAGE_ABANDON_AFTER_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Pub/Sub の通知をこれより古ければ処理せずに捨てる（12 時間。`isStaleGmailEvent`）
+ *
+ * 再送は最大 24 時間続く（2nd gen の再試行期間）。Gmail の認可切れなど、メール単位の諦め（6 時間）に
+ * 届かない失敗で、同じ通知を 1 日中やり直し続けないようにする。捨てても取りこぼさない: 取込は通知の
+ * historyId ではなく、保存してある historyId（system/gmailState）からの全範囲を処理するので、
+ * その範囲は次の新しい通知（INBOX に何か届いたとき）で処理される。
+ */
+export const STALE_GMAIL_EVENT_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * 同じメッセージを諦めるか（試行 MAX_MESSAGE_ATTEMPTS 回以上 **かつ** 最初の失敗から MESSAGE_ABANDON_AFTER_MS 以上）
+ *
+ * 最初の失敗の時刻が読めない（不正な Date）ときは、時間の条件を外して回数だけで決める
+ * （時刻が読めないまま historyId が永久に止まらないように。`firstFailedAtOf` は常に読める時刻を返すので、通常は起きない）。
+ */
+export function shouldAbandon(attempts: number, firstFailedAt: Date, now: Date): boolean {
+  if (!(attempts >= MAX_MESSAGE_ATTEMPTS)) return false;
+  const elapsedMs = now.getTime() - firstFailedAt.getTime();
+  if (Number.isNaN(elapsedMs)) return true;
+  return elapsedMs >= MESSAGE_ABANDON_AFTER_MS;
+}
+
+function millisOf(value: unknown): number {
+  const ts = value as { toMillis?: () => number } | null | undefined;
+  return typeof ts?.toMillis === 'function' ? ts.toMillis() : NaN;
+}
+
+/**
+ * 失敗の記録に入れる「最初の失敗の時刻」
+ *
+ * 前回までの記録の firstFailedAt を引き継ぐ。firstFailedAt を持たない記録（この項目を足す前の記録）は lastFailedAt で代用し、
+ * どちらも読めない・now より後（時計のずれ・壊れた値）なら now にする（記録が無い初回の失敗も now）。
+ */
+export function firstFailedAtOf(previous: unknown, now: Date): Date {
+  const record = previous as { firstFailedAt?: unknown; lastFailedAt?: unknown } | null | undefined;
+  for (const candidate of [record?.firstFailedAt, record?.lastFailedAt]) {
+    const ms = millisOf(candidate);
+    if (Number.isFinite(ms) && ms <= now.getTime()) return new Date(ms);
+  }
+  return now;
+}
+
+/**
+ * Pub/Sub の通知が古すぎて捨てるか（`STALE_GMAIL_EVENT_MS` より古い）
+ *
+ * @param eventTime CloudEvent の time（Pub/Sub の publish 時刻。再送でも変わらない）
+ * 時刻が読めないときは捨てない（処理しても取りこぼし・二重登録は起きないので、処理する側に倒す）。
+ */
+export function isStaleGmailEvent(eventTime: string | undefined, now: Date): boolean {
+  const publishedAt = typeof eventTime === 'string' ? Date.parse(eventTime) : NaN;
+  if (Number.isNaN(publishedAt)) return false;
+  return now.getTime() - publishedAt > STALE_GMAIL_EVENT_MS;
+}
+
+/** ログに出す例外の種類（メッセージには入力や文書のパスが入りうるので出さない） */
+function errorFields(error: unknown): { errorName: string; errorCode?: string | number } {
+  const name = errorName(error);
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code === 'number' || typeof code === 'string' ? { errorName: name, errorCode: code } : { errorName: name };
+}
+
+/** Gmail API の 404（gaxios 7 は JSON のエラーの code を error.code に、HTTP の状態を error.status に入れる） */
+function isGmailNotFound(error: unknown): boolean {
+  const e = error as { code?: unknown; status?: unknown } | null | undefined;
+  return e?.code === 404 || e?.status === 404;
+}
+
+/**
+ * 失敗したメッセージの記録。`system/gmailFailures` に messageId ごとの試行回数と、最初・最後の失敗の時刻を持つ
+ *
+ * @returns 今回を含めた試行回数と、最初の失敗の時刻（諦めるかは呼び出し側が `shouldAbandon` で決める）
+ */
+async function recordMessageFailure(
+  messageId: string,
+  error: unknown,
+  now: Date
+): Promise<{ attempts: number; firstFailedAt: Date }> {
   const db = getFirestore();
   const ref = db.collection('system').doc('gmailFailures');
 
   return db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     const failures = (snapshot.exists ? snapshot.data() : {}) || {};
-    const previous = (failures[messageId]?.attempts as number | undefined) ?? 0;
+    const previousRecord = failures[messageId];
+    const previous = (previousRecord?.attempts as number | undefined) ?? 0;
     const attempts = previous + 1;
+    const firstFailedAt = firstFailedAtOf(previousRecord, now);
 
     transaction.set(
       ref,
@@ -148,13 +233,14 @@ async function recordMessageFailure(messageId: string, error: unknown): Promise<
         [messageId]: {
           attempts,
           lastError: String((error as Error)?.message ?? error).slice(0, 500),
-          lastFailedAt: Timestamp.now(),
+          firstFailedAt: Timestamp.fromDate(firstFailedAt),
+          lastFailedAt: Timestamp.fromDate(now),
         },
       },
       { merge: true }
     );
 
-    return attempts;
+    return { attempts, firstFailedAt };
   });
 }
 
@@ -183,12 +269,15 @@ async function clearMessageFailure(messageId: string): Promise<void> {
  * 新着メールを取得して処理
  * ページネーション対応：全ページを処理してからhistoryIdを更新
  *
- * 1通でも処理に失敗したら historyId を進めない。以前は個別の失敗を握り潰したまま
+ * 1通でも処理に失敗したら historyId を進めずに投げる。以前は個別の失敗を握り潰したまま
  * historyId を進めていたため、一過性のエラー（Gemini/LINE/Firestore の失敗や
  * トランザクション競合）で落ちたカード利用が**二度と再処理されず消えていた**。
- * Pub/Sub の再送に委ねる（重複は gmailMessageId で弾かれる）。
- * ただし同じメッセージが MAX_MESSAGE_ATTEMPTS 回失敗したら、その1通は諦めて先へ進む
- * （恒久的に処理できない1通で以降の取り込みが止まらないようにする）。
+ * 投げると関数が失敗し、Pub/Sub が同じ通知を 10〜600 秒の間隔で再送する（index.ts の `retry: true`。
+ * 最大 24 時間、12 時間を過ぎた通知は index.ts で捨てる）。再送と、その間に届く新しい通知が同じ範囲をやり直す
+ * （重複は gmailMessageId で弾かれる）。
+ * ただし同じメッセージが試行 MAX_MESSAGE_ATTEMPTS 回以上、かつ最初の失敗から MESSAGE_ABANDON_AFTER_MS 以上
+ * 失敗し続けたら、その1通は諦めて先へ進む（恒久的に処理できない1通で以降の取り込みが止まらないようにする。`shouldAbandon`）。
+ * メールが消されていた（messages.get が 404）ときは失敗として数えず、読み飛ばす（processMessage）。
  */
 async function processNewEmails(newHistoryId: string): Promise<void> {
   const gmail = await getGmailClient();
@@ -230,15 +319,21 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
           processedMessageIds.push(messageId);
 
           try {
+            // メールが消されていた（404）ときも、ここでは成功として扱う（失敗の記録を消し、historyId を止めない）
             await processMessage(gmail, messageId);
             await clearMessageFailure(messageId);
           } catch (messageError) {
-            const attempts = await recordMessageFailure(messageId, messageError);
-            console.error(
-              `Failed to process message ${messageId} (attempt ${attempts}/${MAX_MESSAGE_ATTEMPTS}):`,
-              messageError
-            );
-            if (attempts >= MAX_MESSAGE_ATTEMPTS) {
+            const now = new Date();
+            const { attempts, firstFailedAt } = await recordMessageFailure(messageId, messageError, now);
+            const abandon = shouldAbandon(attempts, firstFailedAt, now);
+            console.error('Gmail message failed', {
+              message: maskId(messageId),
+              attempts,
+              minutesSinceFirstFailure: Math.floor((now.getTime() - firstFailedAt.getTime()) / 60000),
+              abandon,
+              ...errorFields(messageError),
+            });
+            if (abandon) {
               abandonedFailures.push(messageId);
             } else {
               retryableFailures.push(messageId);
@@ -251,21 +346,17 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
     } while (pageToken);
 
     if (abandonedFailures.length > 0) {
-      console.error(
-        `Giving up on ${abandonedFailures.length} message(s) after ${MAX_MESSAGE_ATTEMPTS} attempts: ` +
-          `${abandonedFailures.join(', ')}. ` +
-          'Re-run manually with POST /gmail/force-process/:messageId after fixing the cause ' +
-          '(cards of expenses that were already saved are not resent).'
-      );
+      // 原因を直したら POST /gmail/force-process/:messageId で個別に処理し直せる（保存済みの支出のカードは送り直さない）
+      console.error('Giving up on Gmail messages; re-run them with POST /gmail/force-process/:messageId after fixing the cause', {
+        messages: abandonedFailures.map(maskId),
+      });
     }
 
     if (retryableFailures.length > 0) {
-      // historyId を進めずに投げ直す。Pub/Sub が再送し、次回この範囲をやり直す。
+      // historyId を進めずに投げ直す。関数が失敗し、Pub/Sub が同じ通知を再送して、この範囲をやり直す。
       // 諦めたメールも同じ範囲で再処理されるので、送信待ちのカードの印はここでは消さない（次の再送で送れることがある）
-      throw new Error(
-        `${retryableFailures.length} message(s) failed, keeping historyId at ${startHistoryId} for retry: ` +
-          retryableFailures.join(', ')
-      );
+      console.warn('Keeping the Gmail historyId for the Pub/Sub retry', { failed: retryableFailures.length });
+      throw new Error('Gmail import: some messages failed; keeping historyId for the Pub/Sub retry');
     }
 
     // 全ページ処理完了後にhistoryIdを更新
@@ -276,7 +367,7 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
     // （店名・金額・日付が残り続けないように。cardNotice.ts）
     if (abandonedFailures.length > 0) await discardCardNotices(abandonedFailures, 'abandoned');
   } catch (error: any) {
-    // historyIdが古すぎる場合は最新に更新
+    // historyIdが古すぎる場合は最新に更新（history.list の 404。messages.get の 404 は processMessage の中で読み飛ばすので、ここには来ない）
     if (error.code === 404) {
       console.error(
         `History ID ${startHistoryId} is too old (Gmail keeps ~1 week). ` +
@@ -316,11 +407,22 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     }
 
     // メッセージの詳細を取得
-    const messageResponse = await gmail.users.messages.get({
-      userId: 'me',
-      id: messageId,
-      format: 'full',
-    });
+    let messageResponse;
+    try {
+      messageResponse = await gmail.users.messages.get({
+        userId: 'me',
+        id: messageId,
+        format: 'full',
+      });
+    } catch (error) {
+      // 届いたあとに消された（完全に削除された）メールは 404 になり、何度やり直しても取れない。失敗として数えず読み飛ばす
+      // （送信待ちの印があれば上の deliverPendingCardNotice で処理を終えているので、ここに来るのは印が無いときだけ）
+      if (isGmailNotFound(error)) {
+        console.warn('Gmail message not found (deleted); skipping', { message: maskId(messageId) });
+        return;
+      }
+      throw error;
+    }
 
     const message = messageResponse.data;
     const headers = message.payload?.headers || [];

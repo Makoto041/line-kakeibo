@@ -16,7 +16,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onMessagePublished } from "firebase-functions/v2/pubsub";
 import { webhookApp } from "./line/webhookApp";
 import { gmailRouter } from "./gmail/adminRouter";
-import { handleGmailPubSub, renewWatch } from "./gmail";
+import { handleGmailPubSub, isStaleGmailEvent, renewWatch } from "./gmail";
 import { authRouter } from "./auth/lineAuth";
 import { householdRouter, householdErrorHandler } from "./householdApi";
 import { postDueRecurringExpenses } from "./recurringExpenses";
@@ -108,13 +108,26 @@ export const importMoneyForward = onSchedule(
 /**
  * Gmail Pub/Subハンドラー
  * Gmailから新着メール通知を受け取り、カード利用通知を処理
+ *
+ * 失敗したら Pub/Sub が同じ通知を再送する（`retry: true`。2nd gen は 10〜600 秒の指数バックオフで、最大 24 時間）。
+ * 取込は 1 通でも失敗すると historyId を進めずに投げるので（gmail/handler.ts の processNewEmails）、
+ * 以前の再送なし（`retry` 未指定 = false）では、次に INBOX へ何か届くまでやり直されなかった。
+ * 12 時間より古い通知は処理せずに捨てる（`isStaleGmailEvent`。投げないので再送も止まる）。
+ * 取込は保存してある historyId からの全範囲を処理するので、捨てた通知の範囲は次の新しい通知で処理される。
+ *
+ * 注意: 既存の関数で `retry` を新しく有効にするデプロイは、非対話（CI）では firebase-tools が
+ * 「Pass the --force option to deploy functions with a failure policy」で止める。初回だけオーナーが
+ * 手元から対話で `firebase deploy --only functions:gmailPubSubHandler` する（docs/SETUP.md §7）。
  */
 export const gmailPubSubHandler = onMessagePublished(
   {
     topic: "gmail-notifications",
     region: "asia-northeast1",
     memory: "512MiB",
-    timeoutSeconds: 60,
+    retry: true,
+    // 再送のたびに、止まっている historyId からの範囲をまとめてやり直す（1 通あたり分類 最大 ~11 秒 + Firestore + LINE）。
+    // 範囲が大きくなっても途中で打ち切られない（打ち切りも失敗として再送される）よう 300 秒にする
+    timeoutSeconds: 300,
     maxInstances: 3,
     secrets: [
       "LINE_CHANNEL_TOKEN",
@@ -126,6 +139,10 @@ export const gmailPubSubHandler = onMessagePublished(
     ],
   },
   async (event) => {
+    if (isStaleGmailEvent(event.time, new Date())) {
+      console.warn("Gmail Pub/Sub event is older than 12 hours; dropping it (the next notification processes the range)");
+      return;
+    }
     const data = event.data.message.data;
     await handleGmailPubSub(data);
   }
@@ -133,6 +150,9 @@ export const gmailPubSubHandler = onMessagePublished(
 
 /**
  * Gmail Watch自動更新（6日ごと）
+ *
+ * 失敗したら Cloud Scheduler が 2 回までやり直す（`retryCount`。ジョブは増えないので、スケジュールの無料枠は変わらない）。
+ * やり直しても失敗すると、次の実行は 6 日後で、その前に watch が切れる（docs/GMAIL_AUTO_SPEC.md §11.2）。
  */
 export const renewGmailWatch = onSchedule(
   {
@@ -142,6 +162,7 @@ export const renewGmailWatch = onSchedule(
     timeoutSeconds: 60,
     memory: "512MiB",
     maxInstances: 2,
+    retryCount: 2,
     secrets: ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
   },
   async () => {

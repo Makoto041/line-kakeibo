@@ -158,6 +158,16 @@ cd /path/to/line-kakeibo && ln -s /tmp/rules-tools/node_modules node_modules   #
 CI のデプロイには GitHub の `production-bot` environment に `GCP_SA_KEY`（Firebase Admin / Cloud Functions Developer 等を持つ
 サービスアカウントの JSON）が必要。詳細は `.github/README.md`。
 
+CI の `firebase deploy` は非対話で、`--force` を付けていない。firebase-tools は確認が要る変更で止まるため、次の変更は CI だけでは本番に出ない。
+`--force` は CI に足さない（関数の削除の確認も飛ばすようになり、export を消したときに本番の関数が消える）。
+
+- **関数の削除**（export を消した・名前を変えた）: 止まる。何もしない関数として残すか、オーナーが `firebase functions:delete` で消す（`syncUserLinks`・`importMoneyForward`）。
+- **イベント関数の再送（`retry: true`）を新しく有効にする**: 「Pass the --force option to deploy functions with a failure policy」で止まり、関数もルールも何もデプロイされない（prepare の段階で止まる）。
+  初回だけ、オーナーが手元のターミナルから対話でその関数だけをデプロイし、確認に yes と答える。例（`gmailPubSubHandler`）:
+  `firebase deploy --only functions:gmailPubSubHandler --project line-kakeibo-0410`。`--only` で対象を 1 つに絞っていれば、`--force` を付けても削除の対象はその関数だけになる。
+  firebase-tools の新しい版（15.34.1 で確認。15.10.0 には無い）は AI エージェントの環境を検出すると非対話になるので、Claude などのエージェント経由では確認に答えられない。
+  一度有効にすれば、以降のデプロイでは確認が出ない（確認は「新しく」再送を有効にする関数だけが対象）。そのあと `deploy-bot` を `workflow_dispatch` でやり直す。
+
 `firebase deploy` は `.gitignore` を見ないため、手元からのデプロイでは gitignore 済みのファイルも Functions のソースの zip に入る。
 そのため `firebase.json` の `functions.ignore` で、評価データ（`*.local.json`、`scripts/eval/results`）、鍵ファイル（`kakeibo_service.json`、`vision-key.json`、`*.b64`）、
 デバッグログ（`*-debug.log`）、デプロイで読まれない `.env.local`・`.env.production` を除外している（`.env`・`.env.<projectId>`・`.env.<alias>` は読まれるので除外しない）。実データを含むファイルは `*.local.json` の名前にすること。

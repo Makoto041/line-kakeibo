@@ -3,6 +3,8 @@
  *
  * 保存のあと LINE への push が失敗した・止まったときに、同じメールの再処理（Pub/Sub の再送・/gmail/force-process）で
  * カードを送り直すこと、二重に送らないこと（X-Line-Retry-Key）、印の無い既存の支出には送らないことを確かめる。
+ * あわせて、失敗の記録（system/gmailFailures）の firstFailedAt と諦める条件（試行 3 回以上 かつ 最初の失敗から 6 時間以上。
+ * 再送で回数だけすぐ増えても諦めない）、消されたメール（messages.get の 404）を失敗として数えず読み飛ばすことも確かめる。
  *
  * Gmail・分類器・LINE は偽物に差し替える（dist の exports を書き換える。呼び出し側は呼ぶときに exports を参照する）。
  * 支出の保存・印・重複判定・historyId（system/gmailState）は本物のコードでエミュレータに書く。
@@ -64,6 +66,8 @@ const cardMail = (dateTime, merchant, amount) =>
   ['【ご利用のお知らせ】', `ご利用日時：${dateTime}`, `ご利用店名：${merchant}`, `ご利用金額：${amount}円`, '三井住友ゴールドＶＩＳＡ（ＮＬ）'].join('\n');
 /** 次の history.list で投げる例外（historyId が古すぎる 404 など） */
 let historyError = null;
+/** messages.get が 404 を返す（届いたあとに消された）メール */
+const missingMails = new Set();
 gmailAuth.getGmailClient = async () => ({
   users: {
     history: {
@@ -77,14 +81,18 @@ gmailAuth.getGmailClient = async () => ({
       },
     },
     messages: {
-      get: async ({ id }) => ({
-        data: {
-          payload: {
-            headers: [{ name: 'From', value: 'statement@vpass.ne.jp' }],
-            body: { data: Buffer.from(mails[id], 'utf-8').toString('base64') },
+      get: async ({ id }) => {
+        // 消されたメールは Gmail API が 404 を返す（gaxios 7 は JSON のエラーの code を error.code に入れる）
+        if (missingMails.has(id)) throw Object.assign(new Error('Requested entity was not found.'), { code: 404 });
+        return {
+          data: {
+            payload: {
+              headers: [{ name: 'From', value: 'statement@vpass.ne.jp' }],
+              body: { data: Buffer.from(mails[id], 'utf-8').toString('base64') },
+            },
           },
-        },
-      }),
+        };
+      },
     },
   },
 });
@@ -382,21 +390,91 @@ async function pubsub(ids) {
 
   const historyIdNow = async () => (await db.doc('system/gmailState').get()).get('historyId');
   const discardWarned = () => lastLogs.some((l) => l.startsWith('warn Gmail card notice discarded'));
+  const HOUR = 60 * 60 * 1000;
+  const failuresNow = async () => (await db.doc('system/gmailFailures').get()).data() || {};
+  /** 失敗の記録の最初の失敗を ms 前にする（試行回数などはそのまま。Pub/Sub の再送が何時間も続いた状態を作る） */
+  const backdateFirstFailure = (messageId, ms) =>
+    db.doc('system/gmailFailures').set({ [messageId]: { firstFailedAt: Timestamp.fromMillis(Date.now() - ms) } }, { merge: true });
 
-  console.log('\n[3 回失敗して諦めたら、印を消す（支出は残る）]');
+  console.log('\n[再送で 3 回失敗しても、最初の失敗から 6 時間たつまでは諦めない・たったら諦めて印を消す（支出は残る）]');
   {
     const id = 'msg-abandon-0013';
     mails[id] = cardMail('2026/10/25 12:00', '諦める店', 1330);
-    failNextPushes = 3;
+    failNextPushes = 4;
     const r1 = await quiet(() => pubsub([id]));
+    const first = (await failuresNow())[id];
+    check(
+      '1 回目の失敗: 記録に試行 1・firstFailedAt・lastFailedAt（同じ時刻）を残す',
+      first && first.attempts === 1 && first.firstFailedAt && first.lastFailedAt && first.firstFailedAt.toMillis() === first.lastFailedAt.toMillis(),
+      first
+    );
     const r2 = await quiet(() => pubsub([id]));
     check('1・2 回目は失敗として投げ、印が残る', r1 instanceof Error && r2 instanceof Error && (await noticeOf(id)).exists, [String(r1), String(r2)]);
     const historyBefore = await historyIdNow();
     const r3 = await quiet(() => pubsub([id]));
-    check('3 回目は諦めて投げない（historyId を進める）', r3 === 'ok' && (await historyIdNow()) !== historyBefore, String(r3));
+    const third = (await failuresNow())[id];
+    check('3 回目（最初の失敗から数秒）: まだ諦めずに投げ、historyId を進めない', r3 instanceof Error && (await historyIdNow()) === historyBefore, String(r3));
+    check(
+      '3 回目: 試行 3・firstFailedAt は 1 回目のまま、lastFailedAt は進む',
+      third && third.attempts === 3 && third.firstFailedAt.toMillis() === first.firstFailedAt.toMillis() && third.lastFailedAt.toMillis() >= first.lastFailedAt.toMillis(),
+      third
+    );
+    check('3 回目: 印は残し、警告も出さない', (await noticeOf(id)).exists && !discardWarned());
+
+    await backdateFirstFailure(id, 7 * HOUR);
+    const r4 = await quiet(() => pubsub([id]));
+    check('最初の失敗から 7 時間・4 回目の失敗: 諦めて投げない（historyId を進める）', r4 === 'ok' && (await historyIdNow()) !== historyBefore, String(r4));
     check('諦めたメールの印を消し、届かなかったことを警告する', !(await noticeOf(id)).exists && discardWarned());
-    check('支出は残り（1 件）、カードは届いていない', (await expensesOf(id)).length === 1 && !accepted.has(cardNoticeRetryKey(id)) && pushesFor(id).length === 3);
+    check('支出は残り（1 件）、カードは届いていない', (await expensesOf(id)).length === 1 && !accepted.has(cardNoticeRetryKey(id)) && pushesFor(id).length === 4);
     failNextPushes = 0;
+  }
+
+  console.log('\n[firstFailedAt の無い失敗の記録（項目を足す前の記録）は lastFailedAt で代用する]');
+  {
+    const id = 'msg-legacy-failure-0018';
+    mails[id] = cardMail('2026/10/25 13:00', '古い記録の店', 1880);
+    const lastFailedAt = Timestamp.fromMillis(Date.now() - 7 * HOUR);
+    await db.doc('system/gmailFailures').set({ [id]: { attempts: 2, lastError: 'old', lastFailedAt } }, { merge: true });
+    failNextPushes = 1;
+    const historyBefore = await historyIdNow();
+    const r = await quiet(() => pubsub([id]));
+    const record = (await failuresNow())[id];
+    check('lastFailedAt が 7 時間前・3 回目の失敗: 諦めて historyId を進める', r === 'ok' && (await historyIdNow()) !== historyBefore, String(r));
+    check(
+      '記録の firstFailedAt に、代用した lastFailedAt を書く（試行 3）',
+      record && record.attempts === 3 && record.firstFailedAt && record.firstFailedAt.toMillis() === lastFailedAt.toMillis(),
+      record
+    );
+    check('諦めたメールの印を消す', !(await noticeOf(id)).exists && discardWarned());
+    failNextPushes = 0;
+
+    const recent = 'msg-legacy-failure-0019';
+    mails[recent] = cardMail('2026/10/25 13:30', '古い記録の店 2', 1990);
+    await db.doc('system/gmailFailures').set({ [recent]: { attempts: 5, lastError: 'old', lastFailedAt: Timestamp.fromMillis(Date.now() - 60 * 1000) } }, { merge: true });
+    failNextPushes = 1;
+    const r2 = await quiet(() => pubsub([recent]));
+    check('lastFailedAt が 1 分前なら、試行 6 回でも諦めない（投げる）', r2 instanceof Error && (await noticeOf(recent)).exists, String(r2));
+    failNextPushes = 0;
+    const r3 = await quiet(() => pubsub([recent]));
+    check('次の再送で送れれば、印を消して失敗の記録も消す', r3 === 'ok' && !(await noticeOf(recent)).exists && (await failuresNow())[recent] === undefined, String(r3));
+  }
+
+  console.log('\n[メールが消されていた（messages.get が 404）: 失敗として数えず読み飛ばす]');
+  {
+    const id = 'msg-gone-0020';
+    missingMails.add(id);
+    // 前の実行で失敗していた（記録がある）
+    await db.doc('system/gmailFailures').set({ [id]: { attempts: 1, lastError: 'old', firstFailedAt: Timestamp.now(), lastFailedAt: Timestamp.now() } }, { merge: true });
+    const historyBefore = await historyIdNow();
+    const r = await quiet(() => pubsub([id]));
+    check('投げずに historyId を進める', r === 'ok' && (await historyIdNow()) !== historyBefore, String(r));
+    check('失敗の記録を消し、支出も印も作らない', (await failuresNow())[id] === undefined && (await expensesOf(id)).length === 0 && !(await noticeOf(id)).exists);
+    check(
+      '固定文の警告を出し、messageId をそのまま出さない',
+      lastLogs.some((l) => l.startsWith('warn Gmail message not found (deleted); skipping')) && lastLogs.every((l) => !l.includes(id)),
+      lastLogs
+    );
+    missingMails.delete(id);
   }
 
   console.log('\n[同じ実行で A は諦め・B は再試行で投げる: historyId を進めず A の印は残り、次の実行で A に送る]');
@@ -410,6 +488,8 @@ async function pubsub(ids) {
     failNextPushes = 1;
     const r2 = await quiet(() => pubsub([a]));
     check('A は 2 回失敗し、印が残る', r1 instanceof Error && r2 instanceof Error && (await noticeOf(a)).exists, [String(r1), String(r2)]);
+    // A の最初の失敗を 7 時間前にする（次の失敗で諦める条件を満たす）
+    await backdateFirstFailure(a, 7 * HOUR);
     const historyBefore = await historyIdNow();
     failNextPushes = 2;
     const r3 = await quiet(() => pubsub([a, b]));

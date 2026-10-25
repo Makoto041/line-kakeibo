@@ -76,7 +76,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.15.5 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.15.6 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
@@ -128,9 +128,9 @@ flowchart LR
           <tbody>
             <tr><td class="name">webhook</td><td>HTTPS</td><td class="region">asia-northeast1</td><td>LINE の受信。署名が無いものは 401。<code>/health</code> も同居</td></tr>
             <tr><td class="name">api</td><td>HTTPS</td><td class="region us">us-central1</td><td>LIFF ログイン <code>/auth/line</code>、Web 向け <code>/household/*</code>、Gmail 管理 <code>/gmail/*</code></td></tr>
-            <tr><td class="name">gmailPubSubHandler</td><td>Pub/Sub</td><td class="region">asia-northeast1</td><td>カード利用通知メールの取込</td></tr>
+            <tr><td class="name">gmailPubSubHandler</td><td>Pub/Sub</td><td class="region">asia-northeast1</td><td>カード利用通知メールの取込。失敗したら Pub/Sub が再送する（10〜600 秒の間隔で最大 24 時間。12 時間より古い通知は捨てる）。タイムアウト 300 秒</td></tr>
             <tr><td class="name">postRecurringExpenses</td><td>毎日 09:10 JST</td><td class="region">asia-northeast1</td><td>毎日のバッチ。引き落とし日を迎えた固定費を支出に計上（同じ月に 2 回は入らない）。期間の起算日には精算サマリーを LINE グループへメンション付きで送る（スケジュールの無料枠を使い切っているため相乗り）</td></tr>
-            <tr><td class="name">renewGmailWatch</td><td>6 日ごと 03:00 JST</td><td class="region">asia-northeast1</td><td>Gmail watch（7 日で失効）の更新。取込の位置（historyId）は変えない</td></tr>
+            <tr><td class="name">renewGmailWatch</td><td>6 日ごと 03:00 JST</td><td class="region">asia-northeast1</td><td>Gmail watch（7 日で失効）の更新。取込の位置（historyId）は変えない。失敗したら 2 回までやり直す</td></tr>
             <tr><td class="name">importMoneyForward</td><td>毎日 05:00 JST</td><td class="region">asia-northeast1</td><td>廃止。旧 MoneyForward CSV 取込（一度も機能していなかった）。消すと CI の非対話デプロイが止まるため、何もしない関数として名前だけ残置</td></tr>
             <tr><td class="name">syncUserLinks</td><td>Firestore onCreate</td><td class="region">asia-northeast1</td><td>何もしない。消すと CI の非対話デプロイが止まるため残置</td></tr>
           </tbody>
@@ -164,6 +164,7 @@ flowchart LR
             <li>日付+金額 → 店名の類似 → 時刻 ±1 分で重複を除外</li>
             <li>共同費として保存（確認不要）し、同じトランザクションで送信待ちの印を <code>system/</code> に作る</li>
             <li>LINE グループに通知し、送れたら印を消す。送れなかった・途中で止まったときは、同じメールの再処理で保存時点のカードを送り直す（メッセージごとに決まる retry key で二重には届かない。23 時間を過ぎた印は送らない。印の無い既存の支出には送らない。諦めた・飛ばしたメールの印は消す）</li>
+            <li>1 通でも失敗したら取込の位置を進めずに失敗で返し、Pub/Sub の再送で同じ範囲をやり直す。試行 3 回以上かつ最初の失敗から 6 時間以上で、その 1 通は諦める。消されたメールは読み飛ばす。12 時間より古い通知は捨てる（範囲は次の新しい通知で処理される）</li>
           </ol>
           <span class="src">bot/src/gmail/</span>
         </div>
