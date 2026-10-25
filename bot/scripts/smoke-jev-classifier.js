@@ -120,7 +120,7 @@ async function main() {
   check('text 用の質問文', /家計簿アプリに利用者が入力した/.test(req?.questions?.category?.instructions || ''));
   const criteria = req?.questions?.category?.criteria || {};
   check('既定の 19 カテゴリが選択肢', Object.keys(criteria).length === 19, Object.keys(criteria).join(','));
-  check('食費は Jev 用に差し替えた説明', /飲み会/.test(criteria['食費'] || ''));
+  check('食費は Jev 用に差し替えた説明', /居酒屋/.test(criteria['食費'] || ''));
   check('娯楽は Jev 用に差し替えた説明', /宿泊を伴う旅行は含めない/.test(criteria['娯楽'] || ''));
   check('その他は CATEGORY_GUIDE のまま', criteria['その他'] === CATEGORY_GUIDE['その他']);
   check('提供元のログ（jev）', lastProviderLog()?.provider === 'jev' && lastProviderLog()?.source === 'text' && typeof lastProviderLog()?.ms === 'number', JSON.stringify(lastProviderLog()));

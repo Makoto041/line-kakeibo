@@ -32,6 +32,7 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   'カフェ': '食費',
   'コンビニ': '食費',
   'スーパー': '食費',
+  '飲み会': '食費',
 
   // 交通費
   '交通': '交通費',
@@ -53,7 +54,6 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   'レジャー': '娯楽',
   '交友費': '娯楽',
   '交際費': '娯楽',
-  '飲み会': '娯楽',
 
   // 衣服
   '衣服費': '衣服',

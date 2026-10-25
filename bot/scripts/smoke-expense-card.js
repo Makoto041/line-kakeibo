@@ -480,6 +480,8 @@ const expectedCanonical = (name) => LEGACY_TO_CANONICAL[name] ?? name;
     check(`${legacy}: normalizeCategoryName と同じ正準名`, toCanonicalCategoryName(legacy) === normalizeCategoryName(legacy));
   }
   check('前後の空白は無視する', toCanonicalCategoryName(' 医療費 ') === '医療・健康');
+  check('飲み会 → 食費（#235）', toCanonicalCategoryName('飲み会') === '食費', toCanonicalCategoryName('飲み会'));
+  check('飲み会: normalizeCategoryName も食費', normalizeCategoryName('飲み会') === '食費', normalizeCategoryName('飲み会'));
   // normalizeCategoryName は「その他」や部分一致で寄せるが、保存ではカスタム名などを変えない
   for (const name of ['貯蓄', '趣味', '推し活', '本田', 'ジム代', '日用品費', '', ' 推し活 ', 'constructor', '__proto__', 'toString']) {
     check(`揃えられない名前は変えない: ${JSON.stringify(name)}`, toCanonicalCategoryName(name) === name, JSON.stringify(toCanonicalCategoryName(name)));
