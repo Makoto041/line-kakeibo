@@ -567,6 +567,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
   };
 
   /**
+   * @param updates subCategory: ''（編集画面の「中項目なし」）は、'' を保存せず削除として送る。
    * @param original 元の支出。渡すと、大項目（category）を変える更新で中項目（subCategory）
    *   も消す（buildExpenseUpdate）。
    */

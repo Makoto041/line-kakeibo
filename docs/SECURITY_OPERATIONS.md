@@ -88,7 +88,8 @@ bot では、LINE グループでの発言は発言ごとに所属を読み直�
   `groupId` を付けずに `lineGroupId` だけを持つ支出は作れない。LINE の集計にだけ入る支出を注入できないようにするため。
 - `expenses` の更新: web が実際に編集するフィールドだけを変更できる（許可リスト）。
   `amount` / `description` / `date` / `category` / `subCategory` / `includeInTotal` / `payerId` / `payerDisplayName` / `receiptUrl` / `updatedAt`。
-  `subCategory`（中項目。任意）は 50 文字以内の文字列で、削除もできる（Web は大項目を変えるとき、中項目の削除も常に送る）。
+  `subCategory`（中項目。任意）は 50 文字以内の文字列で、削除もできる（Web の編集画面は食費・娯楽の固定の一覧から選んだ値を送り、
+  「中項目なし」と、大項目を変えて選び直さないときは削除を送る）。
   それ以外（`lineId` / `groupId` / `lineGroupId` / `createdAt` / `inputSource` / `status` / `advanceBy` / `advanceFull` など）は不変。
   変更は bot（Admin SDK）だけが行う。`receiptUrl` は `https://firebasestorage.googleapis.com/` から始まる URL に限る。
 - 精算済み（`status == 'advance_settled'`。以前の立替の精算か、全額にする前の立替を Web の精算タブで精算済みにしたもの）の支出は、
