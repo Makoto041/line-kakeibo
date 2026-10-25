@@ -7,8 +7,8 @@
 
 import { toCanonicalCategoryName } from "../categoryNormalization";
 import { findLineGroupId, getUserGroups, getUserSettings, saveExpense } from "../firestore";
-import { classifyExpenseWithGemini } from "../geminiCategoryClassifier";
-import type { GeminiClassificationResult } from "../geminiCategoryClassifier";
+import { classifyExpense } from "../geminiCategoryClassifier";
+import type { ClassificationResult } from "../geminiCategoryClassifier";
 import { getCategoryEmoji } from "../gmail/types";
 import { resolveExpenseGroupScope } from "../expenseGroupScope";
 import { resolveAppUidForExpense } from "../linkUserResolver";
@@ -129,7 +129,7 @@ const CLASSIFY_MIN_CONFIDENCE = 0.4;
  */
 export function decideTextExpenseCategory(input: {
   specified?: string;
-  classified?: GeminiClassificationResult | null;
+  classified?: ClassificationResult | null;
   defaultCategory?: string | null;
 }): { category: string; origin?: CategoryOrigin } {
   if (input.specified) return { category: toCanonicalCategoryName(input.specified), origin: "specified" };
@@ -331,14 +331,14 @@ export async function processExpenseInBackground(
       decided = decideTextExpenseCategory({ specified: parsed.category });
     } else {
       // カテゴリ分類を並列実行（辞書・モデル〔Jev → 失敗時 Gemini〕 + ユーザーデフォルト）
-      const [geminiResult, userSettingsResult] = await Promise.allSettled([
-        classifyExpenseWithGemini(event.source.userId, parsed.description),
+      const [classification, userSettingsResult] = await Promise.allSettled([
+        classifyExpense(event.source.userId, parsed.description),
         getUserSettings(event.source.userId)
       ]);
 
       // 分類結果を優先使用（閾値0.4で精度向上）。決まらなければユーザーデフォルト（decideTextExpenseCategory）
       decided = decideTextExpenseCategory({
-        classified: geminiResult.status === 'fulfilled' ? geminiResult.value : null,
+        classified: classification.status === 'fulfilled' ? classification.value : null,
         defaultCategory: userSettingsResult.status === 'fulfilled'
           ? userSettingsResult.value?.defaultCategory
           : undefined,

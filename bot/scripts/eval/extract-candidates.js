@@ -44,7 +44,7 @@ delete process.env.GEMINI_API_KEY;
 
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
-const { classifyExpenseWithGemini } = require('../../dist/geminiCategoryClassifier');
+const { classifyExpense } = require('../../dist/geminiCategoryClassifier');
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
@@ -106,7 +106,7 @@ async function main() {
     if (source === 'text') {
       const misses = [];
       for (const c of candidates) {
-        const r = await classifyExpenseWithGemini('eval', c.description, { source: 'text' });
+        const r = await classifyExpense('eval', c.description, { source: 'text' });
         if (r.reasoning !== 'Fast local keyword matching') misses.push(c);
       }
       candidates = misses;

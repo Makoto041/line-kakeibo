@@ -313,9 +313,9 @@ function setupGemini() {
   };
   // カテゴリ一覧は Firestore を使わず固定（空を返すと CANONICAL_CATEGORIES になる）
   require('../../dist/firestore').getAllUserCategories = async () => [];
-  const { classifyExpenseWithGemini } = require('../../dist/geminiCategoryClassifier');
+  const { classifyExpense } = require('../../dist/geminiCategoryClassifier');
   return async (item) => {
-    const r = await classifyExpenseWithGemini(`eval-${item.id}`, item.description, { source: item.source });
+    const r = await classifyExpense(`eval-${item.id}`, item.description, { source: item.source });
     const via = r.category === null ? 'none' : r.reasoning === 'Fast local keyword matching' ? 'dict' : 'gemini';
     return { category: r.category, confidence: r.confidence, via };
   };

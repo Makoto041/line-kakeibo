@@ -2,7 +2,7 @@
 // そのまま import できる（geminiClient.ts のような require + 型だけの参照は要らない）
 import { TypeSafeClient, choice } from '@typesafe-ai/sdk';
 import { CATEGORY_GUIDE } from './categoryGuide';
-import type { ClassificationSource, GeminiClassificationResult } from './geminiCategoryClassifier';
+import type { ClassificationSource, ClassificationResult } from './geminiCategoryClassifier';
 
 /**
  * Jev（TypeSafe AI の System One 決定モデル）によるカテゴリ分類。分類のメイン。
@@ -73,7 +73,7 @@ export async function classifyWithJev(
   categoryNames: string[],
   description: string,
   source: ClassificationSource
-): Promise<GeminiClassificationResult | null> {
+): Promise<ClassificationResult | null> {
   if (!isJevConfigured()) return null;
   try {
     const { answers } = await getClient().systemOne({
