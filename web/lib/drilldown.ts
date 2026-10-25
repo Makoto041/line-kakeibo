@@ -1,8 +1,60 @@
-// 内訳（合計 → カテゴリ → 支払い者 → 明細）の純関数。
+// 内訳（合計 → カテゴリ → 中項目 / 支払い者 → 明細）の純関数。
 // ホームのカテゴリ別カード・精算の金額タイルから開く内訳シート（components/drilldown/DrillSheet.tsx）が使う。
 // 読み込み済みの明細から計算するだけで、Firestore を追加で読まない。
 // node --test から直接読めるよう、他のモジュールからは型だけを import する。
 import type { Expense } from './hooks';
+
+/**
+ * 中項目の一覧（#235）。bot/src/categoryTaxonomy.ts の SUB_CATEGORIES の写し
+ * （一致することは __tests__/drilldown.test.mjs で確かめる）。
+ * 一覧にない値を「その他の…」（各一覧の最後）に寄せるためだけに持つ。
+ * 大項目は正準名の完全一致で引く（bot と同じく、部分一致・別名では寄せない）。
+ */
+export const SUB_CATEGORIES: Readonly<Record<string, readonly string[]>> = {
+  食費: [
+    '食料品（スーパー）',
+    '外食',
+    '朝ご飯',
+    '昼ご飯',
+    '夜ご飯',
+    'カフェ',
+    'コンビニ',
+    '自販機',
+    'デリバリー・テイクアウト',
+    'その他の食費',
+  ],
+  娯楽: [
+    '映画',
+    '銭湯・サウナ',
+    'スポーツ・アウトドア',
+    'ゲーム・課金',
+    '本・漫画',
+    '音楽・ライブ',
+    'レジャー・テーマパーク',
+    'その他の娯楽',
+  ],
+};
+
+/** 中項目の一覧がある大項目で、中項目が付いていないもの */
+export const NO_SUB_CATEGORY = '中項目なし';
+
+/** 大項目の中項目の一覧（無ければ空） */
+export function subCategoriesOf(category: string): readonly string[] {
+  return Object.prototype.hasOwnProperty.call(SUB_CATEGORIES, category) ? SUB_CATEGORIES[category] : [];
+}
+
+/**
+ * 内訳でまとめる中項目。一覧の無い大項目は undefined（中項目の段を出さない）。
+ * 一覧にある値はそのまま、一覧にない値（Web で入れた値など）は「その他の…」、空・文字列でないものは「中項目なし」。
+ * Firestore の値は信用せず、画面には一覧の名前か「中項目なし」だけを出す
+ */
+export function subCategoryKey(category: string, subCategory: unknown): string | undefined {
+  const list = subCategoriesOf(category);
+  if (list.length === 0) return undefined;
+  const value = typeof subCategory === 'string' ? subCategory.trim() : '';
+  if (!value) return NO_SUB_CATEGORY;
+  return list.includes(value) ? value : list[list.length - 1];
+}
 
 /** 内訳に並べる明細（画面ごとに合計の数え方・支払い者の決め方を変えられるよう、呼び出し側で作る） */
 export interface DrillItem {
@@ -11,6 +63,8 @@ export interface DrillItem {
   date: string;
   description: string;
   category: string;
+  /** 中項目（subCategoryKey の結果。中項目の一覧の無い大項目は無し） */
+  subCategory?: string;
   amount: number;
   /** 支払い者の識別（絞り込みのキー） */
   payerKey: string;
@@ -42,11 +96,13 @@ export function toDrillItems(
     if (opts.range && (typeof e.date !== 'string' || e.date < opts.range.startDate || e.date > opts.range.endDate)) continue;
     const payer = opts.payer(e);
     const amount = Number(e.amount);
+    const category = e.category || 'その他';
     out.push({
       id: e.id,
       date: e.date,
       description: e.description || '',
-      category: e.category || 'その他',
+      category,
+      subCategory: subCategoryKey(category, e.subCategory),
       amount: Number.isFinite(amount) ? amount : 0,
       payerKey: payer.key,
       payerName: payer.name,
@@ -59,10 +115,12 @@ export function toDrillItems(
   return out;
 }
 
-export type DrillDim = 'category' | 'payer';
+export type DrillDim = 'category' | 'subCategory' | 'payer';
 
 export interface DrillFilter {
   category?: string;
+  /** 中項目（subCategoryKey の結果。「中項目なし」も含む）。category と一緒に使う */
+  subCategory?: string;
   /** 支払い者のキー（どれかに当たるもの） */
   payers?: string[];
 }
@@ -79,8 +137,9 @@ export interface DrillRange {
   endDate: string;
 }
 
-export function matchesDrill(item: Pick<DrillItem, 'category' | 'payerKey'>, filter: DrillFilter): boolean {
+export function matchesDrill(item: Pick<DrillItem, 'category' | 'subCategory' | 'payerKey'>, filter: DrillFilter): boolean {
   if (filter.category !== undefined && item.category !== filter.category) return false;
+  if (filter.subCategory !== undefined && (item.subCategory ?? NO_SUB_CATEGORY) !== filter.subCategory) return false;
   if (filter.payers && !filter.payers.includes(item.payerKey)) return false;
   return true;
 }
@@ -91,19 +150,25 @@ export function sumAmount(items: ReadonlyArray<Pick<DrillItem, 'amount'>>): numb
   return total;
 }
 
-/** カテゴリ別・支払い者別の小計（金額の多い順。同じ金額は件数の多い順、次に名前順） */
+/**
+ * カテゴリ別・中項目別・支払い者別の小計（金額の多い順。同じ金額は件数の多い順、次に名前順）。
+ * 中項目別では「中項目なし」を金額にかかわらず最後にする
+ */
 export function groupDrill(items: readonly DrillItem[], dim: DrillDim): DrillGroup[] {
   const groups = new Map<string, DrillGroup>();
   for (const item of items) {
-    const key = dim === 'category' ? item.category || 'その他' : item.payerKey;
-    const label = dim === 'category' ? key : item.payerName || '不明';
+    const key =
+      dim === 'category' ? item.category || 'その他' : dim === 'subCategory' ? item.subCategory ?? NO_SUB_CATEGORY : item.payerKey;
+    const label = dim === 'payer' ? item.payerName || '不明' : key;
     const group = groups.get(key) ?? { key, label, total: 0, count: 0 };
     group.total += Number.isFinite(item.amount) ? item.amount : 0;
     group.count += 1;
     groups.set(key, group);
   }
+  const last = (g: DrillGroup) => (dim === 'subCategory' && g.key === NO_SUB_CATEGORY ? 1 : 0);
   return Array.from(groups.values()).sort(
-    (a, b) => b.total - a.total || b.count - a.count || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0)
+    (a, b) =>
+      last(a) - last(b) || b.total - a.total || b.count - a.count || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0)
   );
 }
 
@@ -118,15 +183,23 @@ export function deltaPct(now: number, prev: number | null | undefined): number |
   return Math.round(((now - prev) / prev) * 100);
 }
 
-/** 内訳の切り替え（カテゴリ / 支払い者）が意味を持つか: 絞り込み済みの軸や、1 つしか無い軸は出さない */
+/**
+ * 内訳の切り替え（カテゴリ / 中項目 / 支払い者）が意味を持つか: 絞り込み済みの軸や、1 つしか無い軸は出さない。
+ * 中項目は、カテゴリで絞った階層で、中項目の一覧がある大項目（食費・娯楽）に中項目の付いた明細が 1 件でもあるときだけ
+ * （全部が「中項目なし」なら出さない）
+ */
 export function availableDims(items: readonly DrillItem[], filter: DrillFilter): Record<DrillDim, boolean> {
   return {
     category: filter.category === undefined && groupDrill(items, 'category').length > 1,
+    subCategory:
+      filter.category !== undefined &&
+      filter.subCategory === undefined &&
+      items.some((i) => i.subCategory !== undefined && i.subCategory !== NO_SUB_CATEGORY),
     payer: !(filter.payers && filter.payers.length === 1) && groupDrill(items, 'payer').length > 1,
   };
 }
 
-/** 表示する内訳の軸（希望が使えなければ使える方。どちらも使えなければ null） */
+/** 表示する内訳の軸（希望が使えなければ カテゴリ → 中項目 → 支払い者 の順で使えるもの。どれも使えなければ null） */
 export function resolveDim(
   items: readonly DrillItem[],
   filter: DrillFilter,
@@ -135,6 +208,7 @@ export function resolveDim(
   const dims = availableDims(items, filter);
   if (preferred && dims[preferred]) return preferred;
   if (dims.category) return 'category';
+  if (dims.subCategory) return 'subCategory';
   if (dims.payer) return 'payer';
   return null;
 }

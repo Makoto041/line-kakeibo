@@ -76,7 +76,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.11.0 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.12.0 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
@@ -230,7 +230,7 @@ flowchart LR
         <div class="stage"><b>4. Gemini</b><span>Jev が失敗したとき（鍵なし・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリ）だけ問い合わせ。信頼度が低いだけでは回さない（3.5 Flash-Lite、思考は最小、カテゴリ一覧の中から選ばせる。使うのは Flash-Lite だけ。一番新しい Flash-Lite を自動で選び、終了したら次の Flash-Lite に切り替え）</span><span class="cost">API 呼び出し</span></div>
       </div>
       <p>上は LINE の入力（「500 ランチ」の「ランチ」）の順序。<b>カード利用メールの店名</b>（「ｾﾌﾞﾝ-ｲﾚﾌﾞﾝ」「AMAZON.CO.JP」など）は、辞書の部分一致だと「au」「etc」「パン」などが店名の一部に当たって取り違えるため、<b>キャッシュ → Jev → Gemini → 辞書</b>の順にしている。Jev と Gemini のどちらも使えないときは辞書だけで動き、分類できなければ「その他」になる。失敗した結果はキャッシュしないので、復旧すればモデルで判定し直す。</p>
-      <p><b>中項目</b>（食費・娯楽だけ）は、大項目が決まったあとに辞書と時刻のルールで決める（モデルは呼ばない）。LINE の入力は内容の辞書だけ（入力した時刻は食べた時刻とは限らないので時刻は使わない）。カード利用メールは店名の辞書で、メールに時刻が書かれていれば飲食店だけ朝・昼・夜ご飯にする。決まらなければ中項目を付けず、既存の支出もそのまま。判定に失敗しても保存は続ける。LINE のカードで大項目を変えると、同じルールで決め直す（決まらなければ消す）。</p>
+      <p><b>中項目</b>（食費・娯楽だけ）は、大項目が決まったあとに辞書と時刻のルールで決める（モデルは呼ばない）。LINE の入力は内容の辞書だけ（入力した時刻は食べた時刻とは限らないので時刻は使わない）。カード利用メールは店名の辞書で、メールに時刻が書かれていれば飲食店だけ朝・昼・夜ご飯にする。決まらなければ中項目を付けず、既存の支出もそのまま。判定に失敗しても保存は続ける。LINE のカードで大項目を変えると、同じルールで決め直す（決まらなければ消す）。Web の内訳シートでは、食費・娯楽をタップすると中項目別の小計が出て、さらにタップすると明細まで進める（一覧にない値は「その他の食費」「その他の娯楽」に数え、「中項目なし」は最後に出す）。</p>
     </div>
   </section>
 
@@ -271,6 +271,7 @@ flowchart LR
             <tr><td class="name">bot/src/categoryTaxonomy.ts · subCategoryRules.ts</td><td>中項目（食費・娯楽）の一覧と、辞書と時刻で中項目を決める <code>resolveSubCategory</code>（モデルは呼ばない。登録時の保存〔LINE の入力・カード利用メール〕と、LINE のカードでカテゴリを変えたときに呼ぶ）</td></tr>
             <tr><td class="name">bot/src/settlementSummary.ts · line/settlementSummaryMessage.ts</td><td>期間の精算サマリー（送る日の判定・集計・冪等な送信・Web からの手動の送信と、メンション付きテキスト・Flex）</td></tr>
             <tr><td class="name">web/app/ · components/ · lib/</td><td>画面・部品・ロジック（lib は純関数でテストあり）</td></tr>
+            <tr><td class="name">web/lib/drilldown.ts · components/drilldown/</td><td>内訳シート（合計 → カテゴリ → 中項目 / 支払い者 → 明細）。中項目の一覧は bot の写しで、一致をテストで確かめる</td></tr>
             <tr><td class="name">web/app/manifest.ts · public/sw.js · lib/installApp.ts</td><td>PWA の manifest、Service Worker（オフライン画面と <code>/_next/static</code> のキャッシュ）、追加の案内の出し分け。アイコンは <code>scripts/gen-app-icons.mjs</code> で生成</td></tr>
             <tr><td class="name">firestore.rules · storage.rules</td><td>アクセス制御（CI がデプロイ、エミュレータでテスト）</td></tr>
           </tbody>

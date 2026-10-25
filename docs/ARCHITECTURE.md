@@ -215,6 +215,8 @@ Gemini（退避先）: @google/genai 経由、Flash-Lite 系だけを使う（Fl
 
 中項目（食費・娯楽だけ。#235）: 大項目が決まったあとに resolveSubCategory（subCategoryRules.ts。辞書と時刻のルール、モデルは呼ばない）で決め、決まらなければ付けない。
   LINE は説明文の辞書だけ、カード利用通知は時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。詳細は SPECIFICATION §4.1
+  Web は内訳シート（web/lib/drilldown.ts）で食費・娯楽を中項目別にまとめる（一覧にない値は「その他の食費 / 娯楽」、無ければ「中項目なし」）。
+  一覧は bot の SUB_CATEGORIES の写しで、web/__tests__/drilldown.test.mjs が一致を確かめる。詳細は SPECIFICATION §5.2
 ```
 
 その他のコスト施策:
@@ -291,6 +293,7 @@ line-kakeibo/
 │  │                         # settings/InstallAppCard（ホーム画面への追加の案内）・SettlementNotifyCard（LINEへの精算の通知）
 │  ├─ lib/                   # firebase.ts, lineAuth.ts, hooks.ts, householdApi.ts, householdContract.ts, recurringApi.ts,
 │  │                         # periodSplit.ts, leftoverAdvances.ts, expenseState.ts, dateSettings.ts, swrCache.ts, categoryNormalization.ts,
+│  │                         # drilldown.ts（内訳シートの集計。合計 → カテゴリ → 中項目 / 支払い者 → 明細。中項目の一覧の写しを持つ）,
 │  │                         # installApp.ts（PWA の案内の出し分け・Service Worker の登録）ほか
 │  ├─ __tests__/             # renewal-logic / periodSplit / drilldown / swrCache / installApp（node --test）
 │  ├─ public/icons/          # Flex メッセージ用アイコン PNG（scripts/gen-line-icons.mjs で生成）
