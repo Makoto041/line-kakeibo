@@ -97,7 +97,7 @@ Flex Message 通知（line/flexMessage.ts）
 - **店名の抽出**（`parseSMBCCardEmail`）: 「ご利用店名：」「◇利用先：」の後ろを行末まで取る。text/html しか無いメールは改行が空白になるため、次の項目のラベル（`◇利用金額：` `ご利用金額：` など、ラベルの直後にコロン）の手前で切り、100 文字（モデルに送る上限と同じ）で打ち切る。空なら「不明な店舗」
 - **重複チェック**: `gmailMessageId` に加え、`date + amount` が同じ `gmail_auto` 支出のうち店舗名が類似（一致または包含）し `usedAt` が ±1 分のものも弾く（`saveGmailExpenseAtomic`。Firestore トランザクション内で判定）
 - **失敗時の扱い**: 1 通でも処理に失敗したら `historyId` を進めず Pub/Sub の再送に委ねる。同じメッセージが 3 回失敗したら諦めて先へ進む（`system/gmailFailures` に試行回数を記録）
-- **Gmail Watch の有効期限**: 7 日 → `renewGmailWatch`（6 日ごと 3:00 JST）で自動更新
+- **Gmail Watch の有効期限**: 7 日 → `renewGmailWatch`（6 日ごと 3:00 JST）で自動更新。更新は watch を呼び直すだけで、保存してある `historyId` は変えない（§11.2）
 
 ### 3.3 既存のテキスト入力フォーマット（維持）
 
@@ -222,8 +222,9 @@ Flex Message 通知（line/flexMessage.ts）
 
 | フィールド | 型 | 説明 |
 |-----------|---|------|
-| historyId | string | 最後に処理した Gmail historyId（前進のみ。古い通知の後着で巻き戻さない） |
-| watchExpiration | number | Watch 有効期限（Unix timestamp） |
+| historyId | string | 最後に処理した Gmail historyId（前進のみ。古い通知の後着で巻き戻さない）。進めるのは取込（`gmailPubSubHandler`）だけ。watch の登録・更新（`renewGmailWatch`・`/gmail/register-watch`）では変えず、値が無いとき（初回・`/gmail/revoke` の後）だけ watch の応答の値を入れる |
+| watchExpiration | number | Watch 有効期限（Unix timestamp ms）。watch の登録・更新のたびに merge で書く |
+| updatedAt | timestamp | 最後に書いた時刻 |
 
 #### system/oauthState
 
@@ -358,6 +359,7 @@ bot/src/
    curl -X POST -H "Authorization: Bearer $ADMIN_SECRET" \
      "https://us-central1-<your-project>.cloudfunctions.net/api/gmail/register-watch"
    ```
+   初回は `system/gmailState` が無いので、watch の応答の `historyId`（その時点の位置）から取り込みを始める。2 回目以降は保存してある `historyId` を変えない（§11.2）
 
 ---
 
@@ -369,7 +371,7 @@ bot/src/
 |---------|-----|------|------|
 | GET | `/api/gmail/auth` | OAuth2 認証 URL を取得 | Admin |
 | GET | `/api/gmail/callback` | OAuth2 コールバック（Google からのリダイレクト先。CSRF state を照合） | **不要** |
-| POST | `/api/gmail/register-watch` | Gmail Watch 登録 | Admin |
+| POST | `/api/gmail/register-watch` | Gmail Watch 登録・更新（保存してある `historyId` は変えない。応答の `historyId` は保存後の値） | Admin |
 | GET | `/api/gmail/status` | Gmail 連携ステータス確認 | Admin |
 | POST | `/api/gmail/process-latest` | 最新の SMBC カードメールを手動処理 | Admin |
 | POST | `/api/gmail/test-process` | SMBC カードメール内容をプレビュー | Admin |
@@ -419,6 +421,10 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 
 - Gmail Watch は 7 日間の有効期限あり
 - 6 日ごとに Cloud Scheduler（`renewGmailWatch`）で自動更新
+- 更新は stop を呼ばずに watch を呼び直す（`users.watch` は「Set up or update a push notification watch」。push ガイドの「Renew mailbox watch」も 7 日以内に watch を呼び直すことだけを求めている）。watch が失敗しても既存の watch は期限まで有効で、次の実行でやり直す
+- watch の登録・更新（`renewGmailWatch`・`/gmail/register-watch`）は、保存してある `historyId` を変えない（`registerWatch`。Firestore トランザクションで読み、`watchExpiration`・`updatedAt` だけを merge で書く）。watch の応答の `historyId` はその時点のメールボックスの位置なので、以前のように上書きすると、取込が失敗して `historyId` が止まっている間の範囲が二度と処理されなかった。応答の値を入れるのは、保存値が無いとき（初回・`/gmail/revoke` の後）と、数値として読めない値が入っていたときだけ
+- そのため、止まっていた `historyId` が残っていると、次の通知でその範囲のメールがまとめて処理される（二重登録は `gmailMessageId` で防ぐ）
+- `/gmail/register-watch` で「今の位置まで飛ばす」ことはできない。飛ばしたいときは `system/gmailState` の `historyId` を消してから `/gmail/register-watch` を呼ぶ。別の Gmail アカウントに切り替えるときは、先に `/gmail/revoke`（`system/gmailState` も消える）してから認可と watch 登録をやり直す
 - トークンリフレッシュは自動化（`getValidAccessToken`）
 - historyId は Gmail 側で約 1 週間しか保持されない。古すぎて `history.list` が 404 を返した場合、ハンドラーは通知の historyId まで進める（その間のメールは取り込まれない。必要なら `/api/gmail/force-process/:messageId` で個別に処理する）
 
