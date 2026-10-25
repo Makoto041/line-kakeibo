@@ -58,9 +58,11 @@ geminiCategoryClassifier.ts / jevCategoryClassifier.ts
     ↓
 Firestore 保存（トランザクション・重複排除）
 firestore.ts (saveGmailExpenseAtomic)
+＋ 同じトランザクションで送信待ちの印 system/gmailCardNotice_{messageId}（gmail/cardNotice.ts）
     ↓
 LINE Bot
-Flex Message 通知（line/flexMessage.ts）
+Flex Message 通知（line/flexMessage.ts。X-Line-Retry-Key 付き）→ 送れたら印を消す
+（送れなければ印が残り、同じメールの再処理で送り直す。§3.2）
 ```
 
 ### 2.2 技術スタック
@@ -97,6 +99,11 @@ Flex Message 通知（line/flexMessage.ts）
 - **店名の抽出**（`parseSMBCCardEmail`）: 「ご利用店名：」「◇利用先：」の後ろを行末まで取る。text/html しか無いメールは改行が空白になるため、次の項目のラベル（`◇利用金額：` `ご利用金額：` など、ラベルの直後にコロン）の手前で切り、100 文字（モデルに送る上限と同じ）で打ち切る。空なら「不明な店舗」
 - **重複チェック**: `gmailMessageId` に加え、`date + amount` が同じ `gmail_auto` 支出のうち店舗名が類似（一致または包含）し `usedAt` が ±1 分のものも弾く（`saveGmailExpenseAtomic`。Firestore トランザクション内で判定）
 - **失敗時の扱い**: 1 通でも処理に失敗したら `historyId` を進めず Pub/Sub の再送に委ねる。同じメッセージが 3 回失敗したら諦めて先へ進む（`system/gmailFailures` に試行回数を記録）
+- **保存後に LINE 通知が失敗・中断したとき**（`gmail/cardNotice.ts`）: 支出の保存と同じトランザクションで送信待ちの印（`system/gmailCardNotice_{messageId}`。§5.4）を作り、カードを送れたら消す。push が失敗する（LINE の 5xx・月の上限の 429・ネットワーク）か、保存と push の間で関数が止まると印が残る。同じメールの再処理（上の Pub/Sub の再送・`/gmail/force-process/:messageId`）は、重複チェックより先に印を見て、あれば**保存時点のカード**（判定元の括弧も含む）を送り直して終える。
+  - 二重に届かないよう、メッセージから決まる `X-Line-Retry-Key`（`gmail-card:{messageId}` から作る UUID。`settlementSummary.ts` の `summaryRetryKey` と同じ導き方）を付ける。LINE が受け付け済みなら 409 が返り、送れた扱いにする
+  - key が効くのは 24 時間なので、作ってから 23 時間を過ぎた印は送らずに消す（警告ログ）。支出が消されていたら送らずに消す（取り込み直さない）
+  - 印は LINE グループ（`LINE_GROUP_ID`）があるときだけ作る。印の無い既存の支出には送らない（この仕組みより前の支出のカードは送り直さない）。`/gmail/process-latest` は以前どおりカードを送らず、印も作らない
+  - 同じメールを同時に処理しても、保存のトランザクション（重複の判定と印の文書を読んでから書く）で支出は 1 件になる。「登録済み」になった側も印が残っていれば同じ key で送る（届くのは 1 回）
 - **Gmail Watch の有効期限**: 7 日 → `renewGmailWatch`（6 日ごと 3:00 JST）で自動更新
 
 ### 3.3 既存のテキスト入力フォーマット（維持）
@@ -233,6 +240,17 @@ OAuth 認可の CSRF 用 state。`/gmail/auth` で発行し、`/gmail/callback` 
 
 処理に失敗したメッセージの記録（`{ [messageId]: { attempts, lastError, lastFailedAt } }`）。3 回失敗したメッセージは諦めて `historyId` を進める。成功したら記録を消す。
 
+#### system/gmailCardNotice_{messageId}
+
+カード利用通知の送信待ちの印（§3.2。`gmail/cardNotice.ts`）。支出を新規に保存するのと同じトランザクションで作り、カードを送れたら（409 も含む）消す。23 時間を過ぎた印・支出が消された印は送らずに消す。
+
+| フィールド | 型 | 説明 |
+|-----------|---|------|
+| expenseId | string | 保存した支出の ID |
+| lineGroupId | string | 送り先の LINE グループ ID |
+| card | map | 送るはずだったカード（`CardUsageInfo`。undefined の項目は持たない。判定元 `categoryOrigin` もここにだけ残る） |
+| createdAt | timestamp | 作った時刻（23 時間の判定に使う） |
+
 予算は `budgetSettings/{lineId or lineGroupId}` に持つ（`SPECIFICATION.md` §6）。
 
 ---
@@ -260,6 +278,7 @@ bot/src/
 │   ├── watch.ts              # Gmail Watch 管理（system/gmailState）
 │   ├── parser.ts             # メールパース（送信元判定・利用先/金額/利用日時の抽出・重複判定）
 │   ├── handler.ts            # Pub/Sub ハンドラー・手動処理（process-latest / force-process）
+│   ├── cardNotice.ts         # カード利用通知の送信待ちの印（system/gmailCardNotice_*）と送り直し（§3.2）
 │   └── adminRouter.ts        # /gmail/* 管理 API（Admin 認証・レート制限）
 └── line/
     ├── client.ts             # LINE クライアント・返信ヘルパー
@@ -373,7 +392,7 @@ bot/src/
 | GET | `/api/gmail/status` | Gmail 連携ステータス確認 | Admin |
 | POST | `/api/gmail/process-latest` | 最新の SMBC カードメールを手動処理 | Admin |
 | POST | `/api/gmail/test-process` | SMBC カードメール内容をプレビュー | Admin |
-| POST | `/api/gmail/force-process/:messageId` | 指定メッセージ ID を強制処理（冪等） | Admin |
+| POST | `/api/gmail/force-process/:messageId` | 指定メッセージ ID を強制処理（冪等）。既に支出があり、送信待ちのカード（§3.2）が残っていれば送り直す（応答の `cardNotice` が `sent`） | Admin |
 | POST | `/api/gmail/refresh-token` | トークン強制リフレッシュ | Admin |
 | DELETE | `/api/gmail/revoke` | トークン削除・再認証用 | Admin |
 
