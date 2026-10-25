@@ -97,6 +97,10 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'expenses/expSubCat'), { ...lunch, subCategory: '外食' });
   // web は大項目を変えるとき、中項目を持たない支出にも削除を送る
   await setDoc(doc(db, 'expenses/expNoSubCat'), lunch);
+  // web の編集画面で中項目を選ぶ（別の中項目に変える・大項目と一緒に選び直す）
+  await setDoc(doc(db, 'expenses/expSubSwap'), { ...lunch, subCategory: '昼ご飯' });
+  await setDoc(doc(db, 'expenses/expSubCatPick'), { ...lunch, subCategory: '昼ご飯' });
+  await setDoc(doc(db, 'expenses/expNoSubCatPick'), lunch);
   // 他の項目と組み合わせた削除の確認用（拒否されるだけなので書き換わらない）
   await setDoc(doc(db, 'expenses/expSubPair'), {
     ...lunch, subCategory: '外食', updatedAt: new Date('2026-08-05T00:00:00Z'),
@@ -390,6 +394,18 @@ await test('subCategory: 大項目の変更と中項目の削除を一緒に送�
 await test('subCategory: 中項目を持たない支出にも、大項目の変更と中項目の削除を送れる（web の送信形）', async () => {
   await assertSucceeds(updateDoc(doc(userA, 'expenses/expNoSubCat'), {
     category: '日用品', subCategory: deleteField(), updatedAt: new Date(),
+  }));
+});
+// web の編集画面で中項目を選ぶときの送信形（#235 ⑥）。「中項目なし」は上の削除と同じ形で送る
+await test('subCategory: 編集画面で中項目を別の中項目に変えられる', async () => {
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expSubSwap'), { subCategory: 'カフェ', updatedAt: new Date() }));
+});
+await test('subCategory: 大項目の変更と新しい中項目を一緒に送れる（中項目を持つ支出・持たない支出）', async () => {
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expSubCatPick'), {
+    category: '娯楽', subCategory: '映画', updatedAt: new Date(),
+  }));
+  await assertSucceeds(updateDoc(doc(userA, 'expenses/expNoSubCatPick'), {
+    category: '娯楽', subCategory: 'その他の娯楽', updatedAt: new Date(),
   }));
 });
 await test('subCategory を含まない更新は従来どおり（中項目を持つ支出・持たない支出）', async () => {

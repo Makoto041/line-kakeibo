@@ -9,7 +9,7 @@
 import { FieldValue, getFirestore, type DocumentData, type Transaction } from 'firebase-admin/firestore';
 import { toCanonicalCategoryName } from './categoryNormalization';
 import type { ExpenseStatusType } from './firestore';
-import { errorMessage } from './logSafe';
+import { errorMessage, maskId } from './logSafe';
 import { resolveSubCategory, usedAtHasClockTime } from './subCategoryRules';
 
 /**
@@ -254,7 +254,8 @@ export type ExpenseChangeResult = { record: Record<string, any> } | { reject: st
  * 共同費へ巻き戻す、精算済み判定をすり抜けて変更が通る）。
  *
  * `authorize` を渡すと、支出を読んだ直後・判定の前に呼び、false なら何も書かずに
- * `{ forbidden: true }` を返す（LINE の postback は渡さないので挙動は従来どおり）。
+ * `{ forbidden: true }` を返す（LINE の postback は、支出を変えるボタンすべてで世帯のメンバーかを確かめる。
+ * line/postback.ts の applyAsMember）。
  *
  * @returns 更新後のレコード / 拒否理由 / 権限なし / 支出が見つからなければ null
  */
@@ -278,15 +279,15 @@ export async function applyExpenseChange(
   return db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
 
-    // expenseId は Web API では利用者の入力なので、ログ行を偽造されないよう JSON 文字列にして出す
+    // expenseId は Web API・LINE の postback の入力なので、書式文字列に埋め込まず、伏せてオブジェクトで出す
     if (!snapshot.exists) {
-      console.warn(`Expense not found: ${JSON.stringify(expenseId)}`);
+      console.warn('Expense not found', { expense: maskId(expenseId) });
       return null;
     }
 
     const data = snapshot.data();
     if (!data) {
-      console.warn(`Expense data is empty: ${JSON.stringify(expenseId)}`);
+      console.warn('Expense data is empty', { expense: maskId(expenseId) });
       return null;
     }
 

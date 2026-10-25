@@ -97,6 +97,8 @@ flowchart LR
 | `syncUserLinks` | Firestore `expenses/{id}` onCreate | asia-northeast1 | **無効化済み（何もしない）**。export から外すと CI の非対話デプロイが関数削除の確認で失敗するため残置。削除は手動 `firebase functions:delete syncUserLinks` |
 | `api` | HTTPS（Express） | **us-central1** | Gmail OAuth / watch 管理 `/gmail/*`（`ADMIN_SECRET` 認証）、LIFF ログイン `/auth/line`、Web の確認・以前の立替の精算済み・固定費・折半設定・精算の通知 `/household/*`（Firebase ID トークン認証。SPECIFICATION.md §5.4） |
 
+メモリは全関数 512MiB。どの関数も `bot/src/index.ts` から全関数の依存（特に googleapis）を起動時に読み込むため、256MiB では何もしない関数でも cold start の直後に上限を超えていた。下げる場合は、関数ごとに依存を遅延読み込みしてから cold start 時の使用量を計測する。
+
 ## 4. 主要データフロー
 
 ### 4.1 テキスト支出登録
@@ -146,6 +148,8 @@ Web を開く（LINE の「家計簿一覧を見る」/「修正」リンク、�
   → 精算ページは期間の折半（Firestore から読む）を先に描き、全額にする前の立替が残っていればそのお知らせを
      /household/legacy-advances（コールドスタートあり）の応答が来てから出す
   → 編集/削除/レシート添付はクライアントSDKでFirestore/Storageへ直書き（ルールで許可された範囲のみ）
+     編集ドロワーでは食費・娯楽の中項目（subCategory）も選べる。一覧は lib/categoryTaxonomy.ts（bot の
+     categoryTaxonomy.ts のコピー。一致はテストで確かめる）。「中項目なし」と、大項目を変えて選び直さないときは削除を送る
   → 確認（要確認→共同費）・以前の立替を精算済みにする・固定費・折半設定・精算の通知の送信は ID トークン付きで api 関数の /household/* を呼ぶ
 ```
 
@@ -229,6 +233,7 @@ Gemini（退避先）: @google/genai 経由、Flash-Lite 系だけを使う（Fl
 
 中項目（食費・娯楽だけ。#235）: 大項目が決まったあとに resolveSubCategory（subCategoryRules.ts。辞書と時刻のルール、モデルは呼ばない）で決め、決まらなければ付けない。
   LINE は説明文の辞書だけ、カード利用通知は時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。詳細は SPECIFICATION §4.1
+  Web の編集画面では一覧から手で選べる（「その他の食費」「その他の娯楽」も選べる）
   LINE の確認カードは、カテゴリの行に「食費 › 昼ご飯」と出す（一覧にある値だけ。行は 4 行のまま。SPECIFICATION §2.4）
 ```
 
@@ -238,7 +243,6 @@ Gemini（退避先）: @google/genai 経由、Flash-Lite 系だけを使う（Fl
 - LINE プロフィール 15 分メモリキャッシュ、`Promise.allSettled` による並列化
 - レシート画像はアップロード前にクライアントで圧縮（`web/lib/imageCompress.ts`。OCR / Vision API は廃止済み）
 - 固定費の自動計上は LINE 通知を送らない（push 枠を使わない）
-- Function ごとのメモリチューニング（webhook 512MiB、Gmail 系 / 固定費 256MiB）
 
 ## 6. 認証・セキュリティモデル
 
@@ -251,6 +255,7 @@ Web のアクセス制御は **LIFF ログイン → Firebase カスタムトー
 | Firestore ルール | 所有者（`resource.data.lineId == token.lineId`）と世帯メンバー（`groupMembers/{groupId}_{lineId}.isActive == true`）で判定。`expenses` の create / update / delete はフィールド許可リストと値の検証付き（`status` / `advanceBy` / `advanceFull` / `inputSource` などはクライアント不変）。精算済み（`advance_settled`）は金額・日付・支払者の変更と削除を禁止。`groups` / `groupMembers` / `userLinks` / `linkTokens` はクライアント書込不可、未定義パスは既定拒否。システムユーザーの支出（`gmail-auto-system` / `recurring-system`）は世帯メンバーが修正・削除できる。bot は Admin SDK でルールをバイパスする |
 | Storage ルール | cross-service rules（`firestore.get()` / `firestore.exists()`）で支出と `groupMembers` を参照。所有者 / 有効メンバーだけが get・アップロード・削除でき、list は不可。5MB 以下の JPEG / PNG / WebP / HEIC / HEIF のみ。精算済み支出のレシートは上書き・削除不可。Storage サービスエージェントに `roles/firebaserules.firestoreServiceAgent` が必要（SECURITY_OPERATIONS.md §4） |
 | Web 向け API（`/household/*`） | Firebase ID トークン（`sign_in_provider=custom` かつ `lineId` クレーム）＋ `groupMembers` の有効メンバー判定。レート制限、CORS 許可リスト（`webOrigins.ts`）、`Cache-Control: no-store` |
+| LINE のボタン（postback） | 支出を変えるボタン（区分・［自分が払った］［自分が立替］［取り消す］・OK・カテゴリの変更）とカテゴリ選択のカルーセルは、支出の世帯の有効メンバー（世帯の無い個人の支出は登録した本人）だけ。変更のときは同じトランザクション内でメンバー文書を読む（`postback.ts` の `applyAsMember`）。`lineGroupId` だけを持つ旧形式は不可。カテゴリは選択肢の一覧（正準名と、正準名に揃えられる名前。32 文字以内の文字列）にある値だけ |
 | 世帯メンバー | 2 名固定。bot は発言や招待コードでメンバーを自動追加しない（LINE の `参加` コマンドは無効化済み）。非メンバーの発言は個人支出として保存し、カテゴリ分類で Jev・Gemini を呼ばない（`expenseGroupScope.ts`）。LINE グループ退出（`memberLeft`）で `isActive:false`。追加・無効化は `scripts/manage-group-members.mjs` |
 | Gmail 管理 API | `ADMIN_SECRET`（`Authorization: Bearer` ヘッダーのみ。定数時間比較。クエリ渡しは廃止）＋ レートリミット、OAuth callback は CSRF state |
 | Gmail スコープ | `gmail.readonly` に最小化 |
@@ -287,9 +292,10 @@ line-kakeibo/
 │  │  ├─ webOrigins.ts       # Web オリジンの許可リスト（/auth/line と /household で共用）
 │  │  ├─ adminAuth.ts        # ADMIN_SECRET の定数時間比較
 │  │  ├─ logSafe.ts / time.ts # ログのマスク・JST 日付
+│  │  ├─ docId.ts            # Firestore の文書 ID の入力検証 isValidDocId（/household と LINE の postback で共用）
 │  │  ├─ geminiCategoryClassifier.ts # カテゴリ分類（キャッシュ・辞書・Jev → Gemini の順序）
 │  │  ├─ jevCategoryClassifier.ts / geminiClient.ts / categoryGuide.ts / categoryNormalization.ts # Jev・Gemini の呼び出し、カテゴリの説明、カテゴリ正規化
-│  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧（大項目は正準名の完全一致で引く）と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。登録時〔LINE の入力・Gmail の取込〕と、LINE で大項目を変えたときに呼ぶ）
+│  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧（大項目は正準名の完全一致で引く。web/lib/categoryTaxonomy.ts に同じ一覧）と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。登録時〔LINE の入力・Gmail の取込〕と、LINE で大項目を変えたときに呼ぶ）
 │  │  ├─ linkUserResolver.ts / syncUserLinks.ts
 │  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue
 │  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）
@@ -306,8 +312,9 @@ line-kakeibo/
 │  │                         # settings/InstallAppCard（ホーム画面への追加の案内）・SettlementNotifyCard（LINEへの精算の通知）
 │  ├─ lib/                   # firebase.ts, lineAuth.ts, hooks.ts, householdApi.ts, householdContract.ts, recurringApi.ts,
 │  │                         # periodSplit.ts, leftoverAdvances.ts, expenseState.ts, dateSettings.ts, swrCache.ts, categoryNormalization.ts,
+│  │                         # expenseEdit.ts（支出の編集の純関数）, categoryTaxonomy.ts（中項目の一覧。bot と同じ内容）,
 │  │                         # installApp.ts（PWA の案内の出し分け・Service Worker の登録）ほか
-│  ├─ __tests__/             # renewal-logic / periodSplit / drilldown / swrCache / installApp（node --test）
+│  ├─ __tests__/             # renewal-logic / expenseUpdate / categoryTaxonomy（bot の中項目の一覧との一致）/ periodSplit / drilldown / swrCache / installApp（node --test）
 │  ├─ public/icons/          # Flex メッセージ用アイコン PNG（scripts/gen-line-icons.mjs で生成）
 │  ├─ public/pwa/            # PWA のアイコン（scripts/gen-app-icons.mjs で生成）
 │  ├─ public/sw.js / offline.html # Service Worker とオフライン画面（公開されるのでコメントを書かない）

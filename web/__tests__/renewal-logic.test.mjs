@@ -164,6 +164,7 @@ test('formFromExpense: 支払い者の既定は入力者', () => {
     description: 'スーパー',
     date: '2026-09-12',
     category: '食費',
+    subCategory: '',
     includeInTotal: true,
     payerId: ME,
     payerDisplayName: 'あおい',

@@ -8,6 +8,8 @@ export interface EditForm {
   description: string;
   date: string;
   category: string;
+  /** 中項目。'' は「中項目なし」（保存すると subCategory を消す。shouldClearSubCategory） */
+  subCategory: string;
   includeInTotal: boolean;
   payerId: string;
   payerDisplayName: string;
@@ -20,6 +22,7 @@ const EDIT_KEYS: readonly EditKey[] = [
   'description',
   'date',
   'category',
+  'subCategory',
   'includeInTotal',
   'payerId',
   'payerDisplayName',
@@ -32,7 +35,7 @@ type EditSource = Pick<
   Expense,
   'amount' | 'description' | 'date' | 'category' | 'includeInTotal' | 'lineId'
 > &
-  Partial<Pick<Expense, 'payerId' | 'payerDisplayName' | 'userDisplayName' | 'status'>>;
+  Partial<Pick<Expense, 'subCategory' | 'payerId' | 'payerDisplayName' | 'userDisplayName' | 'status'>>;
 
 /** 編集フォームの初期値（既存の編集ドロワーと同じ既定: 支払い者は入力者） */
 export function formFromExpense(e: EditSource): EditForm {
@@ -41,6 +44,7 @@ export function formFromExpense(e: EditSource): EditForm {
     description: e.description ?? '',
     date: e.date ?? '',
     category: e.category ?? '',
+    subCategory: e.subCategory ?? '',
     includeInTotal: !!e.includeInTotal,
     payerId: e.payerId || e.lineId,
     payerDisplayName: e.payerDisplayName || e.userDisplayName || '',
@@ -73,6 +77,10 @@ export function validateEditForm(form: EditForm, original: EditSource): EditVali
   if (form.category !== base.category && form.category.length > 50) {
     return { field: 'category', message: 'カテゴリは 50 文字以内で入力してください' };
   }
+  // 選択肢は固定の一覧（50 文字以内）なので通常は起きない。ルールと同じ上限を念のため確かめる
+  if (form.subCategory !== base.subCategory && form.subCategory.length > 50) {
+    return { field: 'subCategory', message: '中項目は 50 文字以内で選んでください' };
+  }
   if (original.status === 'advance_settled') {
     const locked = (['amount', 'date', 'payerId'] as const).find((key) => form[key] !== base[key]);
     if (locked) return { field: locked, message: '精算済みの支出は金額・日付・支払者を変更できません' };
@@ -84,6 +92,7 @@ export function validateEditForm(form: EditForm, original: EditSource): EditVali
  * 送る差分（変更した項目だけ）。
  * - 支払い者を変えたときは表示名も一緒に送る
  * - 精算済みの支出は金額・日付・支払者を送らない
+ * - 中項目を「中項目なし」にしたときは subCategory: '' を送る（buildExpenseUpdate が削除に置き換える）
  * updatedAt は updateExpense が付ける。
  */
 export function buildEditUpdate(form: EditForm, original: EditSource): Partial<EditForm> {
@@ -106,31 +115,81 @@ export function hasEditChanges(update: Partial<EditForm>): boolean {
   return Object.keys(update).length > 0;
 }
 
-// ---- 大項目を変えたときの中項目 ---------------------------------------------------
+// ---- 中項目（編集画面の選択肢・大項目を変えたとき・保存） ---------------------------
+
+/** 「中項目なし」の選択肢の値（EditForm.subCategory の '' と同じ） */
+export const NO_SUB_CATEGORY = '';
+
+export interface SubCategoryOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * 中項目の選択肢: 先頭に「中項目なし」→ 大項目の中項目の一覧 → 一覧に無い今の値。
+ * 一覧に無い今の値（自由入力など）は最後に残す（開いただけで選択中の値が消えて、
+ * 保存で別の値に変わるのを防ぐ）。
+ * 一覧が空の大項目（日用品など）は、中項目の欄を出さないので空配列を返す。
+ * list は categoryTaxonomy.ts の subCategoriesOf(大項目) を渡す。
+ */
+export function buildSubCategoryOptions(list: readonly string[], current: string): SubCategoryOption[] {
+  if (list.length === 0) return [];
+  const options: SubCategoryOption[] = [{ value: NO_SUB_CATEGORY, label: '中項目なし' }];
+  list.forEach((name) => options.push({ value: name, label: name }));
+  if (current && !list.includes(current)) options.push({ value: current, label: current });
+  return options;
+}
+
+/**
+ * 編集画面で大項目を選び直したときの次のフォーム。
+ * 大項目が変わったら、中項目は「中項目なし」に戻す（古い中項目が新しい大項目と食い違わないように）。
+ * 大項目は、保存時と同じ正規化（normalize。updateExpense の normalizeCategoryName を渡す）をかけて比べる。
+ * 別名（「外食」など、保存すると食費になる名前）を選んだだけなら大項目は変わらないので、中項目は戻さない
+ * （保存でも shouldClearSubCategory が正規化した後の値で比べ、中項目を消さない）。
+ * reset は「中項目を戻した」（大項目が変わり、それまで中項目が選ばれていた）とき true。
+ * 画面は reset を覚えておき、利用者が中項目を選び直すまで注記を出す。
+ * normalize は、node --test から直接読めるよう引数で受ける（このモジュールは他のモジュールを読まない）。
+ */
+export function changeEditCategory(
+  form: EditForm,
+  category: string,
+  normalize: (category: string) => string
+): { form: EditForm; reset: boolean } {
+  if (category === form.category) return { form, reset: false };
+  if (normalize(category) === normalize(form.category)) return { form: { ...form, category }, reset: false };
+  return {
+    form: { ...form, category, subCategory: NO_SUB_CATEGORY },
+    reset: form.subCategory !== NO_SUB_CATEGORY,
+  };
+}
 
 type SubCategoryFields = Partial<Pick<Expense, 'category' | 'subCategory'>>;
 
 /**
  * この更新で、中項目（subCategory）を消すか。
- * 大項目（category）を変える更新では、古い中項目が新しい大項目と食い違わないよう、常に消す。
- * 元の支出が中項目を持つかは見ない: Web の一覧は 1 回きりの読み込みなので、読み込んだ後に
- * bot が中項目を書いた支出では、手元の一覧が「中項目なし」のままになっている。
- * 中項目を持たない支出への削除は、保存される結果が変わらない（ルールでも許可される）。
- * - 大項目は、正規化した後の値で比べる（別名が同じ大項目になる入力では消さない）
- * - 更新が中項目を自分で指定しているときは、それに任せる
- * - 元の支出が渡されない更新（合計に含めるトグルなど）では消さない
+ * - 更新の中項目が ''（編集画面で「中項目なし」にした）なら消す（'' のまま保存しない）
+ * - 大項目（category）を変える更新では、古い中項目が新しい大項目と食い違わないよう、常に消す。
+ *   元の支出が中項目を持つかは見ない: Web の一覧は 1 回きりの読み込みなので、読み込んだ後に
+ *   bot が中項目を書いた支出では、手元の一覧が「中項目なし」のままになっている。
+ *   中項目を持たない支出への削除は、保存される結果が変わらない（ルールでも許可される）。
+ * - 大項目は、正規化した後の値で比べる（別名が同じ大項目になる入力では消さない。編集画面の
+ *   changeEditCategory も同じ正規化で比べ、中項目を「中項目なし」に戻さない）
+ * - 更新が中項目（'' 以外）を自分で指定しているときは、それに任せる
+ * - 元の支出が渡されない更新（合計に含めるトグルなど）では、大項目を理由には消さない
  */
 export function shouldClearSubCategory(
   update: SubCategoryFields,
   original: SubCategoryFields | null | undefined
 ): boolean {
+  if (update.subCategory === NO_SUB_CATEGORY) return true;
   if (!original) return false;
   if (update.subCategory !== undefined) return false;
   return update.category !== undefined && update.category !== original.category;
 }
 
 /**
- * Firestore に送る更新内容。shouldClearSubCategory のときだけ、subCategory の削除を足す。
+ * Firestore に送る更新内容。shouldClearSubCategory のときだけ、subCategory を削除にする
+ * （無ければ足し、'' なら置き換える）。
  * deleteField は firebase/firestore の deleteField（node --test から差し替えられるよう引数で受ける）。
  * 消さないときは update をそのまま返す。
  */

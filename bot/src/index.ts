@@ -50,11 +50,15 @@ if (require.main === module) {
 }
 
 // Cloud Functions exports
+//
+// メモリ: どの関数もこのファイルを読み込み、全関数の依存（特に googleapis）を起動時に読み込む。
+// そのため何もしない関数でも cold start の直後に 256MiB の上限を超えることがあった
+// （syncUserLinks・gmailPubSubHandler で発生）。全関数を 512MiB にしている。
+// 下げる場合は、関数ごとに依存を遅延読み込みするなどしてから cold start 時の使用量を計測する。
 export const webhook = onRequest(
   {
     region: "asia-northeast1",
-    // 画像OCRは廃止済み。全関数が同じエントリポイントで googleapis 等を読み込むため
-    // メモリは据え置き（下げる場合はコールドスタート時の使用量を計測してから）。
+    // 画像OCRは廃止済みだが、上の「メモリ」のとおり 512MiB より下げない。
     memory: "512MiB",
     // 1 回の配信に含まれるイベントは直列に処理して待つ。1 イベントの最悪ケースは
     // プロフィール取得のリトライ（最大 ~30 秒）+ カテゴリ分類（Jev 3 秒 + 失敗時の Gemini 8 秒で打ち切り）
@@ -89,7 +93,7 @@ export const importMoneyForward = onSchedule(
     timeZone: "Asia/Tokyo",
     region: "asia-northeast1",
     timeoutSeconds: 60,
-    memory: "256MiB",
+    memory: "512MiB",
     maxInstances: 1,
   },
   async () => {
@@ -109,7 +113,7 @@ export const gmailPubSubHandler = onMessagePublished(
   {
     topic: "gmail-notifications",
     region: "asia-northeast1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     maxInstances: 3,
     secrets: [
@@ -136,7 +140,7 @@ export const renewGmailWatch = onSchedule(
     timeZone: "Asia/Tokyo",
     region: "asia-northeast1",
     timeoutSeconds: 60,
-    memory: "256MiB",
+    memory: "512MiB",
     maxInstances: 2,
     secrets: ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
   },
@@ -164,7 +168,7 @@ export const postRecurringExpenses = onSchedule(
     timeZone: "Asia/Tokyo",
     region: "asia-northeast1",
     timeoutSeconds: 120,
-    memory: "256MiB",
+    memory: "512MiB",
     maxInstances: 1,
     retryCount: 1,
     // 精算サマリーの送信（line/client.ts は両方そろっていないとクライアントを作らない）
@@ -212,6 +216,8 @@ gmailApp.use("/household", householdRouter, householdErrorHandler);
 export const api = onRequest(
   {
     region: "us-central1",
+    // 上の「メモリ」参照（未指定だと既定の 256MiB で、使用率が上限の近くにあった）。
+    memory: "512MiB",
     // 管理 API と LIFF ログイン用。cpu 未指定（1 vCPU 未満）のため同時実行は 1/インスタンスで、
     // 同時に処理できるリクエストは最大 5（家計簿の利用規模では十分）。
     maxInstances: 5,
