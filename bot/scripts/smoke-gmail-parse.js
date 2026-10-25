@@ -193,6 +193,57 @@ const colonInName = parseSMBCCardEmail('msg-m20', altLines('SAMPLE:MART EKIMAE')
 check('1 行: ラベルでないコロンでは切らない', colonInName && colonInName.merchant === 'SAMPLE:MART EKIMAE', JSON.stringify(colonInName));
 
 // ------------------------------------------------------------
+// 時刻の有無（usedAtHasTime。#235）
+// 中項目の時刻のルール（朝ご飯・昼ご飯・夜ご飯）は、メールに時刻が書かれていたときだけ当てる。
+// 時刻なし（00:00 にする）・日付なし（処理した時刻にする）・時刻として読めない表記は false。
+// ------------------------------------------------------------
+console.log('\nparseSMBCCardEmail (usedAtHasTime)');
+
+check('日付と時刻あり → true', evening && evening.usedAtHasTime === true, JSON.stringify(evening));
+check('JST 0 時台の時刻（00:30）も true', midnight && midnight.usedAtHasTime === true, JSON.stringify(midnight));
+check('◇ 書式の日時も true', altFormat && altFormat.usedAtHasTime === true, JSON.stringify(altFormat));
+check('1 行（HTML のみ）の日時も true', htmlParsed && htmlParsed.usedAtHasTime === true, JSON.stringify(htmlParsed));
+check('日付だけ（時刻なし）→ false', dateOnly && dateOnly.usedAtHasTime === false, JSON.stringify(dateOnly));
+
+const oneDigitHour = parseSMBCCardEmail('msg-t1', buildBody('2026/03/14 9:05', 'テスト食堂', '500'));
+check('時が 1 桁（9:05）→ true', oneDigitHour && oneDigitHour.usedAtHasTime === true, JSON.stringify(oneDigitHour));
+check('時が 1 桁でも JST の 9:05 として読む', oneDigitHour && formatJST(oneDigitHour.usedAt, 'YYYY-MM-DD HH:mm') === '2026-03-14 09:05',
+  oneDigitHour && formatJST(oneDigitHour.usedAt, 'YYYY-MM-DD HH:mm'));
+const lastMinute = parseSMBCCardEmail('msg-t2', buildBody('2026/03/14 23:59', 'テスト食堂', '500'));
+check('23:59 → true', lastMinute && lastMinute.usedAtHasTime === true, JSON.stringify(lastMinute));
+
+// dayjs は「25:00」を翌日 1:00、「12:60」を 13:00 に繰り上げて読む。日時（usedAt）は今と同じに読み、時刻なしとみなす
+for (const [label, time] of [['25:00', '25:00'], ['24:00', '24:00'], ['12:60', '12:60'], ['99:99', '99:99']]) {
+  const bad = parseSMBCCardEmail(`msg-t-${label}`, buildBody(`2026/03/14 ${time}`, 'テスト食堂', '500'));
+  check(`時刻として読めない表記（${label}）→ false`, bad && bad.usedAtHasTime === false, JSON.stringify(bad));
+}
+
+const before = Date.now();
+const noDate = parseSMBCCardEmail('msg-t3', ['ご利用店名：テスト食堂', 'ご利用金額：500円'].join('\n'));
+const after = Date.now();
+check('日付なし（処理した時刻にする）→ false', noDate && noDate.usedAtHasTime === false, JSON.stringify(noDate));
+check('日付なしの usedAt は処理した時刻（前提の確認）',
+  noDate && noDate.usedAt.getTime() >= before && noDate.usedAt.getTime() <= after, noDate && noDate.usedAt.toISOString());
+const unknownDate = parseSMBCCardEmail('msg-t4', buildBody('不明', 'テスト食堂', '500'));
+check('日時が読めない（「不明」）→ false', unknownDate && unknownDate.usedAtHasTime === false, JSON.stringify(unknownDate));
+check('どの結果も boolean', [evening, midnight, altFormat, dateOnly, oneDigitHour, noDate, unknownDate].every((p) => typeof p.usedAtHasTime === 'boolean'));
+
+// 日時を読めずに処理した時刻になった場合（parseJSTWallClock の退避）は、時刻が一致しないので false
+{
+  const time = require('../dist/time');
+  const realParse = time.parseJSTWallClock;
+  // メールの時刻は、いまの JST から 2 時間ずらす（処理した時刻と偶然一致させない）
+  const otherClock = formatJST(new Date(Date.now() + 2 * 3600 * 1000), 'HH:mm');
+  time.parseJSTWallClock = () => new Date();
+  try {
+    const fallback = parseSMBCCardEmail('msg-t5', buildBody(`2026/03/14 ${otherClock}`, 'テスト食堂', '500'));
+    check('読めずに処理した時刻になったら false', fallback && fallback.usedAtHasTime === false, JSON.stringify(fallback));
+  } finally {
+    time.parseJSTWallClock = realParse;
+  }
+}
+
+// ------------------------------------------------------------
 // 送信元（From ヘッダー）の判定
 // 表示名や末尾の文字列に正規ドメインを書いただけの偽装を通さないこと。
 // ------------------------------------------------------------

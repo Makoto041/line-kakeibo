@@ -1,6 +1,6 @@
 // 中項目を辞書と時刻のルールで決める（#235 の方式 C。モデルは呼ばない）
 //
-// まだどこからも呼ばない（LINE・Gmail の保存への組み込みは後続の PR）。
+// LINE の入力（line/expenseFlow.ts の textSubCategoryOf）と Gmail のカード利用通知（gmail/handler.ts の merchantSubCategoryOf）の保存で呼ぶ。
 // - 辞書: 大項目ごとに順番つきのグループ。説明文・店名を normalizeForMatch で揃えてから照合し、最初に当たったグループの中項目を採る。
 //   keywords は部分一致（String.includes）、exact は揃えた入力の全体と一致したときだけ当てる。入力から正規表現は作らない。
 // - 時刻: Gmail の店名（source: 'merchant'）で、時刻の分かる usedAt が渡され、飲食店のグループ（mealTime）に当たったときだけ、

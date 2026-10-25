@@ -21,11 +21,15 @@ import {
   GmailPubSubPayload,
   getCategoryEmoji,
 } from './types';
+import type { ParsedCardNotification } from './types';
 import { saveGmailExpenseAtomic } from '../firestore';
 import { classifyExpense } from '../geminiCategoryClassifier';
 import type { ClassificationResult } from '../geminiCategoryClassifier';
 import { sendCardUsageNotification } from '../line/flexMessage';
 import type { CategoryOrigin } from '../line/flexMessage';
+import { subCategoriesOf } from '../categoryTaxonomy';
+import { resolveSubCategory } from '../subCategoryRules';
+import { errorMessage } from '../logSafe';
 
 // システム用のLINE ID（Gmail自動取得用）
 const GMAIL_SYSTEM_LINE_ID = 'gmail-auto-system';
@@ -36,6 +40,33 @@ const GMAIL_SYSTEM_LINE_ID = 'gmail-auto-system';
  */
 export function merchantCategoryOf(r: ClassificationResult): { category: string; origin?: CategoryOrigin } {
   return r.category ? { category: r.category, origin: r.provider } : { category: 'その他', origin: 'unclassified' };
+}
+
+/**
+ * カード利用通知の中項目（#235）。店名を辞書で照合し、メールに時刻があれば飲食店を朝ご飯・昼ご飯・夜ご飯にする
+ * （resolveSubCategory。時刻が無いメールでは usedAt を渡さない）。
+ * 決まらなければ undefined（保存で項目ごと付かない）。判定に失敗しても投げず undefined にして、保存は続ける。
+ * 大項目に中項目の一覧があるとき（食費・娯楽）だけ、結果をログに出す（店名・ID は出さない）。
+ */
+export function merchantSubCategoryOf(
+  category: string,
+  parsed: Pick<ParsedCardNotification, 'merchant' | 'usedAt' | 'usedAtHasTime'>
+): string | undefined {
+  try {
+    const sub = resolveSubCategory({
+      major: category,
+      text: parsed.merchant,
+      source: 'merchant',
+      usedAt: parsed.usedAtHasTime ? parsed.usedAt : undefined,
+    });
+    if (subCategoriesOf(category).length > 0) {
+      console.log('Subcategory resolved', { source: 'merchant', subCategory: sub ?? null });
+    }
+    return sub ?? undefined;
+  } catch (error) {
+    console.warn('Subcategory resolution failed', { source: 'merchant', error: errorMessage(error) });
+    return undefined;
+  }
 }
 
 // デフォルトのグループID（環境変数から取得）
@@ -277,6 +308,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       description: parsed.merchant,
       date: toJSTDateString(parsed.usedAt),
       category,
+      subCategory: merchantSubCategoryOf(category, parsed), // 決まらなければ undefined（項目を付けない）
       // カード会社の通知から自動で入るので確認を求めない（要確認は手入力の支出だけ）
       confirmed: true,
       includeInTotal: true, // Gmail自動取得は基本的に会計に含める
@@ -381,13 +413,15 @@ export async function processLatestEmail(): Promise<{
         parsed.merchant,
         { source: 'merchant' }
       );
+      const category = categoryResult.category || 'その他';
 
       const expense = {
         lineId: GMAIL_SYSTEM_LINE_ID,
         amount: parsed.amount,
         description: parsed.merchant,
         date: toJSTDateString(parsed.usedAt),
-        category: categoryResult.category || 'その他',
+        category,
+        subCategory: merchantSubCategoryOf(category, parsed), // 決まらなければ undefined（項目を付けない）
         confirmed: true, // 自動で入るので確認を求めない（要確認は手入力の支出だけ）
         includeInTotal: true, // Gmail自動取得は基本的に会計に含める
         payerId: GMAIL_SYSTEM_LINE_ID,
@@ -503,6 +537,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
       description: parsed.merchant,
       date: toJSTDateString(parsed.usedAt),
       category,
+      subCategory: merchantSubCategoryOf(category, parsed), // 決まらなければ undefined（項目を付けない）
       confirmed: true, // 自動で入るので確認を求めない（要確認は手入力の支出だけ）
       includeInTotal: true, // Gmail自動取得は基本的に会計に含める
       payerId: GMAIL_SYSTEM_LINE_ID,

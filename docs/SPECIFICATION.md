@@ -64,8 +64,9 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 1. LINE プロフィール取得（リトライ＋15分メモリキャッシュ）
 2. `appUid` 解決（LINE userId → Firebase Auth 匿名ユーザーを作成/取得。`linkUserResolver.ts`）
 3. カテゴリの決定: カテゴリトークン（§2.2）があればそれを使う（指定・既定カテゴリの旧名は正準名に揃える）。無ければカテゴリ分類（§4。辞書 → Jev → Gemini）とユーザーデフォルトカテゴリを並列取得し、分類結果の確信度 ≥ 0.4 なら採用（辞書・Jev・Gemini のどれで決まっても同じ閾値）、なければデフォルト、それも無ければ `その他`。カードに出す判定元（§2.4）も一緒に決める（`decideTextExpenseCategory`）
+   - 大項目が決まったあと（指定・分類・既定のどの経路でも）、説明文から中項目を決める（§4.1。辞書だけで、時刻は当てない。`textSubCategoryOf`）。判定元には影響しない
 4. グループ所属の決定（`expenseGroupScope.ts`）: 発言元の LINE グループに紐づく世帯（`groups.lineGroupId` が一致）の有効メンバーなら `groupId` と `lineGroupId` を付ける。それ以外（第三者・脱退済み・紐づく世帯なし）は**どちらも付けず個人支出**として保存し、Web 一覧にも LINE の集計・精算にも入れない
-5. `expenses` に保存（`confirmed: false`, `includeInTotal: false`, `inputSource: 'line_text'`）
+5. `expenses` に保存（`confirmed: false`, `includeInTotal: false`, `inputSource: 'line_text'`。`subCategory` は中項目が決まったときだけ付ける）
 6. 確認用 Flex メッセージを送信（§2.4 の登録・編集カード）
 
 ### 2.4 登録・編集カードの構成（`bot/src/line/flexMessage.ts`）
@@ -169,8 +170,8 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 ### 3.1 Gmail 連携（三井住友カード利用通知）
 
 - Gmail API（`gmail.readonly` スコープのみ）＋ **Pub/Sub push 通知**（topic: `gmail-notifications`）
-- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」を抽出 → カテゴリ分類（§4。Jev → Gemini → 辞書。確信度に関係なく採用）→ **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 4 行＋ボタン）
-- 保存フィールド: `lineId`/`payerId` はシステムユーザー `gmail-auto-system`、`inputSource: 'gmail_auto'`, `status: 'shared'`, `confirmed: true`（自動で入るので要確認にしない）, `includeInTotal: true`, `usedAt`（カード利用日時）、`groupId`（`DEFAULT_GROUP_ID`）/ `lineGroupId`（`LINE_GROUP_ID`）
+- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」と、メールに時刻が書かれていたか（`usedAtHasTime`。日付と 0:00〜23:59 の時刻の両方が取れたときだけ true。時刻なし〔00:00 にする〕・日付なし〔処理した時刻にする〕は false）を抽出 → カテゴリ分類（§4。Jev → Gemini → 辞書。確信度に関係なく採用）→ 中項目の判定（§4.1。店名の辞書。`usedAtHasTime` のときだけ飲食店を朝ご飯・昼ご飯・夜ご飯にする。`merchantSubCategoryOf`）→ **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 4 行＋ボタン）
+- 保存フィールド: `lineId`/`payerId` はシステムユーザー `gmail-auto-system`、`inputSource: 'gmail_auto'`, `status: 'shared'`, `confirmed: true`（自動で入るので要確認にしない）, `includeInTotal: true`, `usedAt`（カード利用日時）、`groupId`（`DEFAULT_GROUP_ID`）/ `lineGroupId`（`LINE_GROUP_ID`）、`subCategory`（中項目が決まったときだけ。手動処理の `/gmail/process-latest`・`/gmail/force-process/:messageId` でも同じ）
 - watch は7日で失効するため、**6日ごとの cron**（`renewGmailWatch`）で更新
 - 管理エンドポイント（`api` function, `/gmail/*`）: OAuth 認可・watch 登録・状態確認・手動処理など。認証は `ADMIN_SECRET` を **`Authorization: Bearer` ヘッダーでのみ**受け付け、定数時間で比較する（`requireAdminAuth`）＋レートリミット（OAuth callback のみ CSRF state 検証）。`?adminSecret=` クエリ渡しはアクセスログ等に秘密値が残るため廃止した。詳細は [GMAIL_AUTO_SPEC.md](./GMAIL_AUTO_SPEC.md)
 
@@ -231,6 +232,17 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - 分類の結果は判定元（`provider`: `dictionary` / `jev` / `gemini`）を持ち、キャッシュでも残る。最初のカードの括弧に出す（§2.4）
 
 ユーザーの修正は `categoryFeedback` コレクションに記録される。
+
+### 4.1 中項目の判定（#235）
+
+食費・娯楽の支出に、中項目（`subCategory`。一覧は `bot/src/categoryTaxonomy.ts` の `SUB_CATEGORIES`）を付ける。大項目が決まったあとに、**辞書と時刻のルールだけ**で決める（`bot/src/subCategoryRules.ts` の `resolveSubCategory`。モデルは呼ばず、外部にも送らない）。
+
+- **辞書**: 大項目ごとに順番つきの語のグループを持ち、説明文・店名を揃えて（NFKC・小文字・記号除去）照合し、最初に当たったグループの中項目を採る。大項目は正準名の完全一致で見る（中項目の一覧が無い大項目・カスタム名では付けない）
+- **LINE の入力**: 説明文の辞書だけ。時刻は当てない（入力した時刻は食べた時刻とは限らない）。例: 「ランチ」→ 昼ご飯、「ラーメン」→ 外食
+- **カード利用通知（Gmail）**: 店名の辞書。メールに時刻が書かれていたとき（§3.1 の `usedAtHasTime`）だけ、飲食店のグループに当たった店名を JST の時刻で朝ご飯（5:00〜10:59）・昼ご飯（11:00〜16:59）・夜ご飯（17:00〜翌 4:59）にする。時刻の無いメールの飲食店は外食。カフェ・コンビニ・飲み会などには時刻を当てない
+- **決まらなければ付けない**: 辞書に当たらない・説明が「支出」だけ・大項目に中項目の一覧が無いときは `subCategory` の項目を保存しない。「その他の食費」「その他の娯楽」は自動では付けない（手で選ぶためのもの）
+- 判定に失敗しても保存は続ける（中項目なし）。結果は `Subcategory resolved` のログ（`source`・`subCategory` だけ。説明・店名・ID は出さない）で見られる。食費・娯楽のときだけ出す
+- **既存のデータはそのまま**（遡って付けない）。Web の編集で大項目を変えると `subCategory` を消す（§6）
 
 ---
 
@@ -301,7 +313,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 | コレクション | 主なフィールド | 備考 |
 |---|---|---|
-| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `subCategory?`（中項目。任意で、`category`（大項目）とは別に持つ。#235 の途中で、まだ保存する処理は無い。Web の編集で大項目を変えると消す）, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`。`advance_pending` は立替、`advance_settled` は以前の立替の精算か、全額にする前の立替を精算済みにしたもの), `inputSource`(`line_text\|gmail_auto\|recurring`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceFull?`（立替を全額で精算に加算する扱い。［自分が立替］で `true`。無い `advance_pending` は全額にする前の立替で、新しくは作られない。bot だけが書き、クライアントからは作成・更新とも不可）, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `recurringId?`, `receiptUrl?`, `needsEdit?`（**レガシー**。書き込み・読み出しとも廃止済みで既存データにのみ存在）, `items?[]`, `ocrText?`（レガシー）, `createdAt`, `updatedAt` | 中核コレクション。システムユーザーの `lineId`: Gmail 取込 `gmail-auto-system` / 固定費 `recurring-system`（ルールで世帯メンバーが修正・削除できる） |
+| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `subCategory?`（中項目。任意で、`category`（大項目）とは別に持つ。LINE の入力と Gmail の取込で、決まったときだけ bot が保存する〔§4.1〕。決まらなければ項目が無い。Web の編集で大項目を変えると消す）, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`。`advance_pending` は立替、`advance_settled` は以前の立替の精算か、全額にする前の立替を精算済みにしたもの), `inputSource`(`line_text\|gmail_auto\|recurring`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceFull?`（立替を全額で精算に加算する扱い。［自分が立替］で `true`。無い `advance_pending` は全額にする前の立替で、新しくは作られない。bot だけが書き、クライアントからは作成・更新とも不可）, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `recurringId?`, `receiptUrl?`, `needsEdit?`（**レガシー**。書き込み・読み出しとも廃止済みで既存データにのみ存在）, `items?[]`, `ocrText?`（レガシー）, `createdAt`, `updatedAt` | 中核コレクション。システムユーザーの `lineId`: Gmail 取込 `gmail-auto-system` / 固定費 `recurring-system`（ルールで世帯メンバーが修正・削除できる） |
 | `groups` | `name`, `inviteCode`(8桁・暗号学的乱数。参加には使わない), `createdBy`, `lineGroupId?`, `splitSettings?`(`{ collectFromLineId, updatedBy, updatedAt }`) | 汎用グループ機能はコード上「非推奨」— 実運用は LINE グループ共有。クライアント書込不可 |
 | `groupMembers/{groupId}_{lineId}` | `groupId`, `lineId`, `displayName`, `isActive`, `joinedAt`, `leftAt?`, `deactivatedReason?` | `isActive == true` が Web アクセス権。LINE グループ退出（`memberLeft`）で bot が `false` にする。発言による自動追加はしない（世帯2名固定、追加は管理スクリプト）。クライアント書込不可 |
 | `recurringExpenses` | `groupId`, `name`, `amount`, `category`, `dayOfMonth`, `payment`(`shared\|advance`), `payerLineId`, `active`, `lastPostedMonth`, `startDate`, `createdBy`, `createdAt`, `updatedAt` | 固定費の項目（§3.3）。クライアントからは読み書き不可（`/household/recurring` 経由） |

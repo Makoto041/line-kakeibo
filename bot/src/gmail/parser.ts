@@ -7,7 +7,7 @@
 
 import { ParsedCardNotification, SMBC_CARD_FILTER } from './types';
 import { getFirestore } from 'firebase-admin/firestore';
-import { parseJSTWallClock } from '../time';
+import { formatJST, parseJSTWallClock } from '../time';
 
 /**
  * ヘッダー値から quoted-string（"..."）とコメント（(...)）を取り除く。
@@ -189,6 +189,9 @@ function normalizeMerchant(raw: string): string {
   return limited || '不明な店舗';
 }
 
+/** 時刻として受け付ける表記（0:00〜23:59。時は 1〜2 桁、分は 2 桁） */
+const CLOCK_TIME_PATTERN = /^([01]?\d|2[0-3]):[0-5]\d$/;
+
 /**
  * 三井住友カード利用通知メールをパース
  *
@@ -237,14 +240,22 @@ export function parseSMBCCardEmail(
       /(?:ご利用日時|◇利用日)[：:]\s*(\d{4}\/\d{1,2}\/\d{1,2})\s*(\d{1,2}:\d{2})?/
     );
     let usedAt: Date;
+    // 時刻がメールに書かれていたか（中項目の時刻のルールに使う。時刻なし・日付なしは false）
+    let usedAtHasTime = false;
     if (dateMatch) {
       const dateStr = dateMatch[1];
       const timeStr = dateMatch[2] || '00:00';
       // メール本文の日時は JST の壁時計表記。コンテナのTZ（本番は UTC）で
       // 解釈すると9時間ずれた瞬間になるため、JST として読む。
       usedAt = parseJSTWallClock(dateStr.replace(/\//g, '-'), timeStr);
+      // 「25:00」のような表記は dayjs が繰り上げて読むので時刻なしとみなす。
+      // 読めずに処理した時刻になった場合（parseJSTWallClock の退避）も、時刻が一致しないので false
+      usedAtHasTime =
+        dateMatch[2] !== undefined &&
+        CLOCK_TIME_PATTERN.test(dateMatch[2]) &&
+        formatJST(usedAt, 'H:mm') === dateMatch[2].replace(/^0(\d)/, '$1');
     } else {
-      // 日時が見つからない場合は現在時刻を使用
+      // 日時が見つからない場合は現在時刻を使用（時刻なしとして扱う）
       usedAt = new Date();
     }
 
@@ -252,6 +263,7 @@ export function parseSMBCCardEmail(
       merchant,
       amount,
       usedAt,
+      usedAtHasTime,
       cardType: '三井住友ゴールドVISA（NL）',
       messageId,
     };

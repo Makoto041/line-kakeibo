@@ -1,5 +1,6 @@
 /**
  * 固定費（/household/recurring と毎日の計上）と折半精算の設定（/household/split-settings）の統合テスト（Firestore・Auth エミュレータ + 実際の Express ルーター）
+ * 末尾で、支出の保存（saveGmailExpenseAtomic・saveExpense）の中項目（subCategory）の有無も確かめる。
  *
  * emulator-household-api.js と同じ形で実行する（npm -w bot run test:emulator から続けて動く）。
  * 本番のプロジェクトには接続しない（demo-* 以外は即終了）。
@@ -236,6 +237,72 @@ async function main() {
     check('ほかの項目は残る', (await db.doc('groups/h1').get()).get('inviteCode') === '101010');
     const cleared = await split(aki, { groupId: 'h1', collectFromLineId: null });
     check('null で指定を解除', cleared.status === 200 && (await db.doc('groups/h1').get()).get('splitSettings').collectFromLineId === null);
+
+    // 中項目（#235）: 決まれば subCategory を保存し、決まらなければ項目ごと付けない（undefined の項目は書かない）
+    console.log('支出の保存: 中項目（subCategory）');
+    {
+      const { saveGmailExpenseAtomic, saveExpense } = require('../dist/firestore');
+      const { merchantSubCategoryOf } = require('../dist/gmail/handler');
+      const { textSubCategoryOf } = require('../dist/line/expenseFlow');
+      const gmailBase = {
+        lineId: 'gmail-auto-system',
+        date: '2026-09-12',
+        confirmed: true,
+        includeInTotal: true,
+        payerId: 'gmail-auto-system',
+        groupId: 'h1',
+        lineGroupId: 'C_home',
+        inputSource: 'gmail_auto',
+        status: 'shared',
+      };
+      const noon = new Date('2026-09-12T03:30:00Z'); // JST 12:30
+      const lunchMail = { merchant: 'テスト食堂 駅前店', usedAt: noon, usedAtHasTime: true };
+      const g1 = await saveGmailExpenseAtomic({
+        ...gmailBase,
+        amount: 980,
+        description: lunchMail.merchant,
+        category: '食費',
+        subCategory: merchantSubCategoryOf('食費', lunchMail),
+        gmailMessageId: 'msg-sub-1',
+        usedAt: noon,
+      });
+      const d1 = (await db.doc(`expenses/${g1.expenseId}`).get()).data();
+      check('Gmail: 時刻ありの飲食店は subCategory「昼ご飯」を保存する', !g1.alreadyExists && d1.subCategory === '昼ご飯' && d1.category === '食費', d1);
+
+      const drugMail = { merchant: 'SAMPLE DRUG', usedAt: noon, usedAtHasTime: true };
+      const g2 = await saveGmailExpenseAtomic({
+        ...gmailBase,
+        amount: 1280,
+        description: drugMail.merchant,
+        category: '日用品',
+        subCategory: merchantSubCategoryOf('日用品', drugMail),
+        gmailMessageId: 'msg-sub-2',
+        usedAt: noon,
+      });
+      const d2 = (await db.doc(`expenses/${g2.expenseId}`).get()).data();
+      check('Gmail: 中項目が決まらなければ subCategory の項目を付けない', !g2.alreadyExists && !('subCategory' in d2) && d2.category === '日用品', d2);
+
+      const lineBase = {
+        lineId: 'Uaki',
+        appUid: 'app-aki',
+        groupId: 'h1',
+        lineGroupId: 'C_home',
+        userDisplayName: 'Aki',
+        date: '2026-09-12',
+        confirmed: false,
+        includeInTotal: false,
+        payerId: 'Uaki',
+        payerDisplayName: 'Aki',
+        inputSource: 'line_text',
+        paymentMethod: 'unknown',
+      };
+      const l1 = await saveExpense({ ...lineBase, amount: 900, description: 'ランチ', category: '食費', subCategory: textSubCategoryOf('食費', 'ランチ') });
+      const d3 = (await db.doc(`expenses/${l1}`).get()).data();
+      check('LINE: 「ランチ」は subCategory「昼ご飯」を保存する', d3.subCategory === '昼ご飯', d3);
+      const l2 = await saveExpense({ ...lineBase, amount: 300, description: 'ティッシュ', category: '日用品', subCategory: textSubCategoryOf('日用品', 'ティッシュ') });
+      const d4 = (await db.doc(`expenses/${l2}`).get()).data();
+      check('LINE: 中項目が決まらなければ subCategory の項目を付けない', !('subCategory' in d4) && d4.category === '日用品', d4);
+    }
   } finally {
     server.close();
   }
