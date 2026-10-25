@@ -19,6 +19,7 @@ const { parseTextExpense } = require('../dist/textParser');
 // どちらも LINE クライアント・Firestore・Gmail のクライアントは最初に使うときに作るので、読み込むだけなら外部に接続しない
 const { decideTextExpenseCategory, textSubCategoryOf } = require('../dist/line/expenseFlow');
 const { merchantCategoryOf, merchantSubCategoryOf } = require('../dist/gmail/handler');
+const { cardNoticeRetryKey } = require('../dist/gmail/cardNotice');
 
 let failed = 0;
 
@@ -956,6 +957,15 @@ const LATE_NIGHT = new Date('2026-03-14T16:30:00.000Z'); // JST 3/15 01:30
   }
 }
 
+{
+  console.log('\n[カード利用通知の X-Line-Retry-Key（gmail/cardNotice.ts）]');
+  const a = cardNoticeRetryKey('18c0ffee12345678');
+  check('同じメッセージなら同じ値', a === cardNoticeRetryKey('18c0ffee12345678'), a);
+  check('別のメッセージなら別の値', a !== cardNoticeRetryKey('18c0ffee12345679'), a);
+  const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  check('UUID v4 の形', ['18c0ffee12345678', 'msg-pubsub', ''].every((id) => uuidV4.test(cardNoticeRetryKey(id))), a);
+}
+
 // ------------------------------------- 保存データの subCategory（LINE の入力・カード利用通知の 3 経路）
 //
 // processExpenseInBackground と Gmail の 3 経路（Pub/Sub の processMessage・processLatestEmail・forceProcessMessage）を、
@@ -999,23 +1009,44 @@ async function saveFlowChecks() {
     cards.push(info);
   };
   const gmailCards = [];
-  flex.sendCardUsageNotification = async (to, info) => {
+  const gmailCardKeys = [];
+  flex.sendCardUsageNotification = async (to, info, retryKey) => {
     gmailCards.push(info);
+    gmailCardKeys.push(retryKey);
   };
   classifier.classifyExpense = async () => classifyReply;
 
   const gmailSaved = [];
-  firestore.saveGmailExpenseAtomic = async (expense) => {
+  const gmailNotices = [];
+  // 送信待ちの印（system/gmailCardNotice_*。gmail/cardNotice.ts）。偽の saveGmailExpenseAtomic が書き、偽の getFirestore で読む・消す
+  const systemDocs = new Map();
+  firestore.saveGmailExpenseAtomic = async (expense, notice) => {
     gmailSaved.push(expense);
-    return { expenseId: `exp_gmail_${gmailSaved.length}`, alreadyExists: false };
+    gmailNotices.push(notice);
+    const expenseId = `exp_gmail_${gmailSaved.length}`;
+    if (notice) systemDocs.set(notice.ref.id, notice.build(expenseId));
+    return { expenseId, alreadyExists: false };
   };
   gmailParser.isDuplicateExpense = async () => false;
   gmailParser.getExpenseIdByGmailMessageId = async () => null;
   gmailWatch.getWatchState = async () => ({ historyId: '100', watchExpiration: Date.now() + 86400000 });
   gmailWatch.updateHistoryId = async () => {};
-  // 失敗の記録（system/gmailFailures）の消去だけが getFirestore を直接使う
+  // 失敗の記録（system/gmailFailures）の消去と、送信待ちの印の読み書き・支出の有無の確かめが getFirestore を直接使う
   adminFirestore.getFirestore = () => ({
-    collection: () => ({ doc: () => ({ set: async () => {} }) }),
+    collection: (name) => ({
+      doc: (id) => ({
+        id,
+        set: async () => {},
+        get: async () => {
+          // expenses は消されていない扱い
+          const data = name === 'system' ? systemDocs.get(id) : { id };
+          return { exists: data !== undefined, data: () => data };
+        },
+        delete: async () => {
+          if (name === 'system') systemDocs.delete(id);
+        },
+      }),
+    }),
     runTransaction: async () => 1,
   });
   let mailBody = '';
@@ -1173,6 +1204,18 @@ async function saveFlowChecks() {
   );
   const gmailRow = gc ? rowText(settingsRows(buildCardUsageFlexMessage(gc))[3]) : '';
   check('Pub/Sub（processMessage）: カードのカテゴリの行は「食費 › 昼ご飯（Jev）」', gmailRow === 'カテゴリ：食費 › 昼ご飯（Jev）', gmailRow);
+  const pubsubNotice = last(gmailNotices);
+  check(
+    'Pub/Sub（processMessage）: 保存に送信待ちの印（system/gmailCardNotice_{messageId}）を渡す',
+    pubsubNotice && pubsubNotice.ref.id === 'gmailCardNotice_msg-pubsub',
+    pubsubNotice && pubsubNotice.ref.id
+  );
+  check(
+    'Pub/Sub（processMessage）: メッセージから決まる X-Line-Retry-Key を付けて送る',
+    gc && last(gmailCardKeys) === cardNoticeRetryKey('msg-pubsub'),
+    last(gmailCardKeys)
+  );
+  check('Pub/Sub（processMessage）: 送ったら印を消す', !systemDocs.has('gmailCardNotice_msg-pubsub'), JSON.stringify([...systemDocs.keys()]));
   check(
     'Pub/Sub（processMessage）: 中項目は 1 通で 1 回だけ決める（カードのために決め直さない）',
     subLogs(allLines.slice(linesBeforeMail)).length === 1,
@@ -1187,6 +1230,7 @@ async function saveFlowChecks() {
     latest && latest.success && g && g.gmailMessageId === 'msg-latest' && g.category === '食費' && g.subCategory === '昼ご飯',
     JSON.stringify({ latest, g })
   );
+  check('processLatestEmail: 送信待ちの印を作らない（カードを送らない）', last(gmailNotices) === undefined);
 
   before = gmailSaved.length;
   cardsBefore = gmailCards.length;
@@ -1203,6 +1247,14 @@ async function saveFlowChecks() {
     'forceProcessMessage: カードにも保存した中項目を渡す（昼ご飯）',
     gc && forced && gc.expenseId === forced.expenseId && gc.subCategory === '昼ご飯',
     JSON.stringify(gc)
+  );
+  check(
+    'forceProcessMessage: 印を渡し、同じ導き方の X-Line-Retry-Key で送り、送ったら消す',
+    last(gmailNotices) &&
+      last(gmailNotices).ref.id === 'gmailCardNotice_msg-force-1' &&
+      last(gmailCardKeys) === cardNoticeRetryKey('msg-force-1') &&
+      !systemDocs.has('gmailCardNotice_msg-force-1'),
+    JSON.stringify({ key: last(gmailCardKeys), docs: [...systemDocs.keys()] })
   );
   check(
     'forceProcessMessage: 中項目は 1 通で 1 回だけ決める',

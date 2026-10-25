@@ -25,11 +25,12 @@ import {
 import { saveGmailExpenseAtomic } from '../firestore';
 import { classifyExpense } from '../geminiCategoryClassifier';
 import type { ClassificationResult } from '../geminiCategoryClassifier';
-import { sendCardUsageNotification } from '../line/flexMessage';
-import type { CategoryOrigin } from '../line/flexMessage';
+import type { CardUsageInfo, CategoryOrigin } from '../line/flexMessage';
 import { subCategoriesOf } from '../categoryTaxonomy';
 import { resolveSubCategory } from '../subCategoryRules';
-import { errorMessage } from '../logSafe';
+import { errorMessage, maskId } from '../logSafe';
+import { cardNoticeFor, deliverPendingCardNotice } from './cardNotice';
+import type { CardNoticeDelivery } from './cardNotice';
 
 // システム用のLINE ID（Gmail自動取得用）
 const GMAIL_SYSTEM_LINE_ID = 'gmail-auto-system';
@@ -67,6 +68,29 @@ export function merchantSubCategoryOf(
     console.warn('Subcategory resolution failed', { source: 'merchant', error: errorMessage(error) });
     return undefined;
   }
+}
+
+/**
+ * カード利用通知に出す内容（保存した値と揃える。expenseId は保存で決まるので含めない）
+ */
+function cardUsageOf(
+  parsed: Pick<ParsedCardNotification, 'merchant' | 'amount' | 'usedAt'>,
+  category: string,
+  subCategory: string | undefined,
+  categoryOrigin: CategoryOrigin | undefined
+): Omit<CardUsageInfo, 'expenseId'> {
+  return {
+    merchant: parsed.merchant,
+    amount: parsed.amount,
+    category,
+    subCategory, // 保存した中項目（決め直さない）
+    categoryOrigin,
+    categoryEmoji: getCategoryEmoji(category),
+    date: formatJST(parsed.usedAt, 'M/D'),
+    // 保存時の値と揃える（Gmail自動取得は共同費として確定で入る）
+    status: 'shared',
+    includeInTotal: true,
+  };
 }
 
 // デフォルトのグループID（環境変数から取得）
@@ -253,6 +277,14 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
  */
 async function processMessage(gmail: any, messageId: string): Promise<void> {
   try {
+    // 前の処理が保存のあと、カードを送れずに終わっていたら送り直す（印は保存と同じトランザクションで作る。cardNotice.ts）。
+    // 印があれば支出は保存済みなので、ここで終える
+    const pending = await deliverPendingCardNotice(messageId);
+    if (pending !== 'none') {
+      console.log('Pending card notice handled', { message: maskId(messageId), result: pending });
+      return;
+    }
+
     // 重複チェック
     const isDuplicate = await isDuplicateExpense(messageId);
     if (isDuplicate) {
@@ -323,30 +355,25 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       status: 'shared' as const,
     };
 
+    // LINEグループに送るカード。送信待ちの印として保存と同じトランザクションで書き、送れたら消す
+    const notice = lineGroupId
+      ? cardNoticeFor(messageId, lineGroupId, cardUsageOf(parsed, category, expense.subCategory, categoryOrigin))
+      : undefined;
+
     // アトミックに重複チェック＋保存（並行処理での二重登録を防止）
-    const { expenseId, alreadyExists } = await saveGmailExpenseAtomic(expense as any);
+    const { expenseId, alreadyExists } = await saveGmailExpenseAtomic(expense as any, notice);
     if (alreadyExists) {
       console.log(`Skipping duplicate (atomic): messageId: ${messageId}, existingId: ${expenseId}`);
+      // 同時に処理した相手が保存のあと、カードを送る前に止まっていたら送る（相手と同じ key なので二重には届かない）
+      await deliverPendingCardNotice(messageId);
       return;
     }
     console.log(`Expense saved from Gmail: ${expenseId}`);
 
-    // LINEグループに通知
+    // LINEグループに通知（失敗したら投げる。印が残り、再処理で送り直す）
     if (lineGroupId) {
-      await sendCardUsageNotification(lineGroupId, {
-        expenseId,
-        merchant: parsed.merchant,
-        amount: parsed.amount,
-        category,
-        subCategory: expense.subCategory, // 保存した中項目（決め直さない）
-        categoryOrigin,
-        categoryEmoji: getCategoryEmoji(category),
-        date: formatJST(parsed.usedAt, 'M/D'),
-        // 保存時の値と揃える（Gmail自動取得は共同費として確定で入る）
-        status: 'shared',
-        includeInTotal: true,
-      });
-      console.log(`LINE notification sent for expense: ${expenseId}`);
+      const delivery = await deliverPendingCardNotice(messageId);
+      console.log('Card notice delivered after saving', { expense: maskId(expenseId), result: delivery });
     } else {
       console.warn('LINE_GROUP_ID not configured, skipping notification');
     }
@@ -461,23 +488,30 @@ export async function processLatestEmail(): Promise<{
 
 /**
  * テスト用: 指定したメッセージIDを強制処理（冪等: 既存の支出があればそれを返す）
+ *
+ * 既存の支出に送信待ちのカード（cardNotice.ts）が残っていれば送り直し、結果を cardNotice で返す。
  */
 export async function forceProcessMessage(messageId: string): Promise<{
   success: boolean;
   message: string;
   expenseId?: string;
   alreadyExists?: boolean;
+  cardNotice?: CardNoticeDelivery;
 }> {
   try {
     // 冪等性: 既存の支出があればそれを返す（重複作成を防ぐ）
     const existingExpenseId = await getExpenseIdByGmailMessageId(messageId);
     if (existingExpenseId) {
       console.log(`Expense already exists for messageId ${messageId}: ${existingExpenseId}`);
+      const cardNotice = await deliverPendingCardNotice(messageId);
       return {
         success: true,
-        message: `Already processed (existing expense)`,
+        message: cardNotice === 'sent'
+          ? 'Already processed (existing expense); resent the pending card notice'
+          : `Already processed (existing expense)`,
         expenseId: existingExpenseId,
         alreadyExists: true,
+        cardNotice,
       };
     }
 
@@ -550,35 +584,30 @@ export async function forceProcessMessage(messageId: string): Promise<{
       status: 'shared' as const,
     };
 
+    // LINEグループに送るカード（processMessage と同じく、送信待ちの印を保存と同じトランザクションで書く）
+    const notice = lineGroupId
+      ? cardNoticeFor(messageId, lineGroupId, cardUsageOf(parsed, category, expense.subCategory, categoryOrigin))
+      : undefined;
+
     // アトミックに重複チェック＋保存
-    const { expenseId, alreadyExists } = await saveGmailExpenseAtomic(expense as any);
+    const { expenseId, alreadyExists } = await saveGmailExpenseAtomic(expense as any, notice);
     if (alreadyExists) {
       console.log(`Duplicate detected (atomic): messageId: ${messageId}, existingId: ${expenseId}`);
+      const cardNotice = await deliverPendingCardNotice(messageId);
       return {
         success: true,
         message: `Duplicate (same content already exists)`,
         expenseId,
         alreadyExists: true,
+        cardNotice,
       };
     }
     console.log(`Expense saved from Gmail (force): ${expenseId}`);
 
-    // LINEグループに通知（新規作成時のみ）
+    // LINEグループに通知（新規作成時のみ。失敗したら印が残り、もう一度呼べば送り直す）
     if (lineGroupId) {
-      await sendCardUsageNotification(lineGroupId, {
-        expenseId,
-        merchant: parsed.merchant,
-        amount: parsed.amount,
-        category,
-        subCategory: expense.subCategory, // 保存した中項目（決め直さない）
-        categoryOrigin,
-        categoryEmoji: getCategoryEmoji(category),
-        date: formatJST(parsed.usedAt, 'M/D'),
-        // 保存時の値と揃える（Gmail自動取得は共同費として確定で入る）
-        status: 'shared',
-        includeInTotal: true,
-      });
-      console.log(`LINE notification sent for expense: ${expenseId}`);
+      const delivery = await deliverPendingCardNotice(messageId);
+      console.log('Card notice delivered after saving', { expense: maskId(expenseId), result: delivery });
     }
 
     return {

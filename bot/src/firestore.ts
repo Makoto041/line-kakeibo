@@ -122,17 +122,27 @@ export async function saveExpense(expense: Omit<Expense, 'id' | 'createdAt' | 'u
  * Gmail自動取得用のアトミックな保存（重複チェック付き）
  * gmailMessageIdまたはusedAt+merchant+amountで重複チェック
  *
+ * @param notice 新規に保存したときだけ、同じトランザクションで書く文書（カード利用通知の送信待ちの印。gmail/cardNotice.ts）。
+ *   build には保存した支出の ID を渡す
  * @returns { expenseId, alreadyExists } - 保存または既存のID
  */
 export async function saveGmailExpenseAtomic(
   expense: Omit<Expense, 'id' | 'createdAt' | 'updatedAt'> & {
     gmailMessageId: string;
     usedAt?: Date;
+  },
+  notice?: {
+    ref: FirebaseFirestore.DocumentReference;
+    build: (expenseId: string) => FirebaseFirestore.DocumentData;
   }
 ): Promise<{ expenseId: string; alreadyExists: boolean }> {
   const db = getDb();
 
   return db.runTransaction(async (transaction) => {
+    // 0. 印の文書も読む（トランザクションの読み取りは書き込みより前に置く）。
+    //    同じメッセージを同時に処理した相手も同じ文書を読んで書くので、どちらかがやり直しになり二重に保存しない
+    if (notice) await transaction.get(notice.ref);
+
     // 1. gmailMessageIdで重複チェック
     const messageIdQuery = db.collection('expenses')
       .where('gmailMessageId', '==', expense.gmailMessageId)
@@ -202,6 +212,7 @@ export async function saveGmailExpenseAtomic(
       createdAt: now,
       updatedAt: now,
     });
+    if (notice) transaction.set(notice.ref, notice.build(newDocRef.id));
 
     console.log(`Expense saved with ID: ${newDocRef.id}, lineId: ${maskId(expense.lineId)}`);
     return {
