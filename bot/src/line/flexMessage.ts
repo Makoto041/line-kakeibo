@@ -1292,14 +1292,14 @@ export function buildEmptyExpenseSummaryFlexMessage(
         },
         {
           type: 'text',
-          text: '• レシート画像を送信',
+          text: '• 「500 ランチ」のようにテキスト入力',
           size: 'sm',
           color: '#475569',
           margin: 'sm',
         },
         {
           type: 'text',
-          text: '• 「500 ランチ」のようにテキスト入力',
+          text: '• レシート画像はWebで支出に添付',
           size: 'sm',
           color: '#475569',
           margin: 'sm',
