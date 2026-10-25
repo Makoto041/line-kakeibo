@@ -888,7 +888,7 @@ export interface ExpenseRecordLike {
   description?: string;
   amount?: number;
   category?: string;
-  /** 中項目（#235。set_category の返信では決め直した値か undefined） */
+  /** 中項目（#235。set_category の返信では、大項目が同じときは保存済みの値、変わるときは決め直した値か undefined） */
   subCategory?: string;
   date?: string;
   status?: ExpenseStatusType;
