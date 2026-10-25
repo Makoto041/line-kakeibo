@@ -76,7 +76,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.12.1 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.13.1 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
@@ -243,7 +243,7 @@ flowchart LR
         <li><b>Firestore ルール</b>: 世帯のデータは <code>groupMembers/{groupId}_{lineId}</code> が有効なメンバーだけが読める。支出の項目は型と値を検証し、精算済みの立替は金額・日付・支払者の変更と削除を拒否する。</li>
         <li><b>Storage ルール</b>: レシート画像は Firestore のメンバー情報を参照して制限（cross-service rules）。</li>
         <li><b>/household API</b>: ID トークンを検証し、世帯メンバーかを確認。レート制限と CORS の許可リストあり。</li>
-        <li><b>LINE のボタン</b>: 精算の金額が変わる［自分が払った］［自分が立替］［取り消す］は、世帯の有効メンバーだけが押せる。立替の項目（<code>status</code>・<code>advanceBy</code>・<code>advanceFull</code>）はクライアントから書けない。</li>
+        <li><b>LINE のボタン</b>: 支出を変えるボタン（区分・［自分が払った］［自分が立替］［取り消す］・OK・カテゴリの変更）とカテゴリ選択のカルーセルは、世帯の有効メンバーだけが押せる。カテゴリは選択肢の一覧にある値だけを保存する。立替の項目（<code>status</code>・<code>advanceBy</code>・<code>advanceFull</code>）はクライアントから書けない。</li>
         <li><b>世帯は 2 名固定</b>: メンバーの追加・無効化は bot ではなく管理スクリプト <code>scripts/manage-group-members.mjs</code> で行う。</li>
         <li><b>シークレット</b>: LINE のトークンや Jev・Gemini の API キーなどは Secret Manager に置き、関数は宣言した名前だけを読む（宣言した名前が Secret Manager に無いとデプロイが失敗する）。</li>
       </ul>

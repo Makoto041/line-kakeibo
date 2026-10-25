@@ -56,6 +56,18 @@ function deepEqual(a, b) {
 /** FieldValue.delete() の番兵か */
 const isFieldDelete = (v) => !!v && typeof v === 'object' && !!v.constructor && v.constructor.name.includes('Transform');
 
+/** Flex メッセージに含まれる postback ボタンの data（JSON を解析したもの）をすべて集める */
+function postbacksIn(message) {
+  const found = [];
+  (function collect(node) {
+    if (Array.isArray(node)) return node.forEach(collect);
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'postback' && typeof node.data === 'string') found.push(JSON.parse(node.data));
+    Object.values(node).forEach(collect);
+  })(message);
+  return found;
+}
+
 // ------------------------------------------------------------
 console.log('decideConfirm（LINE の OK と同じ判定）');
 
@@ -522,60 +534,194 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
   check('line/postback.js が読み込める', typeof require('../dist/line/postback').handlePostback === 'function');
 
   // ------------------------------------------------------------
-  console.log('\npostback の set_category（中項目は postback の値を使わず、サーバーで決める）');
+  console.log('\ntoSelectableCategoryName（postback の set_category で受け付けるカテゴリ）');
   {
-    // Firestore・LINE には繋がない: applyExpenseChange と返信を差し替える（dist の呼び出しはモジュールの exports を毎回引く）
+    const { toSelectableCategoryName, CANONICAL_CATEGORIES, MAX_SELECTABLE_CATEGORY_LENGTH } = require('../dist/categoryNormalization');
+    check('正準名 19 種はそのまま受け付ける', CANONICAL_CATEGORIES.length === 19 && CANONICAL_CATEGORIES.every((c) => toSelectableCategoryName(c) === c));
+    check(
+      'カルーセルの旧名は正準名にして受け付ける（医療費 → 医療・健康 など）',
+      toSelectableCategoryName('医療費') === '医療・健康' && toSelectableCategoryName('娯楽費') === '娯楽' &&
+        toSelectableCategoryName('衣服費') === '衣服' && toSelectableCategoryName('教育費') === '教育'
+    );
+    check('前後の空白は除いて照合する', toSelectableCategoryName(' 食費 ') === '食費');
+    check(
+      '文字列以外は受け付けない',
+      [undefined, null, 0, 123, true, {}, [], ['食費'], { name: '食費' }].every((v) => toSelectableCategoryName(v) === null)
+    );
+    check('一覧に無い名前（空・趣味・カスタム名）は受け付けない', ['', ' ', '趣味', '推し活', 'food', '食費費'].every((v) => toSelectableCategoryName(v) === null));
+    check(`上限は ${MAX_SELECTABLE_CATEGORY_LENGTH} 文字`, MAX_SELECTABLE_CATEGORY_LENGTH === 32);
+    check(
+      '上限ちょうどの長さ（空白で埋めた食費）は受け付け、1 文字超えると受け付けない（揃えれば一覧にある名前でも）',
+      toSelectableCategoryName('食費'.padStart(MAX_SELECTABLE_CATEGORY_LENGTH, ' ')) === '食費' &&
+        toSelectableCategoryName('食費'.padStart(MAX_SELECTABLE_CATEGORY_LENGTH + 1, ' ')) === null
+    );
+
+    // トーク履歴に残っているカルーセルの選択肢は、どれも受け付ける
+    const { buildCategorySelectCarousel } = require('../dist/line/flexMessage');
+    const carousel = buildCategorySelectCarousel({ expenseId: 'exp_0001', currentCategory: '食費', source: 'gmail', merchant: '店', amount: 100 });
+    const choices = postbacksIn(carousel).filter((p) => p.action === 'set_category');
+    check(
+      'カルーセルの「これにする」の値は、どれも受け付けて正準名にする',
+      choices.length === 10 && choices.every((p) => CANONICAL_CATEGORIES.includes(toSelectableCategoryName(p.category))),
+      JSON.stringify(choices.map((p) => [p.category, toSelectableCategoryName(p.category)]))
+    );
+  }
+
+  // ------------------------------------------------------------
+  console.log('\npostback（handlePostback を通す。偽の Firestore と偽の LINE クライアントで、外には繋がない）');
+  {
+    // dist の呼び出しはモジュールの exports を毎回引くので、getFirestore・LINE クライアントを差し替えられる。
+    // applyExpenseChange・メンバー確認（readActiveMember）は本物を、偽の Firestore の上で動かす。
+    const firestoreModule = require('firebase-admin/firestore');
     const actions = require('../dist/expenseActions');
     const client = require('../dist/line/client');
     const { handlePostback } = require('../dist/line/postback');
+    const origGetFirestore = firestoreModule.getFirestore;
     const origApply = actions.applyExpenseChange;
     const origReply = client.replyWithPushFallback;
+    const origGetLineClient = client.getLineClient;
     const origLog = console.log;
+    const origWarn = console.warn;
+    const origError = console.error;
+
+    /** パス（collection/id）→ 文書 */
+    const docs = new Map();
+    /** トランザクションで書いた [パス, 更新内容] */
+    const writes = [];
+    const snapshotOf = (data) => ({
+      exists: data !== undefined,
+      data: () => (data === undefined ? undefined : { ...data }),
+      get: (field) => (data ? data[field] : undefined),
+    });
+    /** Firestore の文書を読んだ回数 */
+    let reads = 0;
+    const refOf = (name, id) => ({
+      id,
+      path: `${name}/${id}`,
+      get: async () => {
+        reads++;
+        return snapshotOf(docs.get(`${name}/${id}`));
+      },
+    });
+    const fakeDb = {
+      collection: (name) => ({ doc: (id) => refOf(name, id) }),
+      runTransaction: async (fn) => {
+        const pending = [];
+        const result = await fn({ get: (ref) => ref.get(), update: (ref, update) => pending.push([ref.path, update]) });
+        for (const [path, update] of pending) {
+          writes.push([path, update]);
+          const next = { ...docs.get(path) };
+          for (const [k, v] of Object.entries(update)) {
+            if (isFieldDelete(v)) delete next[k];
+            else next[k] = v;
+          }
+          docs.set(path, next);
+        }
+        return result;
+      },
+    };
+
     const decisions = [];
+    /** applyExpenseChange の呼び出し（押した action と、authorize を付けたか） */
+    const applyCalls = [];
+    let pressingAction;
+    /** LINE のプロフィールを取得した回数 */
+    let profileCalls = 0;
     const replies = [];
     const logs = [];
-    let stored;
-    actions.applyExpenseChange = async (_expenseId, decide) => {
-      const decision = decide(stored);
-      decisions.push(decision);
-      if ('reject' in decision) return decision;
-      return { record: { ...stored, ...decision.cardPatch } };
+    const warns = [];
+
+    firestoreModule.getFirestore = () => fakeDb;
+    actions.applyExpenseChange = (expenseId, decide, opts) => {
+      applyCalls.push({ action: pressingAction, authorized: !!opts && typeof opts.authorize === 'function' });
+      return origApply(expenseId, (data) => {
+        const decision = decide(data);
+        decisions.push(decision);
+        return decision;
+      }, opts);
     };
     client.replyWithPushFallback = async (_replyToken, _to, messages) => {
       replies.push(messages);
       return 'reply';
     };
-    const press = async (data, payload) => {
-      stored = data;
-      const before = decisions.length;
+    client.getLineClient = () => ({
+      getProfile: async () => {
+        profileCalls++;
+        return { displayName: 'プロフィール名' };
+      },
+      getGroupMemberProfile: async () => {
+        profileCalls++;
+        return { displayName: 'プロフィール名' };
+      },
+    });
+
+    const MEMBERS_ONLY = '変更できるのは、世帯のメンバーだけです';
+    const PRESSER_UNKNOWN = '押した人を特定できなかったため、変更できませんでした';
+    const NOT_SELECTABLE = 'このカテゴリには変更できません';
+
+    // 世帯 g1（LINE グループ C_line1）: Alice・Bob が有効、Left は脱退済み
+    docs.set('groupMembers/g1_Ualice0001', { groupId: 'g1', lineId: 'Ualice0001', displayName: 'Alice', isActive: true });
+    docs.set('groupMembers/g1_Ubob0001', { groupId: 'g1', lineId: 'Ubob0001', displayName: 'Bob', isActive: true });
+    docs.set('groupMembers/g1_Uleft0001', { groupId: 'g1', lineId: 'Uleft0001', displayName: 'Left', isActive: false });
+    const groupExpense = (extra) => ({ lineId: 'Ualice0001', groupId: 'g1', lineGroupId: 'C_line1', amount: 1000, description: 'ランチ', category: 'その他', ...extra });
+    const legacyExpense = (extra) => ({ lineId: 'Ualice0001', lineGroupId: 'C_line1', amount: 900, description: 'ランチ', category: 'その他', ...extra });
+    const personalExpense = (extra) => ({ lineId: 'Ualice0001', amount: 500, description: 'ランチ', category: 'その他', ...extra });
+    const expense = (id) => docs.get(`expenses/${id}`);
+
+    /** ボタンを押す。userId を null にすると、押した人が分からないイベントになる */
+    const press = async (payload, userId = 'Ubob0001') => {
+      const before = { decisions: decisions.length, replies: replies.length, writes: writes.length, warns: warns.length };
+      pressingAction = payload && payload.action;
       console.log = (...args) => logs.push(args);
+      console.warn = (...args) => warns.push(args);
+      console.error = () => {};
       try {
         await handlePostback({
           type: 'postback',
           replyToken: 'reply-token',
-          source: { type: 'user', userId: 'Uabcdef1234' },
+          source: userId === null ? { type: 'group', groupId: 'C_line1' } : { type: 'group', groupId: 'C_line1', userId },
           postback: { data: JSON.stringify(payload) },
         });
       } finally {
         console.log = origLog;
+        console.warn = origWarn;
+        console.error = origError;
       }
-      return decisions.length > before ? decisions[decisions.length - 1] : undefined;
+      const newReplies = replies.slice(before.replies);
+      return {
+        decision: decisions.length > before.decisions ? decisions[decisions.length - 1] : undefined,
+        decided: decisions.length > before.decisions,
+        wrote: writes.length > before.writes,
+        replies: newReplies,
+        text: newReplies.length === 1 && newReplies[0].length === 1 && newReplies[0][0].type === 'text' ? newReplies[0][0].text : undefined,
+        flex: newReplies.length === 1 && newReplies[0].length === 1 && newReplies[0][0].type === 'flex' ? newReplies[0][0] : undefined,
+        warns: warns.slice(before.warns),
+      };
     };
-    const categoryLogs = () => logs.filter((l) => l[0] === 'Expense category updated').map((l) => l[1]);
+    /** 拒否された（決める処理を呼ばず・書かず、文言 text を 1 通だけ返した） */
+    const refused = (r, text) => !r.decided && !r.wrote && r.text === text;
 
     try {
+      // ---------------- set_category の中項目（#264） ----------------
+      console.log('  [set_category の中項目は postback の値を使わず、サーバーで決める]');
       const forged = { action: 'set_category', expenseId: 'exp_0001', category: '食費', subCategory: '夜ご飯' };
-      const a = await press({ category: 'その他', description: 'ランチ', status: 'shared', amount: 1000 }, forged);
-      check('postback の subCategory（夜ご飯）ではなく、辞書で決めた値（昼ご飯）を保存する', a && a.update.subCategory === '昼ご飯' && a.cardPatch.subCategory === '昼ご飯', JSON.stringify(a && a.update));
-      const b = await press({ category: 'その他', description: '謎の支出', status: 'shared', amount: 1000 }, forged);
-      check('辞書で決まらなければ、postback に値があっても消す', b && isFieldDelete(b.update.subCategory) && 'subCategory' in b.cardPatch && b.cardPatch.subCategory === undefined, JSON.stringify(b && b.cardPatch));
-      const c = await press({ category: '食費', description: 'ランチ', subCategory: 'カフェ', status: 'shared', amount: 1000 }, forged);
-      check('大項目が同じなら、postback に値があっても中項目に触らない', c && !('subCategory' in c.update) && !('subCategory' in c.cardPatch), JSON.stringify(c));
-      const d = await press({ category: '食費', description: 'ランチ', subCategory: '手で書いた中項目', status: 'shared', amount: 1000 }, forged);
+      const pressForged = async (data) => {
+        docs.set('expenses/exp_0001', groupExpense(data));
+        return (await press(forged)).decision;
+      };
+      const logsBefore = logs.length;
+      const a = await pressForged({ category: 'その他', description: 'ランチ', status: 'shared' });
+      check('postback の subCategory（夜ご飯）ではなく、辞書で決めた値（昼ご飯）を保存する', a && a.update.subCategory === '昼ご飯' && a.cardPatch.subCategory === '昼ご飯' && expense('exp_0001').subCategory === '昼ご飯', JSON.stringify(a && a.update));
+      const b = await pressForged({ category: 'その他', description: '謎の支出', status: 'shared', subCategory: '外食' });
+      check('辞書で決まらなければ、postback に値があっても消す', b && isFieldDelete(b.update.subCategory) && 'subCategory' in b.cardPatch && b.cardPatch.subCategory === undefined && !('subCategory' in expense('exp_0001')), JSON.stringify(b && b.cardPatch));
+      const c = await pressForged({ category: '食費', description: 'ランチ', subCategory: 'カフェ', status: 'shared' });
+      check('大項目が同じなら、postback に値があっても中項目に触らない', c && !('subCategory' in c.update) && !('subCategory' in c.cardPatch) && expense('exp_0001').subCategory === 'カフェ', JSON.stringify(c));
+      const d = await pressForged({ category: '食費', description: 'ランチ', subCategory: '手で書いた中項目', status: 'shared' });
       check('（大項目が同じ・一覧に無い中項目でも触らない）', d && !('subCategory' in d.update));
-      check('どの場合も最新の値のカードを返信する', replies.length === 4 && replies.every((m) => Array.isArray(m) && m.length === 1 && m[0].type === 'flex'), JSON.stringify(replies.map((m) => m.map((x) => x.type))));
+      const forgedReplies = replies.slice(-4);
+      check('どの場合も最新の値のカードを返信する', replies.length === 4 && forgedReplies.every((m) => Array.isArray(m) && m.length === 1 && m[0].type === 'flex'), JSON.stringify(replies.map((m) => m.map((x) => x.type))));
 
-      const logged = categoryLogs();
+      const logged = logs.slice(logsBefore).filter((l) => l[0] === 'Expense category updated').map((l) => l[1]);
       check(
         'ログに中項目を出す（決めた値・消したら null・触らなければ保存済みの値）',
         logged.length === 4 && logged[0].subCategory === '昼ご飯' && logged[1].subCategory === null && logged[2].subCategory === 'カフェ',
@@ -583,9 +729,226 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
       );
       check('一覧に無い中項目はログに出さない', logged.length === 4 && logged[3].subCategory === '(not in list)', JSON.stringify(logged[3]));
       check('ログの支出 ID は伏せる', logged.length === 4 && logged.every((l) => l.expense === '…0001'), JSON.stringify(logged.map((l) => l.expense)));
+
+      // ---------------- set_category の認可（#266） ----------------
+      console.log('  [set_category は世帯のメンバーだけ]');
+      const setCategory = { action: 'set_category', expenseId: 'exp_cat', category: '食費' };
+      for (const [who, userId] of [['メンバー外', 'Ustranger01'], ['脱退者', 'Uleft0001']]) {
+        docs.set('expenses/exp_cat', groupExpense({}));
+        const r = await press(setCategory, userId);
+        check(`${who}は「${MEMBERS_ONLY}」で、書かない`, refused(r, MEMBERS_ONLY) && expense('exp_cat').category === 'その他' && expense('exp_cat').confirmed === undefined, JSON.stringify(r));
+      }
+      docs.set('expenses/exp_cat', groupExpense({}));
+      const byMember = await press(setCategory, 'Ubob0001');
+      check('メンバー（登録者でない Bob）は変えられる（確認済み・共同費にもなる）', byMember.wrote && byMember.flex && expense('exp_cat').category === '食費' && expense('exp_cat').status === 'shared' && expense('exp_cat').confirmed === true, JSON.stringify(expense('exp_cat')));
+      docs.set('expenses/exp_cat', groupExpense({}));
+      const unknown = await press(setCategory, null);
+      check(`押した人が分からなければ「${PRESSER_UNKNOWN}」で、書かない`, refused(unknown, PRESSER_UNKNOWN) && expense('exp_cat').category === 'その他', JSON.stringify(unknown));
+
+      docs.set('expenses/exp_cat_legacy', legacyExpense({}));
+      const legacy = await press({ ...setCategory, expenseId: 'exp_cat_legacy' }, 'Ualice0001');
+      check('lineGroupId だけを持つ旧形式は、登録した本人でも変えられない', refused(legacy, MEMBERS_ONLY) && expense('exp_cat_legacy').category === 'その他', JSON.stringify(legacy));
+
+      docs.set('expenses/exp_cat_personal', personalExpense({}));
+      const personalOther = await press({ ...setCategory, expenseId: 'exp_cat_personal' }, 'Ubob0001');
+      check('世帯の無い個人の支出は、登録した本人でなければ変えられない', refused(personalOther, MEMBERS_ONLY) && expense('exp_cat_personal').category === 'その他');
+      const personalOwner = await press({ ...setCategory, expenseId: 'exp_cat_personal' }, 'Ualice0001');
+      check('世帯の無い個人の支出は、登録した本人なら変えられる', personalOwner.wrote && expense('exp_cat_personal').category === '食費');
+
+      // ---------------- set_category の入力検証（#266） ----------------
+      console.log('  [set_category は一覧にあるカテゴリだけ]');
+      const invalid = [
+        ['数値', 123],
+        ['真偽値', true],
+        ['null', null],
+        ['オブジェクト', { name: '食費' }],
+        ['配列', ['食費']],
+        ['無し', undefined],
+        ['空文字', ''],
+        ['一覧に無い名前', '趣味'],
+        ['長すぎる値', 'あ'.repeat(200)],
+        ['揃えれば一覧にあるが上限を超える長さ', '食費'.padStart(40, ' ')],
+      ];
+      for (const [label, category] of invalid) {
+        docs.set('expenses/exp_cat', groupExpense({}));
+        const payload = { action: 'set_category', expenseId: 'exp_cat' };
+        if (category !== undefined) payload.category = category;
+        const r = await press(payload, 'Ubob0001');
+        const loggedValue = r.warns.some((w) => JSON.stringify(w).includes(typeof category === 'string' && category.trim() ? category.trim() : '\u0000'));
+        check(
+          `${label}は「${NOT_SELECTABLE}」で、書かない（メンバーが押しても。ログに値を出さない）`,
+          refused(r, NOT_SELECTABLE) && expense('exp_cat').category === 'その他' && expense('exp_cat').confirmed === undefined && !loggedValue,
+          JSON.stringify({ text: r.text, wrote: r.wrote, warns: r.warns })
+        );
+      }
+      {
+        docs.set('expenses/exp_cat', groupExpense({}));
+        const r = await press({ action: 'set_category', expenseId: 'exp_cat', category: '趣味' }, 'Ubob0001');
+        const w = r.warns.find((x) => x[0] === 'Rejected set_category: the category is not in the list');
+        check('拒否のログは型と長さだけ（支出 ID は伏せる）', w && w[1].type === 'string' && w[1].length === 2 && w[1].expense === '…_cat' && !JSON.stringify(w).includes('趣味'), JSON.stringify(r.warns));
+      }
+      docs.set('expenses/exp_cat', groupExpense({}));
+      const alias = await press({ action: 'set_category', expenseId: 'exp_cat', category: '医療費' }, 'Ubob0001');
+      check('カルーセルの旧名（医療費）は正準名（医療・健康）で保存する', alias.wrote && expense('exp_cat').category === '医療・健康');
+
+      // ---------------- confirm の認可（#266） ----------------
+      console.log('  [confirm（OK）は世帯のメンバーだけ]');
+      const confirm = { action: 'confirm', expenseId: 'exp_ok' };
+      for (const [who, userId] of [['メンバー外', 'Ustranger01'], ['脱退者', 'Uleft0001']]) {
+        docs.set('expenses/exp_ok', groupExpense({ includeInTotal: false, confirmed: false }));
+        const r = await press(confirm, userId);
+        check(`${who}は「${MEMBERS_ONLY}」で、共同費にしない`, refused(r, MEMBERS_ONLY) && expense('exp_ok').status === undefined && expense('exp_ok').includeInTotal === false && expense('exp_ok').confirmed === false, JSON.stringify(r));
+      }
+      docs.set('expenses/exp_ok', groupExpense({ includeInTotal: false, confirmed: false }));
+      const okUnknown = await press(confirm, null);
+      check(`押した人が分からなければ「${PRESSER_UNKNOWN}」で、書かない`, refused(okUnknown, PRESSER_UNKNOWN) && expense('exp_ok').confirmed === false);
+      docs.set('expenses/exp_ok_legacy', legacyExpense({ includeInTotal: false, confirmed: false }));
+      const okLegacy = await press({ action: 'confirm', expenseId: 'exp_ok_legacy' }, 'Ualice0001');
+      check('lineGroupId だけを持つ旧形式は、登録した本人でも確定できない', refused(okLegacy, MEMBERS_ONLY) && expense('exp_ok_legacy').confirmed === false);
+      docs.set('expenses/exp_ok', groupExpense({ includeInTotal: false, confirmed: false }));
+      const okMember = await press(confirm, 'Ubob0001');
+      check('メンバーは確定できる（未確認 → 共同費・計上・確認済み）', okMember.wrote && okMember.flex && expense('exp_ok').status === 'shared' && expense('exp_ok').includeInTotal === true && expense('exp_ok').confirmed === true, JSON.stringify(expense('exp_ok')));
+      const okLog = logs.filter((l) => l[0] === 'Expense confirmed').pop();
+      check('確定のログは支出 ID を伏せ、書式文字列に埋め込まない', okLog && okLog[1].expense === '…p_ok' && okLog[1].status === 'shared', JSON.stringify(okLog));
+
+      // ---------------- show_category_select の認可（#266） ----------------
+      console.log('  [show_category_select（カテゴリ選択のカルーセル）は世帯のメンバーだけ]');
+      const show = { action: 'show_category_select', expenseId: 'exp_show', source: 'gmail' };
+      docs.set('expenses/exp_show', groupExpense({}));
+      docs.set('expenses/exp_show_legacy', legacyExpense({}));
+      for (const [who, userId, expenseId] of [
+        ['メンバー外', 'Ustranger01', 'exp_show'],
+        ['脱退者', 'Uleft0001', 'exp_show'],
+        ['旧形式（lineGroupId だけ）の登録者', 'Ualice0001', 'exp_show_legacy'],
+      ]) {
+        const r = await press({ ...show, expenseId }, userId);
+        check(`${who}にはカルーセルを返さず「${MEMBERS_ONLY}」`, refused(r, MEMBERS_ONLY) && !r.flex, JSON.stringify(r.replies));
+      }
+      const showUnknown = await press(show, null);
+      check(`押した人が分からなければ「${PRESSER_UNKNOWN}」`, refused(showUnknown, PRESSER_UNKNOWN));
+      const showMember = await press(show, 'Ubob0001');
+      check('メンバーにはカルーセルを返す（書かない）', showMember.flex && showMember.flex.contents.type === 'carousel' && !showMember.wrote, JSON.stringify(showMember.replies));
+      const showMissing = await press({ ...show, expenseId: 'no_such' }, 'Ubob0001');
+      check('存在しない支出には返信しない', showMissing.replies.length === 0 && !showMissing.wrote);
+
+      // ---------------- show_category_select の source（許可リスト） ----------------
+      console.log('  [show_category_select の source は gmail / text だけ（それ以外は gmail）]');
+      const sourcesInCarousel = async (source) => {
+        const payload = { action: 'show_category_select', expenseId: 'exp_show' };
+        if (source !== undefined) payload.source = source;
+        const r = await press(payload, 'Ubob0001');
+        return r.flex ? [...new Set(postbacksIn(r.flex).map((p) => p.source))] : null;
+      };
+      check('source が text なら、カルーセルのボタンにも text を埋め込む', deepEqual(await sourcesInCarousel('text'), ['text']));
+      check('source が gmail・無しなら gmail', deepEqual(await sourcesInCarousel('gmail'), ['gmail']) && deepEqual(await sourcesInCarousel(undefined), ['gmail']));
+      const unexpectedSources = [];
+      for (const source of ['x'.repeat(300), 'TEXT', 123, { a: 1 }, ['text'], null]) {
+        const s = await sourcesInCarousel(source);
+        if (!deepEqual(s, ['gmail'])) unexpectedSources.push([source, s]);
+      }
+      check('許可リストに無い source（長い文字列・大文字・数値・オブジェクト・配列・null）は既定の gmail にする', unexpectedSources.length === 0, JSON.stringify(unexpectedSources));
+
+      // ---------------- set_payer・set_split・set_advance（区分・［自分が払った］［自分が立替］［取り消す］） ----------------
+      console.log('  [set_payer・set_split・set_advance も世帯のメンバーだけ]');
+      for (const [label, payload] of [
+        ['set_payer', { action: 'set_payer' }],
+        ['set_split', { action: 'set_split', to: 'personal' }],
+        ['set_advance', { action: 'set_advance', to: 'on' }],
+        ['旧UIの personal', { action: 'personal' }],
+      ]) {
+        for (const [who, userId, make] of [
+          ['メンバー外', 'Ustranger01', groupExpense],
+          ['脱退者', 'Uleft0001', groupExpense],
+          ['旧形式（lineGroupId だけ）の登録者', 'Ualice0001', legacyExpense],
+        ]) {
+          docs.set('expenses/exp_btn', make({ status: 'shared', includeInTotal: true, confirmed: true, payerId: 'Ualice0001' }));
+          const r = await press({ ...payload, expenseId: 'exp_btn' }, userId);
+          check(`${label}: ${who}は「${MEMBERS_ONLY}」で、書かない`, refused(r, MEMBERS_ONLY) && expense('exp_btn').status === 'shared' && expense('exp_btn').payerId === 'Ualice0001', JSON.stringify(r.replies));
+        }
+      }
+      docs.set('expenses/exp_btn', groupExpense({ status: 'shared', includeInTotal: true, confirmed: true, payerId: 'Ualice0001', payerDisplayName: 'Alice' }));
+      const payer = await press({ action: 'set_payer', expenseId: 'exp_btn' }, 'Ubob0001');
+      check(
+        'set_payer: メンバーが押すと支払った人がその人になる（名前はメンバー文書の Bob。LINE のプロフィール名ではない）',
+        payer.wrote && payer.flex && expense('exp_btn').payerId === 'Ubob0001' && expense('exp_btn').payerDisplayName === 'Bob',
+        JSON.stringify(expense('exp_btn'))
+      );
+      docs.set('groupMembers/g1_Uhana0001', { groupId: 'g1', lineId: 'Uhana0001', displayName: '作成者', isActive: true });
+      const placeholder = await press({ action: 'set_payer', expenseId: 'exp_btn' }, 'Uhana0001');
+      check('set_payer: メンバー文書の名前が仮名「作成者」なら LINE のプロフィール名を使う', placeholder.wrote && expense('exp_btn').payerDisplayName === 'プロフィール名', JSON.stringify(expense('exp_btn')));
+      docs.delete('groupMembers/g1_Uhana0001');
+      const split = await press({ action: 'set_split', expenseId: 'exp_btn', to: 'personal' }, 'Ubob0001');
+      check('set_split: メンバーは除外にできる', split.wrote && expense('exp_btn').status === 'personal' && expense('exp_btn').includeInTotal === false);
+      const advance = await press({ action: 'set_advance', expenseId: 'exp_btn', to: 'on' }, 'Ubob0001');
+      check('set_advance: メンバーは立替にできる（押した人が立替・支払い。名前はメンバー文書）', advance.wrote && expense('exp_btn').status === 'advance_pending' && expense('exp_btn').advanceBy === 'Ubob0001' && expense('exp_btn').payerDisplayName === 'Bob', JSON.stringify(expense('exp_btn')));
+      const clear = await press({ action: 'set_advance', expenseId: 'exp_btn', to: 'off' }, 'Ualice0001');
+      check('set_advance off: メンバーは立替を取り消せる', clear.wrote && expense('exp_btn').status === 'shared' && !('advanceBy' in expense('exp_btn')));
+
+      // ---------------- 支出 ID の形式（最初に確かめ、不正なら何もしない） ----------------
+      console.log('  [支出 ID が文書 ID として不正なら、Firestore も LINE も呼ばずに何もしない]');
+      const badIds = [
+        ['a/b/c', 'a/b/c'],
+        ['数値', 123],
+        ['巨大な文字列', 'x'.repeat(100000)],
+        ['129 文字', 'x'.repeat(129)],
+        ['予約 ID（__x__）', '__x__'],
+        ['..', '..'],
+        ['空文字', ''],
+        ['オブジェクト', { id: 'exp_btn' }],
+      ];
+      for (const [label, expenseId] of badIds) {
+        const touched = [];
+        for (const action of ['set_category', 'confirm', 'show_category_select', 'set_payer', 'set_split', 'set_advance', 'edit']) {
+          const before = { reads, profileCalls, applyCalls: applyCalls.length };
+          const r = await press({ action, expenseId, category: '食費', to: 'personal' }, 'Ubob0001');
+          if (r.replies.length > 0 || r.wrote || r.decided || reads !== before.reads || profileCalls !== before.profileCalls || applyCalls.length !== before.applyCalls) {
+            touched.push(action);
+          }
+        }
+        check(`${label}: どの action でも返信・読み取り・書き込み・プロフィール取得をしない`, touched.length === 0, JSON.stringify(touched));
+      }
+      {
+        const r = await press({ action: 'set_category', expenseId: 'exp_btn', category: '食費' }, 'Ubob0001');
+        check('（比較: 正しい支出 ID なら同じ押し方で書き込む）', r.wrote);
+      }
+      {
+        const before = { reads, replies: replies.length };
+        console.log = () => {};
+        console.error = () => {};
+        try {
+          await handlePostback({ type: 'postback', replyToken: 'reply-token', source: { type: 'group', groupId: 'C_line1', userId: 'Ubob0001' }, postback: { data: 'null' } });
+          await handlePostback({ type: 'postback', replyToken: 'reply-token', source: { type: 'group', groupId: 'C_line1', userId: 'Ubob0001' }, postback: { data: '1' } });
+        } finally {
+          console.log = origLog;
+          console.error = origError;
+        }
+        check('JSON がオブジェクトでない postback（null・数値）は投げずに何もしない', reads === before.reads && replies.length === before.replies);
+      }
+
+      // ---------------- ログ（利用者の入力を書式文字列に埋め込まない） ----------------
+      console.log('  [ログに利用者の入力を書式文字列で埋め込まない]');
+      {
+        const r = await press({ action: 'evil\naction', expenseId: 'exp_btn' }, 'Ubob0001');
+        const w = r.warns.find((x) => x[0] === 'Unknown postback action');
+        check('不明な action は型だけをオブジェクトで出す（値を出さない）', w && w[1].type === 'string' && w[1].expense === '…_btn' && !JSON.stringify(r.warns).includes('evil'), JSON.stringify(r.warns));
+        const m = await press({ action: 'set_category', expenseId: 'no_such_0042', category: '食費' }, 'Ubob0001');
+        const nf = m.warns.find((x) => x[0] === 'Expense not found');
+        check('存在しない支出のログ（applyExpenseChange）は支出 ID を伏せてオブジェクトで出す', nf && nf[1].expense === '…0042' && !JSON.stringify(m.warns).includes('no_such'), JSON.stringify(m.warns));
+      }
+
+      // ---------------- applyExpenseChange は authorize 付きでだけ呼ぶ ----------------
+      const pressedActions = [...new Set(applyCalls.map((c) => c.action))].sort();
+      const expectedActions = ['confirm', 'personal', 'set_advance', 'set_category', 'set_payer', 'set_split'];
+      check(
+        `押した ${expectedActions.join('・')} は、どれも authorize を付けて applyExpenseChange を呼ぶ`,
+        deepEqual(pressedActions, expectedActions) && applyCalls.every((c) => c.authorized),
+        JSON.stringify({ pressedActions, unauthorized: applyCalls.filter((c) => !c.authorized) })
+      );
     } finally {
+      firestoreModule.getFirestore = origGetFirestore;
       actions.applyExpenseChange = origApply;
       client.replyWithPushFallback = origReply;
+      client.getLineClient = origGetLineClient;
     }
   }
 

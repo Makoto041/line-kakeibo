@@ -267,6 +267,22 @@ export function toCanonicalCategoryName(name: string): string {
   return name;
 }
 
+/** LINE のカテゴリ選択（postback の set_category）で受け付けるカテゴリ名の長さの上限（文字数） */
+export const MAX_SELECTABLE_CATEGORY_LENGTH = 32;
+
+/**
+ * LINE のカテゴリ選択（postback の set_category）で受け取った値を、保存してよい正準名にする（#266）
+ *
+ * 文字列で、長さが上限以内で、正準名（CANONICAL_CATEGORIES）か、正準名に揃えられる名前
+ * （カルーセルの「医療費」などのエイリアス。toCanonicalCategoryName）のときだけ正準名を返す。それ以外は null。
+ * 利用者ごとのカスタムカテゴリ（userCustomCategories）はカルーセルに出さないので受け付けない。
+ */
+export function toSelectableCategoryName(input: unknown): string | null {
+  if (typeof input !== 'string' || input.length > MAX_SELECTABLE_CATEGORY_LENGTH) return null;
+  const canonical = toCanonicalCategoryName(input);
+  return CANONICAL_CATEGORIES.includes(canonical) ? canonical : null;
+}
+
 function pickAvailable(target: string, available?: string[]): string {
   if (!available || available.length === 0) return target;
   if (available.includes(target)) return target;

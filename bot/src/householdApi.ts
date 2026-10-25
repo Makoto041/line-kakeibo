@@ -28,6 +28,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore, type DocumentData, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { parseBearerToken } from './adminAuth';
+import { isValidDocId } from './docId';
 import { applyExpenseChange, decideConfirm, decideSettleLegacyAdvance } from './expenseActions';
 import { getPendingAdvances, type Expense } from './firestore';
 import { readActiveMember } from './householdMembers';
@@ -56,23 +57,8 @@ export const MAX_LEGACY_SETTLE_IDS = 500;
 // 入力検証（純関数）
 // ============================================
 
-/**
- * Firestore のドキュメント ID として安全な文字列か
- *
- * 1〜128 文字、`/` を含まない、`.` `..` ではない、`__…__`（予約 ID。Firestore が拒否して 500 になる）ではない。
- * 予約 ID の判定は改行を含む値（`__a\nb__`）も対象にするため、正規表現の `.` ではなく前後の一致で見る。
- */
-export function isValidDocId(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length >= 1 &&
-    value.length <= 128 &&
-    !value.includes('/') &&
-    value !== '.' &&
-    value !== '..' &&
-    !(value.length >= 4 && value.startsWith('__') && value.endsWith('__'))
-  );
-}
+// ドキュメント ID の判定は LINE の postback と共用（docId.ts）。既存の呼び出し・テストのためここからも export する
+export { isValidDocId };
 
 /** JSON のオブジェクト（配列・null 以外）か */
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
