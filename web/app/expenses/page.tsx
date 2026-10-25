@@ -25,8 +25,11 @@ import {
   buildPayerOptions,
   payerDisplayNameFor,
   buildCategoryOptions,
+  buildSubCategoryOptions,
+  changeEditCategory,
   type EditForm,
 } from "../../lib/expenseEdit";
+import { subCategoriesOf } from "../../lib/categoryTaxonomy";
 import { confirmExpense, isHouseholdApiConfigured, householdErrorCode } from "../../lib/householdApi";
 import type { Expense } from "../../lib/hooks";
 import PreviewModeBanner from "../../components/PreviewModeBanner";
@@ -200,7 +203,9 @@ function ExpensesPageContent() {
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeDrawerRef = useRef<() => void>(() => {});
   const lastFocusedRef = useRef<HTMLElement | null>(null);
-  const [editForm, setEditForm] = useState<EditForm>({ amount: 0, description: "", date: "", category: "", includeInTotal: true, payerId: "", payerDisplayName: "" });
+  const [editForm, setEditForm] = useState<EditForm>({ amount: 0, description: "", date: "", category: "", subCategory: "", includeInTotal: true, payerId: "", payerDisplayName: "" });
+  // 大項目を変えて中項目を「中項目なし」に戻した（中項目を選び直すまで注記を出す）
+  const [subCategoryReset, setSubCategoryReset] = useState(false);
   // Flag to prevent re-triggering edit mode after user closes the editor
   const [editConsumed, setEditConsumed] = useState(false);
 
@@ -217,10 +222,12 @@ function ExpensesPageContent() {
           description: expenseToEdit.description,
           date: expenseToEdit.date,
           category: expenseToEdit.category,
+          subCategory: expenseToEdit.subCategory ?? "",
           includeInTotal: expenseToEdit.includeInTotal,
           payerId: expenseToEdit.payerId || expenseToEdit.lineId,
           payerDisplayName: expenseToEdit.payerDisplayName || expenseToEdit.userDisplayName || "",
         });
+        setSubCategoryReset(false);
         // Mark as consumed to prevent re-triggering
         setEditConsumed(true);
         // スクロールして表示
@@ -344,12 +351,14 @@ function ExpensesPageContent() {
       description: expense.description,
       date: expense.date,
       category: expense.category,
+      subCategory: expense.subCategory ?? "",
       includeInTotal: expense.includeInTotal,
       payerId: expense.payerId || expense.lineId,
       payerDisplayName: expense.payerDisplayName || expense.userDisplayName || "",
     };
-    
+
     setEditForm(formData);
+    setSubCategoryReset(false);
   };
 
   const handleEditCancel = () => {
@@ -360,10 +369,12 @@ function ExpensesPageContent() {
       description: "",
       date: "",
       category: "",
+      subCategory: "",
       includeInTotal: true,
       payerId: "",
       payerDisplayName: "",
     });
+    setSubCategoryReset(false);
   };
 
   // Keep the latest cancel handler available to the keydown listener.
@@ -425,7 +436,15 @@ function ExpensesPageContent() {
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     const { name, value, type } = e.target;
-    if (name === "payerId") {
+    if (name === "category") {
+      // 大項目が変わったら、中項目は「中項目なし」に戻す（選択肢も新しい大項目の一覧に替わる）
+      const next = changeEditCategory(editForm, value);
+      setEditForm(next.form);
+      if (next.reset) setSubCategoryReset(true);
+    } else if (name === "subCategory") {
+      setSubCategoryReset(false);
+      setEditForm((prev) => ({ ...prev, subCategory: value }));
+    } else if (name === "payerId") {
       // 支払い者IDが変更されたら、対応する表示名も更新
       const displayName = payerDisplayNameFor(value, availableMembers, expenses);
 
@@ -529,6 +548,8 @@ function ExpensesPageContent() {
             form={editForm}
             settled={editingExpenseData?.status === 'advance_settled'}
             categories={allCategories}
+            subCategoryOptions={buildSubCategoryOptions(subCategoriesOf(editForm.category), editForm.subCategory)}
+            subCategoryReset={subCategoryReset}
             payerOptions={buildPayerOptions(editingExpenseData, availableMembers, expenses, editForm)}
             error={editError}
             saving={savingEdit}
