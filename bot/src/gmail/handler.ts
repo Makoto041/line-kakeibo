@@ -338,6 +338,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
         merchant: parsed.merchant,
         amount: parsed.amount,
         category,
+        subCategory: expense.subCategory, // 保存した中項目（決め直さない）
         categoryOrigin,
         categoryEmoji: getCategoryEmoji(category),
         date: formatJST(parsed.usedAt, 'M/D'),
@@ -569,6 +570,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
         merchant: parsed.merchant,
         amount: parsed.amount,
         category,
+        subCategory: expense.subCategory, // 保存した中項目（決め直さない）
         categoryOrigin,
         categoryEmoji: getCategoryEmoji(category),
         date: formatJST(parsed.usedAt, 'M/D'),

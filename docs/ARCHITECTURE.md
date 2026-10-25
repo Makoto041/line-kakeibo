@@ -113,9 +113,9 @@ LINEテキスト → webhook(署名検証)
   → 中項目の判定（大項目が決まったあと。辞書だけで、時刻は当てない。決まらなければ付けない。SPECIFICATION §4.1）
   → グループ所属の決定（expenseGroupScope.ts: 発言元 LINE グループに紐づく世帯の有効メンバーなら groupId+lineGroupId、それ以外は個人支出）
   → expenses 保存 (confirmed:false, includeInTotal:false, inputSource:'line_text', subCategory は決まったときだけ)
-  → 確認Flex返信（現在の設定4行〔支出区分・支払った人・立替・カテゴリ〕＋ボタン / OK / 修正 / レシート添付 / 家計簿一覧を見る）
+  → 確認Flex返信（現在の設定4行〔支出区分・支払った人・立替・カテゴリ。中項目が一覧にあればカテゴリの行に「食費 › 昼ご飯」〕＋ボタン / OK / 修正 / レシート添付 / 家計簿一覧を見る）
   → postbackで status / includeInTotal / payerId / advanceBy / advanceFull / category を確定 → 最新値のカードを返信
-     （category で大項目が変わるときは、中項目 subCategory を辞書と時刻のルールで決め直す。決まらなければ消す）
+     （category で大項目が変わるときは、中項目 subCategory を辞書と時刻のルールで決め直す。決まらなければ消す。返信カードは決め直した中項目を出す）
      （［自分が払った］は押した人を支払った人に、［自分が立替］は押した人の立替〔全額を精算に加算〕にする。
        どちらも押せるのは世帯の有効メンバーだけ）
 ```
@@ -129,7 +129,7 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
   → 中項目の判定（店名の辞書。時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。決まらなければ付けない。SPECIFICATION §4.1）
   → Firestoreトランザクションでアトミック保存（status: 'shared'・confirmed: true。自動で入るので要確認にしない。subCategory は決まったときだけ）
      （gmailMessageId ＋ date+amount+店舗名の類似+usedAt±1分 の二重チェックで重複排除）
-  → LINEグループへFlex通知（テキスト入力と同じ登録・編集カード）
+  → LINEグループへFlex通知（テキスト入力と同じ登録・編集カード。保存した中項目をカテゴリの行に出す）
 ```
 
 ### 4.3 Web 閲覧・編集
@@ -234,6 +234,7 @@ Gemini（退避先）: @google/genai 経由、Flash-Lite 系だけを使う（Fl
 中項目（食費・娯楽だけ。#235）: 大項目が決まったあとに resolveSubCategory（subCategoryRules.ts。辞書と時刻のルール、モデルは呼ばない）で決め、決まらなければ付けない。
   LINE は説明文の辞書だけ、カード利用通知は時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。詳細は SPECIFICATION §4.1
   Web の編集画面では一覧から手で選べる（「その他の食費」「その他の娯楽」も選べる）
+  LINE の確認カードは、カテゴリの行に「食費 › 昼ご飯」と出す（一覧にある値だけ。行は 4 行のまま。SPECIFICATION §2.4）
   Web の内訳シート（web/lib/drilldown.ts）は食費・娯楽を中項目別にまとめる（一覧にない値は「その他の食費 / 娯楽」、無ければ「中項目なし」。
   一覧は web/lib/categoryTaxonomy.ts の subCategoriesOf を引数で受ける）。詳細は SPECIFICATION §5.2
 ```

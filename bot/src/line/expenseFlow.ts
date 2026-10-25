@@ -450,6 +450,7 @@ export async function processExpenseInBackground(
         description: parsed.description,
         amount: parsed.amount,
         category: finalCategory,
+        subCategory, // 保存した中項目（カテゴリの行に「食費 › 昼ご飯」と出す）
         // 最初のカードだけに出す（保存しない。postback で作り直したカードには出ない）
         categoryOrigin,
         categoryEmoji: getCategoryEmoji(finalCategory),
