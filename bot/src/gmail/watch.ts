@@ -78,6 +78,9 @@ function isUsableHistoryId(value: unknown): value is string | number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
+/** 保存する historyId をどこから取ったか（`resolveWatchHistoryId`） */
+export type WatchHistoryIdSource = 'kept' | 'initialized' | 'replaced';
+
 /**
  * watch の登録・更新で保存する historyId を決める
  *
@@ -89,7 +92,7 @@ function isUsableHistoryId(value: unknown): value is string | number {
 export function resolveWatchHistoryId(
   stored: unknown,
   fromWatch: string
-): { historyId: string; source: 'kept' | 'initialized' | 'replaced' } {
+): { historyId: string; source: WatchHistoryIdSource } {
   if (!stored) {
     return { historyId: fromWatch, source: 'initialized' };
   }
@@ -97,6 +100,24 @@ export function resolveWatchHistoryId(
     return { historyId: String(stored), source: 'kept' };
   }
   return { historyId: fromWatch, source: 'replaced' };
+}
+
+/**
+ * watch の登録・更新で `system/gmailState` に merge で書く項目
+ *
+ * historyId を書くのは、保存値が無い・使えないとき（`initialized` / `replaced`）だけ。
+ * 保存値を残すとき（`kept`）は historyId の項目自体を含めず、watchExpiration と updatedAt だけを書く。
+ */
+export function watchStateFields(
+  resolved: { historyId: string; source: WatchHistoryIdSource },
+  watchExpiration: number,
+  updatedAt: unknown
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = { watchExpiration, updatedAt };
+  if (resolved.source !== 'kept') {
+    fields.historyId = resolved.historyId;
+  }
+  return fields;
 }
 
 /**
@@ -108,22 +129,18 @@ export function resolveWatchHistoryId(
 async function saveWatchState(
   historyIdFromWatch: string,
   watchExpiration: number
-): Promise<{ state: GmailWatchState; source: 'kept' | 'initialized' | 'replaced' }> {
+): Promise<{ state: GmailWatchState; source: WatchHistoryIdSource }> {
   const db = getFirestore();
   const ref = gmailStateRef();
 
   const result = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     const stored = snapshot.exists ? snapshot.data()?.historyId : undefined;
-    const { historyId, source } = resolveWatchHistoryId(stored, historyIdFromWatch);
+    const resolved = resolveWatchHistoryId(stored, historyIdFromWatch);
 
-    const fields: Record<string, unknown> = { watchExpiration, updatedAt: Timestamp.now() };
-    if (source !== 'kept') {
-      fields.historyId = historyId;
-    }
-    transaction.set(ref, fields, { merge: true });
+    transaction.set(ref, watchStateFields(resolved, watchExpiration, Timestamp.now()), { merge: true });
 
-    return { state: { historyId, watchExpiration }, source };
+    return { state: { historyId: resolved.historyId, watchExpiration }, source: resolved.source };
   });
 
   if (result.source === 'replaced') {

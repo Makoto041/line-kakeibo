@@ -377,7 +377,7 @@ bot/src/
 | POST | `/api/gmail/test-process` | SMBC カードメール内容をプレビュー | Admin |
 | POST | `/api/gmail/force-process/:messageId` | 指定メッセージ ID を強制処理（冪等） | Admin |
 | POST | `/api/gmail/refresh-token` | トークン強制リフレッシュ | Admin |
-| DELETE | `/api/gmail/revoke` | トークン削除・再認証用 | Admin |
+| DELETE | `/api/gmail/revoke` | トークン削除・再認証用（`system/gmailState` も消す。消せなければ 500 と `watchStateCleared: false` を返すので、やり直す） | Admin |
 
 > **注意**: `/api/gmail/callback` は Google からの OAuth2 リダイレクト先のため、Admin 認証は不要です。
 
@@ -421,10 +421,10 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 
 - Gmail Watch は 7 日間の有効期限あり
 - 6 日ごとに Cloud Scheduler（`renewGmailWatch`）で自動更新
-- 更新は stop を呼ばずに watch を呼び直す（`users.watch` は「Set up or update a push notification watch」。push ガイドの「Renew mailbox watch」も 7 日以内に watch を呼び直すことだけを求めている）。watch が失敗しても既存の watch は期限まで有効で、次の実行でやり直す
+- 更新は stop を呼ばずに watch を呼び直す（`users.watch` は「Set up or update a push notification watch」。push ガイドの「Renew mailbox watch」も 7 日以内に watch を呼び直すことだけを求めている）。更新に失敗すると、watch は約 1 日後に切れる。cron が 6 日ごとなので、通知は最大数日止まりうる。保存してある `historyId` は残るので、約 1 週間以内なら再登録後の最初の通知でまとめて処理される
 - watch の登録・更新（`renewGmailWatch`・`/gmail/register-watch`）は、保存してある `historyId` を変えない（`registerWatch`。Firestore トランザクションで読み、`watchExpiration`・`updatedAt` だけを merge で書く）。watch の応答の `historyId` はその時点のメールボックスの位置なので、以前のように上書きすると、取込が失敗して `historyId` が止まっている間の範囲が二度と処理されなかった。応答の値を入れるのは、保存値が無いとき（初回・`/gmail/revoke` の後）と、数値として読めない値が入っていたときだけ
 - そのため、止まっていた `historyId` が残っていると、次の通知でその範囲のメールがまとめて処理される（二重登録は `gmailMessageId` で防ぐ）
-- `/gmail/register-watch` で「今の位置まで飛ばす」ことはできない。飛ばしたいときは `system/gmailState` の `historyId` を消してから `/gmail/register-watch` を呼ぶ。別の Gmail アカウントに切り替えるときは、先に `/gmail/revoke`（`system/gmailState` も消える）してから認可と watch 登録をやり直す
+- `/gmail/register-watch` で「今の位置まで飛ばす」ことはできない。飛ばしたいときは `system/gmailState` の `historyId` を消してから `/gmail/register-watch` を呼ぶ。別の Gmail アカウントに切り替えるときは、先に `/gmail/revoke`（`system/gmailState` も消える）してから認可と watch 登録をやり直す。古いアカウントの watch は stop されないため、最大 7 日は同じ topic に通知しうる。revoke の後は、応答が `watchStateCleared: true` で `system/gmailState` が消えたことを確認する（消せなかったときは 500 と `watchStateCleared: false` が返るので、revoke をやり直す）
 - トークンリフレッシュは自動化（`getValidAccessToken`）
 - historyId は Gmail 側で約 1 週間しか保持されない。古すぎて `history.list` が 404 を返した場合、ハンドラーは通知の historyId まで進める（その間のメールは取り込まれない。必要なら `/api/gmail/force-process/:messageId` で個別に処理する）
 
