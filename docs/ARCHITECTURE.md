@@ -104,8 +104,10 @@ flowchart LR
 ```text
 LINEテキスト → webhook(署名検証)
   → parseTextExpense()（金額必須・日付/支払方法/カテゴリ/摘要を抽出）
-  → 並列: プロフィール取得(15分cache) / appUid解決(匿名Auth) / カテゴリ分類
+  → 並列: プロフィール取得(15分cache) / appUid解決(匿名Auth) / 所属グループの取得（個人チャット。LINE グループでの発言はプロフィール取得の後）
+  → 世帯メンバーかの判定（expenseGroupScope.ts の isHouseholdMember: LINE グループに紐づく世帯の有効メンバーか。取得済みの所属から判定し、読み取りは増やさない）
   → カテゴリ分類: キャッシュ → キーワードマップ → Jev（失敗時のみ Gemini）。確信度≥0.4で採用
+     （世帯メンバーでない送信者はキーワードマップまで。Jev・Gemini を呼ばない。所属の確認に失敗したときはモデルを呼ぶ。§5）
   → グループ所属の決定（expenseGroupScope.ts: 発言元 LINE グループに紐づく世帯の有効メンバーなら groupId+lineGroupId、それ以外は個人支出）
   → expenses 保存 (confirmed:false, includeInTotal:false, inputSource:'line_text')
   → 確認Flex返信（現在の設定4行〔支出区分・支払った人・立替・カテゴリ〕＋ボタン / OK / 修正 / レシート添付 / 家計簿一覧を見る）
@@ -183,7 +185,7 @@ viewport-fit=cover: ノッチ・ホームバーは env(safe-area-inset-*) で避
 ```text
 LINE のテキスト（source: 'text'）
   ├─ 1. 結果キャッシュ（関数インスタンスのメモリ内。15分TTL）── ヒット→終了
-  ├─ 2. FAST_KEYWORD_MAP（メモリ内・即時・conf 0.8）── ヒット→終了
+  ├─ 2. FAST_KEYWORD_MAP（メモリ内・即時・conf 0.8）── ヒット→終了（世帯メンバーでない送信者はここまで）
   ├─ 3. Jev ── 成功→終了
   └─ 4. Gemini（Jev が失敗したときだけ）
 
@@ -195,6 +197,16 @@ LINE のテキスト（source: 'text'）
 
 Jev の「失敗」= 鍵なし（TYPESAFE_API_KEY が無い）・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリ。信頼度が低いだけでは Gemini に回さない。
 Jev・Gemini の失敗はキャッシュしない。どちらで決まったかは「Category classified」ログの provider（jev / gemini）
+
+世帯メンバーの確認（費用・無料枠の保護。#245）: LINE のテキストは、送信者が世帯（LINE グループに紐づくグループ）の
+有効メンバーのときだけ 3・4 に進む（expenseFlow.ts → classifyExpense の allowModels）。「グループ作成」で作った
+自分だけのグループ（lineGroupId なし）のメンバーは世帯メンバーとみなさない。LINE グループでの発言は、発言元の
+LINE グループに紐づく世帯のメンバーに限る。メンバーでなければ 2 までで決め、決まらなければ既定カテゴリか「その他」
+（Jev・Gemini が使えないときと同じ。カテゴリ一覧も読まない）。判定は支出の所属を決めるために読んだ所属グループ
+（個人チャットは 15 分のプロフィールキャッシュ、LINE グループは発言ごとに読み直し）を使い、読み取りは増やさない。
+所属の確認（getUserGroups / findLineGroupId）自体が失敗したときはモデルを呼び、その失敗はキャッシュに残さない。
+スキップは「Skipping category models: poster is not a household member」ログ（利用者 ID は伏せる）。
+Gmail 取込（gmail-auto-system）は対象外
 
 Jev: @typesafe-ai/sdk 経由の System One（jevCategoryClassifier.ts）
   ・モデルは jev-1.13.0 に固定（モデルや SDK の版を上げるときは、bot/scripts/eval/eval-classifier.js で評価してから）
@@ -230,7 +242,7 @@ Web のアクセス制御は **LIFF ログイン → Firebase カスタムトー
 | Firestore ルール | 所有者（`resource.data.lineId == token.lineId`）と世帯メンバー（`groupMembers/{groupId}_{lineId}.isActive == true`）で判定。`expenses` の create / update / delete はフィールド許可リストと値の検証付き（`status` / `advanceBy` / `advanceFull` / `inputSource` などはクライアント不変）。精算済み（`advance_settled`）は金額・日付・支払者の変更と削除を禁止。`groups` / `groupMembers` / `userLinks` / `linkTokens` はクライアント書込不可、未定義パスは既定拒否。システムユーザーの支出（`gmail-auto-system` / `recurring-system`）は世帯メンバーが修正・削除できる。bot は Admin SDK でルールをバイパスする |
 | Storage ルール | cross-service rules（`firestore.get()` / `firestore.exists()`）で支出と `groupMembers` を参照。所有者 / 有効メンバーだけが get・アップロード・削除でき、list は不可。5MB 以下の JPEG / PNG / WebP / HEIC / HEIF のみ。精算済み支出のレシートは上書き・削除不可。Storage サービスエージェントに `roles/firebaserules.firestoreServiceAgent` が必要（SECURITY_OPERATIONS.md §4） |
 | Web 向け API（`/household/*`） | Firebase ID トークン（`sign_in_provider=custom` かつ `lineId` クレーム）＋ `groupMembers` の有効メンバー判定。レート制限、CORS 許可リスト（`webOrigins.ts`）、`Cache-Control: no-store` |
-| 世帯メンバー | 2 名固定。bot は発言や招待コードでメンバーを自動追加しない（LINE の `参加` コマンドは無効化済み）。非メンバーの発言は個人支出として保存（`expenseGroupScope.ts`）。LINE グループ退出（`memberLeft`）で `isActive:false`。追加・無効化は `scripts/manage-group-members.mjs` |
+| 世帯メンバー | 2 名固定。bot は発言や招待コードでメンバーを自動追加しない（LINE の `参加` コマンドは無効化済み）。非メンバーの発言は個人支出として保存し、カテゴリ分類で Jev・Gemini を呼ばない（`expenseGroupScope.ts`）。LINE グループ退出（`memberLeft`）で `isActive:false`。追加・無効化は `scripts/manage-group-members.mjs` |
 | Gmail 管理 API | `ADMIN_SECRET`（`Authorization: Bearer` ヘッダーのみ。定数時間比較。クエリ渡しは廃止）＋ レートリミット、OAuth callback は CSRF state |
 | Gmail スコープ | `gmail.readonly` に最小化 |
 
@@ -257,7 +269,7 @@ line-kakeibo/
 │  │  ├─ textParser.ts       # 支出テキストパーサ
 │  │  ├─ firestore.ts        # Firestore データアクセス（支出/グループ/メンバー/予算/立替）
 │  │  ├─ expenseActions.ts   # 支出の確認・支払った人・立替・以前の立替の精算済みの判定とトランザクション（LINE postback と Web API で共用）
-│  │  ├─ expenseGroupScope.ts # LINE 発言に付ける groupId / lineGroupId の決定（非メンバーは個人支出）
+│  │  ├─ expenseGroupScope.ts # LINE 発言に付ける groupId / lineGroupId の決定（非メンバーは個人支出）と世帯メンバーの判定（非メンバーは分類でモデルを呼ばない）
 │  │  ├─ householdApi.ts     # Web 向け /household ルーター（ID トークン認証・メンバー確認・CORS・レート制限・以前の立替の精算済み・固定費 CRUD・折半設定・精算の通知）
 │  │  ├─ householdMembers.ts # 世帯の有効メンバーと表示名（精算サマリー・固定費・LINE の支払った人で共用）
 │  │  ├─ recurringExpenses.ts # 固定費の検証・計上ロジック（postRecurringExpenses）

@@ -10,7 +10,7 @@ import { findLineGroupId, getUserGroups, getUserSettings, saveExpense } from "..
 import { classifyExpense } from "../geminiCategoryClassifier";
 import type { ClassificationResult } from "../geminiCategoryClassifier";
 import { getCategoryEmoji } from "../gmail/types";
-import { resolveExpenseGroupScope } from "../expenseGroupScope";
+import { isHouseholdMember, resolveExpenseGroupScope } from "../expenseGroupScope";
 import { resolveAppUidForExpense } from "../linkUserResolver";
 import { errorMessage, maskId } from "../logSafe";
 import { getPaymentMethodLabel, PaymentMethod } from "../textParser";
@@ -178,6 +178,9 @@ export async function processExpenseInBackground(
     let userDisplayName = null; // Will be set based on context
     let lineGroupId = null;
     let appUid = null;
+    // 世帯の確認（getUserGroups・findLineGroupId）が失敗したか。activeGroup が null でも、
+    // 「メンバーでない」のか「確認できなかった」のかを分ける（カテゴリ分類でモデルを呼ぶかに使う。#245）
+    let membershipLookupFailed = false;
 
     // Check if this is from a LINE group
     if (event.source.type === "group") {
@@ -252,7 +255,9 @@ export async function processExpenseInBackground(
               }
               break;
             case 'groups':
-              if (!value.error && value.data.length > 0) {
+              if (value.error) {
+                membershipLookupFailed = true;
+              } else if (value.data.length > 0) {
                 activeGroup = pickActiveGroup(value.data, lineGroupId);
                 // グループ情報からの名前は使用しない（LINEプロファイルを優先）
               }
@@ -264,16 +269,19 @@ export async function processExpenseInBackground(
         }
       });
 
-      // キャッシュ更新
-      const cacheKey = event.source.type === "group"
-        ? `${event.source.userId}_${lineGroupId}`
-        : event.source.userId;
+      // キャッシュ更新。所属グループの読み取り（個人チャットの getUserGroups）に失敗したときは残さない。
+      // 失敗を「所属なし」として 15 分残すと、その間はメンバーの入力でもモデルを呼ばず、個人支出にもなるため
+      if (!membershipLookupFailed) {
+        const cacheKey = event.source.type === "group"
+          ? `${event.source.userId}_${lineGroupId}`
+          : event.source.userId;
 
-      userProfileCache.set(cacheKey, {
-        profile: { displayName: userDisplayName },
-        groups: activeGroup ? [activeGroup] : [],
-        timestamp: Date.now()
-      });
+        userProfileCache.set(cacheKey, {
+          profile: { displayName: userDisplayName },
+          groups: activeGroup ? [activeGroup] : [],
+          timestamp: Date.now()
+        });
+      }
     }
 
     // グループコンテキストでプロファイル取得後にグループ操作を実行
@@ -287,6 +295,7 @@ export async function processExpenseInBackground(
           activeGroup = groups.find((g) => g.id === groupId) || null;
         }
       } catch (groupError) {
+        membershipLookupFailed = true;
         console.error("Failed to setup group after profile fetch:", groupError);
       }
     }
@@ -330,9 +339,24 @@ export async function processExpenseInBackground(
     if (parsed.category) {
       decided = decideTextExpenseCategory({ specified: parsed.category });
     } else {
+      // モデル（Jev・Gemini）を呼ぶのは世帯メンバーの入力だけ（費用・無料枠の保護。#245）。
+      // メンバーでなければ辞書だけで判定し、決まらなければ既定カテゴリか「その他」（モデルが使えないときと同じ）。
+      // 世帯の確認自体に失敗したときはモデルを呼ぶ（メンバーでない人は Firestore の失敗を起こせない。
+      // 一時的な失敗でメンバーの入力を辞書だけにしないほうを優先する）
+      const allowModels = membershipLookupFailed || isHouseholdMember(activeGroup, lineGroupId);
+      if (!allowModels) {
+        console.log("Skipping category models: poster is not a household member", {
+          user: maskId(event.source.userId),
+        });
+      } else if (membershipLookupFailed) {
+        console.warn("Household membership lookup failed; classifying with models", {
+          user: maskId(event.source.userId),
+        });
+      }
+
       // カテゴリ分類を並列実行（辞書・モデル〔Jev → 失敗時 Gemini〕 + ユーザーデフォルト）
       const [classification, userSettingsResult] = await Promise.allSettled([
-        classifyExpense(event.source.userId, parsed.description),
+        classifyExpense(event.source.userId, parsed.description, { allowModels }),
         getUserSettings(event.source.userId)
       ]);
 

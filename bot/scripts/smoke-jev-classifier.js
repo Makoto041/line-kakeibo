@@ -6,6 +6,7 @@
  * - Jev が例外・タイムアウト・鍵なし・一覧に無いカテゴリ・答えが無いなら Gemini の結果を使う
  * - 選択肢は利用者のカテゴリ一覧から作り、説明の無いカスタムカテゴリは null で入る
  * - Jev・Gemini の失敗はキャッシュしない
+ * - allowModels: false（世帯メンバーでない送信者）なら Jev・Gemini を呼ばず、カテゴリ一覧も読まない
  * - ログに入力・店名を出さない
  *   node bot/scripts/smoke-jev-classifier.js
  */
@@ -63,7 +64,11 @@ geminiClient.generateJson = async (prompt, options) => {
 const categoriesByUser = {
   U_custom: [{ name: '食費' }, { name: '推し活' }, { name: 'その他' }],
 };
-firestore.getAllUserCategories = async (lineId) => categoriesByUser[lineId] ?? [];
+let categoryReads = 0;
+firestore.getAllUserCategories = async (lineId) => {
+  categoryReads++;
+  return categoriesByUser[lineId] ?? [];
+};
 
 const { classifyExpense } = require('../dist/geminiCategoryClassifier');
 const { JEV_MODEL } = require('../dist/jevCategoryClassifier');
@@ -274,6 +279,35 @@ async function main() {
   r = await classify('gmail-auto-system', 'ﾛｰｿﾝ ローソン', { source: 'merchant' });
   check('merchant: 復旧後は Jev で判定し直す', r.category === '日用品' && r.reasoning === 'Jev classification' && jevCalls.length === 1, JSON.stringify(r));
   check('merchant: 復旧後の判定元は jev', r.provider === 'jev', JSON.stringify(r));
+
+  console.log('\n# (g) allowModels: false（世帯メンバーでない送信者。#245）: モデルを呼ばない');
+  // lineId はカテゴリ一覧がまだキャッシュされていないもの（読めば categoryReads が増える）
+  reset();
+  categoryReads = 0;
+  jevBehavior = jevAnswer('娯楽', 0.9);
+  geminiReply = { category: '娯楽', confidence: 0.9 };
+  r = await classify('U_guest', 'カヌー', { allowModels: false });
+  check('辞書に無ければ null（判定元なし）', r.category === null && r.provider === undefined, JSON.stringify(r));
+  check('Jev・Gemini は呼ばれない', jevCalls.length === 0 && geminiCalls.length === 0, `jev ${jevCalls.length} / gemini ${geminiCalls.length}`);
+  check('カテゴリ一覧（Firestore）も読まない', categoryReads === 0, `${categoryReads} 回`);
+  check('提供元のログは出さない', lastProviderLog() === undefined);
+  reset();
+  r = await classify('U_guest', 'ランチ', { allowModels: false });
+  check('辞書に当たれば辞書で決める（判定元は dictionary）', r.category === '食費' && r.provider === 'dictionary', JSON.stringify(r));
+  check('辞書で決まっても Jev・Gemini は呼ばれない', jevCalls.length === 0 && geminiCalls.length === 0);
+  reset();
+  r = await classify('U_guest', 'カヌー');
+  check('null はキャッシュしない（同じ入力を allowModels 既定で分類すると Jev を呼ぶ）', r.category === '娯楽' && r.provider === 'jev' && jevCalls.length === 1, JSON.stringify(r));
+  check('このときはカテゴリ一覧を読む', categoryReads === 1, `${categoryReads} 回`);
+  reset();
+  r = await classify('U_guest', 'カヤック', { allowModels: true });
+  check('allowModels: true は従来どおり（Jev で決まれば Gemini は呼ばない）', r.provider === 'jev' && jevCalls.length === 1 && geminiCalls.length === 0, JSON.stringify(r));
+  reset();
+  r = await classify('gmail-guard', 'XYZ SHOP', { source: 'merchant', allowModels: false });
+  check('merchant でも allowModels: false ならモデルを呼ばない', r.category === null && jevCalls.length === 0 && geminiCalls.length === 0, JSON.stringify(r));
+  reset();
+  r = await classify('gmail-guard', 'ﾛｰｿﾝ ローソン', { source: 'merchant', allowModels: false });
+  check('merchant・allowModels: false: 辞書で決める', r.category === '食費' && r.provider === 'dictionary' && jevCalls.length === 0, JSON.stringify(r));
 
   console.log('\n# どちらも使えないとき');
   reset();
