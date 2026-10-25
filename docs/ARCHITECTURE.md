@@ -107,6 +107,7 @@ flowchart LR
 LINEテキスト → webhook(署名検証)
   → parseTextExpense()（金額必須・日付/支払方法/カテゴリ/摘要を抽出）
   → 並列: プロフィール取得(15分cache) / appUid解決(匿名Auth) / 所属グループの取得（個人チャット。LINE グループでの発言はプロフィール取得の後）
+     （表示名が取れなければ「ユーザー情報の取得に失敗しました」と返して保存しない。失敗はキャッシュに残さず、次の入力で取り直す）
   → 世帯メンバーかの判定（expenseGroupScope.ts の isHouseholdMember: LINE グループに紐づく世帯の有効メンバーか。取得済みの所属から判定し、読み取りは増やさない）
   → カテゴリ分類: キャッシュ → キーワードマップ → Jev（失敗時のみ Gemini）。確信度≥0.4で採用
      （世帯メンバーでない送信者はキーワードマップまで。Jev・Gemini を呼ばない。所属の確認に失敗したときはモデルを呼ぶ。§5）
@@ -242,7 +243,7 @@ Gemini（退避先）: @google/genai 経由、Flash-Lite 系だけを使う（Fl
 その他のコスト施策:
 
 - **replyMessage 優先・push フォールバック**（LINE 無料枠 200 push/月の節約。※テキスト支出の登録通知と postback 応答（設定変更後のカード再送・カテゴリ選択カルーセル・各種案内）が対象。Gmail カード通知のみグループ宛の非同期プッシュで reply トークンが無く push 専用）
-- LINE プロフィール 15 分メモリキャッシュ、`Promise.allSettled` による並列化
+- LINE プロフィール 15 分メモリキャッシュ（取得に失敗した結果は残さない）、`Promise.allSettled` による並列化
 - レシート画像はアップロード前にクライアントで圧縮（`web/lib/imageCompress.ts`。OCR / Vision API は廃止済み）
 - 固定費の自動計上は LINE 通知を送らない（push 枠を使わない）
 

@@ -297,8 +297,10 @@ export async function processExpenseInBackground(
 
       // キャッシュ更新。取得した回だけ書き、期限は取得した時点から CACHE_TTL（キャッシュに当たった回は延ばさない）。
       // 所属グループの読み取り（個人チャットの getUserGroups）に失敗したときは残さない。
-      // 失敗を「所属なし」として 15 分残すと、その間はメンバーの入力でもモデルを呼ばず、個人支出にもなるため
-      if (fetchedProfile && !membershipLookupFailed) {
+      // 失敗を「所属なし」として 15 分残すと、その間はメンバーの入力でもモデルを呼ばず、個人支出にもなるため。
+      // プロフィールの取得に失敗した（表示名が取れなかった）ときも残さない（#261）。個人チャットはキャッシュに
+      // 当たるかの判定で表示名を見ないため、残すとその間は入力のたびに「ユーザー情報の取得に失敗しました」で止まる
+      if (fetchedProfile && !membershipLookupFailed && userDisplayName) {
         const cacheKey = event.source.type === "group"
           ? `${event.source.userId}_${lineGroupId}`
           : event.source.userId;
