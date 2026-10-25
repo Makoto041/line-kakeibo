@@ -275,7 +275,9 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
   Jev の呼び出しでは、ログに入力・店名・利用者 ID・API の応答本文を出さない（失敗時はエラーの種類と HTTP ステータスだけ）。
 - Gemini の呼び出し（`bot/src/geminiClient.ts`）でも、ログにプロンプト・応答本文を出さない。応答を JSON として解釈できないとき
   （`Gemini response is not valid JSON`）と HTTP ステータスの無い失敗のときは、エラー名（`errorName`）だけを出す（`JSON.parse` の
-  `SyntaxError` の文言には応答の一部が入るため）。API のエラーは HTTP ステータスと API のエラー文の先頭 300 文字を出す。
+  `SyntaxError` の文言には応答の一部が入るため）。通信の失敗（`fetch failed`）では、原因のエラーコード（`cause.code`。`ECONNRESET`・
+  `UND_ERR_CONNECT_TIMEOUT` など、英大文字・数字・`_` だけのとき）も `code` として出す（文言・原因の文言は出さない）。
+  API のエラーは HTTP ステータスと API のエラー文の先頭 300 文字を出す。
 - 鍵（`TYPESAFE_API_KEY`）は Firebase の Secret Manager で管理し、`firebase functions:secrets:set TYPESAFE_API_KEY` で登録する。
   コード・ログ・`.env.example` に値を書かない。止めるときの手順は SETUP.md §4「Jev（TypeSafe AI）」。
 - 開発者の手元で評価スクリプト（`bot/scripts/eval/eval-classifier.js --provider jev`）を実行するときは、評価データ（実際の支出の説明文・店名。

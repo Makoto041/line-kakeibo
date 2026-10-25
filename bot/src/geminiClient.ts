@@ -1,5 +1,5 @@
 import type * as GenAI from '@google/genai' with { 'resolution-mode': 'import' };
-import { errorName } from './logSafe';
+import { errorCauseCode, errorName } from './logSafe';
 
 // @google/genai は "type": "module" のパッケージで、型定義は ESM として解釈される。
 // bot は CommonJS なので、実行時はパッケージが用意している CommonJS 版（exports の require）を
@@ -196,7 +196,8 @@ export interface GenerateJsonOptions {
  * プロンプトを送り、JSON として解釈した応答を返す。
  * 設定なし・タイムアウト・API エラー・JSON でない応答のときは null（呼び出し側でフォールバックする）。
  * プロンプトと応答本文は利用者の入力を含むためログに出さない。JSON.parse の SyntaxError の文言には応答の一部が入るので、
- * 解釈の失敗と、HTTP ステータスの無い例外（SDK が応答を解釈するときの SyntaxError など）は、エラー名だけを出す。
+ * 解釈の失敗と、HTTP ステータスの無い例外（SDK が応答を解釈するときの SyntaxError など）は、エラー名だけを出す
+ * （通信の失敗では、原因のエラーコード〔ECONNRESET など〕も添える）。
  */
 export async function generateJson<T = unknown>(
   prompt: string,
@@ -283,8 +284,9 @@ export async function generateJson<T = unknown>(
         });
       } else {
         // HTTP ステータスの無い例外（通信の失敗、SDK が応答を解釈するときの SyntaxError など）は、文言に応答の断片が
-        // 入りうるので名前だけを出す
-        console.error('Gemini request failed', { errorName: errorName(error) });
+        // 入りうるので名前だけを出す。通信の失敗（fetch failed）の診断のため、原因のエラーコードが決まった形なら添える
+        const code = errorCauseCode(error);
+        console.error('Gemini request failed', { errorName: errorName(error), ...(code ? { code } : {}) });
       }
     }
     return null;

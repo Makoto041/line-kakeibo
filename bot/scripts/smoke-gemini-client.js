@@ -8,7 +8,7 @@
  * - スキーマ誤りなど関係のない 400 では予備に切り替えない
  * - API に締め切り（httpOptions.timeout）を送らない（再試行の設定は送る）。打ち切りは呼び出し側の AbortController が受け持つ
  * - 応答を JSON として解釈できないとき・HTTP ステータスの無い例外のときは、ログに応答の断片（SyntaxError の文言）を出さず、
- *   固定文とエラー名だけを出す
+ *   固定文とエラー名だけを出す。通信の失敗では、原因のエラーコード（cause.code が決まった形のときだけ）を添える
  *   node bot/scripts/smoke-gemini-client.js
  */
 const path = require('path');
@@ -298,6 +298,41 @@ async function main() {
     check(
       '固定文 + オブジェクト（エラー名）で error に出す',
       failedLog?.level === 'error' && failedLog.args[1]?.errorName === 'SyntaxError' && !('error' in failedLog.args[1]),
+      logged
+    );
+  }
+
+  console.log('\n# 通信の失敗（fetch failed）: 原因のエラーコードを添える。文言・原因の文言は出さない');
+  /** fetch の通信の失敗（undici）と同じ形: TypeError('fetch failed') の cause に code 付きのエラー */
+  const fetchFailed = (code) =>
+    new TypeError(`fetch failed ${CANARY}`, { cause: Object.assign(new Error(`connect ${CANARY} 203.0.113.1:443`), { code }) });
+  for (const [label, code, expected] of [
+    ['ECONNRESET', 'ECONNRESET', 'ECONNRESET'],
+    ['UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT'],
+    ['決まった形でない code（入力の断片でありうる）', `E_${CANARY}`, undefined],
+    ['小文字・空白を含む code', 'econn reset', undefined],
+    ['長すぎる code', 'E'.repeat(65), undefined],
+    ['文字列でない code', 104, undefined],
+    ['code なし', undefined, undefined],
+  ]) {
+    client.resetGeminiModelState();
+    calls = [];
+    behavior = () => {
+      throw fetchFailed(code);
+    };
+    const { result, logs } = await captureLogs(() => client.generateJson('p', opts));
+    const logged = logText(logs);
+    const failedLog = logs.find((l) => l.args[0] === 'Gemini request failed');
+    check(`${label}: null を返す`, result === null, JSON.stringify(result));
+    check(`${label}: ログに文言・原因の文言を出さない`, !logged.includes('CANARY') && !logged.includes('秘密') && !logged.includes('203.0.113.1'), logged);
+    check(
+      `${label}: ${expected ? `{ errorName, code: ${expected} }` : 'code は出さない（errorName だけ）'}`,
+      failedLog?.level === 'error' &&
+        failedLog.args.length === 2 &&
+        failedLog.args[1].errorName === 'TypeError' &&
+        failedLog.args[1].code === expected &&
+        ('code' in failedLog.args[1]) === (expected !== undefined) &&
+        Object.keys(failedLog.args[1]).every((k) => k === 'errorName' || k === 'code'),
       logged
     );
   }
