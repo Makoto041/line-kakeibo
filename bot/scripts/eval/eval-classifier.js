@@ -29,7 +29,8 @@
  *   --include-unreviewed         reviewed でない件も使う（動作確認用。数字の報告には使わない）
  *   --show-errors                間違えた件を画面に出す（説明文・店名が出る。人に見せる画面では使わない）
  *
- * 階層化（大項目 / 中項目。#235）の評価:
+ * 階層化（大項目 / 中項目。#235）の評価（--scheme stage2|flat）:
+ *   方式 C を採ったため本番では使わない。所感発表での方式 B との比較のために残す。
  *   node bot/scripts/eval/eval-classifier.js --provider jev --variant v3 --scheme stage2 --limit 5          # 試運転
  *   node bot/scripts/eval/eval-classifier.js --provider jev --variant v3 --scheme stage2 --subset tune
  *   node bot/scripts/eval/eval-classifier.js --provider jev --variant v3 --scheme flat --decode sum --subset tune
@@ -37,11 +38,11 @@
  *   --scheme major|stage2|flat   major = 大項目だけを測る（既定。今までどおり）。stage2 / flat は --provider jev のときだけ
  *                                （Jev だけで判定する。辞書は通さず、Gemini には送らない）。
  *                                stage2 = 1 回目は major と同じ要求（同じ --variant。本番と同じにするなら --variant v3）。
- *                                  1 回目で決まった大項目に中項目の一覧（bot/src/categoryTaxonomy.ts の subCategoriesOf。仮）が
+ *                                  1 回目で決まった大項目に中項目の一覧（bot/src/categoryTaxonomy.ts の subCategoriesOf。確定）が
  *                                  あるときだけ、2 回目の要求（その大項目の中項目から 1 つを選ぶ choice の質問 1 問。質問文は SUB_QUESTIONS）を送る。
  *                                flat = 大項目と中項目を並べた 1 回の要求。選択肢は、中項目のある大項目は「大項目/中項目」、
  *                                  中項目の無い大項目は大項目名（説明は --variant のとおり）。質問文は major と同じ。
- *   --sub-desc on|off            stage2 / flat のみ。中項目の選択肢に説明（categoryTaxonomy.ts の SUB_CATEGORY_DESCRIPTIONS。仮）を
+ *   --sub-desc on|off            stage2 / flat のみ。中項目の選択肢に説明（categoryTaxonomy.ts の SUB_CATEGORY_DESCRIPTIONS。確定）を
  *                                付けるか（既定 off = 説明なし）。説明の無い中項目は説明なしで送る（その個数を画面と summary に出す）
  *   --stage2-major pred|gold     stage2 のみ。2 回目に使う大項目（既定 pred = 1 回目の答え / gold = 正解の大項目。2 回目だけの精度を
  *                                切り分ける用。gold でも 1 回目は送る。--show-errors では 1 回目の大項目と、正解の大項目の下で選んだ
@@ -673,7 +674,7 @@ async function main() {
         stage2Major: SCHEME === 'stage2' ? STAGE2_MAJOR : null,
         decode: SCHEME === 'flat' ? DECODE : null,
         subDescribed,
-        note: 'Jev だけで判定（辞書は通さず、Gemini には送らない）。対象は中項目の正解（validSubLabel）がある件だけ。中項目の一覧は仮（categoryTaxonomy.ts）',
+        note: 'Jev だけで判定（辞書は通さず、Gemini には送らない）。対象は中項目の正解（validSubLabel）がある件だけ。中項目の一覧は確定（categoryTaxonomy.ts）',
       }
     : {};
   const summary = { tag, provider: PROVIDER, variant: PROVIDER === 'jev' ? VARIANT : null, ...schemeInfo, createdAt: new Date().toISOString(), bySource: {} };

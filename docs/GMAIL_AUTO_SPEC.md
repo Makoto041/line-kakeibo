@@ -175,6 +175,7 @@ Flex Message 通知（line/flexMessage.ts）
 | description | string | 説明・店舗名 | ✓ |
 | date | string | YYYY-MM-DD 形式（JST） | ✓ |
 | category | string | カテゴリ名 | ✓ |
+| subCategory | string | 中項目（食費・娯楽だけ。辞書で決まったときだけ。SPECIFICATION.md §4.1） | |
 | confirmed | boolean | 確認済みフラグ | ✓ |
 | payerId | string | 支払者 LINE ID | ✓ |
 | payerDisplayName | string | 支払者表示名 | |

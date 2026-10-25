@@ -7,6 +7,7 @@
  * （bot/scripts/emulator-household-api.js）で行う。
  */
 const assert = require('assert');
+const { Timestamp } = require('firebase-admin/firestore');
 const {
   decideClearAdvance,
   decideConfirm,
@@ -73,10 +74,14 @@ function legacyConfirm(data) {
       };
 }
 
+/** 比較用に、FieldValue.delete() の番兵を目印の文字列に置き換える（番兵どうしの同一性に頼らない） */
+const DELETE = '<FieldValue.delete()>';
+const withDeleteMarker = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, isFieldDelete(v) ? DELETE : v]));
+
 /** updatedAt（生成時刻）は Date であることだけ確かめて比較から外す */
 function comparable(decision) {
   const { updatedAt, ...rest } = decision.update;
-  return { update: rest, cardPatch: decision.cardPatch, updatedAtIsDate: updatedAt instanceof Date };
+  return { update: withDeleteMarker(rest), cardPatch: decision.cardPatch, updatedAtIsDate: updatedAt instanceof Date };
 }
 
 const statuses = [undefined, null, '', 'pending', 'shared', 'personal', 'advance_pending', 'advance_settled'];
@@ -162,29 +167,34 @@ console.log('\ndecideSettleLegacyAdvance（全額にする前の立替を精算�
 // ------------------------------------------------------------
 console.log('\ndecideSetCategory（LINE のカテゴリ選択。postback の set_category）');
 {
-  /** 切り出す前の postback.ts handleSetCategory のクロージャ（比較用の写し。カテゴリはそのまま保存していた） */
+  /**
+   * 切り出す前の postback.ts handleSetCategory のクロージャ（比較用の写し。カテゴリはそのまま保存していた）に、
+   * 中項目の削除（#235。大項目が変わり、辞書で決まらないとき）を足したもの。
+   * 下のデータは category・description を持たないので、どの大項目を選んでも「大項目が変わり、決まらない」になる。
+   */
   function legacySetCategory(category, data) {
     const status = data.status;
     const isPending = !status || status === 'pending';
     return isPending
       ? {
-          update: { category, confirmed: true, status: 'shared', includeInTotal: true, updatedAt: new Date() },
-          cardPatch: { category, status: 'shared', includeInTotal: true },
+          update: { category, subCategory: DELETE, confirmed: true, status: 'shared', includeInTotal: true, updatedAt: new Date() },
+          cardPatch: { category, subCategory: undefined, status: 'shared', includeInTotal: true },
         }
       : {
-          update: { category, confirmed: true, updatedAt: new Date() },
-          cardPatch: { category },
+          update: { category, subCategory: DELETE, confirmed: true, updatedAt: new Date() },
+          cardPatch: { category, subCategory: undefined },
         };
   }
 
-  // 正準名・揃えられない名前（趣味・カスタム名）は、切り出す前と同じ更新内容
+  // 正準名・揃えられない名前（趣味・カスタム名）は、切り出す前と同じ更新内容（＋中項目の削除）
   for (const category of ['食費', '通信費', 'その他', '医療・健康', '趣味', '推し活']) {
     for (const status of statuses) {
       const data = { status, amount: 1000, includeInTotal: false };
       const actual = decideSetCategory(category)(data);
       check(
-        `${category}・status=${JSON.stringify(status)} は従来と同じ更新内容`,
-        !('reject' in actual) && deepEqual(comparable(actual), comparable(legacySetCategory(category, data))),
+        `${category}・status=${JSON.stringify(status)} は従来と同じ更新内容（＋中項目の削除）`,
+        !('reject' in actual) && deepEqual(comparable(actual), comparable(legacySetCategory(category, data))) &&
+          'subCategory' in actual.cardPatch,
         JSON.stringify(actual)
       );
     }
@@ -202,7 +212,7 @@ console.log('\ndecideSetCategory（LINE のカテゴリ選択。postback の set
       const data = { status, amount: 1000, includeInTotal: false };
       const actual = decideSetCategory(label)(data);
       check(
-        `${label}・status=${JSON.stringify(status)} → ${canonical} で保存（ほかは従来と同じ）`,
+        `${label}・status=${JSON.stringify(status)} → ${canonical} で保存（ほかは従来と同じ＋中項目の削除）`,
         !('reject' in actual) && deepEqual(comparable(actual), comparable(legacySetCategory(canonical, data))) &&
           actual.update.category === canonical && actual.cardPatch.category === canonical,
         JSON.stringify(actual)
@@ -210,6 +220,119 @@ console.log('\ndecideSetCategory（LINE のカテゴリ選択。postback の set
     }
   }
   check('精算済みでもカテゴリは変えられる（拒否しない）', !('reject' in decideSetCategory('医療費')({ status: 'advance_settled' })));
+}
+
+// ------------------------------------------------------------
+console.log('\ndecideSetCategory の中項目（#235。大項目が変わるときだけ、辞書と時刻のルールで決め直す）');
+{
+  /** JST の壁時計の時刻の Firestore Timestamp（保存済みの usedAt は読むと Timestamp になる） */
+  const jst = (s) => Timestamp.fromDate(new Date(`${s}+09:00`));
+  const decide = (category, data) => decideSetCategory(category)(data);
+  const hasSubKey = (d) => 'subCategory' in d.update || 'subCategory' in d.cardPatch;
+
+  // 大項目が同じ
+  for (const status of [undefined, 'shared', 'advance_settled']) {
+    const d = decide('食費', { category: '食費', description: 'ランチ', subCategory: '夜ご飯', status });
+    check(
+      `大項目が同じなら中項目に触らない（update・cardPatch ともキーなし。status=${status ?? '無し'}）`,
+      !('reject' in d) && !hasSubKey(d) && d.update.category === '食費',
+      JSON.stringify(d)
+    );
+  }
+  {
+    const alias = decide('医療費', { category: '医療・健康', description: '病院', subCategory: 'x', status: 'shared' });
+    check('旧名を選んでも、正準名どうしで同じなら触らない（医療・健康 → 医療費）', !hasSubKey(alias) && alias.update.category === '医療・健康', JSON.stringify(alias));
+    const storedLegacy = decide('娯楽', { category: '娯楽費', description: 'ランチ', subCategory: '映画', status: 'shared' });
+    check('保存済みが旧名（娯楽費）で同じ大項目（娯楽）を選んでも触らない', !hasSubKey(storedLegacy) && storedLegacy.update.category === '娯楽', JSON.stringify(storedLegacy));
+    const padded = decide('食費', { category: ' 食費 ', description: 'ランチ', subCategory: 'カフェ', status: 'shared' });
+    check('保存済みの大項目の前後に空白があっても（「 食費 」→ 食費）同じ大項目として触らない', !hasSubKey(padded) && padded.update.category === '食費', JSON.stringify(padded));
+    const storedMedical = decide('医療・健康', { category: '医療費', description: '病院', subCategory: 'x', status: 'shared' });
+    check('保存済みが旧名（医療費）で正準名（医療・健康）を選んでも触らない', !hasSubKey(storedMedical) && storedMedical.update.category === '医療・健康', JSON.stringify(storedMedical));
+  }
+
+  // 大項目が変わり、辞書で決まる
+  {
+    const lunch = decide('食費', { category: 'その他', description: 'ランチ', status: 'shared' });
+    check('食費にして説明「ランチ」→ 昼ご飯（update・cardPatch とも）', lunch.update.subCategory === '昼ご飯' && lunch.cardPatch.subCategory === '昼ご飯', JSON.stringify(lunch));
+    const movie = decide('娯楽費', { category: '食費', description: '映画館', subCategory: 'カフェ', status: 'shared' });
+    check('娯楽費（旧名）にして説明「映画館」→ 映画（食費の中項目を残さない）', movie.update.category === '娯楽' && movie.update.subCategory === '映画' && movie.cardPatch.subCategory === '映画', JSON.stringify(movie));
+    const pending = decide('食費', { description: 'ランチ' });
+    check('未確認でも決める（共同費への昇格と一緒に）', pending.update.subCategory === '昼ご飯' && pending.update.status === 'shared' && pending.cardPatch.subCategory === '昼ご飯');
+  }
+
+  // 大項目が変わり、決まらなければ消す
+  {
+    const none = decide('日用品', { category: '食費', description: 'ランチ', subCategory: '昼ご飯', status: 'shared' });
+    check('中項目の無い大項目にすると消す（update は FieldValue.delete() の番兵）', isFieldDelete(none.update.subCategory), JSON.stringify(none.update));
+    check('cardPatch.subCategory は undefined で、キーはある', 'subCategory' in none.cardPatch && none.cardPatch.subCategory === undefined, JSON.stringify(Object.keys(none.cardPatch)));
+    const record = { ...{ category: '食費', subCategory: '昼ご飯' }, ...none.cardPatch };
+    check('返信カード用のレコード（{ ...data, ...cardPatch }）に古い中項目が残らない', record.subCategory === undefined && record.category === '日用品');
+    const noMatch = decide('食費', { category: 'その他', description: '謎の支出', subCategory: 'カフェ', status: 'shared' });
+    check('辞書に当たらなければ消す', isFieldDelete(noMatch.update.subCategory) && 'subCategory' in noMatch.cardPatch && noMatch.cardPatch.subCategory === undefined);
+    const custom = decide('推し活', { category: '食費', description: 'ランチ', subCategory: '昼ご飯', status: 'shared' });
+    check('利用者のカスタム名にすると消す', isFieldDelete(custom.update.subCategory) && custom.update.category === '推し活');
+    const other = decide('食費', { category: 'その他', description: '食費', status: 'shared' });
+    check('説明が大項目名だけなら決めない（消す）', isFieldDelete(other.update.subCategory));
+  }
+
+  // 時刻のルール（Gmail 取込の店名で、保存済みの usedAt に時刻があるときだけ）
+  {
+    const base = { category: 'その他', description: 'ラーメン', status: 'shared' };
+    const gmail = (usedAt) => decide('食費', { ...base, inputSource: 'gmail_auto', usedAt }).update.subCategory;
+    check('Gmail で 12:30（JST）の飲食店 → 昼ご飯', gmail(jst('2026-10-20T12:30:00')) === '昼ご飯');
+    check('Gmail で 07:15 → 朝ご飯、19:00 → 夜ご飯', gmail(jst('2026-10-20T07:15:00')) === '朝ご飯' && gmail(jst('2026-10-20T19:00:00')) === '夜ご飯');
+    check('Gmail で 00:00:00.000 ちょうど（時刻なし）→ 外食（夜ご飯にしない）', gmail(jst('2026-10-20T00:00:00')) === '外食', gmail(jst('2026-10-20T00:00:00')));
+    check('Gmail で 00:01 は時刻あり → 夜ご飯', gmail(jst('2026-10-20T00:01:00')) === '夜ご飯');
+    check('Gmail で usedAt が無ければ外食', gmail(undefined) === '外食' && gmail(null) === '外食');
+    check('Timestamp でない usedAt（Date・数値・文字列）には時刻を当てない', [new Date('2026-10-20T12:30:00+09:00'), Date.parse('2026-10-20T12:30:00+09:00'), '2026-10-20T12:30:00+09:00'].every((v) => gmail(v) === '外食'));
+    check('toDate が投げても、時刻なしとして辞書で決める', gmail({ toDate() { throw new Error('boom'); } }) === '外食');
+    check('toDate が Date を返さなければ時刻なし', gmail({ toDate: () => '2026-10-20T12:30:00+09:00' }) === '外食');
+    const cafe = decide('食費', { ...base, description: 'スターバックス', inputSource: 'gmail_auto', usedAt: jst('2026-10-20T12:30:00') });
+    check('飲食店でないグループ（カフェ）には時刻を当てない', cafe.update.subCategory === 'カフェ');
+    const text = (inputSource) => decide('食費', { ...base, inputSource, usedAt: jst('2026-10-20T12:30:00') }).update.subCategory;
+    check('LINE（text）には時刻を当てない（line_text・入力元なし・固定費）', ['line_text', undefined, 'recurring', 'line_ocr'].every((s) => text(s) === '外食'));
+  }
+
+  // 精算済み
+  {
+    const settled = decide('食費', { category: 'その他', description: 'ランチ', status: 'advance_settled', advanceBy: 'U1' });
+    check('精算済みでも大項目・中項目を変えられる（status は変えない）', !('reject' in settled) && settled.update.category === '食費' && settled.update.subCategory === '昼ご飯' && settled.update.status === undefined, JSON.stringify(settled));
+  }
+
+  // 判定で例外が起きても大項目の変更は続ける（中項目は消す）
+  {
+    const rules = require('../dist/subCategoryRules');
+    const silenced = (fn) => {
+      const origWarn = console.warn;
+      const warns = [];
+      console.warn = (...args) => warns.push(args);
+      try {
+        return { result: fn(), warns };
+      } finally {
+        console.warn = origWarn;
+      }
+    };
+
+    const origResolve = rules.resolveSubCategory;
+    rules.resolveSubCategory = () => {
+      throw new Error('boom');
+    };
+    let thrown;
+    try {
+      thrown = silenced(() => decide('食費', { category: 'その他', description: 'ランチ', subCategory: '映画', status: 'shared' }));
+    } finally {
+      rules.resolveSubCategory = origResolve;
+    }
+    const d = thrown.result;
+    check('resolveSubCategory が投げても大項目の変更は続く', !('reject' in d) && d.update.category === '食費' && d.update.confirmed === true, JSON.stringify(d));
+    check('そのとき中項目は消す（update は番兵、cardPatch は undefined のキー）', isFieldDelete(d.update.subCategory) && 'subCategory' in d.cardPatch && d.cardPatch.subCategory === undefined);
+    check('原因はオブジェクトでログに出す（書式文字列に埋め込まない）', thrown.warns.length === 1 && typeof thrown.warns[0][0] === 'string' && !thrown.warns[0][0].includes('boom') && thrown.warns[0][1] && thrown.warns[0][1].error === 'boom', JSON.stringify(thrown.warns));
+
+    const broken = { category: 'その他', status: 'shared', subCategory: '映画' };
+    Object.defineProperty(broken, 'description', { enumerable: true, get() { throw new Error('getter'); } });
+    const fromGetter = silenced(() => decide('食費', broken));
+    check('説明の読み取りが投げても大項目の変更は続き、中項目は消す', fromGetter.result.update.category === '食費' && isFieldDelete(fromGetter.result.update.subCategory) && fromGetter.warns.length === 1);
+  }
 }
 
 const ts = (ms) => ({ toMillis: () => ms });
@@ -397,6 +520,74 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
 
   // postback が共有関数を読み込めること（require 時に落ちない）
   check('line/postback.js が読み込める', typeof require('../dist/line/postback').handlePostback === 'function');
+
+  // ------------------------------------------------------------
+  console.log('\npostback の set_category（中項目は postback の値を使わず、サーバーで決める）');
+  {
+    // Firestore・LINE には繋がない: applyExpenseChange と返信を差し替える（dist の呼び出しはモジュールの exports を毎回引く）
+    const actions = require('../dist/expenseActions');
+    const client = require('../dist/line/client');
+    const { handlePostback } = require('../dist/line/postback');
+    const origApply = actions.applyExpenseChange;
+    const origReply = client.replyWithPushFallback;
+    const origLog = console.log;
+    const decisions = [];
+    const replies = [];
+    const logs = [];
+    let stored;
+    actions.applyExpenseChange = async (_expenseId, decide) => {
+      const decision = decide(stored);
+      decisions.push(decision);
+      if ('reject' in decision) return decision;
+      return { record: { ...stored, ...decision.cardPatch } };
+    };
+    client.replyWithPushFallback = async (_replyToken, _to, messages) => {
+      replies.push(messages);
+      return 'reply';
+    };
+    const press = async (data, payload) => {
+      stored = data;
+      const before = decisions.length;
+      console.log = (...args) => logs.push(args);
+      try {
+        await handlePostback({
+          type: 'postback',
+          replyToken: 'reply-token',
+          source: { type: 'user', userId: 'Uabcdef1234' },
+          postback: { data: JSON.stringify(payload) },
+        });
+      } finally {
+        console.log = origLog;
+      }
+      return decisions.length > before ? decisions[decisions.length - 1] : undefined;
+    };
+    const categoryLogs = () => logs.filter((l) => l[0] === 'Expense category updated').map((l) => l[1]);
+
+    try {
+      const forged = { action: 'set_category', expenseId: 'exp_0001', category: '食費', subCategory: '夜ご飯' };
+      const a = await press({ category: 'その他', description: 'ランチ', status: 'shared', amount: 1000 }, forged);
+      check('postback の subCategory（夜ご飯）ではなく、辞書で決めた値（昼ご飯）を保存する', a && a.update.subCategory === '昼ご飯' && a.cardPatch.subCategory === '昼ご飯', JSON.stringify(a && a.update));
+      const b = await press({ category: 'その他', description: '謎の支出', status: 'shared', amount: 1000 }, forged);
+      check('辞書で決まらなければ、postback に値があっても消す', b && isFieldDelete(b.update.subCategory) && 'subCategory' in b.cardPatch && b.cardPatch.subCategory === undefined, JSON.stringify(b && b.cardPatch));
+      const c = await press({ category: '食費', description: 'ランチ', subCategory: 'カフェ', status: 'shared', amount: 1000 }, forged);
+      check('大項目が同じなら、postback に値があっても中項目に触らない', c && !('subCategory' in c.update) && !('subCategory' in c.cardPatch), JSON.stringify(c));
+      const d = await press({ category: '食費', description: 'ランチ', subCategory: '手で書いた中項目', status: 'shared', amount: 1000 }, forged);
+      check('（大項目が同じ・一覧に無い中項目でも触らない）', d && !('subCategory' in d.update));
+      check('どの場合も最新の値のカードを返信する', replies.length === 4 && replies.every((m) => Array.isArray(m) && m.length === 1 && m[0].type === 'flex'), JSON.stringify(replies.map((m) => m.map((x) => x.type))));
+
+      const logged = categoryLogs();
+      check(
+        'ログに中項目を出す（決めた値・消したら null・触らなければ保存済みの値）',
+        logged.length === 4 && logged[0].subCategory === '昼ご飯' && logged[1].subCategory === null && logged[2].subCategory === 'カフェ',
+        JSON.stringify(logged)
+      );
+      check('一覧に無い中項目はログに出さない', logged.length === 4 && logged[3].subCategory === '(not in list)', JSON.stringify(logged[3]));
+      check('ログの支出 ID は伏せる', logged.length === 4 && logged.every((l) => l.expense === '…0001'), JSON.stringify(logged.map((l) => l.expense)));
+    } finally {
+      actions.applyExpenseChange = origApply;
+      client.replyWithPushFallback = origReply;
+    }
+  }
 
   console.log(failed === 0 ? '\nALL PASSED' : `\n${failed} FAILED`);
   process.exit(failed === 0 ? 0 : 1);

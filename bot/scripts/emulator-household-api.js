@@ -36,7 +36,7 @@ if (!projectId.startsWith('demo-')) {
 initializeApp({ projectId });
 
 const { householdRouter, householdErrorHandler } = require('../dist/householdApi');
-const { applyExpenseChange, decideConfirm, decideSetAdvance, decideSetPayer } = require('../dist/expenseActions');
+const { applyExpenseChange, decideConfirm, decideSetAdvance, decideSetCategory, decideSetPayer } = require('../dist/expenseActions');
 const { readActiveMember } = require('../dist/householdMembers');
 
 const ORIGIN = 'https://line-kakeibo.vercel.app';
@@ -403,6 +403,53 @@ async function main() {
       check('メンバー外は立替にできない', strangerAdvance && strangerAdvance.forbidden === true);
       const onSettled = await setPayer('e_settled', 'Ualice');
       check('立替で精算済みは変えない', onSettled && onSettled.reject && (await db.doc('expenses/e_settled').get()).get('payerId') === 'Ubob', onSettled);
+    }
+
+    // ---------------- カテゴリの変更（LINE の set_category。中項目を辞書で決め直す） ----------------
+    console.log('\nカテゴリの変更（postback と同じ applyExpenseChange + decideSetCategory。大項目が変わるときは中項目を決め直す）');
+    {
+      const read = async (id) => (await db.doc(`expenses/${id}`).get()).data();
+      // Gmail 取込と同じく usedAt は Date で書く（読むと Timestamp）
+      const gmailDoc = (description, usedAt) => ({
+        lineId: 'gmail-auto-system', payerId: 'gmail-auto-system', groupId: 'g1', lineGroupId: 'C_line1', amount: 980, description,
+        date: '2026-10-20', category: 'その他', status: 'shared', inputSource: 'gmail_auto', gmailMessageId: `m_${description}`,
+        usedAt, includeInTotal: true, confirmed: true,
+      });
+      const lunchAt = new Date('2026-10-20T12:30:00+09:00');
+      await db.doc('expenses/cat_gmail').set(gmailDoc('ラーメン山田', lunchAt));
+      await db.doc('expenses/cat_gmail_midnight').set(gmailDoc('ラーメン山田', new Date('2026-10-20T00:00:00+09:00')));
+      await db.doc('expenses/cat_line').set({ lineId: 'Ualice', payerId: 'Ualice', groupId: 'g1', lineGroupId: 'C_line1', amount: 1200, description: 'ランチ', date: '2026-10-20', category: 'その他', inputSource: 'line_text', includeInTotal: false, confirmed: false });
+
+      const r1 = await applyExpenseChange('cat_gmail', decideSetCategory('食費'));
+      const d1 = await read('cat_gmail');
+      check('Gmail 取込の 12:30 の飲食店を食費にすると、中項目に昼ご飯を書く（返信用のレコードも同じ）', d1.category === '食費' && d1.subCategory === '昼ご飯' && r1 && r1.record && r1.record.subCategory === '昼ご飯', { doc: d1.subCategory, record: r1 && r1.record && r1.record.subCategory });
+      check('usedAt は Timestamp で読め、書き方は変わらない', d1.usedAt instanceof Timestamp && d1.usedAt.toMillis() === lunchAt.getTime());
+
+      await applyExpenseChange('cat_gmail_midnight', decideSetCategory('食費'));
+      check('usedAt が 00:00 ちょうど（時刻なし）なら時刻を当てず外食', (await read('cat_gmail_midnight')).subCategory === '外食', (await read('cat_gmail_midnight')).subCategory);
+
+      const r2 = await applyExpenseChange('cat_line', decideSetCategory('食費'));
+      const d2 = await read('cat_line');
+      check('LINE 手入力の「ランチ」を食費にすると昼ご飯（未確認なら共同費・確認済みにもする）', d2.subCategory === '昼ご飯' && d2.category === '食費' && d2.status === 'shared' && d2.confirmed === true && r2.record.subCategory === '昼ご飯', d2);
+
+      // 大項目が同じなら中項目に触らない（手で選んだ中項目を辞書で上書きしない）
+      await db.doc('expenses/cat_gmail').update({ subCategory: 'カフェ' });
+      await applyExpenseChange('cat_gmail', decideSetCategory('食費'));
+      check('大項目が同じなら中項目は変えない', (await read('cat_gmail')).subCategory === 'カフェ', (await read('cat_gmail')).subCategory);
+
+      // 決まらなければ消す
+      const r3 = await applyExpenseChange('cat_gmail', decideSetCategory('日用品'));
+      const d3 = await read('cat_gmail');
+      check('中項目の無い大項目にすると、文書から subCategory が消える', d3.category === '日用品' && !('subCategory' in d3), d3);
+      check('返信用のレコードにも古い中項目が残らない（キーは undefined）', r3 && r3.record && 'subCategory' in r3.record && r3.record.subCategory === undefined && r3.record.category === '日用品');
+      const r4 = await applyExpenseChange('cat_gmail', decideSetCategory('食費'));
+      check('中項目の無い支出で、決まった値を書く（日用品 → 食費。12:30 なので昼ご飯）', (await read('cat_gmail')).subCategory === '昼ご飯' && r4.record.subCategory === '昼ご飯');
+
+      // 精算済みでも変えられる
+      await db.doc('expenses/cat_settled').set({ lineId: 'Ubob', payerId: 'Ubob', groupId: 'g1', lineGroupId: 'C_line1', amount: 3000, description: '映画館', date: '2026-10-01', category: 'その他', subCategory: '外食', status: 'advance_settled', advanceBy: 'Ubob', includeInTotal: true, confirmed: true });
+      const r5 = await applyExpenseChange('cat_settled', decideSetCategory('娯楽費'));
+      const d5 = await read('cat_settled');
+      check('精算済みでも大項目・中項目を変える（娯楽費 → 娯楽・映画。status は変えない）', r5 && r5.record && d5.category === '娯楽' && d5.subCategory === '映画' && d5.status === 'advance_settled', d5);
     }
 
     // ---------------- 以前の立替を精算済みにする ----------------

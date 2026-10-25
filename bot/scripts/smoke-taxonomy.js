@@ -57,6 +57,10 @@ check('中項目の無い大項目（日用品）は空', subCategoriesOf('日�
 check('その他は空', subCategoriesOf('その他').length === 0);
 check('一覧に無い名前は空', subCategoriesOf('架空のカテゴリ').length === 0);
 check('空文字は空', subCategoriesOf('').length === 0);
+check('別名「娯楽費」「交際費」→ 娯楽の一覧（完全一致の別名）', subCategoriesOf('娯楽費') === SUB_CATEGORIES['娯楽'] && subCategoriesOf('交際費') === SUB_CATEGORIES['娯楽']);
+check('カスタム名「飲食代」は空（部分一致では寄せない）', subCategoriesOf('飲食代').length === 0);
+check('別名を含むだけの名前「外食代」は空', subCategoriesOf('外食代').length === 0);
+check('文字列でなければ空', subCategoriesOf(undefined).length === 0 && subCategoriesOf(null).length === 0);
 
 console.log('\n# applySubLabel');
 const food = SUB_CATEGORIES['食費'];

@@ -23,6 +23,7 @@ import {
   SETTLED_REJECTION,
   type ExpenseDecider,
 } from '../expenseActions';
+import { subCategoriesOf } from '../categoryTaxonomy';
 import { fallbackDisplayName, readActiveMember } from '../householdMembers';
 import { errorMessage, maskId } from '../logSafe';
 import {
@@ -39,7 +40,7 @@ import { getLineClient, replyWithPushFallback } from './client';
  */
 interface ExtendedPostbackActionData extends PostbackActionData {
   source?: 'gmail' | 'text';  // 入力元
-  category?: string;          // 設定するカテゴリ
+  category?: string;          // 設定するカテゴリ（大項目。中項目は受け取らず、サーバーで決める）
   /**
    * set_split / set_advance で設定する値
    *
@@ -409,7 +410,7 @@ async function handleShowCategorySelect(
 }
 
 /**
- * カテゴリを設定
+ * カテゴリを設定（大項目が変わるときは中項目も決め直す。decideSetCategory）
  */
 async function handleSetCategory(
   event: PostbackEvent,
@@ -429,6 +430,8 @@ async function handleSetCategory(
   // LINE手入力（includeInTotal: false で保存される）はカード上でカテゴリが直った
   // ように見えるのに合計にはずっと入らない。
   // カルーセルの旧名（医療費・娯楽費など）は正準名に揃えて保存する（decideSetCategory）。
+  // 大項目が変わるときは、中項目を辞書と時刻のルールでサーバーが決め直す（決まらなければ消す）。
+  // postback に中項目（subCategory）が入っていても使わない（渡すのは category だけ）。
   const result = await applyExpenseChange(expenseId, decideSetCategory(category));
 
   if (!result) return;
@@ -437,7 +440,15 @@ async function handleSetCategory(
     return;
   }
 
-  console.log('Expense category updated', { expense: maskId(expenseId), category: result.record.category });
+  // 中項目は固定の一覧の語だけを出す（大項目が同じで触らなかったとき、Web で書かれた一覧に無い値が残っていることがある）
+  const sub = result.record.subCategory;
+  const subForLog =
+    typeof sub !== 'string' ? null : subCategoriesOf(String(result.record.category)).includes(sub) ? sub : '(not in list)';
+  console.log('Expense category updated', {
+    expense: maskId(expenseId),
+    category: result.record.category,
+    subCategory: subForLog,
+  });
 
   await replyUpdatedCard(event, expenseId, result.record, '設定を更新しました');
 }

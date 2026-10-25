@@ -6,6 +6,7 @@
  */
 
 import { toCanonicalCategoryName } from "../categoryNormalization";
+import { subCategoriesOf } from "../categoryTaxonomy";
 import { findLineGroupId, getUserGroups, getUserSettings, saveExpense } from "../firestore";
 import { classifyExpense } from "../geminiCategoryClassifier";
 import type { ClassificationResult } from "../geminiCategoryClassifier";
@@ -13,6 +14,7 @@ import { getCategoryEmoji } from "../gmail/types";
 import { isHouseholdMember, resolveExpenseGroupScope } from "../expenseGroupScope";
 import { resolveAppUidForExpense } from "../linkUserResolver";
 import { errorMessage, maskId } from "../logSafe";
+import { resolveSubCategory } from "../subCategoryRules";
 import { getPaymentMethodLabel, PaymentMethod } from "../textParser";
 import { getLineClient, replyText, replyWithPushFallback } from "./client";
 import { buildExpenseEditUrl, sendTextExpenseNotification, TextExpenseInfo } from "./flexMessage";
@@ -150,6 +152,24 @@ export function decideTextExpenseCategory(input: {
   }
 
   return { category, origin };
+}
+
+/**
+ * LINE の入力の中項目（#235）。説明文を辞書で照合する（resolveSubCategory。入力した時刻は食べた時刻とは限らないので、時刻は渡さない）。
+ * 決まらなければ undefined（保存で項目ごと付かない）。判定に失敗しても投げず undefined にして、保存は続ける。
+ * 大項目に中項目の一覧があるとき（食費・娯楽）だけ、結果をログに出す（説明・ID は出さない）。
+ */
+export function textSubCategoryOf(category: string, description: string): string | undefined {
+  try {
+    const sub = resolveSubCategory({ major: category, text: description, source: "text" });
+    if (subCategoriesOf(category).length > 0) {
+      console.log("Subcategory resolved", { source: "text", subCategory: sub ?? null });
+    }
+    return sub ?? undefined;
+  } catch (error) {
+    console.warn("Subcategory resolution failed", { source: "text", error: errorMessage(error) });
+    return undefined;
+  }
 }
 
 export async function processExpenseInBackground(
@@ -378,6 +398,8 @@ export async function processExpenseInBackground(
 
     const finalCategory = decided.category;
     const categoryOrigin = decided.origin;
+    // 中項目は大項目が決まったあとに説明文から決める（指定・分類・既定のどの経路でも同じ。判定元には影響しない）
+    const subCategory = textSubCategoryOf(finalCategory, parsed.description);
 
     // グループ所属の決定。発言元の LINE グループに紐づくグループの有効なメンバーで
     // なければ lineGroupId も付けず個人支出にする（LINE 集計・精算への混入防止）。
@@ -399,6 +421,7 @@ export async function processExpenseInBackground(
       description: parsed.description,
       date: parsed.date,
       category: finalCategory,
+      subCategory, // 決まらなければ undefined（saveExpense が項目を付けない）
       confirmed: false, // 未確認状態で保存（ボタンで確認）
       includeInTotal: false, // LINE手入力は初期状態では会計に含めない
       payerId: event.source.userId, // デフォルトは入力者
