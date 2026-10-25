@@ -9,7 +9,7 @@
  * - LINE グループ: 発言元の LINE グループに紐づく世帯の有効メンバーなら従来どおり。非メンバー・紐づく世帯なしは辞書だけ
  * - 世帯の確認（getUserGroups・findLineGroupId）が失敗したらモデルを呼ぶ。個人チャットの失敗はキャッシュに残さない
  * - 個人チャットのキャッシュの期限は取得した時点から 15 分で、キャッシュに当たっても延びない
- * - lineGroupId を持つ、世帯ではないグループのメンバーは、現状はメンバーとみなされモデルを呼ぶ（判定の定義は未決）
+ * - lineGroupId を持つ、世帯ではないグループのメンバーは、メンバーとみなされモデルを呼ぶ（今の判定の定義のまま）
  * - ログに利用者 ID・入力を出さない
  *   node bot/scripts/smoke-expense-flow-member-guard.js
  */
@@ -246,8 +246,9 @@ async function main() {
 
   // isHouseholdMember は「lineGroupId を持つどれかのグループの有効メンバー」をメンバーとみなす。以前に bot が
   // LINE グループごとに自動で作ったグループが残っていて作成者が有効なままなら、世帯でなくてもモデルを呼べる。
-  // 世帯の groupId に限るかは未決（PR #258。本番データの確認とあわせてユーザーの判断待ち）。ここでは現状の挙動を残す
-  console.log('\n# lineGroupId を持つ、世帯ではないグループのメンバー → 現状はモデルを呼ぶ（判定の定義は未決）');
+  // PR #258 で、本番では世帯以外に lineGroupId を持つ有効なグループが無いことを確かめ、世帯の groupId には限らず
+  // この定義のままにした。そうしたグループができたらモデルを呼べることを、ここで挙動として残す
+  console.log('\n# lineGroupId を持つ、世帯ではないグループのメンバー → モデルを呼ぶ（今の判定の定義のまま）');
   const legacy = { id: 'G_legacy', name: '以前に自動作成されたグループ', lineGroupId: 'L_legacy' };
   groupIdByLineGroup.L_legacy = 'G_legacy';
   reset();
