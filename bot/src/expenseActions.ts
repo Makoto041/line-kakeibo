@@ -254,7 +254,8 @@ export type ExpenseChangeResult = { record: Record<string, any> } | { reject: st
  * 共同費へ巻き戻す、精算済み判定をすり抜けて変更が通る）。
  *
  * `authorize` を渡すと、支出を読んだ直後・判定の前に呼び、false なら何も書かずに
- * `{ forbidden: true }` を返す（LINE の postback は渡さないので挙動は従来どおり）。
+ * `{ forbidden: true }` を返す（LINE の postback は、支出を変えるボタンすべてで世帯のメンバーかを確かめる。
+ * line/postback.ts の applyAsMember）。
  *
  * @returns 更新後のレコード / 拒否理由 / 権限なし / 支出が見つからなければ null
  */

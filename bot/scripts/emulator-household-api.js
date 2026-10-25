@@ -36,8 +36,10 @@ if (!projectId.startsWith('demo-')) {
 initializeApp({ projectId });
 
 const { householdRouter, householdErrorHandler } = require('../dist/householdApi');
-const { applyExpenseChange, decideConfirm, decideSetAdvance, decideSetCategory, decideSetPayer } = require('../dist/expenseActions');
+const { applyExpenseChange, decideSetAdvance, decideSetCategory, decideSetPayer } = require('../dist/expenseActions');
 const { readActiveMember } = require('../dist/householdMembers');
+const lineClient = require('../dist/line/client');
+const { handlePostback } = require('../dist/line/postback');
 
 const ORIGIN = 'https://line-kakeibo.vercel.app';
 const EVIL_ORIGIN = 'https://evil.example.com';
@@ -54,6 +56,52 @@ function check(name, cond, detail) {
   }
 }
 const sameMembers = (a, b) => a.length === b.length && [...a].sort().join('\n') === [...b].sort().join('\n');
+
+const MEMBERS_ONLY = '変更できるのは、世帯のメンバーだけです';
+const NOT_SELECTABLE = 'このカテゴリには変更できません';
+
+/**
+ * LINE グループ C_line1 で、userId の人が postback のボタンを押す（本物の handlePostback。Firestore はエミュレータ）
+ *
+ * LINE への返信とプロフィールの取得だけを差し替え、押し終わったら元に戻す
+ * （後の精算の通知のテストは、LINE に送れないこと〔502〕を確かめるため）。
+ */
+async function pressPostback(payload, userId) {
+  const origReply = lineClient.replyWithPushFallback;
+  const origGetLineClient = lineClient.getLineClient;
+  const origLog = console.log;
+  const origWarn = console.warn;
+  const replies = [];
+  lineClient.replyWithPushFallback = async (_replyToken, _to, messages) => {
+    replies.push(messages);
+    return 'reply';
+  };
+  lineClient.getLineClient = () => ({
+    getProfile: async () => ({ displayName: 'プロフィール名' }),
+    getGroupMemberProfile: async () => ({ displayName: 'プロフィール名' }),
+  });
+  console.log = () => {};
+  console.warn = () => {};
+  try {
+    await handlePostback({
+      type: 'postback',
+      replyToken: 'reply-token',
+      source: { type: 'group', groupId: 'C_line1', userId },
+      postback: { data: JSON.stringify(payload) },
+    });
+  } finally {
+    lineClient.replyWithPushFallback = origReply;
+    lineClient.getLineClient = origGetLineClient;
+    console.log = origLog;
+    console.warn = origWarn;
+  }
+  const only = replies.length === 1 && replies[0].length === 1 ? replies[0][0] : undefined;
+  return {
+    replies,
+    text: only && only.type === 'text' ? only.text : undefined,
+    flex: only && only.type === 'flex' ? only : undefined,
+  };
+}
 
 // ------------------------------------------------------------
 // エミュレータの準備
@@ -341,11 +389,18 @@ async function main() {
       check('文書: status=shared, includeInTotal=true, confirmed=true', doc.status === 'shared' && doc.includeInTotal === true && doc.confirmed === true);
       check('文書: updatedAt を更新し、他のフィールドは変えない', doc.updatedAt.toMillis() > Date.parse('2026-09-12T01:00:00Z') && doc.amount === 2480 && doc.lineId === 'Ualice' && doc.description === 'スーパー');
 
-      // LINE の OK（postback が呼ぶのと同じ applyExpenseChange + decideConfirm、authorize なし）と同じ結果か
-      await applyExpenseChange('e_line_manual_postback', decideConfirm());
+      // LINE の OK（postback の confirm。Web と同じ applyExpenseChange + decideConfirm で、世帯のメンバーかも同じく確かめる）
+      for (const [who, userId] of [['メンバー外', 'Ustranger'], ['脱退者', 'Uleft']]) {
+        const r = await pressPostback({ action: 'confirm', expenseId: 'e_line_manual_postback' }, userId);
+        const d = (await db.doc('expenses/e_line_manual_postback').get()).data();
+        check(`LINE の OK: ${who}は「${MEMBERS_ONLY}」で、書かない`, r.text === MEMBERS_ONLY && d.status === undefined && d.confirmed === false && d.includeInTotal === false, { replies: r.replies, doc: d });
+      }
+      const okByLine = await pressPostback({ action: 'confirm', expenseId: 'e_line_manual_postback' }, 'Ubob');
       const viaLine = (await db.doc('expenses/e_line_manual_postback').get()).data();
       const pick = (d) => ({ status: d.status, includeInTotal: d.includeInTotal, confirmed: d.confirmed, amount: d.amount, category: d.category, advanceBy: d.advanceBy });
-      check('LINE の OK と同じ内容を書く', JSON.stringify(pick(viaLine)) === JSON.stringify(pick(doc)), { web: pick(doc), line: pick(viaLine) });
+      check('LINE の OK（メンバー）は Web の確認と同じ内容を書き、カードを返す', !!okByLine.flex && JSON.stringify(pick(viaLine)) === JSON.stringify(pick(doc)), { web: pick(doc), line: pick(viaLine) });
+      const legacyByLine = await pressPostback({ action: 'confirm', expenseId: 'e_legacy' }, 'Ualice');
+      check('LINE の OK: lineGroupId だけの旧形式は、登録した本人でも確定できない', legacyByLine.text === MEMBERS_ONLY && (await db.doc('expenses/e_legacy').get()).get('confirmed') === false, legacyByLine.replies);
 
       const again = await call('POST', '/household/expenses/e_line_manual/actions', { token: tokens.alice, body: { action: 'confirm' } });
       check('確認済みをもう一度確認しても 200（冪等）', again.status === 200 && again.body.expense.status === 'shared');
@@ -450,6 +505,65 @@ async function main() {
       const r5 = await applyExpenseChange('cat_settled', decideSetCategory('娯楽費'));
       const d5 = await read('cat_settled');
       check('精算済みでも大項目・中項目を変える（娯楽費 → 娯楽・映画。status は変えない）', r5 && r5.record && d5.category === '娯楽' && d5.subCategory === '映画' && d5.status === 'advance_settled', d5);
+    }
+
+    // ---------------- LINE の postback（handlePostback）: カテゴリの選択・変更の認可と入力検証（#266） ----------------
+    console.log('\nLINE の postback: show_category_select・set_category は世帯のメンバーだけ、カテゴリは一覧にあるものだけ');
+    {
+      const read = async (id) => (await db.doc(`expenses/${id}`).get()).data();
+      await db.doc('expenses/pb_cat').set({ lineId: 'Ualice', payerId: 'Ualice', groupId: 'g1', lineGroupId: 'C_line1', amount: 1200, description: 'ランチ', date: '2026-10-20', category: 'その他', inputSource: 'line_text', includeInTotal: false, confirmed: false });
+      await db.doc('expenses/pb_personal').set({ lineId: 'Ualice', payerId: 'Ualice', amount: 300, description: 'ランチ', date: '2026-10-20', category: 'その他', inputSource: 'line_text', includeInTotal: false, confirmed: false });
+      const outsiders = [
+        ['メンバー外', 'Ustranger'],
+        ['脱退者', 'Uleft'],
+        ['別の世帯のメンバー', 'Ucarol'],
+        ['文書 ID が衝突する人（x_Umallory）', 'x_Umallory'],
+      ];
+
+      // カテゴリ選択のカルーセル
+      for (const [who, userId] of outsiders) {
+        const r = await pressPostback({ action: 'show_category_select', expenseId: 'pb_cat', source: 'text' }, userId);
+        check(`show_category_select: ${who}にはカルーセルを返さず「${MEMBERS_ONLY}」`, r.text === MEMBERS_ONLY && !r.flex, r.replies);
+      }
+      const legacyShow = await pressPostback({ action: 'show_category_select', expenseId: 'e_legacy', source: 'text' }, 'Ualice');
+      check('show_category_select: lineGroupId だけの旧形式は、登録した本人にもカルーセルを返さない', legacyShow.text === MEMBERS_ONLY && !legacyShow.flex, legacyShow.replies);
+      const shown = await pressPostback({ action: 'show_category_select', expenseId: 'pb_cat', source: 'text' }, 'Ubob');
+      check('show_category_select: メンバー（登録者でない Bob）にはカルーセルを返す', !!shown.flex && shown.flex.contents.type === 'carousel', shown.replies);
+
+      // カテゴリの変更（認可）
+      for (const [who, userId] of outsiders) {
+        const r = await pressPostback({ action: 'set_category', expenseId: 'pb_cat', category: '食費' }, userId);
+        const d = await read('pb_cat');
+        check(`set_category: ${who}は「${MEMBERS_ONLY}」で、書かない`, r.text === MEMBERS_ONLY && d.category === 'その他' && d.confirmed === false && d.status === undefined && !('subCategory' in d), { replies: r.replies, doc: d });
+      }
+      const legacySet = await pressPostback({ action: 'set_category', expenseId: 'e_legacy', category: '日用品' }, 'Ualice');
+      check('set_category: lineGroupId だけの旧形式は、登録した本人でも変えられない', legacySet.text === MEMBERS_ONLY && (await read('e_legacy')).category === '食費', legacySet.replies);
+      const personalOther = await pressPostback({ action: 'set_category', expenseId: 'pb_personal', category: '食費' }, 'Ubob');
+      check('set_category: 世帯の無い個人の支出は、登録した本人でなければ変えられない', personalOther.text === MEMBERS_ONLY && (await read('pb_personal')).category === 'その他', personalOther.replies);
+
+      // カテゴリの変更（入力検証。メンバーが押しても一覧に無い値は書かない）
+      const invalid = [
+        ['数値', 1],
+        ['オブジェクト', { name: '食費' }],
+        ['配列', ['食費']],
+        ['一覧に無い名前', '趣味'],
+        ['長すぎる値', 'あ'.repeat(300)],
+        ['揃えれば一覧にあるが上限を超える長さ', '食費'.padStart(40, ' ')],
+      ];
+      for (const [label, category] of invalid) {
+        const r = await pressPostback({ action: 'set_category', expenseId: 'pb_cat', category }, 'Ubob');
+        const d = await read('pb_cat');
+        check(`set_category: ${label}は「${NOT_SELECTABLE}」で、書かない`, r.text === NOT_SELECTABLE && d.category === 'その他' && d.confirmed === false, { replies: r.replies, doc: d });
+      }
+
+      // メンバーなら変えられる
+      const bySet = await pressPostback({ action: 'set_category', expenseId: 'pb_cat', category: '食費' }, 'Ubob');
+      const d = await read('pb_cat');
+      check('set_category: メンバーは変えられる（中項目を決め、確認済み・共同費にする。カードを返す）', !!bySet.flex && d.category === '食費' && d.subCategory === '昼ご飯' && d.status === 'shared' && d.includeInTotal === true && d.confirmed === true, d);
+      const byAlias = await pressPostback({ action: 'set_category', expenseId: 'pb_cat', category: '医療費' }, 'Ualice');
+      check('set_category: カルーセルの旧名（医療費）は正準名（医療・健康）で保存する', !!byAlias.flex && (await read('pb_cat')).category === '医療・健康');
+      const personalOwner = await pressPostback({ action: 'set_category', expenseId: 'pb_personal', category: '食費' }, 'Ualice');
+      check('set_category: 世帯の無い個人の支出は、登録した本人なら変えられる', !!personalOwner.flex && (await read('pb_personal')).category === '食費');
     }
 
     // ---------------- 以前の立替を精算済みにする ----------------

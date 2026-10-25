@@ -139,19 +139,19 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | `set_split`（`to: shared \| personal`） | `status` を設定し `includeInTotal` を連動（`shared`=true / `personal`=false）。立替は解除（`advanceBy` / `advanceFull` を削除）。あわせて `confirmed: true`。押せるのは世帯の有効メンバーだけ |
 | `set_payer`（自分が払った） | `payerId` / `payerDisplayName` を押下者にし、`confirmed: true`。未確認（status なし / `pending`）は `status: 'shared'`・`includeInTotal: true` へ昇格。立替（`advance_pending`）は立替のまま、`advanceBy` も押下者にする（払った人と立て替えた人は同じ）。`personal` は `personal` のまま |
 | `set_advance`（`to: on \| off`） | on（自分が立替）= `status: 'advance_pending'`・`advanceFull: true`・`advanceBy` / `payerId` / `payerDisplayName` に押下者・`includeInTotal: true`・`confirmed: true`（除外からでも立替になる）/ off（取り消す）= `status: 'shared'`・`includeInTotal: true`・`confirmed: true`・`advanceBy` / `advanceFull` を削除（支払った人は変えないので、折半で支払った人の分になる）。立替でない支出の off は「立替ではないため、変更はありません」 |
-| `confirm`（OK） | `confirmed: true`。**`pending` のときだけ** `status: 'shared'`・`includeInTotal: true` へ昇格（設定済みの支出を共同費へ巻き戻さない） |
+| `confirm`（OK） | `confirmed: true`。**`pending` のときだけ** `status: 'shared'`・`includeInTotal: true` へ昇格（設定済みの支出を共同費へ巻き戻さない）。押せるのは世帯の有効メンバーだけ |
 | `edit`（修正） | 押下者の `lineId` を含む Web 編集 URL（`/expenses?edit=<id>&lineId=...`）を返信。**押す人が分かっているカードでは「修正」は URI ボタンで直接 Web を開く**ため、この postback へ来るのは Gmail 通知と配信済みの古いカードだけ |
-| `show_category_select` / `set_category` | カテゴリ選択カルーセルを表示 / カテゴリを更新（`decideSetCategory`）。カルーセルの選択肢は `医療費` などの名前のまま、保存は正準名（§2.2 のカテゴリと同じ揃え方）。「選択中」も正準名どうしで比べる。**中項目（`subCategory`）**: 大項目が正準名どうしで同じなら触らない。変わるときは辞書と時刻のルール（`resolveSubCategory`。モデルは呼ばない）で決め直し、決まらなければ削除する。説明文を辞書に当て、時刻（朝・昼・夜ご飯）は Gmail 取込（`inputSource: 'gmail_auto'`）の飲食店で、保存済みの `usedAt` に時刻があるときだけ当てる（JST の 00:00:00.000 ちょうどは時刻なしとみなす）。制限: 日時の無いカード利用通知は、処理した時刻が `usedAt` に入るため、大項目を変え直したときの時刻ルールは、その処理時刻で判定される（登録時は、日時の無いメールには時刻ルールを当てないため、結果が食い違いうる。件数はごく少ない）。判定に失敗しても大項目は変え、中項目は削除する。postback に中項目が入っていても使わない |
+| `show_category_select` / `set_category` | カテゴリ選択カルーセルを表示 / カテゴリを更新（`decideSetCategory`）。どちらも押せるのは世帯の有効メンバーだけ（カルーセルもメンバーにだけ返す）。**受け付けるカテゴリ**: `category` は 32 文字以内の文字列で、正準名（19 種）か、正準名に揃えられる名前（カルーセルの `医療費` など）だけ（`toSelectableCategoryName`）。それ以外（文字列以外・一覧に無い名前・長すぎる値）は「このカテゴリには変更できません」と返して保存しない。カルーセルの選択肢は `医療費` などの名前のまま、保存は正準名（§2.2 のカテゴリと同じ揃え方）。「選択中」も正準名どうしで比べる。**中項目（`subCategory`）**: 大項目が正準名どうしで同じなら触らない。変わるときは辞書と時刻のルール（`resolveSubCategory`。モデルは呼ばない）で決め直し、決まらなければ削除する。説明文を辞書に当て、時刻（朝・昼・夜ご飯）は Gmail 取込（`inputSource: 'gmail_auto'`）の飲食店で、保存済みの `usedAt` に時刻があるときだけ当てる（JST の 00:00:00.000 ちょうどは時刻なしとみなす）。制限: 日時の無いカード利用通知は、処理した時刻が `usedAt` に入るため、大項目を変え直したときの時刻ルールは、その処理時刻で判定される（登録時は、日時の無いメールには時刻ルールを当てないため、結果が食い違いうる。件数はごく少ない）。判定に失敗しても大項目は変え、中項目は削除する。postback に中項目が入っていても使わない |
 | `show_list` | 押下者の `lineId` を含む家計簿一覧 URL を返す |
 | `shared` / `personal` / `advance`（旧 UI） | 配信済みカードからの押下に備えて `set_split` / `set_advance`（`advance` は［自分が立替］）へ読み替える |
 
-**押せる人**: `set_split`・`set_payer`・`set_advance`（on / off）と旧UIの `shared` / `personal` / `advance` は期間の精算の金額が変わるため、押せるのは支出の世帯（`groupId`）の有効メンバーだけ（`groupId` の無い個人の支出は登録した本人だけ、`lineGroupId` だけを持つ旧形式は不可。それ以外は「変更できるのは、世帯のメンバーだけです」）。表示名はメンバー文書の名前 → LINE のプロフィール名 → `User_xxxxxx`。
+**押せる人**: `set_split`・`set_payer`・`set_advance`（on / off）・`confirm`・`set_category`・`show_category_select` と旧UIの `shared` / `personal` / `advance` は、期間の精算の金額や集計が変わるため（OK とカテゴリの変更は未確認の支出を共同費にする）、押せるのは支出の世帯（`groupId`）の有効メンバーだけ（`groupId` の無い個人の支出は登録した本人だけ、`lineGroupId` だけを持つ旧形式は不可。それ以外は「変更できるのは、世帯のメンバーだけです」。押した人の `userId` が無ければ「押した人を特定できなかったため、変更できませんでした」）。表示名はメンバー文書の名前 → LINE のプロフィール名 → `User_xxxxxx`。
 
 **矛盾の解消**: 個人費（除外）にすると立替は解除され、立替にすると支出区分は共同費相当に揃う（除外かつ立替は成立しない）。`advance_settled` の支出に対する**支出区分・支払った人・立替の変更**はサーバー側で拒否する（「精算済みのため変更できません」。古いカードにボタンが残っているため、表示を消すだけでは足りない）。カテゴリ変更は精算後も可能（精算額に影響しないため）。
 
 **変更後の再表示**: LINE は送信済みメッセージを編集できないため、状態を変えたら最新値のカードを `replyToken` で返信する（`buildExpenseCardFromRecord()`）。登録直後のカードと同じビルダーを通すので表現がぶれない。
 
-**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`。OK・支払った人・立替・取り消しの判定 `decideConfirm()` / `decideSetPayer()` / `decideSetAdvance()` / `decideClearAdvance()` とともに `bot/src/expenseActions.ts` にあり、Web の確認と以前の立替を精算済みにする操作（§5.4。`decideSettleLegacyAdvance()`）も同じ仕組みを使う。`set_payer` / `set_advance` のメンバー確認も同じトランザクション内で読む）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
+**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`。OK・支払った人・立替・取り消しの判定 `decideConfirm()` / `decideSetPayer()` / `decideSetAdvance()` / `decideClearAdvance()` とともに `bot/src/expenseActions.ts` にあり、Web の確認と以前の立替を精算済みにする操作（§5.4。`decideSettleLegacyAdvance()`）も同じ仕組みを使う。支出を変える postback のメンバー確認も同じトランザクション内で読む）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
 
 ### 2.6 メッセージ送信ポリシー
 
@@ -345,7 +345,7 @@ Storage: `receipts/{expenseId}/{fileName}` — cross-service rules で支出を�
 - **Web 向け API**: §5.4 の ID トークン認証＋メンバー判定。Gmail 管理 API は `ADMIN_SECRET`
 - **世帯メンバー管理**: 2 名固定。追加・無効化は `scripts/manage-group-members.mjs`（`docs/SECURITY_OPERATIONS.md` §1–2）
 
-残っているセキュリティ上の課題（LINE postback でのメンバーシップ未確認、脱退者による自分の登録分の読み取り、トークン付き `receiptUrl` など）は `docs/SECURITY_OPERATIONS.md` §6 に集約している。
+残っているセキュリティ上の課題（脱退者による自分の登録分の読み取り、トークン付き `receiptUrl` など）は `docs/SECURITY_OPERATIONS.md` §6 に集約している。
 
 ---
 

@@ -11,8 +11,9 @@
 import { webhook, messagingApi } from '@line/bot-sdk';
 
 type PostbackEvent = webhook.PostbackEvent;
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore, type DocumentData, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { PostbackActionData } from '../gmail/types';
+import { toSelectableCategoryName } from '../categoryNormalization';
 import {
   applyExpenseChange,
   decideClearAdvance,
@@ -40,7 +41,12 @@ import { getLineClient, replyWithPushFallback } from './client';
  */
 interface ExtendedPostbackActionData extends PostbackActionData {
   source?: 'gmail' | 'text';  // 入力元
-  category?: string;          // 設定するカテゴリ（大項目。中項目は受け取らず、サーバーで決める）
+  /**
+   * 設定するカテゴリ（大項目。中項目は受け取らず、サーバーで決める）
+   *
+   * JSON から読んだ値なので文字列とは限らない。toSelectableCategoryName で確かめてから使う。
+   */
+  category?: unknown;
   /**
    * set_split / set_advance で設定する値
    *
@@ -82,13 +88,13 @@ async function loadExpense(expenseId: string) {
   const snapshot = await ref.get();
 
   if (!snapshot.exists) {
-    console.warn('Expense not found:', expenseId);
+    console.warn('Expense not found', { expense: maskId(expenseId) });
     return null;
   }
 
   const data = snapshot.data();
   if (!data) {
-    console.warn('Expense data is empty:', expenseId);
+    console.warn('Expense data is empty', { expense: maskId(expenseId) });
     return null;
   }
 
@@ -242,11 +248,38 @@ async function profileName(event: PostbackEvent, userId: string): Promise<string
   }
 }
 
+/** 押した人の userId が無いときの返信 */
+const PRESSER_UNKNOWN_TEXT = '押した人を特定できなかったため、変更できませんでした';
+
+/** 押した人が支出を変えてよい人でないときの返信 */
+const MEMBERS_ONLY_TEXT = '変更できるのは、世帯のメンバーだけです';
+
 /**
- * 押した人として、世帯のメンバーだけに許す変更を行う（支出区分・［自分が払った］［自分が立替］［取り消す］）
+ * 押した人が、この支出を変えてよい人か
  *
- * 期間の精算の金額が変わるため、押せるのは支出の世帯の有効メンバーだけ（世帯の無い個人の支出は登録した本人。
- * lineGroupId だけを持つ旧形式は変えない）。表示名はメンバー文書の名前、無ければ LINE のプロフィール名。
+ * 支出の世帯（groupId）の有効メンバーだけ（世帯の無い個人の支出は登録した本人だけ。lineGroupId だけを持つ
+ * 旧形式は誰も変えられない）。tx があればメンバー文書をトランザクション内で読む。
+ *
+ * @returns 変えてよければメンバー文書の表示名（個人の支出・仮名「作成者」は空文字）、だめなら null
+ */
+async function presserAsMember(
+  db: Firestore,
+  data: DocumentData,
+  userId: string,
+  tx?: Pick<Transaction, 'get'>
+): Promise<{ displayName: string } | null> {
+  if (typeof data.groupId === 'string' && data.groupId) {
+    return readActiveMember(db, data.groupId, userId, tx);
+  }
+  return !data.lineGroupId && data.lineId === userId ? { displayName: '' } : null;
+}
+
+/**
+ * 押した人として、世帯のメンバーだけに許す変更を行う
+ * （支出区分・［自分が払った］［自分が立替］［取り消す］・OK・カテゴリの変更）
+ *
+ * 期間の精算の金額や集計が変わるため、押せるのは支出の世帯の有効メンバーだけ（presserAsMember）。
+ * 表示名はメンバー文書の名前、無ければ LINE のプロフィール名。
  *
  * @returns 返信を済ませたら null、変更できたら更新後のレコード
  */
@@ -258,7 +291,7 @@ async function applyAsMember(
   const userId = event.source!.userId;
   if (!userId) {
     console.error('Cannot identify the presser: userId is missing', { expense: maskId(expenseId), sourceType: event.source!.type });
-    await replyText(event, '押した人を特定できなかったため、変更できませんでした');
+    await replyText(event, PRESSER_UNKNOWN_TEXT);
     return null;
   }
 
@@ -270,19 +303,16 @@ async function applyAsMember(
     (data) => decide({ lineId: userId, displayName: memberName || fromProfile || fallbackDisplayName(userId) })(data),
     {
       authorize: async (data, tx) => {
-        if (typeof data.groupId === 'string' && data.groupId) {
-          const member = await readActiveMember(db, data.groupId, userId, tx);
-          memberName = member?.displayName ?? '';
-          return member !== null;
-        }
-        return !data.lineGroupId && data.lineId === userId;
+        const member = await presserAsMember(db, data, userId, tx);
+        memberName = member?.displayName ?? '';
+        return member !== null;
       },
     }
   );
 
   if (!result) return null;
   if ('forbidden' in result) {
-    await replyText(event, '変更できるのは、世帯のメンバーだけです');
+    await replyText(event, MEMBERS_ONLY_TEXT);
     return null;
   }
   if ('reject' in result) {
@@ -323,7 +353,8 @@ async function handleSetAdvance(event: PostbackEvent, actionData: ExtendedPostba
  * 内容を確定する
  *
  * 未確認（pending）のときだけ共同費へ昇格させる。個人費や立替を設定済みの支出に対して
- * OK を押しても、その設定を共同費へ巻き戻さない。
+ * OK を押しても、その設定を共同費へ巻き戻さない。未確認の支出は共同費になり精算の金額が変わるため、
+ * 押せるのは世帯のメンバーだけ（applyAsMember。Web の確認と同じ）。
  */
 async function handleConfirm(
   event: PostbackEvent,
@@ -332,16 +363,11 @@ async function handleConfirm(
   const { expenseId } = actionData;
 
   // 判定は Web の確認（/household API）と共通（expenseActions.ts）
-  const result = await applyExpenseChange(expenseId, decideConfirm());
+  const record = await applyAsMember(event, expenseId, () => decideConfirm());
+  if (!record) return;
 
-  if (!result) return;
-  if ('reject' in result) {
-    await replyText(event, result.reject);
-    return;
-  }
-
-  console.log(`Expense ${expenseId} confirmed (status: ${result.record.status})`);
-  await replyUpdatedCard(event, expenseId, result.record, '登録を確定しました');
+  console.log('Expense confirmed', { expense: maskId(expenseId), status: record.status });
+  await replyUpdatedCard(event, expenseId, record, '登録を確定しました');
 }
 
 /**
@@ -384,6 +410,9 @@ async function handleShowList(event: PostbackEvent): Promise<void> {
 
 /**
  * カテゴリ選択Carouselを表示
+ *
+ * 選んだあとの set_category でも確かめるが、支出を変えられない人（世帯のメンバーでない人）には
+ * カルーセル（支出 ID 入りのボタン）も返さない。拒否の文言は applyAsMember と同じ。
  */
 async function handleShowCategorySelect(
   event: PostbackEvent,
@@ -391,11 +420,23 @@ async function handleShowCategorySelect(
 ): Promise<void> {
   const { expenseId, source } = actionData;
 
+  const userId = event.source!.userId;
+  if (!userId) {
+    console.error('Cannot identify the presser: userId is missing', { expense: maskId(expenseId), sourceType: event.source!.type });
+    await replyText(event, PRESSER_UNKNOWN_TEXT);
+    return;
+  }
+
   // Firestoreから支出データを取得（postbackデータの300バイト制限対策）
   const loaded = await loadExpense(expenseId);
   if (!loaded) return;
 
   const { data } = loaded;
+
+  if (!(await presserAsMember(getFirestore(), data, userId))) {
+    await replyText(event, MEMBERS_ONLY_TEXT);
+    return;
+  }
 
   const carouselInfo: CategorySelectInfo = {
     expenseId,
@@ -406,20 +447,31 @@ async function handleShowCategorySelect(
   };
 
   await replyToPostback(event, [buildCategorySelectCarousel(carouselInfo)]);
-  console.log(`Category select carousel sent for expense ${expenseId}`);
+  console.log('Category select carousel sent', { expense: maskId(expenseId) });
 }
 
 /**
  * カテゴリを設定（大項目が変わるときは中項目も決め直す。decideSetCategory）
+ *
+ * 受け付けるのは選択肢の一覧（正準名と、カルーセルの「医療費」などの正準名に揃えられる名前）だけ
+ * （toSelectableCategoryName）。押せるのは世帯のメンバーだけ（applyAsMember。未確認の支出は共同費になるため）。
  */
 async function handleSetCategory(
   event: PostbackEvent,
   actionData: ExtendedPostbackActionData
 ): Promise<void> {
-  const { expenseId, category } = actionData;
+  const { expenseId } = actionData;
 
-  if (!category) {
-    console.warn('Category is missing in set_category action');
+  const category = toSelectableCategoryName(actionData.category);
+  if (category === null) {
+    // 値は利用者の入力なのでログに出さない（型と長さだけ）
+    const raw = actionData.category;
+    console.warn('Rejected set_category: the category is not in the list', {
+      expense: maskId(expenseId),
+      type: typeof raw,
+      length: typeof raw === 'string' ? raw.length : null,
+    });
+    await replyText(event, 'このカテゴリには変更できません');
     return;
   }
 
@@ -429,26 +481,21 @@ async function handleSetCategory(
   // set_advance と同じく確認済みにする。カテゴリだけ更新して未確認のままにすると、
   // LINE手入力（includeInTotal: false で保存される）はカード上でカテゴリが直った
   // ように見えるのに合計にはずっと入らない。
-  // カルーセルの旧名（医療費・娯楽費など）は正準名に揃えて保存する（decideSetCategory）。
+  // カルーセルの旧名（医療費・娯楽費など）は正準名に揃えて保存する（toSelectableCategoryName・decideSetCategory）。
   // 大項目が変わるときは、中項目を辞書と時刻のルールでサーバーが決め直す（決まらなければ消す）。
   // postback に中項目（subCategory）が入っていても使わない（渡すのは category だけ）。
-  const result = await applyExpenseChange(expenseId, decideSetCategory(category));
-
-  if (!result) return;
-  if ('reject' in result) {
-    await replyText(event, result.reject);
-    return;
-  }
+  const record = await applyAsMember(event, expenseId, () => decideSetCategory(category));
+  if (!record) return;
 
   // 中項目は固定の一覧の語だけを出す（大項目が同じで触らなかったとき、Web で書かれた一覧に無い値が残っていることがある）
-  const sub = result.record.subCategory;
+  const sub = record.subCategory;
   const subForLog =
-    typeof sub !== 'string' ? null : subCategoriesOf(String(result.record.category)).includes(sub) ? sub : '(not in list)';
+    typeof sub !== 'string' ? null : subCategoriesOf(String(record.category)).includes(sub) ? sub : '(not in list)';
   console.log('Expense category updated', {
     expense: maskId(expenseId),
-    category: result.record.category,
+    category: record.category,
     subCategory: subForLog,
   });
 
-  await replyUpdatedCard(event, expenseId, result.record, '設定を更新しました');
+  await replyUpdatedCard(event, expenseId, record, '設定を更新しました');
 }
