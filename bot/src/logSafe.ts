@@ -17,3 +17,12 @@ export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
 }
+
+/**
+ * Error から名前（SyntaxError など）だけを取り出す。文言に入力の断片が入りうるエラーに使う
+ * （JSON.parse の SyntaxError の文言には、解釈しようとした文字列の一部が入る）。Error でなければ型の名前
+ */
+export function errorName(error: unknown): string {
+  if (error instanceof Error) return error.name;
+  return typeof error;
+}

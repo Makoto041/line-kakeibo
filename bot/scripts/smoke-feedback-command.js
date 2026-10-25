@@ -13,7 +13,7 @@
  * - 公開 Issue の本文: 元の本文はコードブロックに入れ、Gemini の結果はメンション・参照・HTML コメント・HTML タグ・
  *   リンク先を無効にし、長さを切る
  * - 使い方と作成できたときの返信に、公開されることの注意を付ける
- * - ログに利用者 ID・本文を出さない
+ * - ログに利用者 ID・本文を出さない。Gemini での整理が例外になっても、例外の文言（応答の断片）を出さない
  *   node bot/scripts/smoke-feedback-command.js
  */
 const path = require('path');
@@ -440,6 +440,30 @@ async function main() {
   check('Gemini が使えないとき: 本文から作ったタイトル・概要・詳細も無害化する', parts2 && liveMarkup(parts2.outside).length === 0 && liveMarkup(post.body.title).length === 0, `${show(post.body.title)} ${show(parts2?.outside)}`);
   check('Gemini が使えないとき: 元の本文はコードブロックにそのまま', parts2?.inside === original2, show(post.body.body));
   geminiReply = defaultAnalysis;
+
+  console.log('\n# Gemini での整理が例外になったとき → 代わりの文で Issue を作り、ログには固定文とエラー名だけを出す');
+  logs.length = 0;
+  putMember('G_house', 'U_throw');
+  const generateJson = geminiClient.generateJson;
+  // SyntaxError の文言には、解釈しようとした文字列（Gemini の応答）の一部が入る
+  geminiClient.generateJson = async (prompt) => {
+    geminiPrompts.push(prompt);
+    return JSON.parse('秘密CANARY応答');
+  };
+  r = await send({ userId: 'U_throw', body: '整理が例外になる要望' });
+  geminiClient.generateJson = generateJson;
+  check('Issue を作る（代わりの文で）', created(r), detail(r));
+  const analysisError = findLog('Gemini feedback analysis error');
+  check(
+    '固定文 + オブジェクト（エラー名）で error に出す',
+    analysisError?.level === 'error' && analysisError.args.length === 2 && analysisError.args[1].errorName === 'SyntaxError',
+    JSON.stringify(analysisError?.args)
+  );
+  const loggedHere = JSON.stringify(
+    logs.map((l) => l.args),
+    (_key, value) => (value instanceof Error ? `${value.name}: ${value.message}` : value)
+  );
+  check('ログに例外の文言（応答の断片）を出さない', !loggedHere.includes('CANARY') && !loggedHere.includes('秘密'), loggedHere);
 
   console.log('\n# フィードバックでない入力は処理しない');
   r = await captureLogs(() => handleFeedbackCommand({ replyToken: 'reply-token', source: { type: 'user', userId: 'U_other' } }, '500 ランチ'));

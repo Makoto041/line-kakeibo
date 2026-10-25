@@ -7,6 +7,8 @@
  * - 思考レベルを受け付けない 400 なら、思考の設定なしで同じモデルにもう一度送る
  * - スキーマ誤りなど関係のない 400 では予備に切り替えない
  * - API に締め切り（httpOptions.timeout）を送らない（再試行の設定は送る）。打ち切りは呼び出し側の AbortController が受け持つ
+ * - 応答を JSON として解釈できないとき・HTTP ステータスの無い例外のときは、ログに応答の断片（SyntaxError の文言）を出さず、
+ *   固定文とエラー名だけを出す
  *   node bot/scripts/smoke-gemini-client.js
  */
 const path = require('path');
@@ -20,6 +22,29 @@ function check(name, cond, detail) {
     console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`);
   }
 }
+
+/** fn の間のログを集める（画面には出さない） */
+async function captureLogs(fn) {
+  const logs = [];
+  const original = { log: console.log, warn: console.warn, error: console.error };
+  for (const level of Object.keys(original)) {
+    console[level] = (...args) => logs.push({ level, args });
+  }
+  try {
+    return { result: await fn(), logs };
+  } finally {
+    Object.assign(console, original);
+  }
+}
+/** 集めたログを 1 つの文字列にする（Error は JSON にすると {} になるので、入れ子のものも名前と文言にする） */
+function logText(logs) {
+  return JSON.stringify(
+    logs.map((l) => l.args),
+    (_key, value) => (value instanceof Error ? `${value.name}: ${value.message}` : value)
+  );
+}
+/** 応答の断片がログに出たかを見る目印 */
+const CANARY = '秘密CANARY本文';
 
 // --- @google/genai の偽物 ---
 class ApiError extends Error {
@@ -232,6 +257,63 @@ async function main() {
   check('予備には進まない', calls.length === 1, JSON.stringify(calls));
   const abortHttpOptions = calls[0]?.httpOptions;
   check('打ち切りは呼び出し側の AbortController が受け持つ（httpOptions に timeout なし）', !!abortHttpOptions && !('timeout' in abortHttpOptions) && elapsed < 1500, `${JSON.stringify(abortHttpOptions)} ${elapsed}ms`);
+
+  console.log('\n# 応答を JSON として解釈できない → null。ログに応答の断片を出さない（固定文とエラー名だけ）');
+  for (const text of [`${CANARY}です`, `\`\`\`json\n{"category": ${CANARY}}\n\`\`\``]) {
+    const label = text.startsWith('```') ? 'コードブロックの中の壊れた JSON' : 'JSON でない文';
+    let parseMessage = '';
+    try {
+      JSON.parse(client.stripCodeFence(text));
+    } catch (e) {
+      parseMessage = e.message;
+    }
+    check(`${label}: （前提）SyntaxError の文言に断片が入る`, parseMessage.includes('CANARY'), parseMessage);
+    client.resetGeminiModelState();
+    calls = [];
+    behavior = () => ({ text });
+    const { result, logs } = await captureLogs(() => client.generateJson('p', opts));
+    const logged = logText(logs);
+    check(`${label}: null を返す`, result === null, JSON.stringify(result));
+    check(`${label}: 予備には回さない（1 回だけ呼ぶ）`, calls.length === 1, JSON.stringify(calls));
+    check(`${label}: ログに応答の断片を出さない`, !logged.includes('CANARY') && !logged.includes('秘密'), logged);
+    const notJson = logs.find((l) => l.args[0] === 'Gemini response is not valid JSON');
+    check(
+      `${label}: 固定文 + オブジェクト（エラー名）で error に出す`,
+      notJson?.level === 'error' && notJson.args.length === 2 && notJson.args[1].errorName === 'SyntaxError' && !('error' in notJson.args[1]),
+      logged
+    );
+  }
+
+  console.log('\n# HTTP ステータスの無い例外（SDK が応答を解釈するときの SyntaxError など）→ null。文言は出さない');
+  client.resetGeminiModelState();
+  calls = [];
+  behavior = () => JSON.parse(`${CANARY}です`);
+  {
+    const { result, logs } = await captureLogs(() => client.generateJson('p', opts));
+    const logged = logText(logs);
+    check('null を返す', result === null, JSON.stringify(result));
+    check('予備には回さない（1 回だけ呼ぶ）', calls.length === 1, JSON.stringify(calls));
+    check('ログに応答の断片を出さない', !logged.includes('CANARY') && !logged.includes('秘密'), logged);
+    const failedLog = logs.find((l) => l.args[0] === 'Gemini request failed');
+    check(
+      '固定文 + オブジェクト（エラー名）で error に出す',
+      failedLog?.level === 'error' && failedLog.args[1]?.errorName === 'SyntaxError' && !('error' in failedLog.args[1]),
+      logged
+    );
+  }
+
+  console.log('\n# API のエラー（HTTP ステータスあり）は、ステータスと API のエラー文を出す（従来どおり）');
+  client.resetGeminiModelState();
+  calls = [];
+  behavior = () => {
+    throw new ApiError(429, 'Resource has been exhausted');
+  };
+  {
+    const { result, logs } = await captureLogs(() => client.generateJson('p', opts));
+    const failedLog = logs.find((l) => l.args[0] === 'Gemini request failed');
+    check('null を返す', result === null, JSON.stringify(result));
+    check('ステータスと API のエラー文を出す', failedLog?.args[1]?.status === 429 && failedLog.args[1].error === 'Resource has been exhausted', logText(logs));
+  }
 
   console.log(failed ? `\n${failed} failed` : '\nAll checks passed');
   process.exit(failed ? 1 : 0);
