@@ -21,7 +21,9 @@ export const syncUserLinks = onDocumentCreated(
   {
     document: 'expenses/{expenseId}',
     region: 'asia-northeast1',
-    memory: '256MiB',
+    // 何もしない関数でも index.ts 経由で全関数の依存を読み込み、256MiB では cold start の直後に
+    // 上限を超えていた（index.ts の「メモリ」参照）。
+    memory: '512MiB',
     timeoutSeconds: 60,
     maxInstances: 3,
   },

@@ -97,6 +97,8 @@ flowchart LR
 | `syncUserLinks` | Firestore `expenses/{id}` onCreate | asia-northeast1 | **無効化済み（何もしない）**。export から外すと CI の非対話デプロイが関数削除の確認で失敗するため残置。削除は手動 `firebase functions:delete syncUserLinks` |
 | `api` | HTTPS（Express） | **us-central1** | Gmail OAuth / watch 管理 `/gmail/*`（`ADMIN_SECRET` 認証）、LIFF ログイン `/auth/line`、Web の確認・以前の立替の精算済み・固定費・折半設定・精算の通知 `/household/*`（Firebase ID トークン認証。SPECIFICATION.md §5.4） |
 
+メモリは全関数 512MiB。どの関数も `bot/src/index.ts` から全関数の依存（特に googleapis）を起動時に読み込むため、256MiB では何もしない関数でも cold start の直後に上限を超えていた。下げる場合は、関数ごとに依存を遅延読み込みしてから cold start 時の使用量を計測する。
+
 ## 4. 主要データフロー
 
 ### 4.1 テキスト支出登録
@@ -240,7 +242,6 @@ Gemini（退避先）: @google/genai 経由、Flash-Lite 系だけを使う（Fl
 - LINE プロフィール 15 分メモリキャッシュ、`Promise.allSettled` による並列化
 - レシート画像はアップロード前にクライアントで圧縮（`web/lib/imageCompress.ts`。OCR / Vision API は廃止済み）
 - 固定費の自動計上は LINE 通知を送らない（push 枠を使わない）
-- Function ごとのメモリチューニング（webhook 512MiB、Gmail 系 / 固定費 256MiB）
 
 ## 6. 認証・セキュリティモデル
 
