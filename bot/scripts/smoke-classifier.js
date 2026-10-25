@@ -59,6 +59,15 @@ async function main() {
   check('判定元は dictionary', r.provider === 'dictionary', JSON.stringify(r));
   check('Gemini は呼ばれない', geminiCalls.length === 0);
 
+  console.log('\n# LINE の入力（text）: 飲み会・二次会は辞書で食費（#235）');
+  for (const word of ['飲み会', '二次会']) {
+    geminiCalls = [];
+    geminiReply = { category: '娯楽', confidence: 0.9 };
+    r = await classifyExpense('U_text', word);
+    check(`${word} → 食費（辞書）`, r.category === '食費' && r.provider === 'dictionary', JSON.stringify(r));
+    check(`${word}: Gemini は呼ばれない`, geminiCalls.length === 0);
+  }
+
   console.log('\n# LINE の入力（text）: 辞書で決まらなければ Gemini');
   geminiCalls = [];
   geminiReply = { category: '娯楽', confidence: 0.8 };
