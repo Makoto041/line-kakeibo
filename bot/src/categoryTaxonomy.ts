@@ -2,7 +2,7 @@
 //
 // #235 で確定した一覧。中項目を持つのは食費・娯楽だけで、他の大項目は空（中項目なし）。
 // - 中項目は辞書と時刻のルール（subCategoryRules.ts の resolveSubCategory。モデルは呼ばない）で決める。
-//   resolveSubCategory は、LINE で大項目を変えたとき（decideSetCategory）だけ呼ぶ（登録時の保存への組み込みは後続の PR）。
+//   resolveSubCategory は、登録時の保存（LINE の入力・Gmail のカード利用通知）と、LINE で大項目を変えたとき（decideSetCategory）に呼ぶ。
 // - 評価データに中項目の正解を付ける bot/scripts/eval/review-golden.js --sub と、
 //   階層化の評価 bot/scripts/eval/eval-classifier.js --scheme stage2|flat も、この一覧を使う。
 // - 「その他の食費」「その他の娯楽」は、利用者が手で選ぶためだけにある。resolveSubCategory は返さない

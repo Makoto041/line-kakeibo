@@ -43,6 +43,12 @@ export interface ParsedCardNotification {
   amount: number;
   /** 利用日時 */
   usedAt: Date;
+  /**
+   * usedAt の時刻がメールに書かれた時刻か。日付と時刻の両方が取れ、時刻が 0:00〜23:59 の表記のときだけ true。
+   * 時刻の無いメール（00:00 にする）・日付の無いメール（処理した時刻にする）は false。
+   * 中項目の時刻のルール（朝ご飯・昼ご飯・夜ご飯）は true のときだけ当てる（#235）
+   */
+  usedAtHasTime: boolean;
   /** カード種別（常に "三井住友ゴールドVISA（NL）"） */
   cardType: string;
   /** メールの一意ID */

@@ -2,6 +2,8 @@
  * 登録・編集カードのスモークテスト
  *
  * LINEへ実送信せずに Flex JSON を組み立て、構造と主要な仕様を検証する。
+ * 末尾では、LINE の入力・カード利用通知の保存データ（カテゴリと中項目）を、Firestore・LINE・Gmail・分類器を
+ * 偽物に差し替えて確かめる（本物の API・Firestore には接続しない）。
  *   node bot/scripts/smoke-expense-card.js
  */
 const {
@@ -15,8 +17,8 @@ const {
 const { CANONICAL_CATEGORIES, normalizeCategoryName, toCanonicalCategoryName } = require('../dist/categoryNormalization');
 const { parseTextExpense } = require('../dist/textParser');
 // どちらも LINE クライアント・Firestore・Gmail のクライアントは最初に使うときに作るので、読み込むだけなら外部に接続しない
-const { decideTextExpenseCategory } = require('../dist/line/expenseFlow');
-const { merchantCategoryOf } = require('../dist/gmail/handler');
+const { decideTextExpenseCategory, textSubCategoryOf } = require('../dist/line/expenseFlow');
+const { merchantCategoryOf, merchantSubCategoryOf } = require('../dist/gmail/handler');
 
 let failed = 0;
 
@@ -599,5 +601,430 @@ const expectedCanonical = (name) => LEGACY_TO_CANONICAL[name] ?? name;
   }
 }
 
-console.log(failed === 0 ? '\nすべて通過' : `\n${failed} 件失敗`);
-process.exit(failed === 0 ? 0 : 1);
+// ------------------------------------- 中項目（#235）: カード利用通知の店名・LINE の説明文
+/** fn の間の console 出力を集める（画面には出さない） */
+function captureConsole(fn) {
+  const original = { log: console.log, warn: console.warn, error: console.error };
+  const lines = [];
+  for (const level of Object.keys(original)) {
+    console[level] = (...args) => lines.push({ level, args });
+  }
+  try {
+    return { result: fn(), lines };
+  } finally {
+    Object.assign(console, original);
+  }
+}
+async function captureConsoleAsync(fn) {
+  const original = { log: console.log, warn: console.warn, error: console.error };
+  const lines = [];
+  for (const level of Object.keys(original)) {
+    console[level] = (...args) => lines.push({ level, args });
+  }
+  try {
+    return { result: await fn(), lines };
+  } finally {
+    Object.assign(console, original);
+  }
+}
+/** 'Subcategory resolved' のログ（固定文＋オブジェクト）だけを取り出す */
+const subLogs = (lines) => lines.filter((l) => l.args[0] === 'Subcategory resolved');
+const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+const NOON = new Date('2026-03-14T03:30:00.000Z'); // JST 3/14 12:30
+const MORNING = new Date('2026-03-14T23:00:00.000Z'); // JST 3/15 08:00
+const EVENING = new Date('2026-03-14T10:20:00.000Z'); // JST 3/14 19:20
+const LATE_NIGHT = new Date('2026-03-14T16:30:00.000Z'); // JST 3/15 01:30
+
+{
+  console.log('\n[merchantSubCategoryOf]');
+  const withTime = (merchant, usedAt) => ({ merchant, usedAt, usedAtHasTime: true });
+  const noTime = (merchant, usedAt) => ({ merchant, usedAt, usedAtHasTime: false });
+  // [名前, 大項目, parsed, 中項目, 'Subcategory resolved' のログが出るか]
+  const cases = [
+    ['食費・「スターバックス 渋谷店」（時刻あり）→ カフェ（時刻のルールは当てない）', '食費', withTime('スターバックス 渋谷店', NOON), 'カフェ', true],
+    ['食費・飲食店（時刻あり・JST 12:30）→ 昼ご飯', '食費', withTime('テスト食堂 駅前店', NOON), '昼ご飯', true],
+    ['食費・飲食店（時刻あり・JST 8:00）→ 朝ご飯', '食費', withTime('テスト食堂 駅前店', MORNING), '朝ご飯', true],
+    ['食費・飲食店（時刻あり・JST 19:20）→ 夜ご飯', '食費', withTime('テスト食堂 駅前店', EVENING), '夜ご飯', true],
+    ['食費・飲食店（時刻あり・JST 1:30）→ 夜ご飯', '食費', withTime('SAMPLE RAMEN', LATE_NIGHT), '夜ご飯', true],
+    // usedAt は正午の Date でも、時刻が無いメールなら時刻のルールを当てない
+    ['食費・飲食店（時刻なし・usedAt は正午）→ 外食', '食費', noTime('テスト食堂 駅前店', NOON), '外食', true],
+    ['食費・スーパー（時刻なし）→ 食料品（スーパー）', '食費', noTime('SAMPLE スーパー 駅前', NOON), '食料品（スーパー）', true],
+    ['娯楽・「TOHOシネマズ 日比谷」→ 映画', '娯楽', withTime('TOHOシネマズ 日比谷', EVENING), '映画', true],
+    ['食費・辞書に無い店名 → undefined', '食費', withTime('SAMPLE MART', NOON), undefined, true],
+    ['食費・「不明な店舗」→ undefined', '食費', withTime('不明な店舗', NOON), undefined, true],
+    ['日用品・「スターバックス」→ undefined（中項目の一覧が無い大項目）', '日用品', withTime('スターバックス', NOON), undefined, false],
+    ['その他・飲食店 → undefined', 'その他', withTime('テスト食堂 駅前店', NOON), undefined, false],
+  ];
+  for (const [name, category, parsed, expected, logged] of cases) {
+    const { result, lines } = captureConsole(() => merchantSubCategoryOf(category, parsed));
+    check(name, result === expected, JSON.stringify(result));
+    const logs = subLogs(lines);
+    if (logged) {
+      check(
+        `${name}: ログは 1 行で { source, subCategory } だけ（店名を出さない）`,
+        logs.length === 1 && logs[0].level === 'log' && logs[0].args.length === 2 &&
+          sameJson(logs[0].args[1], { source: 'merchant', subCategory: expected ?? null }) &&
+          !JSON.stringify(lines).includes(parsed.merchant),
+        JSON.stringify(lines)
+      );
+    } else {
+      check(`${name}: ログを出さない`, lines.length === 0, JSON.stringify(lines));
+    }
+  }
+
+  // 判定に失敗しても投げず、中項目なし（undefined）にする。店名は出さない
+  const throwing = {
+    get merchant() {
+      throw new Error('merchant getter failed');
+    },
+    usedAt: NOON,
+    usedAtHasTime: true,
+  };
+  let threw = false;
+  const failed1 = captureConsole(() => {
+    try {
+      return merchantSubCategoryOf('食費', throwing);
+    } catch {
+      threw = true;
+      return 'threw';
+    }
+  });
+  check('店名を読むと例外になる入力でも投げずに undefined', !threw && failed1.result === undefined, JSON.stringify(failed1.result));
+  check(
+    '失敗は warn を 1 行（固定文＋{ source, error }）',
+    failed1.lines.length === 1 && failed1.lines[0].level === 'warn' &&
+      failed1.lines[0].args[0] === 'Subcategory resolution failed' &&
+      sameJson(Object.keys(failed1.lines[0].args[1]), ['source', 'error']) && failed1.lines[0].args[1].source === 'merchant',
+    JSON.stringify(failed1.lines)
+  );
+  const failedNull = captureConsole(() => merchantSubCategoryOf('食費', null));
+  check('parsed が null でも投げずに undefined', failedNull.result === undefined, JSON.stringify(failedNull.result));
+}
+
+{
+  console.log('\n[textSubCategoryOf]');
+  const cases = [
+    ['食費・「ランチ」→ 昼ご飯', '食費', 'ランチ', '昼ご飯', true],
+    ['食費・「ラーメン」→ 外食（LINE の入力には時刻を当てない）', '食費', 'ラーメン', '外食', true],
+    ['食費・「スタバ」→ カフェ', '食費', 'スタバ', 'カフェ', true],
+    ['娯楽・「カラオケ」→ 音楽・ライブ', '娯楽', 'カラオケ', '音楽・ライブ', true],
+    ['食費・「支出」（説明なし）→ undefined', '食費', '支出', undefined, true],
+    ['食費・「食費」（カテゴリ名だけ）→ undefined', '食費', '食費', undefined, true],
+    ['食費・辞書に無い説明 → undefined', '食費', 'おみやげ', undefined, true],
+    ['日用品・「ランチ」→ undefined（中項目の一覧が無い大項目）', '日用品', 'ランチ', undefined, false],
+    ['カスタム名「推し活」→ undefined', '推し活', 'カラオケ', undefined, false],
+  ];
+  for (const [name, category, description, expected, logged] of cases) {
+    const { result, lines } = captureConsole(() => textSubCategoryOf(category, description));
+    check(name, result === expected, JSON.stringify(result));
+    const logs = subLogs(lines);
+    if (logged) {
+      check(
+        `${name}: ログは 1 行で { source, subCategory } だけ（説明を出さない）`,
+        logs.length === 1 && logs[0].args.length === 2 &&
+          sameJson(logs[0].args[1], { source: 'text', subCategory: expected ?? null }) &&
+          !JSON.stringify(lines).includes(description),
+        JSON.stringify(lines)
+      );
+    } else {
+      check(`${name}: ログを出さない`, lines.length === 0, JSON.stringify(lines));
+    }
+  }
+}
+
+{
+  console.log('\n[中項目の判定が例外を投げても保存は続く（判定を差し替えて確かめる）]');
+  const subRules = require('../dist/subCategoryRules');
+  const realResolve = subRules.resolveSubCategory;
+  subRules.resolveSubCategory = () => {
+    throw new Error('resolveSubCategory failed');
+  };
+  /** 投げたら 'threw' を返す（投げたことをテストの失敗として出す） */
+  const orThrew = (fn) => () => {
+    try {
+      return fn();
+    } catch {
+      return 'threw';
+    }
+  };
+  try {
+    const m = captureConsole(orThrew(() => merchantSubCategoryOf('食費', { merchant: 'テスト食堂', usedAt: NOON, usedAtHasTime: true })));
+    check('merchantSubCategoryOf: 投げずに undefined', m.result === undefined, JSON.stringify(m.result));
+    check('merchantSubCategoryOf: warn に店名を出さない', m.lines.length === 1 && m.lines[0].level === 'warn' && !JSON.stringify(m.lines).includes('テスト食堂'), JSON.stringify(m.lines));
+    const t = captureConsole(orThrew(() => textSubCategoryOf('食費', 'ランチ')));
+    check('textSubCategoryOf: 投げずに undefined', t.result === undefined, JSON.stringify(t.result));
+    check('textSubCategoryOf: warn に説明を出さない', t.lines.length === 1 && t.lines[0].level === 'warn' && !JSON.stringify(t.lines).includes('ランチ'), JSON.stringify(t.lines));
+  } finally {
+    subRules.resolveSubCategory = realResolve;
+  }
+}
+
+// ------------------------------------- 保存データの subCategory（LINE の入力・カード利用通知の 3 経路）
+//
+// processExpenseInBackground と Gmail の 3 経路（Pub/Sub の processMessage・processLatestEmail・forceProcessMessage）を、
+// Firestore・LINE・Gmail・分類器の偽物で動かし、保存に渡すデータを見る。dist の exports を書き換える
+// （呼び出し側は呼ぶときに exports を参照する）。firebase-admin は初期化せず、getFirestore も偽物にする。
+async function saveFlowChecks() {
+  const path = require('path');
+  const firestore = require('../dist/firestore');
+  const classifier = require('../dist/geminiCategoryClassifier');
+  const linkUserResolver = require('../dist/linkUserResolver');
+  const lineClient = require('../dist/line/client');
+  const flex = require('../dist/line/flexMessage');
+  const gmailAuth = require('../dist/gmail/auth');
+  const gmailWatch = require('../dist/gmail/watch');
+  const gmailParser = require('../dist/gmail/parser');
+  const subRules = require('../dist/subCategoryRules');
+  const adminFirestore = require(require.resolve('firebase-admin/firestore', { paths: [path.join(__dirname, '..')] }));
+  const { processExpenseInBackground } = require('../dist/line/expenseFlow');
+  const { handleGmailPubSub, processLatestEmail, forceProcessMessage } = require('../dist/gmail/handler');
+
+  // --- 偽物 ---
+  const saved = [];
+  const cards = [];
+  const settingsByUser = {};
+  let classifyReply = null;
+  firestore.saveExpense = async (expense) => {
+    saved.push(expense);
+    return `exp_line_${saved.length}`;
+  };
+  firestore.getUserGroups = async () => [];
+  firestore.getUserSettings = async (lineId) => settingsByUser[lineId] ?? null;
+  firestore.findLineGroupId = async () => null;
+  linkUserResolver.resolveAppUidForExpense = async () => 'uid_test';
+  lineClient.getLineClient = () => ({
+    getProfile: async () => ({ displayName: 'テスト' }),
+    getGroupMemberProfile: async () => ({ displayName: 'テスト' }),
+  });
+  lineClient.replyText = async () => {};
+  lineClient.replyWithPushFallback = async () => {};
+  flex.sendTextExpenseNotification = async (targetId, info) => {
+    cards.push(info);
+  };
+  flex.sendCardUsageNotification = async () => {};
+  classifier.classifyExpense = async () => classifyReply;
+
+  const gmailSaved = [];
+  firestore.saveGmailExpenseAtomic = async (expense) => {
+    gmailSaved.push(expense);
+    return { expenseId: `exp_gmail_${gmailSaved.length}`, alreadyExists: false };
+  };
+  gmailParser.isDuplicateExpense = async () => false;
+  gmailParser.getExpenseIdByGmailMessageId = async () => null;
+  gmailWatch.getWatchState = async () => ({ historyId: '100', watchExpiration: Date.now() + 86400000 });
+  gmailWatch.updateHistoryId = async () => {};
+  // 失敗の記録（system/gmailFailures）の消去だけが getFirestore を直接使う
+  adminFirestore.getFirestore = () => ({
+    collection: () => ({ doc: () => ({ set: async () => {} }) }),
+    runTransaction: async () => 1,
+  });
+  let mailBody = '';
+  gmailAuth.getGmailClient = async () => ({
+    users: {
+      history: { list: async () => ({ data: { history: [{ messagesAdded: [{ message: { id: 'msg-pubsub' } }] }] } }) },
+      messages: {
+        list: async () => ({ data: { messages: [{ id: 'msg-latest' }] } }),
+        get: async () => ({
+          data: {
+            payload: {
+              headers: [{ name: 'From', value: 'statement@vpass.ne.jp' }],
+              body: { data: Buffer.from(mailBody, 'utf-8').toString('base64') },
+            },
+          },
+        }),
+      },
+    },
+  });
+  delete process.env.LINE_GROUP_ID;
+  delete process.env.DEFAULT_GROUP_ID;
+
+  const allLines = [];
+  async function run(fn) {
+    const { result, lines } = await captureConsoleAsync(fn);
+    allLines.push(...lines);
+    return result;
+  }
+  const last = (list) => list[list.length - 1];
+
+  // --- LINE の入力 ---
+  console.log('\n[保存データの subCategory: LINE の入力（processExpenseInBackground）]');
+  let userSeq = 0;
+  async function lineInput(text) {
+    userSeq++;
+    const userId = `U_sub_${userSeq}`; // プロフィールのキャッシュに当てないよう、毎回別の人にする
+    const before = saved.length;
+    await run(() => processExpenseInBackground({ source: { type: 'user', userId } }, parseTextExpense(text), 'rt'));
+    return { userId, expense: saved.length > before ? last(saved) : null, card: last(cards) };
+  }
+  const dictionary = (category) => ({ category, confidence: 0.8, reasoning: 'Fast local keyword matching', provider: 'dictionary' });
+
+  classifyReply = dictionary('食費');
+  const lunch = await lineInput('900 ランチ');
+  check(
+    '「900 ランチ」（辞書で食費）→ subCategory: 昼ご飯',
+    lunch.expense && lunch.expense.category === '食費' && lunch.expense.subCategory === '昼ご飯',
+    JSON.stringify(lunch.expense)
+  );
+  check('判定元は変わらない（dictionary）', lunch.card && lunch.card.categoryOrigin === 'dictionary', JSON.stringify(lunch.card));
+
+  classifyReply = dictionary('日用品'); // 指定があれば分類の結果は使わない
+  const ramen = await lineInput('1200 ラーメン 食費');
+  check(
+    '「1200 ラーメン 食費」（指定）→ subCategory: 外食（時刻は当てない）',
+    ramen.expense && ramen.expense.category === '食費' && ramen.expense.subCategory === '外食',
+    JSON.stringify(ramen.expense)
+  );
+  check('判定元は変わらない（specified）', ramen.card && ramen.card.categoryOrigin === 'specified', JSON.stringify(ramen.card));
+
+  classifyReply = { category: null, confidence: 0 };
+  settingsByUser[`U_sub_${userSeq + 1}`] = { lineId: `U_sub_${userSeq + 1}`, defaultCategory: '娯楽費' };
+  const karaoke = await lineInput('800 カラオケ');
+  check(
+    '「800 カラオケ」（既定のカテゴリ「娯楽費」）→ 娯楽・subCategory: 音楽・ライブ',
+    karaoke.expense && karaoke.expense.category === '娯楽' && karaoke.expense.subCategory === '音楽・ライブ',
+    JSON.stringify(karaoke.expense)
+  );
+  check('判定元は変わらない（default）', karaoke.card && karaoke.card.categoryOrigin === 'default', JSON.stringify(karaoke.card));
+
+  classifyReply = dictionary('日用品');
+  const linesBeforeTissue = allLines.length;
+  const tissue = await lineInput('300 ティッシュ');
+  check(
+    '「300 ティッシュ」（日用品）→ subCategory は undefined（saveExpense が項目を付けない）',
+    tissue.expense && tissue.expense.category === '日用品' && tissue.expense.subCategory === undefined,
+    JSON.stringify(tissue.expense)
+  );
+  check('日用品では中項目のログを出さない', subLogs(allLines.slice(linesBeforeTissue)).length === 0, JSON.stringify(subLogs(allLines.slice(linesBeforeTissue))));
+
+  classifyReply = dictionary('食費');
+  const unknownFood = await lineInput('500 おみやげ');
+  check(
+    '「500 おみやげ」（食費・辞書に無い）→ subCategory は undefined',
+    unknownFood.expense && unknownFood.expense.category === '食費' && unknownFood.expense.subCategory === undefined,
+    JSON.stringify(unknownFood.expense)
+  );
+
+  const realResolve = subRules.resolveSubCategory;
+  subRules.resolveSubCategory = () => {
+    throw new Error('resolveSubCategory failed');
+  };
+  try {
+    const failedLunch = await lineInput('900 ランチ');
+    check(
+      '中項目の判定が例外を投げても保存は続く（subCategory は undefined）',
+      failedLunch.expense && failedLunch.expense.category === '食費' && failedLunch.expense.subCategory === undefined,
+      JSON.stringify(failedLunch.expense)
+    );
+  } finally {
+    subRules.resolveSubCategory = realResolve;
+  }
+
+  // --- カード利用通知（Gmail） ---
+  console.log('\n[保存データの subCategory: カード利用通知（Gmail の 3 経路）]');
+  const cardMail = (dateTime, merchant) =>
+    [
+      '【ご利用のお知らせ】',
+      `ご利用日時：${dateTime}`,
+      `ご利用店名：${merchant}`,
+      'ご利用金額：980円',
+      '三井住友ゴールドＶＩＳＡ（ＮＬ）',
+    ].join('\n');
+  const jev = (category) => ({ category, confidence: 0.3, reasoning: 'Jev classification', provider: 'jev' });
+
+  mailBody = cardMail('2026/03/14 12:30', 'テスト食堂 駅前店');
+  classifyReply = jev('食費');
+  let before = gmailSaved.length;
+  await run(() => handleGmailPubSub(Buffer.from(JSON.stringify({ emailAddress: 'someone@example.com', historyId: '200' })).toString('base64')));
+  let g = gmailSaved.length > before ? last(gmailSaved) : null;
+  check(
+    'Pub/Sub（processMessage）: 時刻ありの飲食店 → subCategory: 昼ご飯',
+    g && g.gmailMessageId === 'msg-pubsub' && g.category === '食費' && g.subCategory === '昼ご飯',
+    JSON.stringify(g)
+  );
+
+  before = gmailSaved.length;
+  const latest = await run(() => processLatestEmail());
+  g = gmailSaved.length > before ? last(gmailSaved) : null;
+  check(
+    'processLatestEmail: 時刻ありの飲食店 → subCategory: 昼ご飯',
+    latest && latest.success && g && g.gmailMessageId === 'msg-latest' && g.category === '食費' && g.subCategory === '昼ご飯',
+    JSON.stringify({ latest, g })
+  );
+
+  before = gmailSaved.length;
+  const forced = await run(() => forceProcessMessage('msg-force-1'));
+  g = gmailSaved.length > before ? last(gmailSaved) : null;
+  check(
+    'forceProcessMessage: 時刻ありの飲食店 → subCategory: 昼ご飯',
+    forced && forced.success && g && g.gmailMessageId === 'msg-force-1' && g.category === '食費' && g.subCategory === '昼ご飯',
+    JSON.stringify({ forced, g })
+  );
+
+  mailBody = cardMail('2026/03/14', 'テスト食堂 駅前店');
+  for (const [label, call, id] of [
+    ['Pub/Sub（processMessage）', () => handleGmailPubSub(Buffer.from(JSON.stringify({ historyId: '201' })).toString('base64')), 'msg-pubsub'],
+    ['processLatestEmail', () => processLatestEmail(), 'msg-latest'],
+    ['forceProcessMessage', () => forceProcessMessage('msg-force-2'), 'msg-force-2'],
+  ]) {
+    before = gmailSaved.length;
+    await run(call);
+    g = gmailSaved.length > before ? last(gmailSaved) : null;
+    check(`${label}: 時刻の無いメールの飲食店 → subCategory: 外食`, g && g.gmailMessageId === id && g.subCategory === '外食', JSON.stringify(g));
+  }
+
+  mailBody = cardMail('2026/03/14 12:30', 'SAMPLE DRUG');
+  classifyReply = jev('日用品');
+  const linesBeforeDaily = allLines.length;
+  for (const [label, call] of [
+    ['Pub/Sub（processMessage）', () => handleGmailPubSub(Buffer.from(JSON.stringify({ historyId: '202' })).toString('base64'))],
+    ['processLatestEmail', () => processLatestEmail()],
+    ['forceProcessMessage', () => forceProcessMessage('msg-force-3')],
+  ]) {
+    before = gmailSaved.length;
+    await run(call);
+    g = gmailSaved.length > before ? last(gmailSaved) : null;
+    check(`${label}: 日用品 → subCategory は undefined`, g && g.category === '日用品' && g.subCategory === undefined, JSON.stringify(g));
+  }
+  check('日用品のカード利用通知では中項目のログを出さない', subLogs(allLines.slice(linesBeforeDaily)).length === 0, JSON.stringify(subLogs(allLines.slice(linesBeforeDaily))));
+
+  mailBody = cardMail('2026/03/14 12:30', 'テスト食堂 駅前店');
+  classifyReply = jev('食費');
+  subRules.resolveSubCategory = () => {
+    throw new Error('resolveSubCategory failed');
+  };
+  try {
+    for (const [label, call] of [
+      ['Pub/Sub（processMessage）', () => handleGmailPubSub(Buffer.from(JSON.stringify({ historyId: '203' })).toString('base64'))],
+      ['processLatestEmail', () => processLatestEmail()],
+      ['forceProcessMessage', () => forceProcessMessage('msg-force-4')],
+    ]) {
+      before = gmailSaved.length;
+      await run(call);
+      g = gmailSaved.length > before ? last(gmailSaved) : null;
+      check(`${label}: 中項目の判定が例外を投げても保存は続く（subCategory は undefined）`, g && g.category === '食費' && g.subCategory === undefined, JSON.stringify(g));
+    }
+  } finally {
+    subRules.resolveSubCategory = realResolve;
+  }
+
+  // --- ログ ---
+  const logs = subLogs(allLines);
+  check(
+    '中項目のログは { source, subCategory } だけで、説明・店名・ID を出さない',
+    logs.length > 0 &&
+      logs.every((l) => l.args.length === 2 && sameJson(Object.keys(l.args[1]), ['source', 'subCategory'])) &&
+      !['ランチ', 'ラーメン', 'カラオケ', 'テスト食堂', 'U_sub_', 'msg-'].some((s) => JSON.stringify(logs).includes(s)),
+    JSON.stringify(logs)
+  );
+}
+
+saveFlowChecks()
+  .catch((error) => {
+    failed++;
+    console.log(`  FAIL 保存データの確かめで例外 — ${error && error.stack}`);
+  })
+  .finally(() => {
+    console.log(failed === 0 ? '\nすべて通過' : `\n${failed} 件失敗`);
+    process.exit(failed === 0 ? 0 : 1);
+  });

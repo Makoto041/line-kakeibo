@@ -106,8 +106,9 @@ LINEテキスト → webhook(署名検証)
   → parseTextExpense()（金額必須・日付/支払方法/カテゴリ/摘要を抽出）
   → 並列: プロフィール取得(15分cache) / appUid解決(匿名Auth) / カテゴリ分類
   → カテゴリ分類: キャッシュ → キーワードマップ → Jev（失敗時のみ Gemini）。確信度≥0.4で採用
+  → 中項目の判定（大項目が決まったあと。辞書だけで、時刻は当てない。決まらなければ付けない。SPECIFICATION §4.1）
   → グループ所属の決定（expenseGroupScope.ts: 発言元 LINE グループに紐づく世帯の有効メンバーなら groupId+lineGroupId、それ以外は個人支出）
-  → expenses 保存 (confirmed:false, includeInTotal:false, inputSource:'line_text')
+  → expenses 保存 (confirmed:false, includeInTotal:false, inputSource:'line_text', subCategory は決まったときだけ)
   → 確認Flex返信（現在の設定4行〔支出区分・支払った人・立替・カテゴリ〕＋ボタン / OK / 修正 / レシート添付 / 家計簿一覧を見る）
   → postbackで status / includeInTotal / payerId / advanceBy / advanceFull / category を確定 → 最新値のカードを返信
      （category で大項目が変わるときは、中項目 subCategory を辞書と時刻のルールで決め直す。決まらなければ消す）
@@ -119,9 +120,10 @@ LINEテキスト → webhook(署名検証)
 
 ```text
 SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
-  → history API差分取得 → SMBCフィルタ → 利用先/金額/利用日時パース
+  → history API差分取得 → SMBCフィルタ → 利用先/金額/利用日時パース（メールに時刻が書かれていたか〔usedAtHasTime〕も取る）
   → カテゴリ分類（店名なので Jev → Gemini を優先。どちらも使えないときだけキーワードマップ）
-  → Firestoreトランザクションでアトミック保存（status: 'shared'・confirmed: true。自動で入るので要確認にしない）
+  → 中項目の判定（店名の辞書。時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。決まらなければ付けない。SPECIFICATION §4.1）
+  → Firestoreトランザクションでアトミック保存（status: 'shared'・confirmed: true。自動で入るので要確認にしない。subCategory は決まったときだけ）
      （gmailMessageId ＋ date+amount+店舗名の類似+usedAt±1分 の二重チェックで重複排除）
   → LINEグループへFlex通知（テキスト入力と同じ登録・編集カード）
 ```
@@ -210,6 +212,9 @@ Gemini（退避先）: @google/genai 経由、Flash-Lite 系だけを使う（Fl
   ・思考 MINIMAL・8s タイムアウト・構造化出力（category をカテゴリ一覧の enum に限定）
   ・候補のカテゴリ一覧は Firestore から読み 30分キャッシュ（Jev と同じ一覧）
   └─ 出力を categoryNormalization で正準19カテゴリに正規化
+
+中項目（食費・娯楽だけ。#235）: 大項目が決まったあとに resolveSubCategory（subCategoryRules.ts。辞書と時刻のルール、モデルは呼ばない）で決め、決まらなければ付けない。
+  LINE は説明文の辞書だけ、カード利用通知は時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。詳細は SPECIFICATION §4.1
 ```
 
 その他のコスト施策:
@@ -269,7 +274,7 @@ line-kakeibo/
 │  │  ├─ logSafe.ts / time.ts # ログのマスク・JST 日付
 │  │  ├─ geminiCategoryClassifier.ts # カテゴリ分類（キャッシュ・辞書・Jev → Gemini の順序）
 │  │  ├─ jevCategoryClassifier.ts / geminiClient.ts / categoryGuide.ts / categoryNormalization.ts # Jev・Gemini の呼び出し、カテゴリの説明、カテゴリ正規化
-│  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧（大項目は正準名の完全一致で引く）と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。LINE で大項目を変えたときだけ呼ぶ）
+│  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧（大項目は正準名の完全一致で引く）と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。登録時〔LINE の入力・Gmail の取込〕と、LINE で大項目を変えたときに呼ぶ）
 │  │  ├─ linkUserResolver.ts / syncUserLinks.ts
 │  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue
 │  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）

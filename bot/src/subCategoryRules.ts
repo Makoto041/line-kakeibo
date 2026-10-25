@@ -1,7 +1,7 @@
 // 中項目を辞書と時刻のルールで決める（#235 の方式 C。モデルは呼ばない）
 //
-// LINE で大項目を変えたとき（postback の set_category。expenseActions.ts の decideSetCategory）に呼ぶ。
-// LINE・Gmail の登録時の保存への組み込みは後続の PR。
+// 呼ぶのは 2 か所: 登録時の保存（LINE の入力は line/expenseFlow.ts の textSubCategoryOf、Gmail のカード利用通知は
+// gmail/handler.ts の merchantSubCategoryOf）と、LINE で大項目を変えたときの決め直し（postback の set_category。expenseActions.ts の decideSetCategory）。
 // - 辞書: 大項目ごとに順番つきのグループ。説明文・店名を normalizeForMatch で揃えてから照合し、最初に当たったグループの中項目を採る。
 //   keywords は部分一致（String.includes）、exact は揃えた入力の全体と一致したときだけ当てる。入力から正規表現は作らない。
 // - 時刻: Gmail の店名（source: 'merchant'）で、時刻の分かる usedAt が渡され、飲食店のグループ（mealTime）に当たったときだけ、
@@ -318,7 +318,7 @@ export function mealOfJst(usedAt: Date): MealSubCategory | null {
 }
 
 /**
- * 保存済みの利用日時に時刻があるか。保存済みのレコードしかない再判定（#235 の後続の PR ③）専用のフォールバック。
+ * 保存済みの利用日時に時刻があるか。保存済みのレコードしかない決め直し（LINE で大項目を変えたとき。expenseActions.ts の decideSetCategory）専用のフォールバック。
  * Gmail の取込は、メールに時刻が無いと JST の 00:00 にする（gmail/parser.ts）ので、JST の 00:00:00.000 ちょうどは時刻なしとみなす。
  * 日付の無いメールは処理した時刻が入るため、時刻なしと見分けられない（true になる）。取込の時点では、メールから時刻の有無を直接取って使う。
  * Date だけを受け、有効な Date でなければ false。
