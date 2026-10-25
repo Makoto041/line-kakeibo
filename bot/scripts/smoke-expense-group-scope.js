@@ -1,9 +1,9 @@
 /**
- * LINE 支出のグループ所属決定（resolveExpenseGroupScope）のスモークテスト
+ * LINE 支出のグループ所属決定（resolveExpenseGroupScope）と世帯メンバーの判定（isHouseholdMember）のスモークテスト
  *
  *   node bot/scripts/smoke-expense-group-scope.js
  */
-const { resolveExpenseGroupScope } = require('../dist/expenseGroupScope');
+const { isHouseholdMember, resolveExpenseGroupScope } = require('../dist/expenseGroupScope');
 
 let failed = 0;
 
@@ -44,6 +44,17 @@ check('個人チャット: 所属グループの支出になり lineGroupId は�
 r = resolveExpenseGroupScope(null, undefined);
 check('個人チャット・所属なし: どちらも付けない',
   r.groupId === undefined && r.lineGroupId === undefined, JSON.stringify(r));
+
+console.log('isHouseholdMember（モデルを呼んでよいか。#245）');
+check('世帯の LINE グループの有効メンバーはメンバー', isHouseholdMember(household, 'Lhouse') === true);
+check('LINE グループ: 所属なしはメンバーでない', isHouseholdMember(null, 'Lhouse') === false);
+check('LINE グループ: 別の LINE グループに紐づくグループのメンバーはメンバーでない', isHouseholdMember(other, 'Lhouse') === false);
+check('LINE グループ: 自作グループ（lineGroupId なし）のメンバーはメンバーでない', isHouseholdMember(personalGroup, 'Lhouse') === false);
+check('個人チャット: LINE グループに紐づくグループのメンバーはメンバー', isHouseholdMember(household, null) === true);
+check('個人チャット: 自作グループ（「グループ作成」）だけのメンバーはメンバーでない', isHouseholdMember(personalGroup, null) === false);
+check('個人チャット: 所属なしはメンバーでない', isHouseholdMember(null, undefined) === false);
+check('id の無いグループはメンバーでない', isHouseholdMember({ lineGroupId: 'Lhouse' }, 'Lhouse') === false);
+check('lineGroupId が空文字のグループはメンバーでない', isHouseholdMember({ id: 'G4', lineGroupId: '' }, null) === false);
 
 if (failed > 0) {
   console.log(`\n${failed} check(s) failed`);

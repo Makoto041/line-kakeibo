@@ -26,3 +26,22 @@ export function resolveExpenseGroupScope(
     ? { groupId: activeGroup!.id, lineGroupId }
     : { groupId: undefined, lineGroupId: undefined };
 }
+
+/**
+ * LINE の入力の送信者が世帯のメンバーか（カテゴリ分類でモデル〔Jev・Gemini〕を呼んでよいか。#245）。
+ *
+ * 世帯 = LINE グループに紐づく（lineGroupId を持つ）グループ。「グループ作成」コマンドで誰でも
+ * 自分だけのグループ（lineGroupId なし）の有効メンバーになれるため、グループに所属しているだけでは
+ * メンバーとみなさない。LINE グループでの発言は、発言元の LINE グループに紐づくグループの
+ * 有効メンバーに限る（resolveExpenseGroupScope が世帯の支出にするときと同じ条件）。
+ *
+ * @param activeGroup 発言者が有効なメンバーであるグループ（無ければ null）
+ * @param lineGroupId 発言元の LINE グループ ID（個人チャットなら null）
+ */
+export function isHouseholdMember(
+  activeGroup: { id?: string; lineGroupId?: string } | null | undefined,
+  lineGroupId: string | null | undefined
+): boolean {
+  if (!activeGroup?.id || !activeGroup.lineGroupId) return false;
+  return !lineGroupId || activeGroup.lineGroupId === lineGroupId;
+}
