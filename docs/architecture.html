@@ -149,7 +149,7 @@ flowchart LR
             <li>金額・日付・支払方法・内容を解析</li>
             <li>カテゴリを分類（下の 4 段）</li>
             <li>支出を保存し確認カードで返信</li>
-            <li>カードの OK / 修正 / 自分が払った / 自分が立替 / 除外で更新</li>
+            <li>カードの OK / 修正 / 自分が払った / 自分が立替 / 除外 / カテゴリで更新（カテゴリの大項目が変わると、中項目を辞書で決め直す）</li>
           </ol>
           <span class="src">bot/src/index.ts · line/</span>
         </div>
@@ -265,7 +265,7 @@ flowchart LR
             <tr><td class="name">bot/src/householdApi.ts</td><td><code>/household/*</code>（確認・以前の立替の精算済み・固定費・折半設定・精算の通知）</td></tr>
             <tr><td class="name">bot/src/gmail/</td><td>Gmail 取込と管理 API（<code>adminRouter.ts</code>）</td></tr>
             <tr><td class="name">bot/src/recurringExpenses.ts</td><td>固定費の計上ロジック</td></tr>
-            <tr><td class="name">bot/src/categoryTaxonomy.ts · subCategoryRules.ts</td><td>中項目（食費・娯楽）の一覧と、辞書と時刻で中項目を決める <code>resolveSubCategory</code>（モデルは呼ばない。まだどこからも呼ばない）</td></tr>
+            <tr><td class="name">bot/src/categoryTaxonomy.ts · subCategoryRules.ts</td><td>中項目（食費・娯楽）の一覧と、辞書と時刻で中項目を決める <code>resolveSubCategory</code>（モデルは呼ばない。LINE のカードでカテゴリを変えたときだけ呼ぶ）</td></tr>
             <tr><td class="name">bot/src/settlementSummary.ts · line/settlementSummaryMessage.ts</td><td>期間の精算サマリー（送る日の判定・集計・冪等な送信・Web からの手動の送信と、メンション付きテキスト・Flex）</td></tr>
             <tr><td class="name">web/app/ · components/ · lib/</td><td>画面・部品・ロジック（lib は純関数でテストあり）</td></tr>
             <tr><td class="name">web/app/manifest.ts · public/sw.js · lib/installApp.ts</td><td>PWA の manifest、Service Worker（オフライン画面と <code>/_next/static</code> のキャッシュ）、追加の案内の出し分け。アイコンは <code>scripts/gen-app-icons.mjs</code> で生成</td></tr>

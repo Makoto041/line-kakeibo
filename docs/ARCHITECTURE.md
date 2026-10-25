@@ -110,6 +110,7 @@ LINEテキスト → webhook(署名検証)
   → expenses 保存 (confirmed:false, includeInTotal:false, inputSource:'line_text')
   → 確認Flex返信（現在の設定4行〔支出区分・支払った人・立替・カテゴリ〕＋ボタン / OK / 修正 / レシート添付 / 家計簿一覧を見る）
   → postbackで status / includeInTotal / payerId / advanceBy / advanceFull / category を確定 → 最新値のカードを返信
+     （category で大項目が変わるときは、中項目 subCategory を辞書と時刻のルールで決め直す。決まらなければ消す）
      （［自分が払った］は押した人を支払った人に、［自分が立替］は押した人の立替〔全額を精算に加算〕にする。
        どちらも押せるのは世帯の有効メンバーだけ）
 ```
@@ -268,7 +269,7 @@ line-kakeibo/
 │  │  ├─ logSafe.ts / time.ts # ログのマスク・JST 日付
 │  │  ├─ geminiCategoryClassifier.ts # カテゴリ分類（キャッシュ・辞書・Jev → Gemini の順序）
 │  │  ├─ jevCategoryClassifier.ts / geminiClient.ts / categoryGuide.ts / categoryNormalization.ts # Jev・Gemini の呼び出し、カテゴリの説明、カテゴリ正規化
-│  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧（大項目は正準名の完全一致で引く）と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。まだどこからも呼ばない）
+│  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧（大項目は正準名の完全一致で引く）と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。LINE で大項目を変えたときだけ呼ぶ）
 │  │  ├─ linkUserResolver.ts / syncUserLinks.ts
 │  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue
 │  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）
