@@ -59,7 +59,7 @@ export interface Expense {
   description: string;
   date: string;             // YYYY-MM-DD format
   category: string;
-  subCategory?: string;     // 中項目。任意。category（大項目）とは別（#235。まだ書き込む処理は無い）
+  subCategory?: string;     // 中項目。任意。category（大項目）とは別（#235。bot は登録時〔LINE の入力・Gmail の取込〕に辞書で決まったときだけ書き、LINE で大項目を変えたときに決め直す・決まらなければ消す〔expenseActions.ts の decideSetCategory〕）
   confirmed: boolean;
   includeInTotal: boolean;  // 合計金額に含めるか（Gmail自動取得:true, LINE手入力:false）
   payerId: string;          // LINE User ID of the person who paid (defaults to lineId)
@@ -78,6 +78,7 @@ export interface Expense {
   advanceSettledAt?: Timestamp;   // 精算日時
   paymentMethod?: string;         // 支払い方法（cash, paypay, card）
   gmailMessageId?: string;        // Gmail自動取得時のメッセージID
+  usedAt?: Date | Timestamp;      // Gmail自動取得時のカード利用日時（Date で書き、読むと Timestamp。メールが日付だけなら JST 00:00、日時が無ければ処理した時刻）
   receiptUrl?: string;            // レシート画像のURL（Firebase Storage）
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
