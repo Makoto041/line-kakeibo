@@ -56,7 +56,7 @@ export default function PrivacyPolicy() {
 
           <section>
             <h2 className="mb-2 text-base font-semibold text-fg">6. お問い合わせ</h2>
-            <p>プライバシーに関するお問い合わせは、LINEボットを通じてご連絡ください。</p>
+            <p>プライバシーに関するお問い合わせは、開発者に直接ご連絡ください。「要望」「改善」「不具合」「フィードバック」で始まるメッセージは公開のGitHubリポジトリのIssueになるため、お問い合わせには使わないでください。</p>
           </section>
 
           <p className="mt-8 text-sm text-muted">最終更新日: 2026年10月25日</p>

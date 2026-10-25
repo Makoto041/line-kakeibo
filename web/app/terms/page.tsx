@@ -45,7 +45,7 @@ export default function TermsOfService() {
             <p>本規約は日本法に準拠します。</p>
           </section>
 
-          <p className="mt-8 text-sm text-muted">最終更新日: 2024年1月</p>
+          <p className="mt-8 text-sm text-muted">最終更新日: 2026年3月14日</p>
         </div>
       </div>
     </div>
