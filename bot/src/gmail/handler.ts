@@ -254,14 +254,14 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
       console.error(
         `Giving up on ${abandonedFailures.length} message(s) after ${MAX_MESSAGE_ATTEMPTS} attempts: ` +
           `${abandonedFailures.join(', ')}. ` +
-          'Re-run manually with POST /gmail/force-process/:messageId after fixing the cause.'
+          'Re-run manually with POST /gmail/force-process/:messageId after fixing the cause ' +
+          '(cards of expenses that were already saved are not resent).'
       );
-      // もう再処理しないので、送信待ちのカードの印も残さない（店名・金額・日付が残り続けないように。cardNotice.ts）
-      await discardCardNotices(abandonedFailures, 'abandoned');
     }
 
     if (retryableFailures.length > 0) {
       // historyId を進めずに投げ直す。Pub/Sub が再送し、次回この範囲をやり直す。
+      // 諦めたメールも同じ範囲で再処理されるので、送信待ちのカードの印はここでは消さない（次の再送で送れることがある）
       throw new Error(
         `${retryableFailures.length} message(s) failed, keeping historyId at ${startHistoryId} for retry: ` +
           retryableFailures.join(', ')
@@ -271,6 +271,10 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
     // 全ページ処理完了後にhistoryIdを更新
     await updateHistoryId(newHistoryId);
     console.log(`Processed ${processedMessageIds.length} messages, updated historyId to ${newHistoryId}`);
+
+    // historyId を進めたので、諦めたメールはもう再処理されない。送信待ちのカードの印も残さない
+    // （店名・金額・日付が残り続けないように。cardNotice.ts）
+    if (abandonedFailures.length > 0) await discardCardNotices(abandonedFailures, 'abandoned');
   } catch (error: any) {
     // historyIdが古すぎる場合は最新に更新
     if (error.code === 404) {

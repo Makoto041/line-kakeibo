@@ -135,7 +135,7 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
      X-Line-Retry-Key（メッセージから決まる UUID）を付けて push し、送れたら（409 も）印を消す
   ※ push の失敗・中断で印が残ったら、同じメールの再処理（Pub/Sub の再送・/gmail/force-process）が重複チェックより先に印を見て、
     保存時点のカードを同じ key で送り直す。23 時間を過ぎた印（key は 24 時間だけ有効）・支出が消された印は送らずに消す。
-    印の無い既存の支出には送らない。3 回失敗して諦めた・historyId が古すぎて飛ばしたメールの印も消す
+    印の無い既存の支出には送らない。3 回失敗して諦めた（historyId を進めたときだけ）・historyId が古すぎて飛ばしたメールの印も消す
     （消し損ねた印は expireAt〔24 時間〕の TTL で消える。TTL ポリシーは運用で設定）
 ```
 

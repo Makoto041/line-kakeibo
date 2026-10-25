@@ -399,6 +399,40 @@ async function pubsub(ids) {
     failNextPushes = 0;
   }
 
+  console.log('\n[同じ実行で A は諦め・B は再試行で投げる: historyId を進めず A の印は残り、次の実行で A に送る]');
+  {
+    const a = 'msg-mixed-a-0016';
+    const b = 'msg-mixed-b-0017';
+    mails[a] = cardMail('2026/10/26 08:00', '混在の店 A', 1660);
+    mails[b] = cardMail('2026/10/26 08:30', '混在の店 B', 1770);
+    failNextPushes = 1;
+    const r1 = await quiet(() => pubsub([a]));
+    failNextPushes = 1;
+    const r2 = await quiet(() => pubsub([a]));
+    check('A は 2 回失敗し、印が残る', r1 instanceof Error && r2 instanceof Error && (await noticeOf(a)).exists, [String(r1), String(r2)]);
+    const historyBefore = await historyIdNow();
+    failNextPushes = 2;
+    const r3 = await quiet(() => pubsub([a, b]));
+    const failures = (await db.doc('system/gmailFailures').get()).data() || {};
+    check(
+      '3 回目: A は諦め（試行 3）、B は再試行（試行 1）で投げる',
+      r3 instanceof Error && failures[a] && failures[a].attempts === 3 && failures[b] && failures[b].attempts === 1,
+      { r3: String(r3), a: failures[a], b: failures[b] }
+    );
+    check('historyId は進まず、諦めた A の印も B の印も残る', (await historyIdNow()) === historyBefore && (await noticeOf(a)).exists && (await noticeOf(b)).exists);
+    check('A のカードはまだ届かず、印を消した警告も出ない', !accepted.has(cardNoticeRetryKey(a)) && !discardWarned());
+    const r4 = await quiet(() => pubsub([a, b]));
+    check(
+      '次の実行で A と B に送り、historyId を進める',
+      r4 === 'ok' && accepted.has(cardNoticeRetryKey(a)) && accepted.has(cardNoticeRetryKey(b)) && (await historyIdNow()) !== historyBefore,
+      String(r4)
+    );
+    check(
+      'A と B の印を消し、支出はそれぞれ 1 件',
+      !(await noticeOf(a)).exists && !(await noticeOf(b)).exists && (await expensesOf(a)).length === 1 && (await expensesOf(b)).length === 1
+    );
+  }
+
   console.log('\n[historyId が古すぎて先へ飛ばしたら、失敗の記録にあるメールの印を消す]');
   {
     const id = 'msg-skip-0014';
