@@ -23,7 +23,7 @@ export async function handleFeedbackCommand(event: any, text: string): Promise<b
   if (feedbackText === null) return false;
 
   if (!feedbackText) {
-    await replyText(event.replyToken, "フィードバック内容を入力してください。\n例: 「要望 月別のグラフが見たい」\n「不具合 レシートが読み取れない」");
+    await replyText(event.replyToken, "フィードバック内容を入力してください。\n例: 「要望 月別のグラフが見たい」\n「不具合 金額が合わない」");
     return true;
   }
   try {
