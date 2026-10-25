@@ -1,19 +1,38 @@
 'use client';
 
-// 内訳シート: 合計 → カテゴリ / 支払い者 → 明細 と潜っていく（モバイル: 下からのシート / デスクトップ: 右のドロワー）。
+// 内訳シート: 合計 → カテゴリ → 中項目 / 支払い者 → 明細 と潜っていく（モバイル: 下からのシート / デスクトップ: 右のドロワー）。
+// 中項目の段は、中項目の一覧がある大項目（食費・娯楽）だけ。
 // ホームのカテゴリ別カードと、精算の期間の精算（折半）の金額から開く。計算は lib/drilldown.ts。
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import dayjs from 'dayjs';
 import {
+  Bath,
+  Beer,
+  Bike,
+  BookOpen,
   ChevronLeft,
   ChevronRight,
   Clock,
+  Coffee,
   CreditCard,
+  CupSoda,
+  FerrisWheel,
+  Film,
+  Gamepad2,
   Landmark,
   Layers,
   List,
+  Minus,
+  MoreHorizontal,
+  Moon,
+  Mountain,
+  Music,
   Pencil,
+  ShoppingCart,
+  Store,
+  Sun,
+  Sunrise,
   User,
   X,
   type LucideIcon,
@@ -24,6 +43,7 @@ import { yen } from '../../lib/money';
 import { splitChip } from '../../lib/expenseState';
 import {
   CARD_PAYER_NAME,
+  NO_SUB_CATEGORY,
   SHARED_PAYER_NAME,
   deltaPct,
   groupDrill,
@@ -74,9 +94,39 @@ function payerIcon(name: string): LucideIcon {
   return User;
 }
 
+/** 中項目のアイコン（色は親の大項目。「中項目なし」は灰色） */
+const SUB_CATEGORY_ICONS: Record<string, LucideIcon> = {
+  '食料品（スーパー）': ShoppingCart,
+  外食: Beer,
+  朝ご飯: Sunrise,
+  昼ご飯: Sun,
+  夜ご飯: Moon,
+  カフェ: Coffee,
+  コンビニ: Store,
+  自販機: CupSoda,
+  'デリバリー・テイクアウト': Bike,
+  映画: Film,
+  '銭湯・サウナ': Bath,
+  'スポーツ・アウトドア': Mountain,
+  'ゲーム・課金': Gamepad2,
+  '本・漫画': BookOpen,
+  '音楽・ライブ': Music,
+  'レジャー・テーマパーク': FerrisWheel,
+};
+const NO_SUB_CATEGORY_HEX = '#94a3b8';
+
+function subCategoryVisual(category: string, subCategory: string): { icon: LucideIcon; hex: string } {
+  if (subCategory === NO_SUB_CATEGORY) return { icon: Minus, hex: NO_SUB_CATEGORY_HEX };
+  const icon = Object.prototype.hasOwnProperty.call(SUB_CATEGORY_ICONS, subCategory) ? SUB_CATEGORY_ICONS[subCategory] : MoreHorizontal;
+  return { icon, hex: getCategoryVisual(category).hex };
+}
+
+const DIM_LABEL: Record<DrillDim, string> = { category: 'カテゴリ', subCategory: '中項目', payer: '支払い者' };
+const DIM_ORDER: readonly DrillDim[] = ['category', 'subCategory', 'payer'];
+
 export default function DrillSheet({ initial, items, range, prevCategoryTotals, listHref, editHref, onClose }: Props) {
   const [stack, setStack] = useState<DrillView[]>(initial);
-  // 階層ごとの内訳の軸（カテゴリ / 支払い者）
+  // 階層ごとの内訳の軸（カテゴリ / 中項目 / 支払い者）
   const [dims, setDims] = useState<Record<number, DrillDim>>({});
   const [sort, setSort] = useState<DrillSort>('date');
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -146,7 +196,17 @@ export default function DrillSheet({ initial, items, range, prevCategoryTotals, 
     return (key: string, label: string) => map.get(key) ?? payerColor(label, map.size);
   }, [items]);
 
-  const push = (next: DrillView) => setStack((s) => [...s, next]);
+  // 次の階層へ進むときは、その深さから先で選んだ内訳の軸を忘れる（食費で選んだ「支払い者」を、戻って開いた娯楽に持ち越さない）。
+  // パンくず・戻るで戻った階層の軸は残す
+  const push = (next: DrillView) => {
+    const at = depth + 1;
+    setDims((m) => {
+      const kept: Record<number, DrillDim> = {};
+      for (const [k, d] of Object.entries(m)) if (Number(k) < at) kept[Number(k)] = d;
+      return kept;
+    });
+    setStack((s) => [...s, next]);
+  };
   const goTo = (index: number) => setStack((s) => s.slice(0, index + 1));
 
   // 精算のカード（.glass）の中から開いても画面全体を覆うよう、body 直下に描く
@@ -279,12 +339,22 @@ function SetView({
   const grandTotal = sumAmount(items.filter((i) => i.included));
   const dims = availableDims(included, filter);
   const dim = resolveDim(included, filter, preferredDim ?? view.dim);
+  const dimOptions = DIM_ORDER.filter((d) => dims[d]).map((d) => ({ value: d, label: DIM_LABEL[d] }));
   const groups = dim ? groupDrill(included, dim) : [];
   const singlePayer = filter.payers && filter.payers.length === 1 ? included.find((i) => i.payerKey === filter.payers![0]) : undefined;
+  const isSub = filter.category !== undefined && filter.subCategory !== undefined;
+  // 中項目の階層では、親の大項目（同じ支払い者の絞り込み）に占める割合も出す
+  const parentTotal = isSub
+    ? sumAmount(items.filter((i) => i.included && matchesDrill(i, { ...filter, subCategory: undefined })))
+    : 0;
 
   let heroIcon: LucideIcon = Layers;
   let heroColor = '#10b981';
-  if (filter.category !== undefined) {
+  if (isSub) {
+    const v = subCategoryVisual(filter.category!, filter.subCategory!);
+    heroIcon = v.icon;
+    heroColor = v.hex;
+  } else if (filter.category !== undefined) {
     const v = getCategoryVisual(filter.category);
     heroIcon = v.icon;
     heroColor = v.hex;
@@ -292,9 +362,14 @@ function SetView({
     heroIcon = payerIcon(singlePayer.payerName);
     heroColor = colorOf(singlePayer.payerKey, singlePayer.payerName);
   }
-  const prev = filter.category !== undefined && !filter.payers ? prevCategoryTotals?.[filter.category] : undefined;
-  const delta = filter.category !== undefined && !filter.payers && prevCategoryTotals ? deltaPct(total, prev) : null;
-  const href = listHref?.(filter) ?? null;
+  // 前期比はカテゴリ全体の合計どうしで比べる（支払い者・中項目で絞った階層では出さない）
+  const showPrev = filter.category !== undefined && !filter.payers && !isSub && !!prevCategoryTotals;
+  const prev = showPrev ? prevCategoryTotals?.[filter.category!] : undefined;
+  const delta = showPrev ? deltaPct(total, prev) : null;
+  // 支出一覧は中項目で絞れないので、中項目の階層では出さない
+  const href = isSub ? null : listHref?.(filter) ?? null;
+  // 明細の行に中項目を添える（カテゴリの階層だけ。中項目の階層では同じ名前が並ぶだけなので出さない）
+  const showSub = filter.category !== undefined && !isSub;
 
   return (
     <>
@@ -310,10 +385,15 @@ function SetView({
 
       <div className="flex flex-wrap gap-1.5 text-[11px] text-muted">
         <span className="rounded-full bg-fg/5 px-2 py-0.5"><b className="font-semibold text-fg">{included.length}</b>件</span>
+        {isSub && (
+          <span className="rounded-full bg-fg/5 px-2 py-0.5">
+            {filter.category}の <b className="font-semibold text-fg">{sharePct(total, parentTotal)}%</b>
+          </span>
+        )}
         {(filter.category !== undefined || filter.payers) && (
           <span className="rounded-full bg-fg/5 px-2 py-0.5">合計の <b className="font-semibold text-fg">{sharePct(total, grandTotal)}%</b></span>
         )}
-        {filter.category !== undefined && !filter.payers && prevCategoryTotals && (
+        {showPrev && (
           <span className="rounded-full bg-fg/5 px-2 py-0.5">
             前期 <b className="font-semibold text-fg">{prev ? yen(prev) : 'なし'}</b>
             {delta !== null && delta !== 0 && (
@@ -334,38 +414,41 @@ function SetView({
         <section>
           <div className="mb-1 flex items-center justify-between gap-2">
             <h3 className="text-xs font-semibold text-muted">内訳</h3>
-            {dims.category && dims.payer && (
-              <Segmented
-                label="内訳の切り替え"
-                value={dim}
-                options={[
-                  { value: 'category', label: 'カテゴリ' },
-                  { value: 'payer', label: '支払い者' },
-                ]}
-                onChange={onDim}
-              />
-            )}
+            {dimOptions.length > 1 && <Segmented label="内訳の切り替え" value={dim} options={dimOptions} onChange={onDim} />}
           </div>
           <ul>
             {groups.map((g) => {
-              const isCategory = dim === 'category';
-              const v = isCategory ? getCategoryVisual(g.key) : null;
-              const color = isCategory ? v!.hex : colorOf(g.key, g.label);
-              const Icon = isCategory ? v!.icon : payerIcon(g.label);
               const payerTitle = singlePayer?.payerName;
-              const next: DrillView = isCategory
-                ? { kind: 'set', title: payerTitle ? `${payerTitle}・${g.label}` : g.label, filter: { ...filter, category: g.key } }
-                : {
-                    kind: 'set',
-                    title: filter.category !== undefined ? `${filter.category}・${g.label}` : `${g.label}の支払い`,
-                    filter: { ...filter, payers: [g.key] },
-                  };
+              let Icon: LucideIcon;
+              let color: string;
+              let next: DrillView;
+              if (dim === 'category') {
+                const v = getCategoryVisual(g.key);
+                Icon = v.icon;
+                color = v.hex;
+                next = { kind: 'set', title: payerTitle ? `${payerTitle}・${g.label}` : g.label, filter: { ...filter, category: g.key } };
+              } else if (dim === 'subCategory') {
+                const v = subCategoryVisual(filter.category!, g.key);
+                Icon = v.icon;
+                color = v.hex;
+                next = { kind: 'set', title: payerTitle ? `${payerTitle}・${g.label}` : g.label, filter: { ...filter, subCategory: g.key } };
+              } else {
+                Icon = payerIcon(g.label);
+                color = colorOf(g.key, g.label);
+                const scope = filter.subCategory ?? filter.category;
+                next = {
+                  kind: 'set',
+                  title: scope !== undefined ? `${scope}・${g.label}` : `${g.label}の支払い`,
+                  filter: { ...filter, payers: [g.key] },
+                };
+              }
               return (
                 <li key={g.key} className="border-b border-line last:border-0">
                   <BreakdownRow
                     icon={Icon}
                     color={color}
                     label={g.label}
+                    muted={dim === 'subCategory' && g.key === NO_SUB_CATEGORY}
                     count={g.count}
                     amount={g.total}
                     share={sharePct(g.total, total)}
@@ -400,7 +483,12 @@ function SetView({
           <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
             {sortDrillItems(included, sort).map((item) => (
               <li key={item.id}>
-                <ItemRow item={item} color={colorOf(item.payerKey, item.payerName)} onClick={() => onPush({ kind: 'item', title: item.description, id: item.id })} />
+                <ItemRow
+                  item={item}
+                  color={colorOf(item.payerKey, item.payerName)}
+                  showSub={showSub}
+                  onClick={() => onPush({ kind: 'item', title: item.description, id: item.id })}
+                />
               </li>
             ))}
           </ul>
@@ -429,6 +517,7 @@ export function BreakdownRow({
   icon: Icon,
   color,
   label,
+  muted = false,
   count,
   amount,
   share,
@@ -439,6 +528,8 @@ export function BreakdownRow({
   icon: LucideIcon;
   color: string;
   label: string;
+  /** 名前を薄くする（「中項目なし」） */
+  muted?: boolean;
   count: number;
   amount: number;
   /** バーの長さ（%） */
@@ -454,7 +545,7 @@ export function BreakdownRow({
       </span>
       <span className="min-w-0">
         <span className="flex items-baseline gap-1.5">
-          <span className="truncate text-sm font-medium text-fg">{label}</span>
+          <span className={`truncate text-sm font-medium ${muted ? 'text-muted' : 'text-fg'}`}>{label}</span>
           <span className="shrink-0 text-[11px] text-muted">{count}件</span>
         </span>
         <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-fg/10">
@@ -470,7 +561,18 @@ export function BreakdownRow({
   );
 }
 
-function ItemRow({ item, color, onClick }: { item: DrillItem; color: string; onClick: () => void }) {
+function ItemRow({
+  item,
+  color,
+  showSub = false,
+  onClick,
+}: {
+  item: DrillItem;
+  color: string;
+  /** 中項目を小さく添える（「中項目なし」は添えない） */
+  showSub?: boolean;
+  onClick: () => void;
+}) {
   const v = getCategoryVisual(item.category);
   const Icon = v.icon;
   return (
@@ -483,6 +585,7 @@ function ItemRow({ item, color, onClick }: { item: DrillItem; color: string; onC
         <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
           {dayjs(item.date).format('M/D')}
           <span className="rounded px-1.5 py-px font-medium" style={{ color, background: `${color}1f` }}>{item.payerName}</span>
+          {showSub && item.subCategory !== undefined && item.subCategory !== NO_SUB_CATEGORY && <span>{item.subCategory}</span>}
           {item.pending && (
             <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1.5 py-px font-semibold text-amber-700 dark:text-amber-300">
               <Clock className="h-3 w-3" />
@@ -553,6 +656,8 @@ function ItemView({
         {[
           ['日付', dayjs(item.date).format('YYYY/M/D')],
           ['カテゴリ', item.category],
+          // 中項目の一覧がある大項目（食費・娯楽）だけ
+          ...(item.subCategory !== undefined ? [['中項目', item.subCategory]] : []),
           ['支払い者', <span key="p" style={{ color }}>{item.payerName}</span>],
           ['入力', inputSourceLabel(item.inputSource)],
           ['区分', item.pending ? '未確認' : SPLIT_LABEL[splitChip(item)]],
