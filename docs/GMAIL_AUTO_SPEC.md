@@ -105,7 +105,7 @@ Flex Message 通知（line/flexMessage.ts。X-Line-Retry-Key 付き）→ 送れ
   - 印は LINE グループ（`LINE_GROUP_ID`）があるときだけ作る。印の無い既存の支出には送らない（この仕組みより前の支出のカードは送り直さない）。`/gmail/process-latest` は以前どおりカードを送らず、印も作らない
   - 同じメールを同時に処理しても、保存のトランザクション（重複の判定と印の文書を読んでから書く）で支出は 1 件になる。「登録済み」になった側も印が残っていれば同じ key で送る（届くのは 1 回）
   - 再処理されなくなったメールの印は消す（店名・金額・日付を残さない。届かなかったことを警告ログに出す）: 3 回失敗して諦めたメールと、`historyId` が古すぎて先へ飛ばしたとき（飛ばした範囲のメッセージは取れないので、`system/gmailFailures` の記録とその実行で失敗したメールだけ）。消せなくても取込は止めない。諦めたあとに `/gmail/force-process` を呼んでも、印が無いのでカードは送り直さない
-- **Gmail Watch の有効期限**: 7 日 → `renewGmailWatch`（6 日ごと 3:00 JST）で自動更新
+- **Gmail Watch の有効期限**: 7 日 → `renewGmailWatch`（6 日ごと 3:00 JST）で自動更新。更新は watch を呼び直すだけで、保存してある `historyId` は変えない（§11.2）
 
 ### 3.3 既存のテキスト入力フォーマット（維持）
 
@@ -230,8 +230,9 @@ Flex Message 通知（line/flexMessage.ts。X-Line-Retry-Key 付き）→ 送れ
 
 | フィールド | 型 | 説明 |
 |-----------|---|------|
-| historyId | string | 最後に処理した Gmail historyId（前進のみ。古い通知の後着で巻き戻さない） |
-| watchExpiration | number | Watch 有効期限（Unix timestamp） |
+| historyId | string | 最後に処理した Gmail historyId（前進のみ。古い通知の後着で巻き戻さない）。進めるのは取込（`gmailPubSubHandler`）だけ。watch の登録・更新（`renewGmailWatch`・`/gmail/register-watch`）では変えず、値が無いとき（初回・`/gmail/revoke` の後）だけ watch の応答の値を入れる |
+| watchExpiration | number | Watch 有効期限（Unix timestamp ms）。watch の登録・更新のたびに merge で書く |
+| updatedAt | timestamp | 最後に書いた時刻 |
 
 #### system/oauthState
 
@@ -381,6 +382,7 @@ bot/src/
    curl -X POST -H "Authorization: Bearer $ADMIN_SECRET" \
      "https://us-central1-<your-project>.cloudfunctions.net/api/gmail/register-watch"
    ```
+   初回は `system/gmailState` が無いので、watch の応答の `historyId`（その時点の位置）から取り込みを始める。2 回目以降は保存してある `historyId` を変えない（§11.2）
 
 ---
 
@@ -392,13 +394,13 @@ bot/src/
 |---------|-----|------|------|
 | GET | `/api/gmail/auth` | OAuth2 認証 URL を取得 | Admin |
 | GET | `/api/gmail/callback` | OAuth2 コールバック（Google からのリダイレクト先。CSRF state を照合） | **不要** |
-| POST | `/api/gmail/register-watch` | Gmail Watch 登録 | Admin |
+| POST | `/api/gmail/register-watch` | Gmail Watch 登録・更新（保存してある `historyId` は変えない。応答の `historyId` は保存後の値） | Admin |
 | GET | `/api/gmail/status` | Gmail 連携ステータス確認 | Admin |
 | POST | `/api/gmail/process-latest` | 最新の SMBC カードメールを手動処理 | Admin |
 | POST | `/api/gmail/test-process` | SMBC カードメール内容をプレビュー | Admin |
 | POST | `/api/gmail/force-process/:messageId` | 指定メッセージ ID を強制処理（冪等）。既に支出があり、送信待ちのカード（§3.2）が残っていれば送り直す（応答の `cardNotice` が `sent`） | Admin |
 | POST | `/api/gmail/refresh-token` | トークン強制リフレッシュ | Admin |
-| DELETE | `/api/gmail/revoke` | トークン削除・再認証用 | Admin |
+| DELETE | `/api/gmail/revoke` | トークン削除・再認証用（`system/gmailState` も消す。消せなければ 500 と `watchStateCleared: false` を返すので、やり直す） | Admin |
 
 > **注意**: `/api/gmail/callback` は Google からの OAuth2 リダイレクト先のため、Admin 認証は不要です。
 
@@ -442,6 +444,10 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 
 - Gmail Watch は 7 日間の有効期限あり
 - 6 日ごとに Cloud Scheduler（`renewGmailWatch`）で自動更新
+- 更新は stop を呼ばずに watch を呼び直す（`users.watch` は「Set up or update a push notification watch」。push ガイドの「Renew mailbox watch」も 7 日以内に watch を呼び直すことだけを求めている）。更新に失敗すると、watch は約 1 日後に切れる。cron が 6 日ごとなので、通知は最大数日止まりうる。保存してある `historyId` は残るので、約 1 週間以内なら再登録後の最初の通知でまとめて処理される
+- watch の登録・更新（`renewGmailWatch`・`/gmail/register-watch`）は、保存してある `historyId` を変えない（`registerWatch`。Firestore トランザクションで読み、`watchExpiration`・`updatedAt` だけを merge で書く）。watch の応答の `historyId` はその時点のメールボックスの位置なので、以前のように上書きすると、取込が失敗して `historyId` が止まっている間の範囲が二度と処理されなかった。応答の値を入れるのは、保存値が無いとき（初回・`/gmail/revoke` の後）と、数値として読めない値が入っていたときだけ
+- そのため、止まっていた `historyId` が残っていると、次の通知でその範囲のメールがまとめて処理される（二重登録は `gmailMessageId` で防ぐ）
+- `/gmail/register-watch` で「今の位置まで飛ばす」ことはできない。飛ばしたいときは `system/gmailState` の `historyId` を消してから `/gmail/register-watch` を呼ぶ。別の Gmail アカウントに切り替えるときは、先に `/gmail/revoke`（`system/gmailState` も消える）してから認可と watch 登録をやり直す。古いアカウントの watch は stop されないため、最大 7 日は同じ topic に通知しうる。revoke の後は、応答が `watchStateCleared: true` で `system/gmailState` が消えたことを確認する（消せなかったときは 500 と `watchStateCleared: false` が返るので、revoke をやり直す）
 - トークンリフレッシュは自動化（`getValidAccessToken`）
 - historyId は Gmail 側で約 1 週間しか保持されない。古すぎて `history.list` が 404 を返した場合、ハンドラーは通知の historyId まで進める（その間のメールは取り込まれない。必要なら `/api/gmail/force-process/:messageId` で個別に処理する）
 

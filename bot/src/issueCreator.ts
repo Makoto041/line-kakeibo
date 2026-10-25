@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { generateJson, isGeminiConfigured, ThinkingLevel } from './geminiClient';
-import { errorMessage } from './logSafe';
+import { errorMessage, errorName } from './logSafe';
 
 export type RequirementType = '機能要件' | '非機能要件';
 
@@ -91,7 +91,8 @@ export async function analyzeFeedbackWithGemini(
         : [],
     };
   } catch (error) {
-    console.error('Gemini feedback analysis error:', error);
+    // 例外の文言（JSON.parse の SyntaxError など）には本文や応答の断片が入りうるので、名前だけを出す
+    console.error('Gemini feedback analysis error', { errorName: errorName(error) });
     return null;
   }
 }

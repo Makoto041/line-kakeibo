@@ -233,11 +233,25 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
     // Firestoreからトークンを削除
     await gmailTokenRef().delete();
 
-    // watchステータスもリセット（gmailStateが正しいドキュメント名）
-    await gmailStateRef().delete().catch(() => {});
+    // watch の状態（historyId）も消す。watch の登録は保存してある historyId を残すため、
+    // 消えていないと、次に認可したアカウントが前のアカウントの位置から取り込もうとする。
+    // 失敗は握り潰さず応答で返す（トークンはもう消えているので、同じリクエストをやり直せばよい）
+    try {
+      await gmailStateRef().delete();
+    } catch (stateError) {
+      console.warn("Failed to delete Gmail watch state on revoke", {
+        errorName: stateError instanceof Error ? stateError.name : typeof stateError,
+      });
+      return res.status(500).json({
+        success: false,
+        watchStateCleared: false,
+        error: "Token deleted, but failed to delete system/gmailState. Retry DELETE /api/gmail/revoke.",
+      });
+    }
 
     res.json({
       success: true,
+      watchStateCleared: true,
       message: "Token revoked and deleted. Please re-authenticate via /api/gmail/auth"
     });
   } catch (error) {

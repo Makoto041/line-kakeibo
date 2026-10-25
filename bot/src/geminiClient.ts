@@ -1,4 +1,5 @@
 import type * as GenAI from '@google/genai' with { 'resolution-mode': 'import' };
+import { errorCauseCode, errorName } from './logSafe';
 
 // @google/genai は "type": "module" のパッケージで、型定義は ESM として解釈される。
 // bot は CommonJS なので、実行時はパッケージが用意している CommonJS 版（exports の require）を
@@ -194,7 +195,9 @@ export interface GenerateJsonOptions {
 /**
  * プロンプトを送り、JSON として解釈した応答を返す。
  * 設定なし・タイムアウト・API エラー・JSON でない応答のときは null（呼び出し側でフォールバックする）。
- * プロンプトと応答本文は利用者の入力を含むためログに出さない。
+ * プロンプトと応答本文は利用者の入力を含むためログに出さない。JSON.parse の SyntaxError の文言には応答の一部が入るので、
+ * 解釈の失敗と、HTTP ステータスの無い例外（SDK が応答を解釈するときの SyntaxError など）は、エラー名だけを出す
+ * （通信の失敗では、原因のエラーコード〔ECONNRESET など〕も添える）。
  */
 export async function generateJson<T = unknown>(
   prompt: string,
@@ -237,7 +240,13 @@ export async function generateJson<T = unknown>(
           const text = (response.text ?? '').trim();
           console.log('Gemini response received', { model, chars: text.length });
           if (!text) return null;
-          return JSON.parse(stripCodeFence(text)) as T;
+          try {
+            return JSON.parse(stripCodeFence(text)) as T;
+          } catch (parseError) {
+            // 予備モデルには回さない（従来どおり null）
+            console.error('Gemini response is not valid JSON', { model, chars: text.length, errorName: errorName(parseError) });
+            return null;
+          }
         } catch (error) {
           if (controller.signal.aborted) throw error;
           // 思考レベルを受け付けないモデルなら、思考の設定なしで同じモデルにもう一度だけ送る
@@ -266,11 +275,19 @@ export async function generateJson<T = unknown>(
     if (controller.signal.aborted) {
       console.warn('Gemini request timed out', { timeoutMs: options.timeoutMs });
     } else {
-      // SDK のエラー文は API のエラー本文（JSON）全体で長くなりうるので切り詰める
-      console.error('Gemini request failed', {
-        status: (error as { status?: unknown })?.status,
-        error: String((error as Error)?.message ?? '').slice(0, 300),
-      });
+      const status = (error as { status?: unknown })?.status;
+      if (typeof status === 'number') {
+        // API のエラー（ApiError）。文言は API のエラー本文（JSON）全体で長くなりうるので切り詰める
+        console.error('Gemini request failed', {
+          status,
+          error: String((error as Error)?.message ?? '').slice(0, 300),
+        });
+      } else {
+        // HTTP ステータスの無い例外（通信の失敗、SDK が応答を解釈するときの SyntaxError など）は、文言に応答の断片が
+        // 入りうるので名前だけを出す。通信の失敗（fetch failed）の診断のため、原因のエラーコードが決まった形なら添える
+        const code = errorCauseCode(error);
+        console.error('Gemini request failed', { errorName: errorName(error), ...(code ? { code } : {}) });
+      }
     }
     return null;
   } finally {
