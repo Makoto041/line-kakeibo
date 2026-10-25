@@ -6,6 +6,7 @@
 
 import { messagingApi } from '@line/bot-sdk';
 import { toCanonicalCategoryName } from '../categoryNormalization';
+import { subCategoriesOf } from '../categoryTaxonomy';
 import { ExpenseStatusType } from '../firestore';
 import type { ClassificationProvider } from '../geminiCategoryClassifier';
 import { getPaymentMethodLabel, PaymentMethod } from '../textParser';
@@ -39,6 +40,17 @@ export const CATEGORY_ORIGIN_LABELS: Record<CategoryOrigin, string> = {
 /** カテゴリの後ろに付ける「（辞書）」などの注記。判定元が無ければ undefined（何も付けない） */
 export function categoryOriginNote(origin?: CategoryOrigin): string | undefined {
   return origin ? `（${CATEGORY_ORIGIN_LABELS[origin]}）` : undefined;
+}
+
+/**
+ * カテゴリの行に「食費 › 昼ご飯」と並べて出す中項目（#235）
+ *
+ * 大項目の中項目の一覧（subCategoriesOf。大項目は正準名で引く）にある値だけを返す。文字列でない・空・一覧に無い値
+ * （Web で入れた自由な値や、別の大項目の中項目）と、一覧の無い大項目（日用品など）は undefined（大項目だけを出す）。
+ * カードに出す文字列は固定の一覧の語だけになる。
+ */
+function cardSubCategoryOf(category: string, subCategory: unknown): string | undefined {
+  return typeof subCategory === 'string' && subCategoriesOf(category).includes(subCategory) ? subCategory : undefined;
 }
 
 // ============================================
@@ -355,7 +367,9 @@ function settingRow(opts: {
   iconUrl: string;
   label: string;
   value: string;
-  /** 値の後ろに小さく添える注記（カテゴリの判定元「（辞書）」など） */
+  /** 値の後ろに「 › 」で続ける下位の値（カテゴリの中項目。「食費 › 昼ご飯」） */
+  subValue?: string;
+  /** 値の後ろに小さく添える注記（カテゴリの判定元「（辞書）」など。下位の値があればその後ろ） */
   note?: string;
   action?: Record<string, unknown>;
   /** ボタン表記（既定: 変更） */
@@ -380,6 +394,12 @@ function settingRow(opts: {
         contents: [
           { type: 'span', text: `${opts.label}：`, color: '#64748B' },
           { type: 'span', text: opts.value, color: '#0F172A', weight: 'bold' },
+          ...(opts.subValue
+            ? [
+                { type: 'span', text: ' › ', color: '#94A3B8' },
+                { type: 'span', text: opts.subValue, color: '#0F172A', weight: 'bold' },
+              ]
+            : []),
           ...(opts.note ? [{ type: 'span', text: opts.note, size: 'xs', color: '#64748B' }] : []),
         ],
       },
@@ -398,18 +418,23 @@ function settingRow(opts: {
  *
  * 支払った人の［自分が払った］は押した人を支払った人にする（期間の折半はこれで数える）。
  * 押す人はカードを送った時点では分からないので、すでに自分でも出す。
+ *
+ * カテゴリの行は、中項目が一覧にあれば「食費 › 昼ご飯」と同じ行に出す（行は 4 行のまま。cardSubCategoryOf）。
+ * 判定元の注記はその後ろに付く。LINE から変えられるのは大項目だけ（［変更］の postback に中項目は入れない）。
  */
 function buildCurrentSettingsSection(opts: {
   expenseId: string;
   source: ExpenseCardSource;
   category: string;
+  /** 中項目（保存した値。一覧に無い値は出さない） */
+  subCategory?: string;
   /** カテゴリの判定元（最初のカードだけ。カテゴリの行に括弧で出す） */
   categoryOrigin?: CategoryOrigin;
   status?: ExpenseStatusType;
   advanceFull?: boolean;
   payer: string;
 }): FlexComponent {
-  const { expenseId, source, category, categoryOrigin, status, advanceFull, payer } = opts;
+  const { expenseId, source, category, subCategory, categoryOrigin, status, advanceFull, payer } = opts;
   const derived = deriveExpenseSettings(status, advanceFull);
 
   return {
@@ -485,6 +510,7 @@ function buildCurrentSettingsSection(opts: {
         iconUrl: categoryIconUrl(category),
         label: 'カテゴリ',
         value: category,
+        subValue: cardSubCategoryOf(category, subCategory),
         note: categoryOriginNote(categoryOrigin),
         action: {
           type: 'postback',
@@ -514,6 +540,8 @@ function buildExpenseCard(opts: {
   amount: number;
   date: string;
   category: string;
+  /** 中項目（保存した値。カテゴリの行に出す。一覧に無い値は出さない） */
+  subCategory?: string;
   /** カテゴリの判定元（最初のカードだけ渡す。作り直したカードでは渡さない） */
   categoryOrigin?: CategoryOrigin;
   source: ExpenseCardSource;
@@ -535,6 +563,7 @@ function buildExpenseCard(opts: {
     amount,
     date,
     category,
+    subCategory,
     categoryOrigin,
     source,
     status,
@@ -606,7 +635,7 @@ function buildExpenseCard(opts: {
         },
         ...detailRows,
         // 現在の設定（値の表示と操作ボタンを分離）
-        buildCurrentSettingsSection({ expenseId, source, category, categoryOrigin, status, advanceFull, payer }),
+        buildCurrentSettingsSection({ expenseId, source, category, subCategory, categoryOrigin, status, advanceFull, payer }),
       ],
       paddingAll: 'lg',
     },
@@ -696,6 +725,8 @@ export interface CardUsageInfo {
   merchant: string;
   amount: number;
   category: string;
+  /** 中項目（保存した値。カテゴリの行に「食費 › カフェ」と出す。一覧に無い値は出さない） */
+  subCategory?: string;
   /** カテゴリの判定元。最初のカードだけに出す（保存しない） */
   categoryOrigin?: CategoryOrigin;
   categoryEmoji: string;
@@ -711,7 +742,7 @@ export interface CardUsageInfo {
  * カード利用通知のFlex Messageを生成
  */
 export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
-  const { expenseId, merchant, amount, category, categoryOrigin, date, remainingBudget, status } = info;
+  const { expenseId, merchant, amount, category, subCategory, categoryOrigin, date, remainingBudget, status } = info;
 
   // 残り予算の表示
   const detailRows = [];
@@ -734,6 +765,7 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
     amount,
     date,
     category,
+    subCategory,
     categoryOrigin,
     source: 'gmail',
     status,
@@ -764,6 +796,8 @@ export interface TextExpenseInfo {
   description: string;
   amount: number;
   category: string;
+  /** 中項目（保存した値。カテゴリの行に「食費 › 昼ご飯」と出す。一覧に無い値は出さない） */
+  subCategory?: string;
   /** カテゴリの判定元。最初のカードだけに出す（保存しない） */
   categoryOrigin?: CategoryOrigin;
   categoryEmoji: string;
@@ -787,6 +821,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     description,
     amount,
     category,
+    subCategory,
     categoryOrigin,
     date,
     paymentMethod,
@@ -814,6 +849,7 @@ export function buildTextExpenseFlexMessage(info: TextExpenseInfo): FlexMessage 
     amount,
     date,
     category,
+    subCategory,
     categoryOrigin,
     source: 'text',
     status,
@@ -852,6 +888,8 @@ export interface ExpenseRecordLike {
   description?: string;
   amount?: number;
   category?: string;
+  /** 中項目（#235。set_category の返信では、大項目が同じときは保存済みの値、変わるときは決め直した値か undefined） */
+  subCategory?: string;
   date?: string;
   status?: ExpenseStatusType;
   advanceFull?: boolean;
@@ -914,6 +952,8 @@ export function buildExpenseCardFromRecord(
     amount: record.amount ?? 0,
     date: record.date ?? '',
     category: record.category || 'その他',
+    // 保存した中項目（一覧に無い値・型の違う値は buildCurrentSettingsSection が出さない）
+    subCategory: record.subCategory,
     source,
     status,
     advanceFull: record.advanceFull === true,

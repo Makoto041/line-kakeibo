@@ -83,6 +83,15 @@ function common(name, msg) {
   // text は text と contents を併用できない
   const badText = nodes.filter((n) => n.type === 'text' && n.text && n.contents);
   check('text の text/contents 併用なし', badText.length === 0);
+  // span の text は空にしない
+  const emptySpans = nodes.filter((n) => n.type === 'span' && (typeof n.text !== 'string' || n.text.length === 0));
+  check('span の text は空でない', emptySpans.length === 0, JSON.stringify(emptySpans));
+
+  // LINE の上限（Messaging API リファレンスの Flex Message）: バブルを定義する JSON は 30 KB まで、altText は 1500 文字まで。
+  // 30 KB は 30,000 バイトとして、少し厳しめに見る
+  const bubbleBytes = Buffer.byteLength(JSON.stringify(msg.contents), 'utf8');
+  check('バブルの JSON は 30 KB 以内', bubbleBytes <= 30000, `${bubbleBytes} bytes`);
+  check('altText は 1500 文字以内', [...msg.altText].length <= 1500, `${[...msg.altText].length} chars`);
 
   // postback data は 300 バイト以内
   const over = walk(msg.contents)
@@ -425,6 +434,193 @@ function common(name, msg) {
   for (const inputSource of ['line_text', 'gmail_auto']) {
     const rebuilt = settingsRows(buildExpenseCardFromRecord('e', { category: '食費', status: 'shared', inputSource }))[3];
     check(`作り直したカード（${inputSource}）のカテゴリ行に括弧が入らない`, rowText(rebuilt) === 'カテゴリ：食費' && !rowText(rebuilt).includes('（'), rowText(rebuilt));
+  }
+}
+
+// ------------------------------------- 中項目（#235）: カテゴリの行に「食費 › 昼ご飯」
+{
+  console.log('\n[中項目: カテゴリの行に「大項目 › 中項目」]');
+  const { decideSetCategory } = require('../dist/expenseActions');
+  const SEP = ' › ';
+  const json = (v) => JSON.stringify(v);
+  /** カテゴリの行（4 行目）の span */
+  const catSpans = (msg) => settingsRows(msg)[3].contents.find((c) => c.type === 'text' && Array.isArray(c.contents)).contents;
+  const postbackData = (msg) =>
+    walk(msg.contents)
+      .filter((n) => n.action && n.action.type === 'postback')
+      .map((n) => n.action.data);
+  /** カテゴリの行から区切りと中項目の span（3・4 つ目）を外したもの */
+  function withoutSub(msg) {
+    const copy = JSON.parse(json(msg));
+    const textNode = settingsRows(copy)[3].contents.find((c) => c.type === 'text' && Array.isArray(c.contents));
+    textNode.contents.splice(2, 2);
+    return copy;
+  }
+
+  const textBase = {
+    expenseId: 'exp_sub',
+    description: 'ランチ',
+    amount: 800,
+    categoryEmoji: '',
+    date: '2026-10-24',
+    payerName: 'まこと',
+    includeInTotal: false,
+    editUrl: buildExpenseEditUrl('exp_sub', 'U1'),
+  };
+  const textCard = (category, subCategory, categoryOrigin) =>
+    buildTextExpenseFlexMessage({ ...textBase, category, subCategory, categoryOrigin });
+  const gmailBase = { expenseId: 'exp_sub_g', merchant: 'SHOP', amount: 600, categoryEmoji: '', date: '10/24', remainingBudget: 142300, status: 'shared', includeInTotal: true };
+  const gmailCard = (category, subCategory, categoryOrigin) =>
+    buildCardUsageFlexMessage({ ...gmailBase, category, subCategory, categoryOrigin });
+  const recordCard = (record) =>
+    buildExpenseCardFromRecord('exp_sub_r', record, { editUrl: buildExpenseEditUrl('exp_sub_r', 'U1'), headerText: '設定を更新しました', headerIconKey: 'check' });
+
+  // 出す: 食費 › 昼ご飯、娯楽 › スポーツ・アウトドア、いちばん長い「デリバリー・テイクアウト」
+  for (const [category, sub] of [
+    ['食費', '昼ご飯'],
+    ['娯楽', 'スポーツ・アウトドア'],
+    ['食費', 'デリバリー・テイクアウト'],
+  ]) {
+    const msg = textCard(category, sub);
+    const plain = textCard(category, undefined);
+    common(`手入力の登録カード（${category} › ${sub}）`, msg);
+    const rows = settingsRows(msg);
+    check('現在の設定は4行のまま', rows.length === 4, `got ${rows.length}`);
+    check(`カテゴリ：${category}${SEP}${sub}`, rowText(rows[3]) === `カテゴリ：${category}${SEP}${sub}`, rowText(rows[3]));
+    const spans = catSpans(msg);
+    check(
+      'span は ラベル → 大項目（太字）→ 区切り（#94A3B8・太字でない）→ 中項目（太字・#0F172A）',
+      spans.length === 4 &&
+        spans.every((s) => s.type === 'span') &&
+        spans[1].text === category && spans[1].weight === 'bold' &&
+        spans[2].text === SEP && spans[2].color === '#94A3B8' && spans[2].weight === undefined && spans[2].size === undefined &&
+        spans[3].text === sub && spans[3].weight === 'bold' && spans[3].color === '#0F172A',
+      json(spans)
+    );
+    check('違いはカテゴリの行の区切りと中項目だけ', json(withoutSub(msg)) === json(plain));
+    check(
+      'postback の data と altText は中項目なしと同じ（中項目を入れない）',
+      json(postbackData(msg)) === json(postbackData(plain)) && msg.altText === plain.altText &&
+        !postbackData(msg).join(' ').includes(sub) && !msg.altText.includes(sub)
+    );
+  }
+
+  // いちばん長い中項目に、注記（判定元）を付けても上限内（common で 30 KB・altText を見る）
+  for (const origin of Object.keys(CATEGORY_ORIGIN_LABELS)) {
+    const longest = textCard('食費', 'デリバリー・テイクアウト', origin);
+    const bytes = Buffer.byteLength(json(longest.contents), 'utf8');
+    const plainBytes = Buffer.byteLength(json(textCard('食費', undefined, origin).contents), 'utf8');
+    check(
+      `いちばん長い中項目＋（${CATEGORY_ORIGIN_LABELS[origin]}）: バブルの JSON は 30 KB 以内（増えるのは span 2 つ分だけ）`,
+      bytes <= 30000 && bytes - plainBytes < 200,
+      `${bytes} bytes（中項目なし ${plainBytes}）`
+    );
+  }
+
+  // 出さない: 中項目が無い・空・一覧に無い（Web で入れた自由な値）・別の大項目の中項目・文字列でない、一覧の無い大項目
+  const notShown = [
+    ['食費', undefined, '中項目なし'],
+    ['食費', '', '空文字'],
+    ['食費', 'おやつ', '一覧に無い値（Web で入れた自由な値）'],
+    ['食費', ' 昼ご飯', '前に空白のある値'],
+    ['食費', '映画', '娯楽の中項目'],
+    ['食費', 'その他の娯楽', '娯楽の「その他」'],
+    ['娯楽', '昼ご飯', '食費の中項目'],
+    ['食費', null, 'null'],
+    ['食費', 123, '数値'],
+    ['食費', ['昼ご飯'], '配列'],
+    ['食費', { toString: () => '昼ご飯' }, 'オブジェクト'],
+    ['日用品', '昼ご飯', '日用品（一覧の無い大項目）'],
+    ['その他', 'その他の食費', 'その他（一覧の無い大項目）'],
+    ['推し活', '昼ご飯', 'カスタム名の大項目'],
+    ['constructor', '昼ご飯', '大項目が constructor'],
+  ];
+  for (const [category, sub, name] of notShown) {
+    const t = textCard(category, sub);
+    check(`手入力: ${name} → 大項目だけ（JSON 全体が中項目なしと同じ）`, json(t) === json(textCard(category, undefined)), rowText(settingsRows(t)[3]));
+    const g = gmailCard(category, sub, 'jev');
+    check(`カード利用通知: ${name} → 大項目だけ`, json(g) === json(gmailCard(category, undefined, 'jev')), rowText(settingsRows(g)[3]));
+    const r = recordCard({ category, subCategory: sub, status: 'shared', inputSource: 'line_text' });
+    check(`作り直したカード: ${name} → 大項目だけ`, json(r) === json(recordCard({ category, status: 'shared', inputSource: 'line_text' })), rowText(settingsRows(r)[3]));
+  }
+  // 大項目は正準名で一覧を引く（保存済みの旧名「娯楽費」でも娯楽の一覧で見る）
+  check(
+    '旧名の大項目「娯楽費」でも娯楽の中項目を出す',
+    rowText(settingsRows(recordCard({ category: '娯楽費', subCategory: 'スポーツ・アウトドア', inputSource: 'line_text' }))[3]) === `カテゴリ：娯楽費${SEP}スポーツ・アウトドア`
+  );
+
+  // 判定元の注記（最初のカードだけ）は今までどおり行の最後に付く
+  for (const [origin, label] of Object.entries(CATEGORY_ORIGIN_LABELS)) {
+    const msg = textCard('食費', '昼ご飯', origin);
+    const rows = settingsRows(msg);
+    check(`${origin} → カテゴリ：食費${SEP}昼ご飯（${label}）`, rowText(rows[3]) === `カテゴリ：食費${SEP}昼ご飯（${label}）`, rowText(rows[3]));
+    const spans = catSpans(msg);
+    check(
+      `${origin} → 注記は最後の span（xs・#64748B・太字でない）`,
+      spans.length === 5 && spans[4].text === `（${label}）` && spans[4].size === 'xs' && spans[4].color === '#64748B' && spans[4].weight === undefined,
+      json(spans[4])
+    );
+    check(`${origin} → 区切りと中項目を外すと、中項目なし・同じ判定元のカードと同じ`, json(withoutSub(msg)) === json(textCard('食費', undefined, origin)));
+  }
+
+  // カード利用通知（Gmail）
+  {
+    const msg = gmailCard('食費', 'カフェ', 'dictionary');
+    common('カード利用通知（食費 › カフェ）', msg);
+    const rows = settingsRows(msg);
+    check('カード利用通知: 現在の設定は4行のまま', rows.length === 4, `got ${rows.length}`);
+    check('カード利用通知: カテゴリ：食費 › カフェ（辞書）', rowText(rows[3]) === `カテゴリ：食費${SEP}カフェ（辞書）`, rowText(rows[3]));
+    check('カード利用通知: 違いはカテゴリの行の区切りと中項目だけ', json(withoutSub(msg)) === json(gmailCard('食費', undefined, 'dictionary')));
+  }
+
+  // 作り直したカード（postback の返信。保存した中項目を出し、判定元は出さない）
+  for (const inputSource of ['line_text', 'gmail_auto']) {
+    const msg = recordCard({ description: 'ランチ', amount: 800, category: '食費', subCategory: '夜ご飯', status: 'shared', inputSource });
+    common(`作り直したカード（${inputSource}・食費 › 夜ご飯）`, msg);
+    const rows = settingsRows(msg);
+    check(`作り直したカード（${inputSource}）: 現在の設定は4行のまま`, rows.length === 4, `got ${rows.length}`);
+    check(`作り直したカード（${inputSource}）: カテゴリ：食費 › 夜ご飯（括弧なし）`, rowText(rows[3]) === `カテゴリ：食費${SEP}夜ご飯`, rowText(rows[3]));
+  }
+
+  // set_category の返信: { ...data, ...cardPatch } から作る（postback.ts の replyUpdatedCard と同じ）
+  const afterSetCategory = (data, category) => {
+    const decision = decideSetCategory(category)(data);
+    return { decision, msg: recordCard({ ...data, ...decision.cardPatch }) };
+  };
+  const base = { amount: 800, date: '2026-10-24', status: 'shared', inputSource: 'line_text', lineId: 'U1' };
+  {
+    const { decision, msg } = afterSetCategory({ ...base, description: 'ランチ', category: '娯楽' }, '食費');
+    check(
+      'set_category: 娯楽 → 食費（ランチ）→ カテゴリ：食費 › 昼ご飯',
+      decision.cardPatch.subCategory === '昼ご飯' && rowText(settingsRows(msg)[3]) === `カテゴリ：食費${SEP}昼ご飯`,
+      rowText(settingsRows(msg)[3])
+    );
+  }
+  {
+    const data = { ...base, description: '居酒屋', category: '食費', subCategory: '外食' };
+    const { decision, msg } = afterSetCategory(data, '娯楽');
+    check('set_category: 食費 › 外食 → 娯楽（居酒屋）: cardPatch.subCategory は undefined（キーはある）', 'subCategory' in decision.cardPatch && decision.cardPatch.subCategory === undefined, json(Object.keys(decision.cardPatch)));
+    check('set_category: 食費 › 外食 → 娯楽 → カテゴリ：娯楽（古い中項目を出さない）', rowText(settingsRows(msg)[3]) === 'カテゴリ：娯楽', rowText(settingsRows(msg)[3]));
+    check(
+      'set_category: 中項目が消えたカードは、中項目の無い支出のカードと同じ',
+      json(msg) === json(recordCard({ ...base, description: '居酒屋', category: '娯楽' }))
+    );
+  }
+  {
+    const { msg } = afterSetCategory({ ...base, description: 'ランチ', category: '食費', subCategory: '昼ご飯' }, '日用品');
+    check('set_category: 食費 › 昼ご飯 → 日用品 → カテゴリ：日用品', rowText(settingsRows(msg)[3]) === 'カテゴリ：日用品', rowText(settingsRows(msg)[3]));
+  }
+  {
+    const { decision, msg } = afterSetCategory({ ...base, description: 'ランチ', category: '食費', subCategory: '夜ご飯' }, '食費');
+    check(
+      'set_category: 大項目が同じなら中項目は触らず、そのまま出す（食費 › 夜ご飯）',
+      !('subCategory' in decision.cardPatch) && rowText(settingsRows(msg)[3]) === `カテゴリ：食費${SEP}夜ご飯`,
+      rowText(settingsRows(msg)[3])
+    );
+  }
+  {
+    const { msg } = afterSetCategory({ ...base, description: 'ランチ', category: '食費', subCategory: 'おやつ' }, '食費');
+    check('set_category: 大項目が同じで、一覧に無い中項目（Web で入れた値）が残っていても出さない', rowText(settingsRows(msg)[3]) === 'カテゴリ：食費', rowText(settingsRows(msg)[3]));
   }
 }
 
@@ -802,7 +998,10 @@ async function saveFlowChecks() {
   flex.sendTextExpenseNotification = async (targetId, info) => {
     cards.push(info);
   };
-  flex.sendCardUsageNotification = async () => {};
+  const gmailCards = [];
+  flex.sendCardUsageNotification = async (to, info) => {
+    gmailCards.push(info);
+  };
   classifier.classifyExpense = async () => classifyReply;
 
   const gmailSaved = [];
@@ -836,7 +1035,8 @@ async function saveFlowChecks() {
       },
     },
   });
-  delete process.env.LINE_GROUP_ID;
+  // カード利用通知は LINE_GROUP_ID があるときだけ送る。架空の値にして、送る内容（上の偽物が受け取る）を見る
+  process.env.LINE_GROUP_ID = 'C_smoke_group';
   delete process.env.DEFAULT_GROUP_ID;
 
   const allLines = [];
@@ -867,6 +1067,13 @@ async function saveFlowChecks() {
     JSON.stringify(lunch.expense)
   );
   check('判定元は変わらない（dictionary）', lunch.card && lunch.card.categoryOrigin === 'dictionary', JSON.stringify(lunch.card));
+  check(
+    'カードにも保存した中項目を渡す（昼ご飯）',
+    lunch.card && lunch.card.description === 'ランチ' && lunch.card.subCategory === '昼ご飯',
+    JSON.stringify(lunch.card)
+  );
+  const lunchRow = lunch.card ? rowText(settingsRows(buildTextExpenseFlexMessage(lunch.card))[3]) : '';
+  check('そのカードのカテゴリの行は「食費 › 昼ご飯（辞書）」', lunchRow === 'カテゴリ：食費 › 昼ご飯（辞書）', lunchRow);
 
   classifyReply = dictionary('日用品'); // 指定があれば分類の結果は使わない
   const ramen = await lineInput('1200 ラーメン 食費');
@@ -876,6 +1083,7 @@ async function saveFlowChecks() {
     JSON.stringify(ramen.expense)
   );
   check('判定元は変わらない（specified）', ramen.card && ramen.card.categoryOrigin === 'specified', JSON.stringify(ramen.card));
+  check('カードにも中項目を渡す（外食）', ramen.card && ramen.card.description === 'ラーメン' && ramen.card.subCategory === '外食', JSON.stringify(ramen.card));
 
   classifyReply = { category: null, confidence: 0 };
   settingsByUser[`U_sub_${userSeq + 1}`] = { lineId: `U_sub_${userSeq + 1}`, defaultCategory: '娯楽費' };
@@ -896,6 +1104,11 @@ async function saveFlowChecks() {
     JSON.stringify(tissue.expense)
   );
   check('日用品では中項目のログを出さない', subLogs(allLines.slice(linesBeforeTissue)).length === 0, JSON.stringify(subLogs(allLines.slice(linesBeforeTissue))));
+  check(
+    '日用品のカードには中項目を渡さない',
+    tissue.card && tissue.card.description === 'ティッシュ' && tissue.card.subCategory === undefined,
+    JSON.stringify(tissue.card)
+  );
 
   classifyReply = dictionary('食費');
   const unknownFood = await lineInput('500 おみやげ');
@@ -903,6 +1116,12 @@ async function saveFlowChecks() {
     '「500 おみやげ」（食費・辞書に無い）→ subCategory は undefined',
     unknownFood.expense && unknownFood.expense.category === '食費' && unknownFood.expense.subCategory === undefined,
     JSON.stringify(unknownFood.expense)
+  );
+  const unknownRow = unknownFood.card ? rowText(settingsRows(buildTextExpenseFlexMessage(unknownFood.card))[3]) : '';
+  check(
+    '中項目が決まらなければ、カードは今までどおり「食費（辞書）」',
+    unknownFood.card && unknownFood.card.description === 'おみやげ' && unknownFood.card.subCategory === undefined && unknownRow === 'カテゴリ：食費（辞書）',
+    unknownRow
   );
 
   const realResolve = subRules.resolveSubCategory;
@@ -935,12 +1154,29 @@ async function saveFlowChecks() {
   mailBody = cardMail('2026/03/14 12:30', 'テスト食堂 駅前店');
   classifyReply = jev('食費');
   let before = gmailSaved.length;
+  let cardsBefore = gmailCards.length;
+  let linesBeforeMail = allLines.length;
   await run(() => handleGmailPubSub(Buffer.from(JSON.stringify({ emailAddress: 'someone@example.com', historyId: '200' })).toString('base64')));
   let g = gmailSaved.length > before ? last(gmailSaved) : null;
   check(
     'Pub/Sub（processMessage）: 時刻ありの飲食店 → subCategory: 昼ご飯',
     g && g.gmailMessageId === 'msg-pubsub' && g.category === '食費' && g.subCategory === '昼ご飯',
     JSON.stringify(g)
+  );
+  /** 直前の 1 通で送ったカード（送っていなければ null） */
+  const sentCard = () => (gmailCards.length === cardsBefore + 1 ? last(gmailCards) : null);
+  let gc = sentCard();
+  check(
+    'Pub/Sub（processMessage）: カードにも保存した中項目を渡す（昼ご飯）',
+    gc && g && gc.expenseId === `exp_gmail_${gmailSaved.length}` && gc.subCategory === '昼ご飯' && gc.subCategory === g.subCategory,
+    JSON.stringify(gc)
+  );
+  const gmailRow = gc ? rowText(settingsRows(buildCardUsageFlexMessage(gc))[3]) : '';
+  check('Pub/Sub（processMessage）: カードのカテゴリの行は「食費 › 昼ご飯（Jev）」', gmailRow === 'カテゴリ：食費 › 昼ご飯（Jev）', gmailRow);
+  check(
+    'Pub/Sub（processMessage）: 中項目は 1 通で 1 回だけ決める（カードのために決め直さない）',
+    subLogs(allLines.slice(linesBeforeMail)).length === 1,
+    JSON.stringify(subLogs(allLines.slice(linesBeforeMail)))
   );
 
   before = gmailSaved.length;
@@ -953,12 +1189,25 @@ async function saveFlowChecks() {
   );
 
   before = gmailSaved.length;
+  cardsBefore = gmailCards.length;
+  linesBeforeMail = allLines.length;
   const forced = await run(() => forceProcessMessage('msg-force-1'));
   g = gmailSaved.length > before ? last(gmailSaved) : null;
   check(
     'forceProcessMessage: 時刻ありの飲食店 → subCategory: 昼ご飯',
     forced && forced.success && g && g.gmailMessageId === 'msg-force-1' && g.category === '食費' && g.subCategory === '昼ご飯',
     JSON.stringify({ forced, g })
+  );
+  gc = sentCard();
+  check(
+    'forceProcessMessage: カードにも保存した中項目を渡す（昼ご飯）',
+    gc && forced && gc.expenseId === forced.expenseId && gc.subCategory === '昼ご飯',
+    JSON.stringify(gc)
+  );
+  check(
+    'forceProcessMessage: 中項目は 1 通で 1 回だけ決める',
+    subLogs(allLines.slice(linesBeforeMail)).length === 1,
+    JSON.stringify(subLogs(allLines.slice(linesBeforeMail)))
   );
 
   mailBody = cardMail('2026/03/14', 'テスト食堂 駅前店');
@@ -982,9 +1231,15 @@ async function saveFlowChecks() {
     ['forceProcessMessage', () => forceProcessMessage('msg-force-3')],
   ]) {
     before = gmailSaved.length;
+    cardsBefore = gmailCards.length;
     await run(call);
     g = gmailSaved.length > before ? last(gmailSaved) : null;
     check(`${label}: 日用品 → subCategory は undefined`, g && g.category === '日用品' && g.subCategory === undefined, JSON.stringify(g));
+    if (label !== 'processLatestEmail') {
+      // processLatestEmail はカードを送らない
+      gc = sentCard();
+      check(`${label}: 日用品のカードには中項目を渡さない`, gc && gc.category === '日用品' && gc.subCategory === undefined, JSON.stringify(gc));
+    }
   }
   check('日用品のカード利用通知では中項目のログを出さない', subLogs(allLines.slice(linesBeforeDaily)).length === 0, JSON.stringify(subLogs(allLines.slice(linesBeforeDaily))));
 
