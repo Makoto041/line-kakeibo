@@ -776,15 +776,18 @@ export function buildCardUsageFlexMessage(info: CardUsageInfo): FlexMessage {
 
 /**
  * カード利用通知をLINEグループに送信
+ *
+ * @param retryKey LINE の X-Line-Retry-Key（同じ値の送信は LINE 側で 1 回にまとまる。gmail/cardNotice.ts）
  */
 export async function sendCardUsageNotification(
   lineGroupId: string,
-  info: CardUsageInfo
+  info: CardUsageInfo,
+  retryKey?: string
 ): Promise<void> {
   const client = getLineClient();
   const message = buildCardUsageFlexMessage(info);
 
-  await client.pushMessage({ to: lineGroupId, messages: [message] });
+  await client.pushMessage({ to: lineGroupId, messages: [message] }, retryKey);
   console.log(`Card usage notification sent to ${maskId(lineGroupId)}`);
 }
 

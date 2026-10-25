@@ -130,7 +130,13 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
   → 中項目の判定（店名の辞書。時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。決まらなければ付けない。SPECIFICATION §4.1）
   → Firestoreトランザクションでアトミック保存（status: 'shared'・confirmed: true。自動で入るので要確認にしない。subCategory は決まったときだけ）
      （gmailMessageId ＋ date+amount+店舗名の類似+usedAt±1分 の二重チェックで重複排除）
+     同じトランザクションで送信待ちの印 system/gmailCardNotice_{messageId} を作る（LINE グループがあるときだけ。gmail/cardNotice.ts）
   → LINEグループへFlex通知（テキスト入力と同じ登録・編集カード。保存した中項目をカテゴリの行に出す）
+     X-Line-Retry-Key（メッセージから決まる UUID）を付けて push し、送れたら（409 も）印を消す
+  ※ push の失敗・中断で印が残ったら、同じメールの再処理（Pub/Sub の再送・/gmail/force-process）が重複チェックより先に印を見て、
+    保存時点のカードを同じ key で送り直す。23 時間を過ぎた印（key は 24 時間だけ有効）・支出が消された印は送らずに消す。
+    印の無い既存の支出には送らない。3 回失敗して諦めた（historyId を進めたときだけ）・historyId が古すぎて飛ばしたメールの印も消す
+    （消し損ねた印は expireAt〔24 時間〕の TTL で消える。TTL ポリシーは運用で設定）
 ```
 
 ### 4.3 Web 閲覧・編集
@@ -306,7 +312,7 @@ line-kakeibo/
 │  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）
 │  │  ├─ line/               # webhookApp.ts（署名検証・イベント振り分け・/health）/ textMessage.ts / commands/*.ts（家計簿・要望・カテゴリー・グループ・立替/精算〔期間の折半の案内だけ〕）
 │  │  │                      # / expenseFlow.ts（テキスト入力の支出登録）/ groupEvents.ts / client.ts（LINE クライアント・返信）/ flexMessage.ts / postback.ts
-│  │  └─ gmail/              # auth.ts / watch.ts / parser.ts / handler.ts / types.ts / adminRouter.ts（/gmail/* 管理 API）/ index.ts
+│  │  └─ gmail/              # auth.ts / watch.ts / parser.ts / handler.ts / cardNotice.ts（カード通知の送信待ちと送り直し）/ types.ts / adminRouter.ts（/gmail/* 管理 API）/ index.ts
 │  ├─ scripts/               # smoke-*.js（npm test）/ emulator-*.js（test:emulator）/ firebase.emulator.json / eval/（分類の評価。実データは *.local.json でコミットしない）
 │  └─ .env.example
 ├─ web/                      # Next.js 16 (Vercel)
