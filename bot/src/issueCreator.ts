@@ -117,10 +117,11 @@ function buildFallbackAnalysis(feedbackText: string): FeedbackAnalysis {
 // 他人へのメンション・他の Issue / リポジトリへの参照（相互参照の通知）・HTML コメントでの隠し文・リンク先の偽装を
 // 起こさないようにする。
 // - 元の本文: 本文中のバッククォートの最長の連続より長いフェンスのコードブロックに入れる（中は解釈されない）
-// - Gemini の結果（と、Gemini が使えないときの代わりの文）: HTML コメント・HTML タグ・Markdown のリンク先を除き、
-//   `@` / `#` / `GH-` / `://` / `www.` の直後にゼロ幅スペースを挟む。本文の Markdown では `& < >` を文字参照に、
-//   バッククォート・チルダ・バックスラッシュをエスケープする（コードブロックを開いて元の本文のフェンスを閉じさせない）。
-//   項目ごとに長さの上限を付ける
+// - Gemini の結果（と、Gemini が使えないときの代わりの文）: HTML コメント・Markdown のリンク先を除き、
+//   `@` / `#` / `GH-` / `://` / `www.` の直後にゼロ幅スペースを挟む。HTML タグは正規表現で除かず（除いた跡から新しいタグが
+//   できるため。CodeQL js/incomplete-multi-character-sanitization）、1 文字ずつ無効にする: 本文の Markdown では `& < >` を
+//   文字参照に（タグは文字として表示される）、タイトルからは `< >` を除く。本文ではバッククォート・チルダ・バックスラッシュを
+//   エスケープする（コードブロックを開いて元の本文のフェンスを閉じさせない）。項目ごとに長さの上限を付ける
 // ============================================
 
 /** メンション・参照・自動リンクを切るために挟むゼロ幅スペース */
@@ -142,10 +143,10 @@ function truncateChars(text: string, max: number): string {
 }
 
 /**
- * HTML コメント・HTML タグ・Markdown のリンク先（リンクと画像は表示する文字だけ残す）・参照リンクの定義を取り除く
+ * HTML コメント（中の隠し文ごと）・Markdown のリンク先（リンクと画像は表示する文字だけ残す）・参照リンクの定義を取り除く
  *
- * 1 回の置換では、除いた跡から新しいタグやコメントができる（`<scr<b>ipt>` → `<script>`、`<!<!---->--` → `<!--`）ので、
- * 変わらなくなるまで繰り返す（置換のたびに短くなるので必ず止まる）。
+ * 1 回の置換では、除いた跡から新しいコメントができる（`<!<!---->--` → `<!--`）ので、変わらなくなるまで繰り返す
+ * （置換のたびに短くなるので必ず止まる）。HTML タグはここでは扱わず、呼び出し側で `<` `>` を 1 文字ずつ無効にする。
  */
 function stripHiddenMarkup(text: string): string {
   let current = text.replace(/\r\n?/g, '\n');
@@ -155,7 +156,6 @@ function stripHiddenMarkup(text: string): string {
     current = current.replace(/<!--[\s\S]*?(?:-->|$)/g, ''); // 閉じていないコメントは末尾まで
     current = current.replace(/!?\[([^\]\n]*)\]\([^)\n]*\)?/g, '$1');
     current = current.replace(/^[ \t]*\[[^\]\n]*\]:.*$/gm, '');
-    current = current.replace(/<\/?[A-Za-z][^<>]*>/g, ''); // <https://…> の自動リンクも含む
   } while (current !== previous);
   return current;
 }
@@ -170,9 +170,9 @@ function neutralizeReferences(text: string): string {
     .replace(/\b(www)\./gi, `$1${ZWSP}.`);
 }
 
-/** Issue のタイトル（1 行。タイトルは HTML として描画されないので文字参照にはしない） */
+/** Issue のタイトル（1 行。タイトルは HTML として描画されないので文字参照にはせず、`<` `>` を除く） */
 export function sanitizeIssueTitle(text: string): string {
-  const oneLine = stripHiddenMarkup(text).replace(/\s+/g, ' ').trim();
+  const oneLine = stripHiddenMarkup(text).replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
   return neutralizeReferences(truncateChars(oneLine, ISSUE_TITLE_MAX_LENGTH)) || FALLBACK_ISSUE_TITLE;
 }
 

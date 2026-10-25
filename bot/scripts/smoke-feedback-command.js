@@ -378,7 +378,9 @@ async function main() {
   check('Markdown: 文字参照のメンション（&#64;）も働かない', md.includes('&amp;#'), show(md));
   check('Markdown: 閉じていない HTML コメントは末尾まで除く', sanitizeIssueMarkdown('前 <!-- 隠し 後ろ', 100, { multiline: true }) === '前', show(sanitizeIssueMarkdown('前 <!-- 隠し 後ろ', 100, { multiline: true })));
   check('Markdown: 長さを切る', Array.from(sanitizeIssueMarkdown('あ'.repeat(300), 200, { multiline: false })).length === 200);
-  check('Markdown: 1 行の項目は改行をまとめる', !sanitizeIssueMarkdown('一\n\n二', 200, { multiline: false }).includes('\n'));
+  const quoted = sanitizeIssueMarkdown('> 引用\n>> 二重 a > b', 200, { multiline: true });
+  check('Markdown: > も文字参照にする（引用を作らない）', !quoted.includes('>') && quoted.includes('&gt;'), show(quoted));
+  check('Markdown: 1 行の項目は改行をまとめる',!sanitizeIssueMarkdown('一\n\n二', 200, { multiline: false }).includes('\n'));
 
   const title = sanitizeIssueTitle(`<!-- 隠し -->@victim を other/repo#1 で <b>直す</b> [リンク](https://evil.example) ${'あ'.repeat(200)}`);
   check('タイトル: メンション・参照・コメント・タグ・リンク先が残らない', liveMarkup(title).length === 0 && !title.includes('隠し') && !title.includes('evil') && title.includes('直す'), show(title));
@@ -387,7 +389,7 @@ async function main() {
   const nestedTitle = sanitizeIssueTitle('<scr<b>ipt>alert(1)</scr</b>ipt> と <!<!---->-- 隠し');
   check('タイトル: 除いた跡から新しいタグ・コメントができない（<scr<b>ipt>・<!<!---->--）', liveMarkup(nestedTitle).length === 0 && !nestedTitle.includes('隠し'), show(nestedTitle));
   const nestedMd = sanitizeIssueMarkdown('<scr<b>ipt>alert(1)</scr</b>ipt> と <!<!---->-- 隠し', 200, { multiline: true });
-  check('Markdown: 除いた跡から新しいタグ・コメントができない', !nestedMd.includes('script') && !nestedMd.includes('隠し'), show(nestedMd));
+  check('Markdown: タグは文字参照にして働かない（入れ子でも）。除いた跡から新しいコメントができない', !/[<>]/.test(nestedMd) && nestedMd.includes('&lt;') && !nestedMd.includes('隠し'), show(nestedMd));
 
   const fenced = fencedOriginalText('a ```` b\n\n@victim');
   check('元の本文: フェンスは本文中のバッククォートの最長の連続より長い', fenced.startsWith('`````text\n') && fenced.endsWith('\n`````'), show(fenced));
