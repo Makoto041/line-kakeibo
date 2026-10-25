@@ -60,19 +60,21 @@ geminiClient.generateJson = async () => {
 
 const household = { id: 'G_house', name: '世帯', lineGroupId: 'L_house' };
 const selfMade = { id: 'G_self', name: '自作' };
-// getUserGroups の結果（lineId ごと）。関数なら呼んだ結果（例外を投げる偽物に使う）
+// getUserGroups の結果（lineId ごと）。failingUsers に入れた lineId では例外を投げる
 const groupsByUser = {};
+const failingUsers = new Set();
 let getUserGroupsCalls = 0;
 firestore.getUserGroups = async (lineId) => {
   getUserGroupsCalls++;
-  const v = groupsByUser[lineId];
-  return typeof v === 'function' ? v() : v ?? [];
+  if (failingUsers.has(lineId)) throw new Error('firestore unavailable');
+  return Object.hasOwn(groupsByUser, lineId) ? groupsByUser[lineId] : [];
 };
-// findLineGroupId の結果（LINE グループ ID ごと）。関数なら呼んだ結果
+// findLineGroupId の結果（LINE グループ ID ごと）。failingLineGroups に入れた ID では例外を投げる
 const groupIdByLineGroup = { L_house: 'G_house' };
+const failingLineGroups = new Set();
 firestore.findLineGroupId = async (lineGroupId) => {
-  const v = groupIdByLineGroup[lineGroupId];
-  return typeof v === 'function' ? v() : v ?? null;
+  if (failingLineGroups.has(lineGroupId)) throw new Error('firestore unavailable');
+  return Object.hasOwn(groupIdByLineGroup, lineGroupId) ? groupIdByLineGroup[lineGroupId] : null;
 };
 const settingsByUser = {};
 firestore.getUserSettings = async (lineId) => settingsByUser[lineId] ?? null;
@@ -174,15 +176,14 @@ async function main() {
 
   console.log('\n# 個人チャット: 世帯の確認に失敗 → モデルを呼ぶ（失敗はキャッシュに残さない）');
   reset();
-  groupsByUser.U_fail1 = () => {
-    throw new Error('firestore unavailable');
-  };
+  failingUsers.add('U_fail1');
   r = await post({ userId: 'U_fail1', description: 'ボルダリング' });
   check('Jev を呼ぶ', jevCalls.length === 1, `jev ${jevCalls.length}`);
   check('判定元は jev', r.card?.categoryOrigin === 'jev', JSON.stringify(r.card));
   const failOpen = failOpenLog();
   check('確認の失敗を固定文 + オブジェクトで warn に出す（利用者 ID は伏せる）', failOpen?.level === 'warn' && failOpen.args[1]?.user === '…ail1', JSON.stringify(failOpen?.args));
   reset();
+  failingUsers.delete('U_fail1');
   groupsByUser.U_fail1 = [];
   r = await post({ userId: 'U_fail1', description: 'カヌー' });
   check('次の入力では所属を読み直す（失敗を「所属なし」としてキャッシュしていない）', getUserGroupsCalls === 1, `${getUserGroupsCalls} 回`);
@@ -213,9 +214,7 @@ async function main() {
 
   console.log('\n# LINE グループ: 世帯の確認に失敗 → モデルを呼ぶ');
   reset();
-  groupIdByLineGroup.L_flaky = () => {
-    throw new Error('firestore unavailable');
-  };
+  failingLineGroups.add('L_flaky');
   r = await post({ userId: 'U_member3', lineGroupId: 'L_flaky', description: 'ボルダリング' });
   check('Jev を呼ぶ', jevCalls.length === 1, `jev ${jevCalls.length}`);
   check('確認の失敗を warn に出す', failOpenLog()?.level === 'warn', JSON.stringify(failOpenLog()?.args));
