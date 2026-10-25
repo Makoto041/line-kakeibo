@@ -4,11 +4,13 @@
  * - shouldAbandon: 同じメールを諦める条件（試行 3 回以上 かつ 最初の失敗から 6 時間以上）
  * - firstFailedAtOf: 失敗の記録に入れる最初の失敗の時刻（firstFailedAt を引き継ぐ。無い記録は lastFailedAt で代用）
  * - isStaleGmailEvent: 12 時間より古い Pub/Sub の通知を捨てるか
+ * - historyIdOfPubSubData: 通知の本文から historyId を取り出す（読めなければ null で、再送させない）
+ * - errorFields: ログに出すエラーの種類（文字列のコードは形を確かめてから出す）
  * - 関数の設定: gmailPubSubHandler の retry: true・timeoutSeconds: 300、renewGmailWatch の retryCount: 2
  * - gmailPubSubHandler が publishTime（無ければ CloudEvent の time）から 12 時間より古い通知を取込に渡さず成功で返すこと（取込は偽物）
  *
- * 取込の流れの中での確かめ（404 の読み飛ばし・firstFailedAt の保存・諦め）は smoke-expense-card.js（偽物）と
- * emulator-gmail-card-notice.js（Firestore エミュレータ）。
+ * 取込の流れの中での確かめ（404 の読み飛ばし・firstFailedAt の保存・諦め・やり直しても直らない失敗で投げないこと・
+ * 名前の無いヘッダー・ログに ID を出さないこと）は smoke-expense-card.js（偽物）と emulator-gmail-card-notice.js（Firestore エミュレータ）。
  *
  *   node bot/scripts/smoke-gmail-retry.js
  */
@@ -19,6 +21,8 @@ const {
   shouldAbandon,
   firstFailedAtOf,
   isStaleGmailEvent,
+  historyIdOfPubSubData,
+  errorFields,
   MESSAGE_ABANDON_AFTER_MS,
   STALE_GMAIL_EVENT_MS,
 } = require('../dist/gmail/handler');
@@ -84,6 +88,33 @@ check('時刻が無い（undefined）→ 捨てない', isStaleGmailEvent(undefi
 check('時刻が文字列でない → 捨てない', isStaleGmailEvent(12345, now) === false);
 check('ナノ秒の小数の付いた RFC 3339（Pub/Sub の publishTime の形）も読む', isStaleGmailEvent('2026-10-25T23:59:00.123456789Z', now) === true);
 
+console.log('\n[historyIdOfPubSubData（通知の本文から historyId を取り出す。読めなければ null で、再送させない）]');
+const b64 = (text) => Buffer.from(text, 'utf-8').toString('base64');
+const data = (payload) => b64(JSON.stringify(payload));
+check('数値の historyId（Gmail の形）→ 型を変えずに返す', historyIdOfPubSubData(data({ emailAddress: 'a@example.com', historyId: 12345 })) === 12345);
+check('数字の文字列 → そのまま返す', historyIdOfPubSubData(data({ historyId: '67890' })) === '67890');
+check('historyId が無い → null', historyIdOfPubSubData(data({ emailAddress: 'a@example.com' })) === null);
+check('数値として読めない文字列 → null', historyIdOfPubSubData(data({ historyId: '12a' })) === null);
+check('負の数・小数 → null', historyIdOfPubSubData(data({ historyId: -1 })) === null && historyIdOfPubSubData(data({ historyId: 1.5 })) === null);
+check('空文字 → null', historyIdOfPubSubData(data({ historyId: '' })) === null);
+check('JSON でない → null', historyIdOfPubSubData(b64('{not json')) === null);
+check('JSON の null・配列・数 → null', [b64('null'), b64('[1]'), b64('42')].every((d) => historyIdOfPubSubData(d) === null));
+check('本文が文字列でない → null', historyIdOfPubSubData(undefined) === null && historyIdOfPubSubData(123) === null);
+
+console.log('\n[errorFields（ログに出すエラーの種類）]');
+check('名前と数のコード', JSON.stringify(errorFields(Object.assign(new Error('x'), { code: 503 }))) === JSON.stringify({ errorName: 'Error', errorCode: 503 }));
+check('英大文字・数字・_ のコードは出す', errorFields(Object.assign(new Error('x'), { code: 'ECONNRESET' })).errorCode === 'ECONNRESET');
+check(
+  '形の違う文字列のコード（入力の断片でありうる）は出さない',
+  ['abc', 'ERR bad', 'a@example.com', 'X'.repeat(65), ''].every((code) => errorFields(Object.assign(new Error('x'), { code })).errorCode === undefined)
+);
+check('NaN・Infinity のコードは出さない', [NaN, Infinity].every((code) => errorFields(Object.assign(new Error('x'), { code })).errorCode === undefined));
+check(
+  '原因のコード（fetch の通信の失敗）は errorCause に出す',
+  errorFields(Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } })).errorCause === 'UND_ERR_CONNECT_TIMEOUT'
+);
+check('エラーの文言は出さない', !JSON.stringify(errorFields(new Error('secret-ish message a@example.com'))).includes('a@example.com'));
+
 console.log('\n[関数の設定と古い通知の扱い（dist/index.js）]');
 // index.js は読み込むと dotenv と Firebase Admin の初期化が走るので、.env の無いディレクトリで別のプロセスにする
 // （接続はしない。Admin SDK は最初に使うときに接続する）
@@ -110,7 +141,8 @@ const probe = spawnSync(
        try {
          // 再送で time が新しくても、publishTime が 13 時間前なら捨てる
          await m.gmailPubSubHandler.run(event(13 * H, 0, 'stale'));
-         // publishTime が無ければ time で測る
+         // publishTime が無ければ time で測る（防御だけ。firebase-functions の Message は publishTime を必ず埋めるので、本番でこの経路は通らない。
+         // ここは onMessagePublished の包みを通さない run を直接呼ぶので、publishTime の無いメッセージを渡せる）
          await m.gmailPubSubHandler.run(event(null, 13 * H, 'stale-time-only'));
        } catch (e) {
          staleError = String(e);

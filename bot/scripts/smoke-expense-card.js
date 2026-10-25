@@ -1092,7 +1092,9 @@ async function saveFlowChecks() {
   let mailBody = '';
   /** messages.get が投げる例外（messageId → 例外。メールが消されていた 404 など） */
   const messageGetErrors = {};
-  gmailAuth.getGmailClient = async () => ({
+  /** messages.get が返す data（messageId → data。名前の無いヘッダー・payload の無いメールなど。無ければ mailBody のメール） */
+  const messageGetData = {};
+  const fakeGmailClient = async () => ({
     users: {
       history: {
         list: async () => {
@@ -1108,6 +1110,7 @@ async function saveFlowChecks() {
         list: async () => ({ data: { messages: [{ id: 'msg-latest' }] } }),
         get: async ({ id }) => {
           if (messageGetErrors[id]) throw messageGetErrors[id];
+          if (id in messageGetData) return { data: messageGetData[id] };
           return {
             data: {
               payload: {
@@ -1120,6 +1123,14 @@ async function saveFlowChecks() {
       },
     },
   });
+  /** getGmailClient を呼んだ回数と、次に投げる例外（トークンが無いなど。null なら偽の Gmail を返す） */
+  let gmailClientCalls = 0;
+  let gmailClientError = null;
+  gmailAuth.getGmailClient = async () => {
+    gmailClientCalls++;
+    if (gmailClientError) throw gmailClientError;
+    return fakeGmailClient();
+  };
   // カード利用通知は LINE_GROUP_ID があるときだけ送る。架空の値にして、送る内容（上の偽物が受け取る）を見る
   process.env.LINE_GROUP_ID = 'C_smoke_group';
   delete process.env.DEFAULT_GROUP_ID;
@@ -1668,6 +1679,164 @@ async function saveFlowChecks() {
             !JSON.stringify(l.args).includes('Internal Server Error')
         ),
       JSON.stringify(failureLogs.slice(0, 3))
+    );
+
+    // (i) やり直しても直らない失敗は投げずに終える（Pub/Sub に再送させない）。一時的な失敗は投げる
+    const b64 = (text) => Buffer.from(text, 'utf-8').toString('base64');
+    const pubsubData = (payload) => b64(JSON.stringify(payload));
+    const handle = (data) =>
+      run(async () => {
+        try {
+          await handleGmailPubSub(data);
+          return 'ok';
+        } catch (error) {
+          return error;
+        }
+      });
+    const warnsSince = (from) => allLines.slice(from).filter((l) => l.level === 'warn').map((l) => l.args);
+    const DROP_LOG = 'Gmail Pub/Sub message has no usable historyId; dropping it (retrying does not help)';
+    for (const [label, data] of [
+      ['JSON でない本文', b64('not json')],
+      ['JSON の null', b64('null')],
+      ['historyId が無い', pubsubData({ emailAddress: 'someone@example.com' })],
+      ['historyId が数値として読めない', pubsubData({ emailAddress: 'someone@example.com', historyId: 'abc' })],
+      ['historyId が負の数', pubsubData({ emailAddress: 'someone@example.com', historyId: -1 })],
+    ]) {
+      const from = allLines.length;
+      const callsBefore = gmailClientCalls;
+      historyBefore = historyUpdates.length;
+      r = await handle(data);
+      const warns = warnsSince(from);
+      check(
+        `通知の本文の${label}: 投げずに終え、取込を始めない（Gmail を呼ばず historyId も進めない）`,
+        r === 'ok' && gmailClientCalls === callsBefore && historyUpdates.length === historyBefore,
+        String(r)
+      );
+      check(
+        `通知の本文の${label}: 固定文の警告を 1 回だけ出し、本文（メールアドレス）を出さない`,
+        warns.length === 1 && warns[0].length === 1 && warns[0][0] === DROP_LOG,
+        JSON.stringify(warns)
+      );
+    }
+    historyBefore = historyUpdates.length;
+    r = await handle(pubsubData({ emailAddress: 'someone@example.com', historyId: 401 }));
+    check(
+      '数値の historyId（Gmail の形）は処理し、型を変えずに渡す',
+      r === 'ok' && historyUpdates.length === historyBefore + 1 && historyUpdates[historyUpdates.length - 1] === 401,
+      JSON.stringify(historyUpdates.slice(-1))
+    );
+
+    // Gmail のトークンが無い（GmailTokenMissingError）: やり直しても直らないので投げない
+    let from = allLines.length;
+    historyBefore = historyUpdates.length;
+    gmailClientError = new gmailAuth.GmailTokenMissingError();
+    try {
+      r = await handle(pubsubData({ historyId: '402' }));
+    } finally {
+      gmailClientError = null;
+    }
+    check(
+      'Gmail のトークンが無い: 投げずに終え（historyId は進めない）、固定文の警告を出す',
+      r === 'ok' &&
+        historyUpdates.length === historyBefore &&
+        JSON.stringify(warnsSince(from)) === JSON.stringify([['Gmail token not found; skipping (run the OAuth setup; retrying does not help)']]),
+      JSON.stringify({ r: String(r), warns: warnsSince(from) })
+    );
+    // 同じ文言でも GmailTokenMissingError でなければ（種類で判定する）、Firestore の失敗などの一時的な失敗として投げる
+    for (const [label, error] of [
+      ['トークンの読み取りの失敗（Firestore UNAVAILABLE）', Object.assign(new Error('14 UNAVAILABLE: Firestore is down'), { code: 14 })],
+      ['トークンの更新の失敗（Google の 503）', Object.assign(new Error('Service Unavailable'), { code: 503, status: 503 })],
+      ['同じ文言の Error（種類が違う）', new Error('Gmail token not found. Please run OAuth2 setup first.')],
+    ]) {
+      gmailClientError = error;
+      try {
+        r = await handle(pubsubData({ historyId: '403' }));
+      } finally {
+        gmailClientError = null;
+      }
+      check(`getGmailClient の${label}: 投げて Pub/Sub に再送させる`, r instanceof Error, String(r));
+    }
+    // watch の状態が無い: 投げない。読み取りの失敗は投げる
+    const realGetWatchState = gmailWatch.getWatchState;
+    from = allLines.length;
+    historyBefore = historyUpdates.length;
+    gmailWatch.getWatchState = async () => null;
+    try {
+      r = await handle(pubsubData({ historyId: '404' }));
+    } finally {
+      gmailWatch.getWatchState = realGetWatchState;
+    }
+    check(
+      'watch の状態が無い: 投げずに終え、historyId を進めない',
+      r === 'ok' && historyUpdates.length === historyBefore && JSON.stringify(warnsSince(from)) === JSON.stringify([['Watch state not found, skipping processing']]),
+      JSON.stringify({ r: String(r), warns: warnsSince(from) })
+    );
+    gmailWatch.getWatchState = async () => {
+      throw Object.assign(new Error('14 UNAVAILABLE'), { code: 14 });
+    };
+    try {
+      r = await handle(pubsubData({ historyId: '405' }));
+    } finally {
+      gmailWatch.getWatchState = realGetWatchState;
+    }
+    check('watch の状態の読み取りの失敗: 投げて再送させる', r instanceof Error, String(r));
+    historyError = Object.assign(new Error('Backend Error'), { code: 503, status: 503 });
+    r = await handle(pubsubData({ historyId: '406' }));
+    check('history.list の 503: 投げて再送させる', r instanceof Error, String(r));
+    const handleLogs = allLines.filter((l) => l.args[0] === 'Failed to handle Gmail Pub/Sub');
+    check(
+      '取込の失敗のログは固定文＋エラーの種類だけ（エラーの文言を出さない）',
+      handleLogs.length > 0 &&
+        handleLogs.every((l) => l.args.length === 2 && !/UNAVAILABLE|Service Unavailable|Backend Error|token not found/.test(JSON.stringify(l.args))),
+      JSON.stringify(handleLogs.slice(0, 3))
+    );
+
+    // (j) 名前・値の無いヘッダー、payload の無いメールでも投げない（その 1 通で取込が止まらない）
+    const oddHeaders = 'msg-odd-headers';
+    const noPayload = 'msg-no-payload';
+    const noBody = 'msg-no-body';
+    messageGetData[oddHeaders] = {
+      payload: {
+        headers: [{ name: null, value: 'x' }, { name: 'From', value: null }, { value: 'y' }, { name: 'From', value: 'statement@vpass.ne.jp' }],
+        body: { data: b64(mailBody) },
+      },
+    };
+    messageGetData[noPayload] = {};
+    messageGetData[noBody] = { payload: { headers: [{ name: null, value: null }] } };
+    try {
+      for (const [label, id, saves] of [
+        ['名前・値の無いヘッダーがある（残りの From で判定する）', oddHeaders, 1],
+        ['payload が無い', noPayload, 0],
+        ['本文が無く、ヘッダーの名前・値も無い', noBody, 0],
+      ]) {
+        historyMessageIds = [id];
+        before = counts();
+        historyBefore = historyUpdates.length;
+        writesBefore = failureWrites.length;
+        r = await pubsubOnce();
+        check(
+          `${label}: 投げずに historyId を進め、失敗として数えない`,
+          r === 'ok' && historyUpdates.length === historyBefore + 1 && failureWrites.length === writesBefore,
+          String(r)
+        );
+        check(`${label}: 保存は ${saves} 件`, gmailSaved.length === before.saved + saves, String(gmailSaved.length - before.saved));
+      }
+    } finally {
+      delete messageGetData[oddHeaders];
+      delete messageGetData[noPayload];
+      delete messageGetData[noBody];
+      historyMessageIds = ['msg-pubsub'];
+    }
+
+    // 古いログ行（書式文字列で ID を埋めていたもの）も含め、Pub/Sub の取込のログ全体に messageId・メールアドレスを出さない
+    const rawIds = ['msg-pubsub', idA, idB, gone, oddHeaders, noPayload, noBody, 'someone@example.com'];
+    const leaked = allLines.filter((l) => rawIds.some((id) => JSON.stringify(l.args).includes(id)));
+    check('Pub/Sub の取込のログ全体に、messageId とメールアドレスをそのまま出さない', leaked.length === 0, JSON.stringify(leaked.slice(0, 3)));
+    const savedLogs = allLines.filter((l) => l.args[0] === 'Expense saved from Gmail');
+    check(
+      '保存のログは固定文で、支出の ID を伏せる（maskId）',
+      savedLogs.length > 0 && savedLogs.every((l) => l.args.length === 2 && !/exp_gmail_/.test(JSON.stringify(l.args))),
+      JSON.stringify(savedLogs.slice(0, 2))
     );
 
     const noticeLogs = allLines.filter((l) => typeof l.args[0] === 'string' && /card notice/i.test(l.args[0]));

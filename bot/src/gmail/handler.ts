@@ -7,8 +7,8 @@
 
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { formatJST, toJSTDateString } from '../time';
-import { getGmailClient } from './auth';
-import { getWatchState, updateHistoryId } from './watch';
+import { getGmailClient, GmailTokenMissingError } from './auth';
+import { getWatchState, isUsableHistoryId, updateHistoryId } from './watch';
 import {
   isSMBCGoldVISANL,
   parseSMBCCardEmail,
@@ -28,7 +28,7 @@ import type { ClassificationResult } from '../geminiCategoryClassifier';
 import type { CardUsageInfo, CategoryOrigin } from '../line/flexMessage';
 import { subCategoriesOf } from '../categoryTaxonomy';
 import { resolveSubCategory } from '../subCategoryRules';
-import { errorMessage, errorName, maskId } from '../logSafe';
+import { errorCauseCode, errorMessage, errorName, maskId } from '../logSafe';
 import { cardNoticeFor, deliverPendingCardNotice, discardCardNotices } from './cardNotice';
 import type { CardNoticeDelivery } from './cardNotice';
 
@@ -103,25 +103,48 @@ const getDefaultLineGroupId = (): string | undefined => {
 };
 
 /**
+ * Pub/Sub の通知の本文（base64 の JSON。`{ emailAddress, historyId }`）から historyId を取り出す
+ *
+ * JSON として読めない・オブジェクトでない・historyId が無い・数値として読めない（watch.ts の isUsableHistoryId）ときは null。
+ * どれもやり直しても直らない。historyId は Gmail が数値で送るので、型は変えずにそのまま返す（以前と同じく、そのまま保存する）。
+ */
+export function historyIdOfPubSubData(data: unknown): string | number | null {
+  if (typeof data !== 'string') return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(Buffer.from(data, 'base64').toString('utf-8'));
+  } catch {
+    return null;
+  }
+  if (typeof payload !== 'object' || payload === null) return null;
+  const historyId = (payload as Partial<GmailPubSubPayload>).historyId;
+  return isUsableHistoryId(historyId) ? historyId : null;
+}
+
+/**
  * Pub/Subメッセージを処理
  * Cloud Functions: onMessagePublished で呼び出される
  *
  * 投げると関数が失敗し、Pub/Sub が同じ通知を再送する（index.ts の gmailPubSubHandler は `retry: true`）。
+ * やり直しても直らないとき（本文から historyId が読めない・Gmail のトークンが無い・watch の状態が無い）は、
+ * 投げずに固定文の警告を出して終える（再送させない）。一時的な失敗（Gmail・Firestore・LINE の 5xx など）は投げる。
  */
 export async function handleGmailPubSub(data: string): Promise<void> {
+  const historyId = historyIdOfPubSubData(data);
+  if (historyId === null) {
+    // 本文にはメールアドレスが入るので出さない
+    console.warn('Gmail Pub/Sub message has no usable historyId; dropping it (retrying does not help)');
+    return;
+  }
+
+  // historyId は数字だけ（isUsableHistoryId で確かめた）
+  console.log('Gmail Pub/Sub received', { historyId: String(historyId) });
+
   try {
-    // Base64デコード
-    const payload: GmailPubSubPayload = JSON.parse(
-      Buffer.from(data, 'base64').toString('utf-8')
-    );
-
-    // payload にはメールアドレスが含まれるため historyId だけを出す
-    console.log(`Gmail Pub/Sub received: historyId=${payload.historyId}`);
-
-    // 新着メールを取得して処理
-    await processNewEmails(payload.historyId);
+    // 新着メールを取得して処理（数値の historyId も以前どおりそのまま渡す）
+    await processNewEmails(historyId as string);
   } catch (error) {
-    console.error('Failed to handle Gmail Pub/Sub:', error);
+    console.error('Failed to handle Gmail Pub/Sub', errorFields(error));
     throw error;
   }
 }
@@ -184,7 +207,8 @@ export function firstFailedAtOf(previous: unknown, now: Date): Date {
 /**
  * Pub/Sub の通知が古すぎて捨てるか（`STALE_GMAIL_EVENT_MS` より古い）
  *
- * @param eventTime Pub/Sub のメッセージの publishTime（RFC 3339。再送でも変わらない。index.ts は無いときだけ CloudEvent の time を渡す）
+ * @param eventTime Pub/Sub のメッセージの publishTime（RFC 3339。再送でも変わらない。index.ts は防御として、無いときだけ
+ *   CloudEvent の time を渡すが、firebase-functions の Message は publishTime を必ず埋めるので本番では起きない）
  * 時刻が読めないときは捨てない（処理しても取りこぼし・二重登録は起きないので、処理する側に倒す）。
  */
 export function isStaleGmailEvent(eventTime: string | undefined, now: Date): boolean {
@@ -193,11 +217,21 @@ export function isStaleGmailEvent(eventTime: string | undefined, now: Date): boo
   return now.getTime() - publishedAt > STALE_GMAIL_EVENT_MS;
 }
 
-/** ログに出す例外の種類（メッセージには入力や文書のパスが入りうるので出さない） */
-function errorFields(error: unknown): { errorName: string; errorCode?: string | number } {
-  const name = errorName(error);
+/**
+ * ログに出す例外の種類（メッセージには入力や文書のパスが入りうるので出さない）
+ *
+ * errorCode は数か、英大文字・数字・`_` だけの 64 文字以内の文字列のときだけ出す（logSafe.ts の errorCauseCode と同じ形の検査）。
+ * errorCause は原因のコード（fetch の通信の失敗の ECONNRESET など。errorCauseCode）。
+ */
+export function errorFields(error: unknown): { errorName: string; errorCode?: string | number; errorCause?: string } {
+  const fields: { errorName: string; errorCode?: string | number; errorCause?: string } = { errorName: errorName(error) };
   const code = (error as { code?: unknown } | null | undefined)?.code;
-  return typeof code === 'number' || typeof code === 'string' ? { errorName: name, errorCode: code } : { errorName: name };
+  if ((typeof code === 'number' && Number.isFinite(code)) || (typeof code === 'string' && /^[A-Z0-9_]{1,64}$/.test(code))) {
+    fields.errorCode = code;
+  }
+  const cause = errorCauseCode(error);
+  if (cause) fields.errorCause = cause;
+  return fields;
 }
 
 /** Gmail API の 404（gaxios 7 は JSON のエラーの code を error.code に、HTTP の状態を error.status に入れる） */
@@ -262,7 +296,7 @@ async function clearMessageFailure(messageId: string): Promise<void> {
     .collection('system')
     .doc('gmailFailures')
     .set({ [messageId]: FieldValue.delete() }, { merge: true })
-    .catch((error) => console.warn(`Failed to clear failure record for ${messageId}:`, error));
+    .catch((error) => console.warn('Failed to clear the Gmail failure record', { message: maskId(messageId), ...errorFields(error) }));
 }
 
 /**
@@ -280,9 +314,21 @@ async function clearMessageFailure(messageId: string): Promise<void> {
  * メールが消されていた（messages.get が 404）ときは失敗として数えず、読み飛ばす（processMessage）。
  */
 async function processNewEmails(newHistoryId: string): Promise<void> {
-  const gmail = await getGmailClient();
+  let gmail: Awaited<ReturnType<typeof getGmailClient>>;
+  try {
+    gmail = await getGmailClient();
+  } catch (error) {
+    // トークンが無い（OAuth の設定前・/gmail/revoke の後）ときはやり直しても直らないので、投げずに終える。
+    // それ以外（Firestore の読み取り・トークンの更新の失敗など）は一時的なことがあるので投げて、Pub/Sub に再送させる
+    if (error instanceof GmailTokenMissingError) {
+      console.warn('Gmail token not found; skipping (run the OAuth setup; retrying does not help)');
+      return;
+    }
+    throw error;
+  }
   const watchState = await getWatchState();
 
+  // watch の状態が無い（初回の登録前・/gmail/revoke の後）ときもやり直しても直らないので、投げずに終える
   if (!watchState) {
     console.warn('Watch state not found, skipping processing');
     return;
@@ -402,7 +448,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     // 重複チェック
     const isDuplicate = await isDuplicateExpense(messageId);
     if (isDuplicate) {
-      console.log(`Skipping duplicate message: ${messageId}`);
+      console.log('Skipping a Gmail message already imported', { message: maskId(messageId) });
       return;
     }
 
@@ -425,22 +471,29 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     }
 
     const message = messageResponse.data;
-    const headers = message.payload?.headers || [];
+    // name・value の無いヘッダー・payload の無いメールでも投げない（processLatestEmail・forceProcessMessage と同じ扱い）。
+    // 投げると、その 1 通が失敗し続けて取込が最大 6 時間止まる（shouldAbandon）
+    const rawHeaders = message.payload?.headers || [];
+    const headers = rawHeaders.filter(
+      (h: { name?: string | null; value?: string | null }): h is { name: string; value: string } =>
+        h.name !== null && h.name !== undefined &&
+        h.value !== null && h.value !== undefined
+    );
     const from = getFromAddress(headers);
     const body = decodeEmailBody(message.payload);
 
     // 三井住友ゴールドVISA（NL）のメールかチェック
     if (!isSMBCGoldVISANL(from, body)) {
-      console.log(`Not a SMBC Gold VISA NL notification: ${messageId}`);
+      console.log('Not a SMBC Gold VISA NL notification; skipping', { message: maskId(messageId) });
       return;
     }
 
-    console.log(`Processing SMBC card notification: ${messageId}`);
+    console.log('Processing SMBC card notification', { message: maskId(messageId) });
 
     // メールをパース
     const parsed = parseSMBCCardEmail(messageId, body);
     if (!parsed) {
-      console.warn(`Failed to parse email: ${messageId}`);
+      console.warn('Failed to parse the SMBC card email; skipping', { message: maskId(messageId) });
       return;
     }
 
@@ -488,13 +541,13 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     // アトミックに重複チェック＋保存（並行処理での二重登録を防止）
     const { expenseId, alreadyExists } = await saveGmailExpenseAtomic(expense as any, notice);
     if (alreadyExists) {
-      console.log(`Skipping duplicate (atomic): messageId: ${messageId}, existingId: ${expenseId}`);
+      console.log('Skipping a duplicate Gmail expense (atomic)', { message: maskId(messageId), expense: maskId(expenseId) });
       // 同時に処理した相手が保存のあと、カードを送る前に止まっていたら送る（相手と同じ key なので二重には届かない）
       const delivery = await deliverPendingCardNotice(messageId);
       console.log('Card notice checked for an existing expense', { expense: maskId(expenseId), result: delivery });
       return;
     }
-    console.log(`Expense saved from Gmail: ${expenseId}`);
+    console.log('Expense saved from Gmail', { expense: maskId(expenseId) });
 
     // LINEグループに通知（失敗したら投げる。印が残り、再処理で送り直す）
     if (lineGroupId) {
@@ -506,7 +559,8 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
   } catch (error) {
     // 呼び出し元（processNewEmails）が試行回数を記録し、historyId を進めるかを決める。
     // ここで握り潰すと、失敗したメールが再処理されないまま historyId だけ進んでしまう。
-    console.error(`Failed to process message ${messageId}:`, error);
+    // 試行回数を付けたログは呼び出し元が出す（ここでは ID を伏せ、エラーの種類だけ）
+    console.error('Gmail message processing failed', { message: maskId(messageId), ...errorFields(error) });
     throw error;
   }
 }

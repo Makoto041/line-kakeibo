@@ -139,7 +139,8 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
     （消し損ねた印は expireAt〔24 時間〕の TTL で消える。TTL ポリシーは運用で設定）
   ※ 1 通でも失敗したら historyId を進めずに投げ、Pub/Sub の再送（retry: true。10〜600 秒の間隔で最大 24 時間）で同じ範囲をやり直す。
     試行 3 回以上 かつ 最初の失敗から 6 時間以上で、その 1 通は諦める（system/gmailFailures の attempts・firstFailedAt）。
-    消されたメール（messages.get の 404）は失敗として数えず読み飛ばす。12 時間より古い通知は処理せずに捨てる
+    消されたメール（messages.get の 404）は失敗として数えず読み飛ばす。やり直しても直らない失敗（historyId の読めない通知・
+    Gmail のトークンが無い・watch の状態が無い）は投げずに終える。12 時間より古い通知は処理せずに捨てる
     （取込は保存してある historyId からの全範囲を処理するので、捨てた範囲は次の新しい通知で処理される）
 ```
 

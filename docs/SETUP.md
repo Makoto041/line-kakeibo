@@ -163,10 +163,24 @@ CI の `firebase deploy` は非対話で、`--force` を付けていない。fir
 
 - **関数の削除**（export を消した・名前を変えた）: 止まる。何もしない関数として残すか、オーナーが `firebase functions:delete` で消す（`syncUserLinks`・`importMoneyForward`）。
 - **イベント関数の再送（`retry: true`）を新しく有効にする**: 「Pass the --force option to deploy functions with a failure policy」で止まり、関数もルールも何もデプロイされない（prepare の段階で止まる）。
-  初回だけ、オーナーが手元のターミナルから対話でその関数だけをデプロイし、確認に yes と答える。例（`gmailPubSubHandler`）:
-  `firebase deploy --only functions:gmailPubSubHandler --project line-kakeibo-0410`。`--only` で対象を 1 つに絞っていれば、`--force` を付けても削除の対象はその関数だけになる。
-  firebase-tools の新しい版（15.34.1 で確認。15.10.0 には無い）は AI エージェントの環境を検出すると非対話になるので、Claude などのエージェント経由では確認に答えられない。
-  一度有効にすれば、以降のデプロイでは確認が出ない（確認は「新しく」再送を有効にする関数だけが対象）。そのあと `deploy-bot` を `workflow_dispatch` でやり直す。
+  初回だけ、**オーナーが**普通のターミナルから対話でその関数だけをデプロイし、確認に yes と答える（エージェントは実行しない。
+  firebase-tools の新しい版〔15.34.1 で確認。15.10.0 には無い〕は AI エージェントの環境を検出すると非対話になり、確認に答えられない）。
+  マージ済みの master の、`.env` の無いクリーンな checkout から行う。例（`gmailPubSubHandler`）:
+
+  ```bash
+  git fetch origin
+  git worktree add ../line-kakeibo-deploy origin/master   # .env を置いていない別のディレクトリ
+  cd ../line-kakeibo-deploy
+  npm ci
+  npm -w bot run build    # firebase.json に functions の predeploy は無い。飛ばすと古い bot/dist（または無い dist）がデプロイされる
+  firebase deploy --only functions:gmailPubSubHandler --project line-kakeibo-0410   # 確認に yes と答える
+  ```
+
+  - クリーンな checkout にするのは、`bot/.env` があると firebase-tools が本番の関数の環境変数を引き継がず、手元の `.env` の内容で置き換えるため
+    （`prepare.js` の `inferDetailsFromExisting`。`.env`・`.env.<projectId>` などがあると `codebaseUsesEnvs` になり、既存の値と混ぜない）。
+    `.env` が無ければ、本番の関数の環境変数（`LINE_GROUP_ID` など）をそのまま引き継ぐ。環境変数の値を画面に出す確認（`gcloud functions describe` の全項目など）はしない。
+  - 一度有効にすれば、以降のデプロイでは確認が出ない（確認は「新しく」再送を有効にする関数だけが対象）。そのあと `deploy-bot` を `workflow_dispatch` でやり直し、
+    終わったら `git worktree remove ../line-kakeibo-deploy` で片付ける。
 
 `firebase deploy` は `.gitignore` を見ないため、手元からのデプロイでは gitignore 済みのファイルも Functions のソースの zip に入る。
 そのため `firebase.json` の `functions.ignore` で、評価データ（`*.local.json`、`scripts/eval/results`）、鍵ファイル（`kakeibo_service.json`、`vision-key.json`、`*.b64`）、

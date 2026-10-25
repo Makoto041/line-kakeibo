@@ -323,6 +323,11 @@ check('From ヘッダーが複数あるメールは送信元なし扱い',
 check('From ヘッダーが1つなら値を返す',
   getFromAddress([{ name: 'from', value: 'statement@vpass.ne.jp' }]) === 'statement@vpass.ne.jp');
 
+// payload の無いメール（Pub/Sub の取込でその 1 通が失敗し続けないよう、投げずに空にする）
+check('payload が無い（undefined / null）なら本文は空文字',
+  decodeEmailBody(undefined) === '' && decodeEmailBody(null) === '');
+check('本文もパートも無い payload は空文字', decodeEmailBody({ headers: [] }) === '');
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`);
   process.exit(1);

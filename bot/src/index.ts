@@ -116,8 +116,10 @@ export const importMoneyForward = onSchedule(
  * 取込は保存してある historyId からの全範囲を処理するので、捨てた通知の範囲は次の新しい通知で処理される。
  *
  * 注意: 既存の関数で `retry` を新しく有効にするデプロイは、非対話（CI）では firebase-tools が
- * 「Pass the --force option to deploy functions with a failure policy」で止める。初回だけオーナーが
- * 手元から対話で `firebase deploy --only functions:gmailPubSubHandler` する（docs/SETUP.md §7）。
+ * 「Pass the --force option to deploy functions with a failure policy」で止める。初回だけオーナーが、
+ * マージ済みの master の .env の無いクリーンな checkout で `npm ci` → `npm -w bot run build` をしてから、
+ * 普通のターミナルで `firebase deploy --only functions:gmailPubSubHandler --project line-kakeibo-0410` を実行し、
+ * 確認に yes と答える（エージェントは実行しない。手順は docs/SETUP.md §7）。
  */
 export const gmailPubSubHandler = onMessagePublished(
   {
@@ -140,7 +142,9 @@ export const gmailPubSubHandler = onMessagePublished(
   },
   async (event) => {
     // 古さは Pub/Sub の publishTime（publish したときに Pub/Sub が付け、再送でも変わらない）で測る。
-    // CloudEvent の time は Eventarc の文書では「イベントの生成時刻」で、publish 時刻と同じかを確かめられないため、無いときだけ使う
+    // CloudEvent の time は Eventarc の文書では「イベントの生成時刻」で、publish 時刻と同じかを確かめられないため使わない。
+    // `|| event.time` は防御だけ: firebase-functions（7.4.0）の Message は publishTime を必ず埋める
+    // （無ければ受け取った時刻）ので、本番でこの経路は通らない
     if (isStaleGmailEvent(event.data.message.publishTime || event.time, new Date())) {
       console.warn("Gmail Pub/Sub event is older than 12 hours; dropping it (the next notification processes the range)");
       return;

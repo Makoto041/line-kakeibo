@@ -17,6 +17,19 @@ import * as crypto from 'crypto';
 // OAuth stateの有効期限（10分）
 const STATE_EXPIRY_MS = 10 * 60 * 1000;
 
+/**
+ * Gmail のトークンが保存されていない（OAuth の設定前・/gmail/revoke の後）
+ *
+ * やり直しても直らないので、取込（handler.ts）はこの種類だけを投げずに終える（Pub/Sub に再送させない）。
+ * Firestore の読み取りの失敗など一時的な失敗は、この種類にしない。
+ */
+export class GmailTokenMissingError extends Error {
+  constructor() {
+    super('Gmail token not found. Please run OAuth2 setup first.');
+    this.name = 'GmailTokenMissingError';
+  }
+}
+
 // OAuth2クライアント
 let oauth2Client: Auth.OAuth2Client | null = null;
 
@@ -242,7 +255,7 @@ export async function getGmailClient() {
   const token = await loadTokenFromFirestore();
 
   if (!token) {
-    throw new Error('Gmail token not found. Please run OAuth2 setup first.');
+    throw new GmailTokenMissingError();
   }
 
   const client = getOAuth2Client();
