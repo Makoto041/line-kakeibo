@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "ぶちこむ家計簿アプリ",
-  description: "LINEから入力されたレシートを自動的に家計簿に保存するアプリ",
+  description: "LINEで入力した支出を家計簿に保存するアプリ",
   applicationName: "ぶちこむ家計簿",
   // 個人の家計簿なので検索エンジンにインデックスさせない
   robots: {

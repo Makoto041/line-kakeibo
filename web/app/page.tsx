@@ -371,7 +371,7 @@ export default function Dashboard() {
                   </span>
                   <h3 className="text-base font-semibold text-fg">支出データがありません</h3>
                   <p className="mt-1.5 text-sm text-muted">
-                    LINEでレシートやメモを送ると、ここに自動で記録されます。
+                    LINEで「500 ランチ」のように金額と内容を送ると、ここに自動で記録されます。
                   </p>
                 </GlassCard>
               )}

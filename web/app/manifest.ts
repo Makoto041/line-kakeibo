@@ -7,7 +7,7 @@ export default function manifest(): MetadataRoute.Manifest {
     id: '/',
     name: 'ぶちこむ家計簿',
     short_name: 'ぶちこむ',
-    description: 'LINEから入力されたレシートを自動的に家計簿に保存するアプリ',
+    description: 'LINEで入力した支出を家計簿に保存するアプリ',
     lang: 'ja',
     start_url: '/',
     scope: '/',

@@ -23,7 +23,7 @@ export async function handleJoin(event: any) {
 
     // Send welcome message with error handling
     try {
-      await pushText(lineGroupId, "家計簿ボットがグループに参加しました！\n\nレシート画像を送信すると支出を自動記録\n「500 ランチ」のようにテキストでも記録\n「家計簿」で支出一覧を表示\n\nグループメンバーの支出が自動的に共有されます");
+      await pushText(lineGroupId, "家計簿ボットがグループに参加しました！\n\n「500 ランチ」のように金額と内容を送ると支出を記録\n「家計簿」で支出一覧を表示\nレシート画像はWebで支出に添付できます\n\nグループメンバーの支出が自動的に共有されます");
 
       console.log(
         `Bot successfully joined and sent welcome to LINE group: ${maskId(lineGroupId)}`
