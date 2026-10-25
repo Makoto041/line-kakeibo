@@ -38,7 +38,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | `参加 <コード> <表示名>` | **無効化済み**。世帯は2名固定で、メンバー追加は管理者が `scripts/manage-group-members.mjs` で行う旨を返信 |
 | `グループ一覧` | 所属グループ一覧 |
 | `立替一覧` / `立替` / `精算` | 一覧も精算の記録もしない。案内を返す（精算は期間の精算（折半）にまとめていること・相手の分を立て替えたら支出カードの［自分が立替］を押すと、その支出の日付の期間の精算に全額を加算すること・精算額は毎月の起算日に世帯の LINE グループへ通知すること・Web の精算画面のリンク。`line/commands/advance.ts`） |
-| `要望 / 改善 / 不具合 / フィードバック <本文>` | Gemini で内容を解析し GitHub Issue を自動起票（公開リポジトリ `Makoto041/line-kakeibo`）。**使えるのは `DEFAULT_GROUP_ID` の世帯グループの有効メンバーだけ**（#260。`groupMembers/{DEFAULT_GROUP_ID}_{userId}` を `readActiveMember` で読む。LINE の postback の認可と同じ判定。どのトーク〔1 対 1・LINE グループ・複数人トーク〕から送っても同じ。読み取りは 1 回で、キャッシュしない）。次のときは Gemini も GitHub も呼ばず、短い返信だけを返す: 世帯の有効メンバーでない（「このコマンドを使えるのは、世帯のメンバーだけです。」）、`DEFAULT_GROUP_ID` が未設定・空、所属の確認に失敗した（Firestore の障害。拒否側に倒す）、送った人の userId が無い、本文が 1,000 文字（コードポイント。絵文字も 1 文字）を超える（切らずに「内容が長すぎます」）、同じ人が 10 分に 3 件を超えた（受け付けた件数だけを数える。関数のインスタンスごとのメモリで数える）。本文が空なら使い方を返す。使い方と作成できたときの返信に、公開リポジトリに載るので個人情報を書かないよう注意を付ける。Issue の元の本文はコードブロックに入れ、Gemini の結果はメンション・参照・HTML・リンク先を無効にして長さを切る（SECURITY_OPERATIONS.md §8。`line/commands/feedback.ts`・`issueCreator.ts`） |
+| `要望 / 改善 / 不具合 / フィードバック <本文>` | Gemini で内容を解析し GitHub Issue を自動起票（公開リポジトリ `Makoto041/line-kakeibo`）。**使えるのは `DEFAULT_GROUP_ID` の世帯グループの有効メンバーだけ**（#260。`groupMembers/{DEFAULT_GROUP_ID}_{userId}` を `readActiveMember` で読む。LINE の postback の認可と同じ判定。どのトーク〔1 対 1・LINE グループ・複数人トーク〕から送っても同じ。読み取りは 1 回で、キャッシュしない）。次のときは Gemini も GitHub も呼ばず、短い返信だけを返す: 世帯の有効メンバーでない（「このコマンドを使えるのは、世帯のメンバーだけです。」）、`DEFAULT_GROUP_ID` が未設定・空、所属の確認に失敗した（Firestore の障害。拒否側に倒す）、送った人の userId が無い、本文が 1,000 文字（コードポイント。絵文字も 1 文字）を超える（切らずに「内容が長すぎます」）、同じ人が 10 分に 3 件を超えた（受け付けた件数だけを数える。関数のインスタンスごとのメモリで数える）。本文が空なら使い方を返す。使い方と作成できたときの返信に、公開リポジトリに載るので個人情報を書かないよう注意を付ける。Issue の元の本文はコードブロックに入れ、Gemini の結果はメンション・参照・HTML・リンクを無効にして（角括弧をエスケープし、リンク・画像・参照定義の構文を成立させない）長さを切る（SECURITY_OPERATIONS.md §8。`line/commands/feedback.ts`・`issueCreator.ts`） |
 | その他のテキスト | 支出テキストとしてパース（§2.2）。金額が取れない場合は**無反応**（誤爆防止） |
 
 グループイベント: メンバー参加（`memberJoined`）は案内メッセージを push するだけで**メンバー登録はしない**。退出（`memberLeft`）はその人の `groupMembers` を `isActive:false` にする。bot 自身の退出（`leave`）ではメンバーシップを変えない。
@@ -384,7 +384,7 @@ Storage: `receipts/{expenseId}/{fileName}` — cross-service rules で支出を�
 | `GEMINI_API_KEY` | カテゴリ分類の退避先（Jev が失敗したとき）・フィードバック解析 |
 | `FIREBASE_PROJECT_ID` | 既定 `line-kakeibo-0410` |
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REDIRECT_URI` | Gmail OAuth |
-| `DEFAULT_GROUP_ID` / `LINE_GROUP_ID` | Gmail 自動登録・通知先 |
+| `DEFAULT_GROUP_ID` / `LINE_GROUP_ID` | Gmail 自動登録・通知先。`DEFAULT_GROUP_ID` は要望コマンドの認可（世帯グループ）にも使う（未設定なら要望コマンドは拒否） |
 | `ADMIN_SECRET` | Gmail 管理 API 認証 |
 | `GITHUB_TOKEN` | フィードバック Issue 起票 |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Firebase Admin 認証（ローカルのみ JSON パス。本番は ADC） |

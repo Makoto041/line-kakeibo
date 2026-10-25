@@ -121,7 +121,9 @@ function buildFallbackAnalysis(feedbackText: string): FeedbackAnalysis {
 //   `@` / `#` / `GH-` / `://` / `www.` の直後にゼロ幅スペースを挟む。HTML タグは正規表現で除かず（除いた跡から新しいタグが
 //   できるため。CodeQL js/incomplete-multi-character-sanitization）、1 文字ずつ無効にする: 本文の Markdown では `& < >` を
 //   文字参照に（タグは文字として表示される）、タイトルからは `< >` を除く。本文ではバッククォート・チルダ・バックスラッシュを
-//   エスケープする（コードブロックを開いて元の本文のフェンスを閉じさせない）。項目ごとに長さの上限を付ける
+//   エスケープし（コードブロックを開いて元の本文のフェンスを閉じさせない）、角括弧 `[ ]` もエスケープする（リンク・画像・
+//   参照定義の構文を成立させない。リンク先の除去は、入れ子の角括弧や改行をまたぐ形で迂回できるため、エスケープを本線にする）。
+//   項目ごとに長さの上限を付ける
 // ============================================
 
 /** メンション・参照・自動リンクを切るために挟むゼロ幅スペース */
@@ -167,7 +169,7 @@ function neutralizeReferences(text: string): string {
     .replace(/#(?=\d)/g, `#${ZWSP}`)
     .replace(/\b(GH)-(?=\d)/gi, `$1-${ZWSP}`)
     .replace(/:\/\//g, `:${ZWSP}//`)
-    .replace(/\b(www)\./gi, `$1${ZWSP}.`);
+    .replace(/(www)\./gi, `$1${ZWSP}.`); // 前に \b を付けない（`_www.` も GitHub は自動リンクにする）
 }
 
 /** Issue のタイトル（1 行。タイトルは HTML として描画されないので文字参照にはせず、`<` `>` を除く） */
@@ -176,7 +178,12 @@ export function sanitizeIssueTitle(text: string): string {
   return neutralizeReferences(truncateChars(oneLine, ISSUE_TITLE_MAX_LENGTH)) || FALLBACK_ISSUE_TITLE;
 }
 
-/** Issue の本文に Markdown として載せる文 */
+/**
+ * Issue の本文に Markdown として載せる文
+ *
+ * 角括弧をエスケープするので、リンク・画像・参照定義（入れ子の角括弧・改行をまたぐもの・リスト項目の中のものを含む）は
+ * 成立しない（受け入れ条件の `- [ ] ` は、この関数の外で付ける）。
+ */
 export function sanitizeIssueMarkdown(text: string, maxLength: number, options: { multiline: boolean }): string {
   const stripped = stripHiddenMarkup(text);
   const shaped = options.multiline ? stripped.replace(/\n{3,}/g, '\n\n').trim() : stripped.replace(/\s+/g, ' ').trim();
@@ -184,7 +191,7 @@ export function sanitizeIssueMarkdown(text: string, maxLength: number, options: 
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/[`~\\]/g, (c) => `\\${c}`);
+    .replace(/[`~\\[\]]/g, (c) => `\\${c}`);
   return neutralizeReferences(escaped);
 }
 

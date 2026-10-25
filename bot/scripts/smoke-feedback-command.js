@@ -183,8 +183,11 @@ function liveMarkup(text) {
   if (/\bGH-\d/i.test(text)) found.push('GH ref');
   if (/<!--/.test(text)) found.push('html comment');
   if (/<\/?[A-Za-z]/.test(text)) found.push('html tag');
-  if (/\]\(/.test(text)) found.push('markdown link');
+  // 角括弧は、前のバックスラッシュが偶数個（0 を含む）のときだけ働く
+  if (/(?<!\\)(?:\\\\)*\]\(/.test(text)) found.push('markdown link');
+  if (/(?<!\\)(?:\\\\)*\]:/.test(text)) found.push('reference definition');
   if (/:\/\//.test(text)) found.push('autolink');
+  if (/(www)\./i.test(text)) found.push('www autolink');
   if (/(^|\n) {0,3}(`{3,}|~{3,})/.test(text)) found.push('code fence');
   return found;
 }
@@ -371,8 +374,14 @@ async function main() {
 
   console.log('\n# 公開 Issue の本文の無害化（関数）');
   const hostile = '@victim と @org/team、other/repo#1 と #2 と GH-3 <!-- 隠し --> [リンク](https://evil.example/x) ![画像](https://evil.example/i.png) <b>太字</b> <img src=x onerror=alert(1)> <https://evil.example> https://github.com/other/repo/issues/1 www.evil.example &#64;victim\n\n```\n閉じさせる\n~~~';
-  const md = sanitizeIssueMarkdown(hostile, 2000, { multiline: true });
+  // リンク先の除去を迂回する形（入れ子の角括弧・改行をまたぐリンクとラベル・リスト項目の中の参照定義・改行入りの画像）と `_www.`
+  const bypass =
+    '[a [b] c](//bypass.example/x) [[x]](//bypass.example/p) ![[x]](//bypass.example/i) [click\nhere](//bypass.example/x)\n' +
+    '- [ref]: //bypass.example/r\n[a\nb]: //bypass.example/y\n![a\nb](//bypass.example/z) _www.bypass.example/w';
+  const md = sanitizeIssueMarkdown(`${hostile}\n${bypass}`, 2000, { multiline: true });
   check('Markdown: メンション・参照・コメント・タグ・リンク・自動リンク・フェンスが残らない', liveMarkup(md).length === 0, `${liveMarkup(md)} ${show(md)}`);
+  check('Markdown: 迂回の形でもリンク・画像・参照定義が成立しない（`](`・`]:` が生きて残らず、//bypass.example がリンク先にならない）', liveMarkup(md).length === 0 && md.includes('bypass.example') && md.includes('\\](//bypass.example') && md.includes('\\]: //bypass.example'), show(md));
+  check('Markdown: `_www.` も自動リンクにならない', md.includes(`_www\u200B.bypass.example`), show(md));
   check('Markdown: 隠し文（HTML コメントの中身）とリンク先を除く', !md.includes('隠し') && !md.includes('evil.example/x') && !md.includes('i.png'), show(md));
   check('Markdown: リンクの表示文字・メンションの名前は読める形で残る', md.includes('リンク') && md.includes('画像') && md.includes('victim') && md.includes('org/team'), show(md));
   check('Markdown: 文字参照のメンション（&#64;）も働かない', md.includes('&amp;#'), show(md));
@@ -401,10 +410,13 @@ async function main() {
     title: '@victim の other/repo#1 を直す <!-- 隠し -->',
     type: '機能要件',
     summary: '@org/team に知らせる <b>太字</b> [リンク](https://evil.example/phish)',
-    details: '詳細\n\n<!-- 隠し指示 -->\n```\nフェンスを閉じさせる\n#3 と https://github.com/other/repo/issues/9',
-    acceptanceCriteria: ['@victim', 'other/repo#1', '<!-- c -->', '[a](https://evil.example)', '5', '6', '7'],
+    details:
+      '詳細\n\n<!-- 隠し指示 -->\n```\nフェンスを閉じさせる\n#3 と https://github.com/other/repo/issues/9\n' +
+      '[a [b] c](//bypass.example/x)\n[click\nhere](//bypass.example/x)\n- [ref]: //bypass.example/r\n[a\nb]: //bypass.example/y\n' +
+      '![a\nb](//bypass.example/z) _www.bypass.example/w',
+    acceptanceCriteria: ['[[x]](//bypass.example/p)', '![[x]](//bypass.example/i)', '@victim', 'other/repo#1', '<!-- c -->', '[a](https://evil.example)', '5', '6', '7'],
   };
-  const original = '前半の文\n\n@victim と other/repo#1 <!-- 隠し --> [リンク](https://evil.example)\n> 引用を抜ける\n```` で閉じさせる';
+  const original = '前半の文\n\n@victim と other/repo#1 <!-- 隠し --> [リンク](https://evil.example)\n> 引用を抜ける\n```` で閉じさせる\n[click\nhere](//bypass.example/x)';
   r = await send({ userId: 'U_hostile', body: original, logBody: false });
   check('Issue を作る', created(r), detail(r));
   post = githubPosts[githubPosts.length - 1];
@@ -413,6 +425,7 @@ async function main() {
   check('元の本文のフェンスは、本文中の最長の連続（4）より長い', parts?.fence === '`````', parts?.fence);
   check('コードブロックの外に、メンション・参照・コメント・タグ・リンク・自動リンク・フェンスが残らない', parts && liveMarkup(parts.outside).length === 0, `${parts && liveMarkup(parts.outside)} ${show(parts?.outside)}`);
   check('コードブロックの外に、隠し文とリンク先を残さない', parts && !parts.outside.includes('隠し') && !parts.outside.includes('evil.example'), show(parts?.outside));
+  check('コードブロックの外で、迂回の形のリンク・画像・参照定義が成立しない（Gemini の詳細・受け入れ条件）', parts && parts.outside.includes('bypass.example') && liveMarkup(parts.outside).length === 0, show(parts?.outside));
   check('受け入れ条件は 5 個まで', (parts?.outside.match(/^- \[ \] /gm) || []).length === 5, show(parts?.outside));
   check('タイトルも無害化する', liveMarkup(post.body.title).length === 0 && !post.body.title.includes('隠し'), show(post.body.title));
   check('ラベルは固定のまま', JSON.stringify(post.body.labels) === JSON.stringify(['user-feedback', '機能要件']), JSON.stringify(post.body.labels));
