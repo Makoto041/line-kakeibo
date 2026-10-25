@@ -384,6 +384,10 @@ async function main() {
   check('タイトル: メンション・参照・コメント・タグ・リンク先が残らない', liveMarkup(title).length === 0 && !title.includes('隠し') && !title.includes('evil') && title.includes('直す'), show(title));
   check(`タイトル: ${ISSUE_TITLE_MAX_LENGTH} 文字前後で切る（ゼロ幅スペースを除いて）`, Array.from(title.replace(/\u200B/g, '')).length === ISSUE_TITLE_MAX_LENGTH, show(title));
   check('タイトル: 無害化して空なら固定のタイトル', sanitizeIssueTitle('<!-- だけ -->') === 'LINE からのフィードバック');
+  const nestedTitle = sanitizeIssueTitle('<scr<b>ipt>alert(1)</scr</b>ipt> と <!<!---->-- 隠し');
+  check('タイトル: 除いた跡から新しいタグ・コメントができない（<scr<b>ipt>・<!<!---->--）', liveMarkup(nestedTitle).length === 0 && !nestedTitle.includes('隠し'), show(nestedTitle));
+  const nestedMd = sanitizeIssueMarkdown('<scr<b>ipt>alert(1)</scr</b>ipt> と <!<!---->-- 隠し', 200, { multiline: true });
+  check('Markdown: 除いた跡から新しいタグ・コメントができない', !nestedMd.includes('script') && !nestedMd.includes('隠し'), show(nestedMd));
 
   const fenced = fencedOriginalText('a ```` b\n\n@victim');
   check('元の本文: フェンスは本文中のバッククォートの最長の連続より長い', fenced.startsWith('`````text\n') && fenced.endsWith('\n`````'), show(fenced));

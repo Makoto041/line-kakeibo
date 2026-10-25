@@ -141,14 +141,23 @@ function truncateChars(text: string, max: number): string {
   return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text;
 }
 
-/** HTML コメント・HTML タグ・Markdown のリンク先（リンクと画像は表示する文字だけ残す）・参照リンクの定義を取り除く */
+/**
+ * HTML コメント・HTML タグ・Markdown のリンク先（リンクと画像は表示する文字だけ残す）・参照リンクの定義を取り除く
+ *
+ * 1 回の置換では、除いた跡から新しいタグやコメントができる（`<scr<b>ipt>` → `<script>`、`<!<!---->--` → `<!--`）ので、
+ * 変わらなくなるまで繰り返す（置換のたびに短くなるので必ず止まる）。
+ */
 function stripHiddenMarkup(text: string): string {
-  return text
-    .replace(/\r\n?/g, '\n')
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, '') // 閉じていないコメントは末尾まで
-    .replace(/!?\[([^\]\n]*)\]\([^)\n]*\)?/g, '$1')
-    .replace(/^[ \t]*\[[^\]\n]*\]:.*$/gm, '')
-    .replace(/<\/?[A-Za-z][^<>]*>/g, ''); // <https://…> の自動リンクも含む
+  let current = text.replace(/\r\n?/g, '\n');
+  let previous: string;
+  do {
+    previous = current;
+    current = current.replace(/<!--[\s\S]*?(?:-->|$)/g, ''); // 閉じていないコメントは末尾まで
+    current = current.replace(/!?\[([^\]\n]*)\]\([^)\n]*\)?/g, '$1');
+    current = current.replace(/^[ \t]*\[[^\]\n]*\]:.*$/gm, '');
+    current = current.replace(/<\/?[A-Za-z][^<>]*>/g, ''); // <https://…> の自動リンクも含む
+  } while (current !== previous);
+  return current;
 }
 
 /** メンション（@user・@org/team・owner/repo@sha）・Issue の参照（#1・owner/repo#1・GH-1）・自動リンク（https://・www.）を切る */
