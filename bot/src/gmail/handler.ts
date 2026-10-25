@@ -184,7 +184,7 @@ export function firstFailedAtOf(previous: unknown, now: Date): Date {
 /**
  * Pub/Sub の通知が古すぎて捨てるか（`STALE_GMAIL_EVENT_MS` より古い）
  *
- * @param eventTime CloudEvent の time（Pub/Sub の publish 時刻。再送でも変わらない）
+ * @param eventTime Pub/Sub のメッセージの publishTime（RFC 3339。再送でも変わらない。index.ts は無いときだけ CloudEvent の time を渡す）
  * 時刻が読めないときは捨てない（処理しても取りこぼし・二重登録は起きないので、処理する側に倒す）。
  */
 export function isStaleGmailEvent(eventTime: string | undefined, now: Date): boolean {

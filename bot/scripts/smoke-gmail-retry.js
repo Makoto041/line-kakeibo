@@ -5,7 +5,7 @@
  * - firstFailedAtOf: 失敗の記録に入れる最初の失敗の時刻（firstFailedAt を引き継ぐ。無い記録は lastFailedAt で代用）
  * - isStaleGmailEvent: 12 時間より古い Pub/Sub の通知を捨てるか
  * - 関数の設定: gmailPubSubHandler の retry: true・timeoutSeconds: 300、renewGmailWatch の retryCount: 2
- * - gmailPubSubHandler が 12 時間より古い通知を取込に渡さず成功で返すこと（取込は偽物）
+ * - gmailPubSubHandler が publishTime（無ければ CloudEvent の time）から 12 時間より古い通知を取込に渡さず成功で返すこと（取込は偽物）
  *
  * 取込の流れの中での確かめ（404 の読み飛ばし・firstFailedAt の保存・諦め）は smoke-expense-card.js（偽物）と
  * emulator-gmail-card-notice.js（Firestore エミュレータ）。
@@ -82,7 +82,7 @@ check('数秒前 → 捨てない', isStaleGmailEvent(eventAt(5000), now) === fa
 check('時刻が不正な文字列 → 捨てない（処理する）', isStaleGmailEvent('not-a-time', now) === false);
 check('時刻が無い（undefined）→ 捨てない', isStaleGmailEvent(undefined, now) === false);
 check('時刻が文字列でない → 捨てない', isStaleGmailEvent(12345, now) === false);
-check('CloudEvent の time の形（ナノ秒の小数）も読む', isStaleGmailEvent('2026-10-25T23:59:00.123456789Z', now) === true);
+check('ナノ秒の小数の付いた RFC 3339（Pub/Sub の publishTime の形）も読む', isStaleGmailEvent('2026-10-25T23:59:00.123456789Z', now) === true);
 
 console.log('\n[関数の設定と古い通知の扱い（dist/index.js）]');
 // index.js は読み込むと dotenv と Firebase Admin の初期化が走るので、.env の無いディレクトリで別のプロセスにする
@@ -98,18 +98,26 @@ const probe = spawnSync(
      handler.handleGmailPubSub = async (data) => { handled.push(data); };
      const g = m.gmailPubSubHandler.__endpoint;
      const w = m.renewGmailWatch.__endpoint;
-     const event = (ageMs, data) => ({ time: new Date(Date.now() - ageMs).toISOString(), data: { message: { data } } });
+     const at = (ageMs) => (ageMs === null ? undefined : new Date(Date.now() - ageMs).toISOString());
+     // publishAgeMs: メッセージの publishTime（null なら無し）、timeAgeMs: CloudEvent の time
+     const event = (publishAgeMs, timeAgeMs, data) => ({ time: at(timeAgeMs), data: { message: { data, publishTime: at(publishAgeMs) } } });
+     const H = 3600 * 1000;
      (async () => {
        const warns = [];
        const warn = console.warn;
        console.warn = (...args) => warns.push(args);
        let staleError = null;
        try {
-         await m.gmailPubSubHandler.run(event(13 * 3600 * 1000, 'stale'));
+         // 再送で time が新しくても、publishTime が 13 時間前なら捨てる
+         await m.gmailPubSubHandler.run(event(13 * H, 0, 'stale'));
+         // publishTime が無ければ time で測る
+         await m.gmailPubSubHandler.run(event(null, 13 * H, 'stale-time-only'));
        } catch (e) {
          staleError = String(e);
        }
-       await m.gmailPubSubHandler.run(event(60 * 1000, 'fresh'));
+       await m.gmailPubSubHandler.run(event(60 * 1000, 60 * 1000, 'fresh'));
+       // publishTime が新しければ、time が古くても処理する
+       await m.gmailPubSubHandler.run(event(60 * 1000, 13 * H, 'fresh-publish'));
        console.warn = warn;
        process.stdout.write('\\nENDPOINTS ' + JSON.stringify({
          retry: g.eventTrigger.retry,
@@ -139,16 +147,25 @@ if (endpoints) {
   );
   check('renewGmailWatch: retryCount: 2', endpoints.renewRetry && endpoints.renewRetry.retryCount === 2, endpoints);
   check(
-    'gmailPubSubHandler: 13 時間前の通知は取込を呼ばずに成功で返す（投げない＝再送を止める）',
+    'gmailPubSubHandler: publishTime が 13 時間前の通知は、time が今でも取込を呼ばずに成功で返す（投げない＝再送を止める）',
     endpoints.staleError === null && !endpoints.handled.includes('stale'),
     endpoints
   );
   check(
-    'gmailPubSubHandler: 古い通知を捨てたら固定文の警告を出す',
-    endpoints.warns.length === 1 && endpoints.warns[0].length === 1 && /older than 12 hours/.test(endpoints.warns[0][0]),
+    'gmailPubSubHandler: publishTime が無ければ time（13 時間前）で測って捨てる',
+    endpoints.staleError === null && !endpoints.handled.includes('stale-time-only'),
+    endpoints
+  );
+  check(
+    'gmailPubSubHandler: 古い通知を捨てたら固定文の警告を出す（2 回）',
+    endpoints.warns.length === 2 && endpoints.warns.every((w) => w.length === 1 && /older than 12 hours/.test(w[0])),
     endpoints.warns
   );
-  check('gmailPubSubHandler: 1 分前の通知は取込に渡す', JSON.stringify(endpoints.handled) === JSON.stringify(['fresh']), endpoints.handled);
+  check(
+    'gmailPubSubHandler: publishTime が 1 分前なら（time が古くても）取込に渡す',
+    JSON.stringify(endpoints.handled) === JSON.stringify(['fresh', 'fresh-publish']),
+    endpoints.handled
+  );
 }
 
 console.log(failed === 0 ? '\nすべて通過' : `\n${failed} 件失敗`);

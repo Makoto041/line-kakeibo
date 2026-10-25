@@ -139,7 +139,9 @@ export const gmailPubSubHandler = onMessagePublished(
     ],
   },
   async (event) => {
-    if (isStaleGmailEvent(event.time, new Date())) {
+    // 古さは Pub/Sub の publishTime（publish したときに Pub/Sub が付け、再送でも変わらない）で測る。
+    // CloudEvent の time は Eventarc の文書では「イベントの生成時刻」で、publish 時刻と同じかを確かめられないため、無いときだけ使う
+    if (isStaleGmailEvent(event.data.message.publishTime || event.time, new Date())) {
       console.warn("Gmail Pub/Sub event is older than 12 hours; dropping it (the next notification processes the range)");
       return;
     }
