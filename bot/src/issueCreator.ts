@@ -24,6 +24,22 @@ export interface IssueCreationResult {
 const GITHUB_REPO = 'Makoto041/line-kakeibo';
 
 /**
+ * フィードバックの本文の上限（文字数。#260）
+ *
+ * 本文は全文を Gemini のプロンプトに入れ、公開リポジトリの Issue に載せる。長い本文で分類と同じ Gemini の無料枠を
+ * 使い切らないよう、超えたら切らずに受け付けない（Gemini も GitHub も呼ばない）。
+ */
+export const FEEDBACK_MAX_LENGTH = 1000;
+
+/** 本文の文字数（コードポイント単位。絵文字も 1 文字と数える） */
+export function feedbackLength(text: string): number {
+  return Array.from(text).length;
+}
+
+/** 本文が上限を超えたときの返信 */
+export const FEEDBACK_TOO_LONG_MESSAGE = `内容が長すぎます。${FEEDBACK_MAX_LENGTH.toLocaleString('ja-JP')} 文字以内で送ってください。`;
+
+/**
  * Gemini APIでユーザーフィードバックを分析してIssue情報を生成する
  */
 export async function analyzeFeedbackWithGemini(
@@ -126,10 +142,17 @@ function buildIssueBody(analysis: FeedbackAnalysis, originalText: string): strin
 
 /**
  * ユーザーフィードバックからGitHub Issueを作成する
+ *
+ * 送れる人（世帯のメンバー）と件数の制限は呼び出し側（line/commands/feedback.ts）で行う。
+ * 本文の長さはここでも確かめ、上限を超えたら Gemini も GitHub も呼ばない。
  */
 export async function createIssueFromFeedback(
   feedbackText: string
 ): Promise<IssueCreationResult> {
+  if (feedbackLength(feedbackText) > FEEDBACK_MAX_LENGTH) {
+    return { success: false, message: FEEDBACK_TOO_LONG_MESSAGE };
+  }
+
   const githubToken = process.env.GITHUB_TOKEN;
   if (!githubToken) {
     console.warn('GITHUB_TOKEN not found in environment variables');
