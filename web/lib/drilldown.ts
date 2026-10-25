@@ -1,55 +1,20 @@
 // 内訳（合計 → カテゴリ → 中項目 / 支払い者 → 明細）の純関数。
 // ホームのカテゴリ別カード・精算の金額タイルから開く内訳シート（components/drilldown/DrillSheet.tsx）が使う。
 // 読み込み済みの明細から計算するだけで、Firestore を追加で読まない。
-// node --test から直接読めるよう、他のモジュールからは型だけを import する。
+// node --test から直接読めるよう、他のモジュールからは型だけを import する
+// （中項目の一覧〔categoryTaxonomy.ts の subCategoriesOf〕も、toDrillItems の引数で受ける）。
 import type { Expense } from './hooks';
 
-/**
- * 中項目の一覧（#235）。bot/src/categoryTaxonomy.ts の SUB_CATEGORIES の写し
- * （一致することは __tests__/drilldown.test.mjs で確かめる）。
- * 一覧にない値を「その他の…」（各一覧の最後）に寄せるためだけに持つ。
- * 大項目は正準名の完全一致で引く（bot と同じく、部分一致・別名では寄せない）。
- */
-export const SUB_CATEGORIES: Readonly<Record<string, readonly string[]>> = {
-  食費: [
-    '食料品（スーパー）',
-    '外食',
-    '朝ご飯',
-    '昼ご飯',
-    '夜ご飯',
-    'カフェ',
-    'コンビニ',
-    '自販機',
-    'デリバリー・テイクアウト',
-    'その他の食費',
-  ],
-  娯楽: [
-    '映画',
-    '銭湯・サウナ',
-    'スポーツ・アウトドア',
-    'ゲーム・課金',
-    '本・漫画',
-    '音楽・ライブ',
-    'レジャー・テーマパーク',
-    'その他の娯楽',
-  ],
-};
-
-/** 中項目の一覧がある大項目で、中項目が付いていないもの */
+/** 中項目の一覧がある大項目（食費・娯楽）で、中項目が付いていないもの */
 export const NO_SUB_CATEGORY = '中項目なし';
 
-/** 大項目の中項目の一覧（無ければ空） */
-export function subCategoriesOf(category: string): readonly string[] {
-  return Object.prototype.hasOwnProperty.call(SUB_CATEGORIES, category) ? SUB_CATEGORIES[category] : [];
-}
-
 /**
- * 内訳でまとめる中項目。一覧の無い大項目は undefined（中項目の段を出さない）。
- * 一覧にある値はそのまま、一覧にない値（Web で入れた値など）は「その他の…」、空・文字列でないものは「中項目なし」。
+ * 内訳でまとめる中項目。list はその大項目の中項目の一覧（categoryTaxonomy.ts の subCategoriesOf(大項目)）。
+ * 一覧の無い大項目（list が空）は undefined（中項目の段を出さない）。
+ * 一覧にある値はそのまま、一覧にない値（Web で入れた値など）は「その他の…」（一覧の最後）、空・文字列でないものは「中項目なし」。
  * Firestore の値は信用せず、画面には一覧の名前か「中項目なし」だけを出す
  */
-export function subCategoryKey(category: string, subCategory: unknown): string | undefined {
-  const list = subCategoriesOf(category);
+export function subCategoryKey(list: readonly string[], subCategory: unknown): string | undefined {
   if (list.length === 0) return undefined;
   const value = typeof subCategory === 'string' ? subCategory.trim() : '';
   if (!value) return NO_SUB_CATEGORY;
@@ -80,7 +45,7 @@ export interface DrillItem {
 /**
  * 明細から内訳の行を作る。期間（range）外のものは除く。
  * 合計に含むかどうか・支払い者の決め方は画面ごとに違う（ホームは支払い者名、精算は lineId）ので渡してもらう。
- * 要確認の判定は expenseState の isPending を渡す
+ * 要確認の判定は expenseState の isPending、中項目の一覧は categoryTaxonomy の subCategoriesOf を渡す
  */
 export function toDrillItems(
   expenses: readonly Expense[],
@@ -89,6 +54,7 @@ export function toDrillItems(
     included: (e: Expense) => boolean;
     payer: (e: Expense) => { key: string; name: string };
     pending: (e: Expense) => boolean;
+    subCategoriesOf: (category: string) => readonly string[];
   }
 ): DrillItem[] {
   const out: DrillItem[] = [];
@@ -102,7 +68,7 @@ export function toDrillItems(
       date: e.date,
       description: e.description || '',
       category,
-      subCategory: subCategoryKey(category, e.subCategory),
+      subCategory: subCategoryKey(opts.subCategoriesOf(category), e.subCategory),
       amount: Number.isFinite(amount) ? amount : 0,
       payerKey: payer.key,
       payerName: payer.name,

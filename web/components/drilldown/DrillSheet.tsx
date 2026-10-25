@@ -196,7 +196,17 @@ export default function DrillSheet({ initial, items, range, prevCategoryTotals, 
     return (key: string, label: string) => map.get(key) ?? payerColor(label, map.size);
   }, [items]);
 
-  const push = (next: DrillView) => setStack((s) => [...s, next]);
+  // 次の階層へ進むときは、その深さから先で選んだ内訳の軸を忘れる（食費で選んだ「支払い者」を、戻って開いた娯楽に持ち越さない）。
+  // パンくず・戻るで戻った階層の軸は残す
+  const push = (next: DrillView) => {
+    const at = depth + 1;
+    setDims((m) => {
+      const kept: Record<number, DrillDim> = {};
+      for (const [k, d] of Object.entries(m)) if (Number(k) < at) kept[Number(k)] = d;
+      return kept;
+    });
+    setStack((s) => [...s, next]);
+  };
   const goTo = (index: number) => setStack((s) => s.slice(0, index + 1));
 
   // 精算のカード（.glass）の中から開いても画面全体を覆うよう、body 直下に描く

@@ -7,6 +7,7 @@ import dayjs from 'dayjs';
 import { ArrowLeftRight, ArrowRight, ChevronLeft, ChevronRight, Loader2, Scale } from 'lucide-react';
 import DrillSheet, { type DrillView } from './drilldown/DrillSheet';
 import { CARD_PAYER_NAME, SHARED_PAYER_NAME, toDrillItems } from '../lib/drilldown';
+import { subCategoriesOf } from '../lib/categoryTaxonomy';
 import { GMAIL_SYSTEM_LINE_ID, RECURRING_SYSTEM_LINE_ID, isPending, resolvePayerName } from '../lib/expenseState';
 import { collectHistoricalUsers } from '../lib/expenseEdit';
 import { useExpenses, type HouseholdMember } from '../lib/hooks';
@@ -104,6 +105,7 @@ export default function PeriodSplitCard({ lineId, groupId, members, collectFrom,
           return { key, name };
         },
         pending: isPending,
+        subCategoriesOf,
       }
     );
   }, [expenses, groupId, members, range]);

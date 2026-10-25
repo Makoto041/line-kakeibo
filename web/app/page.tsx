@@ -18,6 +18,7 @@ import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses } from '../l
 import { countPending, isPending, resolvePayerName } from '../lib/expenseState';
 import { collectHistoricalUsers } from '../lib/expenseEdit';
 import { toDrillItems } from '../lib/drilldown';
+import { subCategoriesOf } from '../lib/categoryTaxonomy';
 import { normalizeCategoryName } from '../lib/categoryNormalization';
 import DrillSheet, { type DrillView } from '../components/drilldown/DrillSheet';
 import { CategoryBreakdownCard } from '../components/home/CategoryBreakdownCard';
@@ -131,6 +132,7 @@ export default function Dashboard() {
         return { key: name, name };
       },
       pending: isPending,
+      subCategoriesOf,
     });
     // effectiveRange は描画ごとに作り直されるので、両端の日付で比べる
     // eslint-disable-next-line react-hooks/exhaustive-deps

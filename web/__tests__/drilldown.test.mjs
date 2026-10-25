@@ -1,7 +1,6 @@
 // 内訳（lib/drilldown.ts）の純関数のテスト。node --test で実行する（型除去で .ts を直接読む）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 
 import {
   toDrillItems,
@@ -16,15 +15,15 @@ import {
   weeklyTotals,
   payerColor,
   inputSourceLabel,
-  subCategoriesOf,
   subCategoryKey,
   CARD_PAYER_NAME,
   SHARED_PAYER_NAME,
   NO_SUB_CATEGORY,
-  SUB_CATEGORIES,
 } from '../lib/drilldown.ts';
 import { isPending } from '../lib/expenseState.ts';
 import { yen } from '../lib/money.ts';
+// 中項目の一覧（bot の一覧との一致は categoryTaxonomy.test.mjs で確かめる）
+import { subCategoriesOf } from '../lib/categoryTaxonomy.ts';
 
 const RANGE = { startDate: '2026-09-15', endDate: '2026-10-14' };
 const e = (id, amount, extra = {}) => ({
@@ -55,7 +54,7 @@ const expenses = [
   // 期間外
   e('g', 99999, { date: '2026-10-15' }),
 ];
-const items = toDrillItems(expenses, { range: RANGE, included: (x) => x.includeInTotal, payer, pending: isPending });
+const items = toDrillItems(expenses, { range: RANGE, included: (x) => x.includeInTotal, payer, pending: isPending, subCategoriesOf });
 const included = items.filter((i) => i.included);
 
 test('toDrillItems: 期間外を除き、合計に含むか・支払い者・要確認を付ける', () => {
@@ -141,47 +140,25 @@ test('payerColor / inputSourceLabel', () => {
 
 // ---- 中項目（#235） ----
 
-test('中項目の一覧: bot/src/categoryTaxonomy.ts の SUB_CATEGORIES と同じ（大項目・中項目・並び）', () => {
-  // bot は CommonJS で拡張子なしの import を使うため直接は読めない。ソースから一覧の部分だけを取り出して比べる
-  const src = readFileSync(new URL('../../bot/src/categoryTaxonomy.ts', import.meta.url), 'utf8');
-  const start = src.indexOf('export const SUB_CATEGORIES:');
-  assert.ok(start >= 0, 'bot の SUB_CATEGORIES が見つからない');
-  const block = src.slice(start, src.indexOf('\n};', start));
-  const bot = {};
-  let major = null;
-  for (const line of block.split('\n')) {
-    const head = line.match(/^ {2}'?([^'\s:]+)'?: \[/);
-    if (head) {
-      major = head[1];
-      bot[major] = [];
-      continue;
-    }
-    const name = line.match(/^ {4}'([^']+)',?$/);
-    if (name && major) bot[major].push(name[1]);
-  }
-  assert.deepEqual(bot, { ...SUB_CATEGORIES });
-  // 一覧にない値を寄せる先（各一覧の最後）は「その他の<大項目>」
-  for (const [m, list] of Object.entries(SUB_CATEGORIES)) assert.equal(list[list.length - 1], `その他の${m}`);
-});
-
 test('subCategoryKey: 一覧の値はそのまま、一覧にない値は「その他の…」、空は「中項目なし」、一覧の無い大項目は無し', () => {
-  assert.equal(subCategoryKey('食費', '昼ご飯'), '昼ご飯');
-  assert.equal(subCategoryKey('食費', ' 昼ご飯 '), '昼ご飯');
-  assert.equal(subCategoryKey('娯楽', 'スポーツ・アウトドア'), 'スポーツ・アウトドア');
-  // 一覧にない値（Web で入れた値・別の大項目の中項目・「中項目なし」という文字列）
-  assert.equal(subCategoryKey('食費', 'おやつ'), 'その他の食費');
-  assert.equal(subCategoryKey('食費', '映画'), 'その他の食費');
-  assert.equal(subCategoryKey('食費', NO_SUB_CATEGORY), 'その他の食費');
-  assert.equal(subCategoryKey('娯楽', 'ボルダリング'), 'その他の娯楽');
-  assert.equal(subCategoryKey('食費', 'あ'.repeat(10000)), 'その他の食費');
+  const key = (category, value) => subCategoryKey(subCategoriesOf(category), value);
+  assert.equal(key('食費', '昼ご飯'), '昼ご飯');
+  assert.equal(key('食費', ' 昼ご飯 '), '昼ご飯');
+  assert.equal(key('娯楽', 'スポーツ・アウトドア'), 'スポーツ・アウトドア');
+  // 一覧にない値（Web で入れた値・別の大項目の中項目・「中項目なし」という文字列）は、一覧の最後の「その他の…」
+  assert.equal(key('食費', 'おやつ'), 'その他の食費');
+  assert.equal(key('食費', '映画'), 'その他の食費');
+  assert.equal(key('食費', NO_SUB_CATEGORY), 'その他の食費');
+  assert.equal(key('娯楽', 'ボルダリング'), 'その他の娯楽');
+  assert.equal(key('食費', 'あ'.repeat(10000)), 'その他の食費');
   // 空・文字列でない
-  for (const v of [undefined, null, '', '   ', 123, {}, ['昼ご飯']]) assert.equal(subCategoryKey('食費', v), NO_SUB_CATEGORY);
+  for (const v of [undefined, null, '', '   ', 123, {}, ['昼ご飯']]) assert.equal(key('食費', v), NO_SUB_CATEGORY);
   // 一覧の無い大項目（値があっても使わない）・正準名でない名前
-  assert.equal(subCategoryKey('日用品', '洗剤'), undefined);
-  assert.equal(subCategoryKey('日用品', undefined), undefined);
-  assert.equal(subCategoryKey('外食', '昼ご飯'), undefined);
-  assert.equal(subCategoryKey('__proto__', '昼ご飯'), undefined);
-  assert.deepEqual(subCategoriesOf('constructor'), []);
+  assert.equal(key('日用品', '洗剤'), undefined);
+  assert.equal(key('日用品', undefined), undefined);
+  assert.equal(key('外食', '昼ご飯'), undefined);
+  assert.equal(key('__proto__', '昼ご飯'), undefined);
+  assert.equal(key('constructor', '昼ご飯'), undefined);
 });
 
 const SUB_RANGE = { startDate: '2026-09-15', endDate: '2026-10-31' };
@@ -202,7 +179,13 @@ const subExpenses = [
   e('m2', 1000, { category: '娯楽' }),
   e('t1', 3000, { category: '交通費' }),
 ];
-const subItems = toDrillItems(subExpenses, { range: SUB_RANGE, included: (x) => x.includeInTotal, payer, pending: isPending });
+const subItems = toDrillItems(subExpenses, {
+  range: SUB_RANGE,
+  included: (x) => x.includeInTotal,
+  payer,
+  pending: isPending,
+  subCategoriesOf,
+});
 const subIncluded = subItems.filter((i) => i.included);
 const FOOD = { category: '食費' };
 const foodItems = subIncluded.filter((i) => matchesDrill(i, FOOD));
@@ -217,6 +200,16 @@ test('toDrillItems: 中項目を subCategoryKey で付ける（一覧の無い�
   assert.equal(sub.m2, NO_SUB_CATEGORY);
   assert.equal(sub.p1, undefined);
   assert.equal(sub.t1, undefined);
+  // 大項目ごとの一覧は渡された関数で引く（一覧が無ければ中項目は付けない）
+  const seen = new Set();
+  const none = toDrillItems(subExpenses, {
+    included: () => true,
+    payer,
+    pending: isPending,
+    subCategoriesOf: (c) => (seen.add(c), []),
+  });
+  assert.ok(none.every((i) => i.subCategory === undefined));
+  assert.deepEqual([...seen].sort(), ['交通費', '娯楽', '日用品', '食費'].sort());
 });
 
 test('groupDrill(subCategory): 金額の多い順、「中項目なし」は金額にかかわらず最後、一覧にない値は「その他の食費」', () => {
