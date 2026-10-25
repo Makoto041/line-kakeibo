@@ -10,6 +10,9 @@
  * - 送り直しても二重に届かないよう、メッセージごとに決まる X-Line-Retry-Key を付ける（LINE が受け付け済みなら 409）。
  *   この key は 24 時間しか効かないため、23 時間を過ぎた印は送らずに消す（二重に届くより、届かない方を選ぶ）。
  * - 印の無い既存の支出には送らない（この仕組みより前の支出のカードが一斉に送り直されないように）。
+ * - 再処理されなくなったメール（3 回失敗して諦めた・historyId が古すぎて先へ飛ばした）の印は消す（discardCardNotices）。
+ *   印には店名・金額・日付が入るため。消し損ねた印も expireAt を過ぎたら Firestore の TTL で消える（TTL ポリシーは運用で設定する。
+ *   未設定でも動作は変わらない。docs/GMAIL_AUTO_SPEC.md §5.4）。
  */
 
 import { createHash } from 'node:crypto';
@@ -17,12 +20,15 @@ import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import type { DocumentReference } from 'firebase-admin/firestore';
 import { sendCardUsageNotification } from '../line/flexMessage';
 import type { CardUsageInfo } from '../line/flexMessage';
-import { errorMessage, maskId } from '../logSafe';
+import { maskId } from '../logSafe';
 
 export const CARD_NOTICE_PREFIX = 'gmailCardNotice_';
 
 /** これより古い印は送らない（X-Line-Retry-Key が効くのは 24 時間。settlementSummary.ts の summaryRetryKey と同じ前提） */
 export const CARD_NOTICE_MAX_AGE_MS = 23 * 60 * 60 * 1000;
+
+/** 印の expireAt（作ってからこの時間で TTL の削除対象にする。送らなくなる 23 時間より後） */
+export const CARD_NOTICE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** 印に持つ値 */
 export interface CardNotice {
@@ -31,7 +37,12 @@ export interface CardNotice {
   /** 送るはずだったカード（undefined の項目は持たない） */
   card: CardUsageInfo;
   createdAt: Timestamp;
+  /** Firestore の TTL で消す時刻（createdAt + 24 時間） */
+  expireAt: Timestamp;
 }
+
+/** 再処理されなくなった理由。abandoned: 3 回失敗して諦めた / history_skipped: historyId が古すぎて先へ飛ばした */
+export type CardNoticeDiscardReason = 'abandoned' | 'history_skipped';
 
 /**
  * 印を見た結果。none: 印が無い / expired: 古すぎて送らずに消した / deleted: 支出が消されていたので送らずに消した /
@@ -63,15 +74,19 @@ export function cardNoticeFor(
 ): { ref: DocumentReference; build: (expenseId: string) => CardNotice } {
   return {
     ref: cardNoticeRef(messageId),
-    build: (expenseId) => ({
-      expenseId,
-      lineGroupId,
-      // Firestore は undefined の値を書けない（categoryOrigin などは無いことがある）
-      card: Object.fromEntries(
-        Object.entries({ ...card, expenseId }).filter(([, value]) => value !== undefined)
-      ) as unknown as CardUsageInfo,
-      createdAt: Timestamp.now(),
-    }),
+    build: (expenseId) => {
+      const createdAt = Timestamp.now();
+      return {
+        expenseId,
+        lineGroupId,
+        // Firestore は undefined の値を書けない（categoryOrigin などは無いことがある）
+        card: Object.fromEntries(
+          Object.entries({ ...card, expenseId }).filter(([, value]) => value !== undefined)
+        ) as unknown as CardUsageInfo,
+        createdAt,
+        expireAt: Timestamp.fromMillis(createdAt.toMillis() + CARD_NOTICE_TTL_MS),
+      };
+    },
   };
 }
 
@@ -80,11 +95,41 @@ function millisOf(value: unknown): number {
   return typeof ts?.toMillis === 'function' ? ts.toMillis() : NaN;
 }
 
+/** ログに出す例外の種類（メッセージには文書のパスなどが入りうるので出さない） */
+function errorFields(error: unknown): { errorName: string; errorCode?: string | number } {
+  const errorName = error instanceof Error ? error.name : typeof error;
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code === 'number' || typeof code === 'string' ? { errorName, errorCode: code } : { errorName };
+}
+
 async function removeNotice(ref: DocumentReference, log: Record<string, string>): Promise<void> {
   // 消せなくても次の処理で同じ key で送り直すだけ（LINE が 409 を返す）なので、警告にとどめる
   await ref.delete().catch((error: unknown) => {
-    console.warn('Gmail card notice: failed to remove the marker', { ...log, error: errorMessage(error) });
+    console.warn('Gmail card notice: failed to remove the marker', { ...log, ...errorFields(error) });
   });
+}
+
+/**
+ * 再処理されなくなったメールの印を消す（送らないことが決まったので、店名・金額・日付を残さない）
+ *
+ * 印があったものは「届かなかった」として警告ログを出す。読めない・消せないときも警告だけで、取込は止めない（投げない）。
+ */
+export async function discardCardNotices(
+  messageIds: readonly string[],
+  reason: CardNoticeDiscardReason
+): Promise<void> {
+  for (const messageId of new Set(messageIds)) {
+    const log = { message: maskId(messageId), reason };
+    try {
+      const ref = cardNoticeRef(messageId);
+      const snapshot = await ref.get();
+      if (!snapshot.exists) continue;
+      await ref.delete();
+      console.warn('Gmail card notice discarded; the card was not delivered', log);
+    } catch (error) {
+      console.warn('Gmail card notice: failed to discard the marker', { ...log, ...errorFields(error) });
+    }
+  }
 }
 
 /**

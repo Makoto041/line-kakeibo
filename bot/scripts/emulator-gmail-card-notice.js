@@ -62,10 +62,19 @@ let historyMessageIds = [];
 const mails = {};
 const cardMail = (dateTime, merchant, amount) =>
   ['【ご利用のお知らせ】', `ご利用日時：${dateTime}`, `ご利用店名：${merchant}`, `ご利用金額：${amount}円`, '三井住友ゴールドＶＩＳＡ（ＮＬ）'].join('\n');
+/** 次の history.list で投げる例外（historyId が古すぎる 404 など） */
+let historyError = null;
 gmailAuth.getGmailClient = async () => ({
   users: {
     history: {
-      list: async () => ({ data: { history: [{ messagesAdded: historyMessageIds.map((id) => ({ message: { id } })) }] } }),
+      list: async () => {
+        if (historyError) {
+          const error = historyError;
+          historyError = null;
+          throw error;
+        }
+        return { data: { history: [{ messagesAdded: historyMessageIds.map((id) => ({ message: { id } })) }] } };
+      },
     },
     messages: {
       get: async ({ id }) => ({
@@ -114,11 +123,17 @@ const pushes = [];
 const accepted = new Set();
 /** 次の push だけの振る舞い。'fail': 500 で失敗 / 'acceptThenLose': LINE は受け付けたが応答が届かない */
 let nextPush = null;
+/** この回数だけ、続けて 500 で失敗する */
+let failNextPushes = 0;
 lineClient.getLineClient = () => ({
   pushMessage: async (request, retryKey) => {
     pushes.push({ to: request.to, retryKey, messages: request.messages });
     const mode = nextPush;
     nextPush = null;
+    if (failNextPushes > 0) {
+      failNextPushes--;
+      throw Object.assign(new Error('LINE 500'), { status: 500 });
+    }
     if (mode === 'fail') throw Object.assign(new Error('LINE 500'), { status: 500 });
     if (retryKey && accepted.has(retryKey)) throw Object.assign(new Error('LINE 409'), { status: 409 });
     if (retryKey) accepted.add(retryKey);
@@ -228,6 +243,11 @@ async function pubsub(ids) {
         notice.get('card.categoryOrigin') === 'jev' &&
         notice.get('card.expenseId') === expenses[0].id &&
         typeof notice.get('createdAt').toMillis === 'function',
+      notice.data()
+    );
+    check(
+      '印の expireAt（TTL）は createdAt + 24 時間',
+      notice.exists && notice.get('expireAt').toMillis() - notice.get('createdAt').toMillis() === 24 * 60 * 60 * 1000,
       notice.data()
     );
     check('LINE には届いていない', !accepted.has(cardNoticeRetryKey(id)));
@@ -358,6 +378,45 @@ async function pubsub(ids) {
     check('force-process の新規保存で push に失敗: success: false・支出 1 件・印が残る', first.success === false && (await expensesOf(id2)).length === 1 && (await noticeOf(id2)).exists, first);
     const second = await quiet(() => forceProcessMessage(id2));
     check('もう一度呼ぶと送り直す（cardNotice: sent）', second.success && second.cardNotice === 'sent' && pushesFor(id2).length === 2 && !(await noticeOf(id2)).exists, second);
+  }
+
+  const historyIdNow = async () => (await db.doc('system/gmailState').get()).get('historyId');
+  const discardWarned = () => lastLogs.some((l) => l.startsWith('warn Gmail card notice discarded'));
+
+  console.log('\n[3 回失敗して諦めたら、印を消す（支出は残る）]');
+  {
+    const id = 'msg-abandon-0013';
+    mails[id] = cardMail('2026/10/25 12:00', '諦める店', 1330);
+    failNextPushes = 3;
+    const r1 = await quiet(() => pubsub([id]));
+    const r2 = await quiet(() => pubsub([id]));
+    check('1・2 回目は失敗として投げ、印が残る', r1 instanceof Error && r2 instanceof Error && (await noticeOf(id)).exists, [String(r1), String(r2)]);
+    const historyBefore = await historyIdNow();
+    const r3 = await quiet(() => pubsub([id]));
+    check('3 回目は諦めて投げない（historyId を進める）', r3 === 'ok' && (await historyIdNow()) !== historyBefore, String(r3));
+    check('諦めたメールの印を消し、届かなかったことを警告する', !(await noticeOf(id)).exists && discardWarned());
+    check('支出は残り（1 件）、カードは届いていない', (await expensesOf(id)).length === 1 && !accepted.has(cardNoticeRetryKey(id)) && pushesFor(id).length === 3);
+    failNextPushes = 0;
+  }
+
+  console.log('\n[historyId が古すぎて先へ飛ばしたら、失敗の記録にあるメールの印を消す]');
+  {
+    const id = 'msg-skip-0014';
+    mails[id] = cardMail('2026/10/25 18:00', '飛ばす店', 1440);
+    nextPush = 'fail';
+    const r = await quiet(() => pubsub([id]));
+    const failures = (await db.doc('system/gmailFailures').get()).data() || {};
+    check('push に失敗し、印と失敗の記録が残る', r instanceof Error && (await noticeOf(id)).exists && failures[id] !== undefined, String(r));
+    // 失敗の記録に無い印（force-process で残ったものなど）は対象にしない
+    const other = 'msg-forceonly-0015';
+    await seedNotice(other, await seedExpense(other, 1550), Timestamp.now());
+    historyError = Object.assign(new Error('Requested entity was not found.'), { code: 404 });
+    const historyBefore = await historyIdNow();
+    const r2 = await quiet(() => pubsub([id]));
+    check('404: 先へ飛ばして投げず（historyId を進める）、送らない', r2 === 'ok' && (await historyIdNow()) !== historyBefore && pushesFor(id).length === 1, String(r2));
+    check('404: 失敗の記録にあるメールの印を消し、警告する', !(await noticeOf(id)).exists && discardWarned());
+    check('404: 失敗の記録に無い印は残す', (await noticeOf(other)).exists);
+    check('404: 支出は残る（1 件）', (await expensesOf(id)).length === 1);
   }
 
   console.log(`\ngmail card notice emulator: ${passed} passed, ${failed} failed`);

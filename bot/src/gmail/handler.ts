@@ -29,7 +29,7 @@ import type { CardUsageInfo, CategoryOrigin } from '../line/flexMessage';
 import { subCategoriesOf } from '../categoryTaxonomy';
 import { resolveSubCategory } from '../subCategoryRules';
 import { errorMessage, maskId } from '../logSafe';
-import { cardNoticeFor, deliverPendingCardNotice } from './cardNotice';
+import { cardNoticeFor, deliverPendingCardNotice, discardCardNotices } from './cardNotice';
 import type { CardNoticeDelivery } from './cardNotice';
 
 // システム用のLINE ID（Gmail自動取得用）
@@ -158,6 +158,17 @@ async function recordMessageFailure(messageId: string, error: unknown): Promise<
   });
 }
 
+/** 失敗の記録にあるメッセージ ID（読めなければ空。呼び出し側の処理は止めない） */
+async function failedMessageIds(): Promise<string[]> {
+  try {
+    const snapshot = await getFirestore().collection('system').doc('gmailFailures').get();
+    return snapshot.exists ? Object.keys(snapshot.data() ?? {}) : [];
+  } catch (error) {
+    console.warn('Failed to read the Gmail failure records', { errorName: error instanceof Error ? error.name : typeof error });
+    return [];
+  }
+}
+
 /** 処理できたメッセージを失敗記録から外す */
 async function clearMessageFailure(messageId: string): Promise<void> {
   const db = getFirestore();
@@ -245,6 +256,8 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
           `${abandonedFailures.join(', ')}. ` +
           'Re-run manually with POST /gmail/force-process/:messageId after fixing the cause.'
       );
+      // もう再処理しないので、送信待ちのカードの印も残さない（店名・金額・日付が残り続けないように。cardNotice.ts）
+      await discardCardNotices(abandonedFailures, 'abandoned');
     }
 
     if (retryableFailures.length > 0) {
@@ -266,6 +279,12 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
           `Skipping to ${newHistoryId}; mail in between is NOT imported.`
       );
       await updateHistoryId(newHistoryId);
+      // 飛ばした範囲のメールは再処理しないので、送信待ちのカードの印も消す。
+      // 範囲のメッセージは取れないため、取れる範囲（失敗の記録と、この実行で失敗したもの）だけを対象にする
+      await discardCardNotices(
+        [...(await failedMessageIds()), ...retryableFailures, ...abandonedFailures],
+        'history_skipped'
+      );
     } else {
       throw error;
     }
@@ -365,7 +384,8 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     if (alreadyExists) {
       console.log(`Skipping duplicate (atomic): messageId: ${messageId}, existingId: ${expenseId}`);
       // 同時に処理した相手が保存のあと、カードを送る前に止まっていたら送る（相手と同じ key なので二重には届かない）
-      await deliverPendingCardNotice(messageId);
+      const delivery = await deliverPendingCardNotice(messageId);
+      console.log('Card notice checked for an existing expense', { expense: maskId(expenseId), result: delivery });
       return;
     }
     console.log(`Expense saved from Gmail: ${expenseId}`);

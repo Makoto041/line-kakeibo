@@ -140,7 +140,9 @@ export async function saveGmailExpenseAtomic(
 
   return db.runTransaction(async (transaction) => {
     // 0. 印の文書も読む（トランザクションの読み取りは書き込みより前に置く）。
-    //    同じメッセージを同時に処理した相手も同じ文書を読んで書くので、どちらかがやり直しになり二重に保存しない
+    //    同じメッセージを同時に処理したとき、下の gmailMessageId のクエリに加えて、この文書の単位でも競合させる
+    //    （エミュレータでは、この読み取りを外してもクエリだけで二重に保存しなかった）。
+    //    印を作らないとき（LINE_GROUP_ID が無い）は、この読み取りも無い
     if (notice) await transaction.get(notice.ref);
 
     // 1. gmailMessageIdで重複チェック

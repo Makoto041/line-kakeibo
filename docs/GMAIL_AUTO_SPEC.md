@@ -104,6 +104,7 @@ Flex Message 通知（line/flexMessage.ts。X-Line-Retry-Key 付き）→ 送れ
   - key が効くのは 24 時間なので、作ってから 23 時間を過ぎた印は送らずに消す（警告ログ）。支出が消されていたら送らずに消す（取り込み直さない）
   - 印は LINE グループ（`LINE_GROUP_ID`）があるときだけ作る。印の無い既存の支出には送らない（この仕組みより前の支出のカードは送り直さない）。`/gmail/process-latest` は以前どおりカードを送らず、印も作らない
   - 同じメールを同時に処理しても、保存のトランザクション（重複の判定と印の文書を読んでから書く）で支出は 1 件になる。「登録済み」になった側も印が残っていれば同じ key で送る（届くのは 1 回）
+  - 再処理されなくなったメールの印は消す（店名・金額・日付を残さない。届かなかったことを警告ログに出す）: 3 回失敗して諦めたメールと、`historyId` が古すぎて先へ飛ばしたとき（飛ばした範囲のメッセージは取れないので、`system/gmailFailures` の記録とその実行で失敗したメールだけ）。消せなくても取込は止めない。諦めたあとに `/gmail/force-process` を呼んでも、印が無いのでカードは送り直さない
 - **Gmail Watch の有効期限**: 7 日 → `renewGmailWatch`（6 日ごと 3:00 JST）で自動更新
 
 ### 3.3 既存のテキスト入力フォーマット（維持）
@@ -242,7 +243,7 @@ OAuth 認可の CSRF 用 state。`/gmail/auth` で発行し、`/gmail/callback` 
 
 #### system/gmailCardNotice_{messageId}
 
-カード利用通知の送信待ちの印（§3.2。`gmail/cardNotice.ts`）。支出を新規に保存するのと同じトランザクションで作り、カードを送れたら（409 も含む）消す。23 時間を過ぎた印・支出が消された印は送らずに消す。
+カード利用通知の送信待ちの印（§3.2。`gmail/cardNotice.ts`）。支出を新規に保存するのと同じトランザクションで作り、カードを送れたら（409 も含む）消す。23 時間を過ぎた印・支出が消された印は送らずに消す。3 回失敗して諦めたメール・`historyId` が古すぎて飛ばしたメールの印も消す。
 
 | フィールド | 型 | 説明 |
 |-----------|---|------|
@@ -250,6 +251,9 @@ OAuth 認可の CSRF 用 state。`/gmail/auth` で発行し、`/gmail/callback` 
 | lineGroupId | string | 送り先の LINE グループ ID |
 | card | map | 送るはずだったカード（`CardUsageInfo`。undefined の項目は持たない。判定元 `categoryOrigin` もここにだけ残る） |
 | createdAt | timestamp | 作った時刻（23 時間の判定に使う） |
+| expireAt | timestamp | `createdAt` + 24 時間。Firestore の TTL で消す時刻（消し損ねた印を残さないため） |
+
+TTL ポリシー（`system` コレクショングループの `expireAt`）は運用で設定する（`gcloud firestore fields ttls update expireAt --collection-group=system --enable-ttl --project=<projectId>`）。未設定でも動作は変わらない（印は送ったとき・送らないと決まったときに bot が消す。TTL は消し損ねた印の後始末だけ）。`system` コレクションで `expireAt` を持つのはこの印だけで、TTL はこのフィールドを持つ文書だけを消す（`oauthState` の `expiresAt` は別のフィールドで対象外）。TTL の削除は期限から 24 時間ほど遅れることがある。
 
 予算は `budgetSettings/{lineId or lineGroupId}` に持つ（`SPECIFICATION.md` §6）。
 

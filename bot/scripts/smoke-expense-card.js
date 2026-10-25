@@ -1008,9 +1008,22 @@ async function saveFlowChecks() {
   flex.sendTextExpenseNotification = async (targetId, info) => {
     cards.push(info);
   };
+  // 本物の送信（X-Line-Retry-Key を pushMessage に渡すかを確かめる）
+  const realSendCardUsageNotification = flex.sendCardUsageNotification;
+  // 送れたカードと、その X-Line-Retry-Key
   const gmailCards = [];
   const gmailCardKeys = [];
+  // 送ろうとした回数（失敗も含む）の X-Line-Retry-Key
+  const gmailCardAttempts = [];
+  /** 次の送信で投げる例外（null なら送れる） */
+  let cardSendError = null;
   flex.sendCardUsageNotification = async (to, info, retryKey) => {
+    gmailCardAttempts.push(retryKey);
+    if (cardSendError) {
+      const error = cardSendError;
+      cardSendError = null;
+      throw error;
+    }
     gmailCards.push(info);
     gmailCardKeys.push(retryKey);
   };
@@ -1020,14 +1033,21 @@ async function saveFlowChecks() {
   const gmailNotices = [];
   // 送信待ちの印（system/gmailCardNotice_*。gmail/cardNotice.ts）。偽の saveGmailExpenseAtomic が書き、偽の getFirestore で読む・消す
   const systemDocs = new Map();
+  /** 'partnerSaved': 同じメールを同時に処理した相手が先に保存し、カードを送る前に止まった（印だけが残る・alreadyExists） */
+  let saveMode = null;
   firestore.saveGmailExpenseAtomic = async (expense, notice) => {
+    if (saveMode === 'partnerSaved') {
+      if (notice) systemDocs.set(notice.ref.id, notice.build('exp_partner'));
+      return { expenseId: 'exp_partner', alreadyExists: true };
+    }
     gmailSaved.push(expense);
     gmailNotices.push(notice);
     const expenseId = `exp_gmail_${gmailSaved.length}`;
     if (notice) systemDocs.set(notice.ref.id, notice.build(expenseId));
     return { expenseId, alreadyExists: false };
   };
-  gmailParser.isDuplicateExpense = async () => false;
+  let duplicateExpense = false;
+  gmailParser.isDuplicateExpense = async () => duplicateExpense;
   gmailParser.getExpenseIdByGmailMessageId = async () => null;
   gmailWatch.getWatchState = async () => ({ historyId: '100', watchExpiration: Date.now() + 86400000 });
   gmailWatch.updateHistoryId = async () => {};
@@ -1047,12 +1067,25 @@ async function saveFlowChecks() {
         },
       }),
     }),
-    runTransaction: async () => 1,
+    // 失敗の記録（recordMessageFailure）が返す試行回数
+    runTransaction: async () => failureAttempts,
   });
+  let failureAttempts = 1;
+  /** 次の history.list で投げる例外（null なら msg-pubsub を返す） */
+  let historyError = null;
   let mailBody = '';
   gmailAuth.getGmailClient = async () => ({
     users: {
-      history: { list: async () => ({ data: { history: [{ messagesAdded: [{ message: { id: 'msg-pubsub' } }] }] } }) },
+      history: {
+        list: async () => {
+          if (historyError) {
+            const error = historyError;
+            historyError = null;
+            throw error;
+          }
+          return { data: { history: [{ messagesAdded: [{ message: { id: 'msg-pubsub' } }] }] } };
+        },
+      },
       messages: {
         list: async () => ({ data: { messages: [{ id: 'msg-latest' }] } }),
         get: async () => ({
@@ -1313,6 +1346,154 @@ async function saveFlowChecks() {
     }
   } finally {
     subRules.resolveSubCategory = realResolve;
+  }
+
+  // --- 送信待ちの印の送り直し（gmail/cardNotice.ts） ---
+  // CI ではエミュレータのテストが走らないので、中核の経路はここでも確かめる（偽の systemDocs と getFirestore を使う）
+  console.log('\n[カード利用通知の送り直し（送信待ちの印）]');
+  {
+    const { Timestamp } = adminFirestore;
+    const HOUR = 60 * 60 * 1000;
+    const noticeId = 'gmailCardNotice_msg-pubsub';
+    const key = cardNoticeRetryKey('msg-pubsub');
+    /** 前の処理が保存のあと、カードを送れずに終わった印（ageMs 前に作った） */
+    const seedNotice = (ageMs, id = noticeId) =>
+      systemDocs.set(id, {
+        expenseId: 'exp_seeded',
+        lineGroupId: 'C_smoke_group',
+        card: { expenseId: 'exp_seeded', merchant: '前回の店', amount: 700, category: '食費', categoryOrigin: 'jev', categoryEmoji: '', date: '3/14', status: 'shared', includeInTotal: true },
+        createdAt: Timestamp.fromMillis(Date.now() - ageMs),
+      });
+    let historySeq = 300;
+    /** Pub/Sub の通知 1 回分（msg-pubsub）。投げたら例外を返す */
+    const pubsubOnce = async () => {
+      try {
+        await run(() => handleGmailPubSub(Buffer.from(JSON.stringify({ historyId: String(++historySeq) })).toString('base64')));
+        return 'ok';
+      } catch (error) {
+        return error;
+      }
+    };
+    const counts = () => ({ saved: gmailSaved.length, cards: gmailCards.length, attempts: gmailCardAttempts.length });
+
+    // sendCardUsageNotification は retryKey を X-Line-Retry-Key として pushMessage に渡す
+    const fakeClient = lineClient.getLineClient;
+    const pushed = [];
+    lineClient.getLineClient = () => ({ pushMessage: async (request, retryKey) => pushed.push({ to: request.to, retryKey }) });
+    try {
+      await run(() =>
+        realSendCardUsageNotification(
+          'C_smoke_group',
+          { expenseId: 'exp_key', merchant: '店', amount: 100, category: '食費', categoryEmoji: '', date: '3/14', status: 'shared' },
+          key
+        )
+      );
+    } finally {
+      lineClient.getLineClient = fakeClient;
+    }
+    check('sendCardUsageNotification: retryKey を pushMessage に渡す', pushed.length === 1 && pushed[0].retryKey === key, JSON.stringify(pushed));
+
+    mailBody = cardMail('2026/03/14 12:30', 'テスト食堂 駅前店');
+    classifyReply = jev('食費');
+
+    // (a) 印があり、支出は登録済み（重複判定で飛ばされる状態）
+    duplicateExpense = true;
+    seedNotice(1 * HOUR);
+    let before = counts();
+    let r = await pubsubOnce();
+    check('登録済みでも印があれば: 処理は成功する', r === 'ok', String(r));
+    check(
+      '登録済みでも印があれば: 保存時点のカードを 1 回だけ、メッセージから決まる key で送る',
+      gmailCardAttempts.length === before.attempts + 1 &&
+        gmailCards.length === before.cards + 1 &&
+        last(gmailCards).merchant === '前回の店' &&
+        last(gmailCards).expenseId === 'exp_seeded' &&
+        last(gmailCardKeys) === key,
+      JSON.stringify({ card: last(gmailCards), key: last(gmailCardKeys) })
+    );
+    check('登録済みでも印があれば: 保存し直さない', gmailSaved.length === before.saved, String(gmailSaved.length - before.saved));
+    check('登録済みでも印があれば: 送ったら印を消す', !systemDocs.has(noticeId));
+    before = counts();
+    r = await pubsubOnce();
+    check('印を消したあとの再処理では送らない', r === 'ok' && gmailCardAttempts.length === before.attempts, String(r));
+
+    // (b) LINE が受け付け済み（409）
+    seedNotice(1 * HOUR);
+    cardSendError = Object.assign(new Error('Conflict'), { status: 409 });
+    before = counts();
+    r = await pubsubOnce();
+    check('409: 送れた扱いにして成功し、印を消す', r === 'ok' && gmailCardAttempts.length === before.attempts + 1 && last(gmailCardAttempts) === key && !systemDocs.has(noticeId), String(r));
+    seedNotice(1 * HOUR);
+    cardSendError = Object.assign(new Error('Internal Server Error'), { status: 500 });
+    r = await pubsubOnce();
+    check('409 以外の失敗: 投げて（再処理させて）印を残す', r instanceof Error && systemDocs.has(noticeId), String(r));
+    systemDocs.delete(noticeId);
+
+    // (d) 古い印（23 時間超）は送らずに消す・23 時間以内なら送る
+    seedNotice(23 * HOUR + 60 * 1000);
+    before = counts();
+    r = await pubsubOnce();
+    check('23 時間 1 分前の印: 送らずに消し、保存し直さない', r === 'ok' && gmailCardAttempts.length === before.attempts && !systemDocs.has(noticeId) && gmailSaved.length === before.saved, String(r));
+    seedNotice(22 * HOUR);
+    before = counts();
+    r = await pubsubOnce();
+    check('22 時間前の印: 送って消す', r === 'ok' && gmailCards.length === before.cards + 1 && !systemDocs.has(noticeId), String(r));
+    duplicateExpense = false;
+
+    // (c) 保存が「登録済み」（同時に処理した相手が先に保存し、カードを送る前に止まった）
+    saveMode = 'partnerSaved';
+    before = counts();
+    try {
+      r = await pubsubOnce();
+    } finally {
+      saveMode = null;
+    }
+    check(
+      'alreadyExists: 相手が残した印のカードを同じ key で送り、印を消す',
+      r === 'ok' && gmailCards.length === before.cards + 1 && last(gmailCards).expenseId === 'exp_partner' && last(gmailCardKeys) === key && !systemDocs.has(noticeId),
+      String(r)
+    );
+
+    // 印の expireAt（TTL）は作ってから 24 時間
+    const built = gmailNotices.filter(Boolean).pop().build('exp_ttl');
+    check('印の expireAt は createdAt + 24 時間', built.expireAt.toMillis() - built.createdAt.toMillis() === 24 * HOUR, JSON.stringify(built));
+
+    // (e) 3 回失敗して諦めたら、印を消す
+    cardSendError = Object.assign(new Error('Internal Server Error'), { status: 500 });
+    failureAttempts = 3;
+    before = counts();
+    try {
+      r = await pubsubOnce();
+    } finally {
+      failureAttempts = 1;
+    }
+    check('3 回目の失敗で諦める（historyId を進める・投げない）', r === 'ok' && gmailSaved.length === before.saved + 1, String(r));
+    check('諦めたメールの印を消す', !systemDocs.has(noticeId), JSON.stringify([...systemDocs.keys()]));
+
+    // (f) historyId が古すぎて先へ飛ばしたら、失敗の記録にあるメールの印を消す（記録に無い印は残す）
+    seedNotice(1 * HOUR);
+    seedNotice(1 * HOUR, 'gmailCardNotice_msg-force-only');
+    systemDocs.set('gmailFailures', { 'msg-pubsub': { attempts: 1 } });
+    historyError = Object.assign(new Error('Requested entity was not found.'), { code: 404 });
+    before = counts();
+    r = await pubsubOnce();
+    check('historyId が古すぎる（404）: 先へ飛ばして成功し、送らない', r === 'ok' && gmailCardAttempts.length === before.attempts, String(r));
+    check('404: 失敗の記録にあるメールの印を消す', !systemDocs.has(noticeId));
+    check('404: 失敗の記録に無い印は消さない', systemDocs.has('gmailCardNotice_msg-force-only'));
+    systemDocs.delete('gmailCardNotice_msg-force-only');
+    systemDocs.delete('gmailFailures');
+
+    const noticeLogs = allLines.filter((l) => typeof l.args[0] === 'string' && /card notice/i.test(l.args[0]));
+    check(
+      '印のログは固定文で、messageId をそのまま出さない（maskId）',
+      noticeLogs.length > 0 && noticeLogs.every((l) => !JSON.stringify(l.args).includes('msg-pubsub')),
+      JSON.stringify(noticeLogs.slice(0, 3))
+    );
+    check(
+      '諦めた・飛ばしたメールの印を消したら警告を出す',
+      noticeLogs.filter((l) => l.level === 'warn' && l.args[0] === 'Gmail card notice discarded; the card was not delivered').length === 2,
+      JSON.stringify(noticeLogs.filter((l) => l.level === 'warn'))
+    );
   }
 
   // --- ログ ---
