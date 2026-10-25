@@ -76,7 +76,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.12.1 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.13.2 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
@@ -231,7 +231,7 @@ flowchart LR
       </div>
       <p>上は LINE の入力（「500 ランチ」の「ランチ」）の順序。<b>カード利用メールの店名</b>（「ｾﾌﾞﾝ-ｲﾚﾌﾞﾝ」「AMAZON.CO.JP」など）は、辞書の部分一致だと「au」「etc」「パン」などが店名の一部に当たって取り違えるため、<b>キャッシュ → Jev → Gemini → 辞書</b>の順にしている。Jev と Gemini のどちらも使えないときは辞書だけで動き、分類できなければ「その他」になる。失敗した結果はキャッシュしないので、復旧すればモデルで判定し直す。</p>
       <p><b>Jev と Gemini を呼ぶのは世帯のメンバーの入力だけ</b>（費用と無料枠を守るため）。世帯のメンバーは、LINE グループに紐づく世帯の有効なメンバー（「グループ作成」で作った自分だけのグループのメンバーは含めない）。それ以外の人の LINE の入力は辞書までで決め、決まらなければ既定のカテゴリか「その他」にする。メンバーかどうかは支出の所属を決めるために読む所属グループで判定し、読み取りは増やさない。所属の確認そのものに失敗したときは、メンバーの入力を辞書だけにしないようモデルを呼ぶ。</p>
-      <p><b>中項目</b>（食費・娯楽だけ）は、大項目が決まったあとに辞書と時刻のルールで決める（モデルは呼ばない）。LINE の入力は内容の辞書だけ（入力した時刻は食べた時刻とは限らないので時刻は使わない）。カード利用メールは店名の辞書で、メールに時刻が書かれていれば飲食店だけ朝・昼・夜ご飯にする。決まらなければ中項目を付けず、既存の支出もそのまま。判定に失敗しても保存は続ける。LINE のカードで大項目を変えると、同じルールで決め直す（決まらなければ消す）。Web の内訳シートでは、食費・娯楽をタップすると中項目別の小計が出て、さらにタップすると明細まで進める（一覧にない値は「その他の食費」「その他の娯楽」に数え、「中項目なし」は最後に出す）。</p>
+      <p><b>中項目</b>（食費・娯楽だけ）は、大項目が決まったあとに辞書と時刻のルールで決める（モデルは呼ばない）。LINE の入力は内容の辞書だけ（入力した時刻は食べた時刻とは限らないので時刻は使わない）。カード利用メールは店名の辞書で、メールに時刻が書かれていれば飲食店だけ朝・昼・夜ご飯にする。決まらなければ中項目を付けず、既存の支出もそのまま。判定に失敗しても保存は続ける。LINE のカードで大項目を変えると、同じルールで決め直す（決まらなければ消す）。Web の支出の編集では、中項目を一覧から手で選べる（「その他の食費」「その他の娯楽」もここで選ぶ。「中項目なし」にすると消え、大項目を変えると「中項目なし」に戻る）。Web の内訳シートでは、食費・娯楽をタップすると中項目別の小計が出て、さらにタップすると明細まで進める（一覧にない値は「その他の食費」「その他の娯楽」に数え、「中項目なし」は最後に出す）。一覧は bot と web の両方に置き、Web のテストで一致を確かめる。</p>
     </div>
   </section>
 
@@ -243,7 +243,7 @@ flowchart LR
         <li><b>Firestore ルール</b>: 世帯のデータは <code>groupMembers/{groupId}_{lineId}</code> が有効なメンバーだけが読める。支出の項目は型と値を検証し、精算済みの立替は金額・日付・支払者の変更と削除を拒否する。</li>
         <li><b>Storage ルール</b>: レシート画像は Firestore のメンバー情報を参照して制限（cross-service rules）。</li>
         <li><b>/household API</b>: ID トークンを検証し、世帯メンバーかを確認。レート制限と CORS の許可リストあり。</li>
-        <li><b>LINE のボタン</b>: 精算の金額が変わる［自分が払った］［自分が立替］［取り消す］は、世帯の有効メンバーだけが押せる。立替の項目（<code>status</code>・<code>advanceBy</code>・<code>advanceFull</code>）はクライアントから書けない。</li>
+        <li><b>LINE のボタン</b>: 支出を変えるボタン（区分・［自分が払った］［自分が立替］［取り消す］・OK・カテゴリの変更）とカテゴリ選択のカルーセルは、世帯の有効メンバーだけが押せる。カテゴリは選択肢の一覧にある値だけを保存する。立替の項目（<code>status</code>・<code>advanceBy</code>・<code>advanceFull</code>）はクライアントから書けない。</li>
         <li><b>世帯は 2 名固定</b>: メンバーの追加・無効化は bot ではなく管理スクリプト <code>scripts/manage-group-members.mjs</code> で行う。</li>
         <li><b>シークレット</b>: LINE のトークンや Jev・Gemini の API キーなどは Secret Manager に置き、関数は宣言した名前だけを読む（宣言した名前が Secret Manager に無いとデプロイが失敗する）。</li>
       </ul>
@@ -271,8 +271,9 @@ flowchart LR
             <tr><td class="name">bot/src/recurringExpenses.ts</td><td>固定費の計上ロジック</td></tr>
             <tr><td class="name">bot/src/categoryTaxonomy.ts · subCategoryRules.ts</td><td>中項目（食費・娯楽）の一覧と、辞書と時刻で中項目を決める <code>resolveSubCategory</code>（モデルは呼ばない。登録時の保存〔LINE の入力・カード利用メール〕と、LINE のカードでカテゴリを変えたときに呼ぶ）</td></tr>
             <tr><td class="name">bot/src/settlementSummary.ts · line/settlementSummaryMessage.ts</td><td>期間の精算サマリー（送る日の判定・集計・冪等な送信・Web からの手動の送信と、メンション付きテキスト・Flex）</td></tr>
+            <tr><td class="name">web/lib/expenseEdit.ts · categoryTaxonomy.ts</td><td>支出の編集（送る差分・入力チェック・中項目の選択肢と、大項目を変えたときのリセット）と、中項目の一覧（bot の <code>categoryTaxonomy.ts</code> と同じ内容）</td></tr>
             <tr><td class="name">web/app/ · components/ · lib/</td><td>画面・部品・ロジック（lib は純関数でテストあり）</td></tr>
-            <tr><td class="name">web/lib/drilldown.ts · components/drilldown/</td><td>内訳シート（合計 → カテゴリ → 中項目 / 支払い者 → 明細）。中項目の一覧は bot の写しで、一致をテストで確かめる</td></tr>
+            <tr><td class="name">web/lib/drilldown.ts · components/drilldown/</td><td>内訳シート（合計 → カテゴリ → 中項目 / 支払い者 → 明細）。中項目の一覧は編集画面と同じ <code>lib/categoryTaxonomy.ts</code> を使う</td></tr>
             <tr><td class="name">web/app/manifest.ts · public/sw.js · lib/installApp.ts</td><td>PWA の manifest、Service Worker（オフライン画面と <code>/_next/static</code> のキャッシュ）、追加の案内の出し分け。アイコンは <code>scripts/gen-app-icons.mjs</code> で生成</td></tr>
             <tr><td class="name">firestore.rules · storage.rules</td><td>アクセス制御（CI がデプロイ、エミュレータでテスト）</td></tr>
           </tbody>
