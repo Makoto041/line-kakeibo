@@ -146,6 +146,11 @@ export type ClassificationSource = 'text' | 'merchant';
 
 export interface ClassifyOptions {
   source?: ClassificationSource;
+  /**
+   * false ならモデル（Jev・Gemini）を呼ばず、キャッシュとキーワード辞書だけで判定する（既定 true）。
+   * カテゴリ一覧（Firestore）も読まない。LINE の入力で、送信者が世帯のメンバーでないときに使う（#245。expenseFlow.ts）
+   */
+  allowModels?: boolean;
 }
 
 const GEMINI_TIMEOUT_MS = 8000;
@@ -298,6 +303,8 @@ async function classifyWithModels(
  *   店名は辞書の部分一致で取り違えやすいためモデルを優先し、どちらも使えないときだけ辞書に頼る
  *
  * どれでも決まらなければ { category: null }（呼び出し側で「その他」にする）。
+ *
+ * options.allowModels が false なら、どちらの順序でもモデルを飛ばす（Jev・Gemini が使えないときと同じ結果になる）。
  */
 export async function classifyExpense(
   lineId: string,
@@ -305,6 +312,7 @@ export async function classifyExpense(
   options: ClassifyOptions = {}
 ): Promise<ClassificationResult> {
   const source: ClassificationSource = options.source ?? 'text';
+  const allowModels = options.allowModels ?? true;
   const cacheKey = `${source}_${lineId}_${description.toLowerCase().trim()}`;
 
   const cached = classificationCache.get(cacheKey);
@@ -329,7 +337,7 @@ export async function classifyExpense(
   };
 
   if (source === 'merchant') {
-    const byModel = await classifyWithModels(lineId, description, source);
+    const byModel = allowModels ? await classifyWithModels(lineId, description, source) : null;
     if (byModel) return remember(byModel);
     const local = byKeyword();
     // モデルが使えなかった結果はキャッシュしない（復旧後にモデルで判定し直せるように）
@@ -338,6 +346,7 @@ export async function classifyExpense(
 
   const local = byKeyword();
   if (local) return remember(local);
+  if (!allowModels) return { category: null, confidence: 0 };
   const byModel = await classifyWithModels(lineId, description, source);
   return byModel ? remember(byModel) : { category: null, confidence: 0 };
 }
