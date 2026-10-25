@@ -189,9 +189,6 @@ function normalizeMerchant(raw: string): string {
   return limited || '不明な店舗';
 }
 
-/** 時刻として受け付ける表記（0:00〜23:59。時は 1〜2 桁、分は 2 桁） */
-const CLOCK_TIME_PATTERN = /^([01]?\d|2[0-3]):[0-5]\d$/;
-
 /**
  * 三井住友カード利用通知メールをパース
  *
@@ -244,16 +241,12 @@ export function parseSMBCCardEmail(
     let usedAtHasTime = false;
     if (dateMatch) {
       const dateStr = dateMatch[1];
-      const timeStr = dateMatch[2] || '00:00';
+      const timeStr = dateMatch[2];
       // メール本文の日時は JST の壁時計表記。コンテナのTZ（本番は UTC）で
       // 解釈すると9時間ずれた瞬間になるため、JST として読む。
-      usedAt = parseJSTWallClock(dateStr.replace(/\//g, '-'), timeStr);
-      // 「25:00」のような表記は dayjs が繰り上げて読むので時刻なしとみなす。
-      // 読めずに処理した時刻になった場合（parseJSTWallClock の退避）も、時刻が一致しないので false
-      usedAtHasTime =
-        dateMatch[2] !== undefined &&
-        CLOCK_TIME_PATTERN.test(dateMatch[2]) &&
-        formatJST(usedAt, 'H:mm') === dateMatch[2].replace(/^0(\d)/, '$1');
+      usedAt = parseJSTWallClock(dateStr.replace(/\//g, '-'), timeStr ?? '00:00');
+      // 読んだ時刻が表記と一致するときだけ（「25:00」「12:60」などは dayjs が繰り上げて読むので食い違い、false）
+      usedAtHasTime = timeStr !== undefined && formatJST(usedAt, 'HH:mm') === timeStr.padStart(5, '0');
     } else {
       // 日時が見つからない場合は現在時刻を使用（時刻なしとして扱う）
       usedAt = new Date();

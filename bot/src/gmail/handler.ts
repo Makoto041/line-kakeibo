@@ -19,9 +19,9 @@ import {
 } from './parser';
 import {
   GmailPubSubPayload,
+  ParsedCardNotification,
   getCategoryEmoji,
 } from './types';
-import type { ParsedCardNotification } from './types';
 import { saveGmailExpenseAtomic } from '../firestore';
 import { classifyExpense } from '../geminiCategoryClassifier';
 import type { ClassificationResult } from '../geminiCategoryClassifier';
@@ -308,7 +308,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
       description: parsed.merchant,
       date: toJSTDateString(parsed.usedAt),
       category,
-      subCategory: merchantSubCategoryOf(category, parsed), // 決まらなければ undefined（項目を付けない）
+      subCategory: merchantSubCategoryOf(category, parsed),
       // カード会社の通知から自動で入るので確認を求めない（要確認は手入力の支出だけ）
       confirmed: true,
       includeInTotal: true, // Gmail自動取得は基本的に会計に含める
@@ -413,7 +413,7 @@ export async function processLatestEmail(): Promise<{
         parsed.merchant,
         { source: 'merchant' }
       );
-      const category = categoryResult.category || 'その他';
+      const { category } = merchantCategoryOf(categoryResult);
 
       const expense = {
         lineId: GMAIL_SYSTEM_LINE_ID,
@@ -421,7 +421,7 @@ export async function processLatestEmail(): Promise<{
         description: parsed.merchant,
         date: toJSTDateString(parsed.usedAt),
         category,
-        subCategory: merchantSubCategoryOf(category, parsed), // 決まらなければ undefined（項目を付けない）
+        subCategory: merchantSubCategoryOf(category, parsed),
         confirmed: true, // 自動で入るので確認を求めない（要確認は手入力の支出だけ）
         includeInTotal: true, // Gmail自動取得は基本的に会計に含める
         payerId: GMAIL_SYSTEM_LINE_ID,
@@ -537,7 +537,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
       description: parsed.merchant,
       date: toJSTDateString(parsed.usedAt),
       category,
-      subCategory: merchantSubCategoryOf(category, parsed), // 決まらなければ undefined（項目を付けない）
+      subCategory: merchantSubCategoryOf(category, parsed),
       confirmed: true, // 自動で入るので確認を求めない（要確認は手入力の支出だけ）
       includeInTotal: true, // Gmail自動取得は基本的に会計に含める
       payerId: GMAIL_SYSTEM_LINE_ID,

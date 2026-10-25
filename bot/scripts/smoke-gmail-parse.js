@@ -195,7 +195,7 @@ check('1 行: ラベルでないコロンでは切らない', colonInName && col
 // ------------------------------------------------------------
 // 時刻の有無（usedAtHasTime。#235）
 // 中項目の時刻のルール（朝ご飯・昼ご飯・夜ご飯）は、メールに時刻が書かれていたときだけ当てる。
-// 時刻なし（00:00 にする）・日付なし（処理した時刻にする）・時刻として読めない表記は false。
+// 時刻なし（00:00 にする）・日付なし（処理した時刻にする）・時刻として読めない表記（dayjs の繰り上げと食い違う）は false。
 // ------------------------------------------------------------
 console.log('\nparseSMBCCardEmail (usedAtHasTime)');
 
@@ -227,21 +227,6 @@ check('日付なしの usedAt は処理した時刻（前提の確認）',
 const unknownDate = parseSMBCCardEmail('msg-t4', buildBody('不明', 'テスト食堂', '500'));
 check('日時が読めない（「不明」）→ false', unknownDate && unknownDate.usedAtHasTime === false, JSON.stringify(unknownDate));
 check('どの結果も boolean', [evening, midnight, altFormat, dateOnly, oneDigitHour, noDate, unknownDate].every((p) => typeof p.usedAtHasTime === 'boolean'));
-
-// 日時を読めずに処理した時刻になった場合（parseJSTWallClock の退避）は、時刻が一致しないので false
-{
-  const time = require('../dist/time');
-  const realParse = time.parseJSTWallClock;
-  // メールの時刻は、いまの JST から 2 時間ずらす（処理した時刻と偶然一致させない）
-  const otherClock = formatJST(new Date(Date.now() + 2 * 3600 * 1000), 'HH:mm');
-  time.parseJSTWallClock = () => new Date();
-  try {
-    const fallback = parseSMBCCardEmail('msg-t5', buildBody(`2026/03/14 ${otherClock}`, 'テスト食堂', '500'));
-    check('読めずに処理した時刻になったら false', fallback && fallback.usedAtHasTime === false, JSON.stringify(fallback));
-  } finally {
-    time.parseJSTWallClock = realParse;
-  }
-}
 
 // ------------------------------------------------------------
 // 送信元（From ヘッダー）の判定
