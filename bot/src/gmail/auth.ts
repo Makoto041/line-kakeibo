@@ -445,7 +445,15 @@ export async function revokeGmailTokenOnGoogle(
  * 共有のクライアント（getOAuth2Client）は使わず、渡されたトークン（revoke が Google に送るのと同じもの）で別のクライアントを作る。
  * アクセストークンが期限切れなら、クライアントが refresh_token で取り直すが、Firestore には保存しない（getGmailClient は保存する。
  * 保存すると、revoke が失効させない新しいアクセストークンが、削除までの間 Firestore に残る）。
- * 待ち時間は、アクセストークンの取り直しを含めた全体で timeoutMs。各 HTTP の要求にも同じ待ち時間を付け、再試行はしない。
+ *
+ * 送るのは、アクセストークンの取り直し（期限切れのときだけ）と stop の、それぞれ 1 回まで。
+ * - 再試行はしない。google-auth-library は取り直しの要求に自前の再試行の設定（POST も対象）を付けるので、要求ごとの
+ *   retry: false では止まらない。このクライアントの送信の手前（interceptor）で、すべての要求の再試行を外す
+ * - 期限（expiry_date）が分からない（無い・0）ときは、期限切れとして先に取り直す。期限が無いと、ライブラリは stop の 401 の後に
+ *   取り直して stop を送り直すため
+ * - 待ち時間は全体で timeoutMs（Promise.race で打ち切る）。各要求にも同じ待ち時間を付けるので、打ち切った後に送信中の要求が
+ *   残っても、その待ち時間で終わる
+ *
  * users.stop は gmail.readonly のスコープで呼べる（googleapis の gmail v1 の型定義の users.stop の説明が、使えるスコープに
  * gmail.readonly を挙げている）。
  */
@@ -469,11 +477,20 @@ export async function stopGmailWatchOnGoogle(
   try {
     const { clientId, clientSecret, redirectUri } = oauth2ClientConfig();
     const client = new google.auth.OAuth2({ clientId, clientSecret, redirectUri, transporterOptions: { timeout: timeoutMs } });
+    client.transporter.interceptors.request.add({
+      resolved: async (config) => {
+        config.retry = false;
+        delete config.retryConfig;
+        return config;
+      },
+    });
     const expiry = tokenData?.expiry_date;
+    const knownExpiry = typeof expiry === 'number' && Number.isFinite(expiry) && expiry > 0 ? expiry : undefined;
     client.setCredentials({
       access_token: access,
       refresh_token: refresh,
-      expiry_date: typeof expiry === 'number' && Number.isFinite(expiry) ? expiry : undefined,
+      // 1 = 期限切れ（先に取り直す）。refresh_token が無ければ取り直せないので、期限は付けない
+      expiry_date: knownExpiry ?? (refresh ? 1 : undefined),
     });
     const gmail = google.gmail({ version: 'v1', auth: client });
     await Promise.race([gmail.users.stop({ userId: 'me' }, { timeout: timeoutMs, retry: false }), deadline]);

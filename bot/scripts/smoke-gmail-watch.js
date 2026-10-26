@@ -7,11 +7,13 @@
  * - DELETE /gmail/revoke: Google 側の失効（#284。Google の失効先は fetch の偽物）。refresh_token を先に本文（form）で送り、
  *   URL にトークンを載せない。Google が受け付けなければ googleRevoked: false・success: false（トークンは消す）。
  *   トークン・Google の応答の本文・例外の文言（目印 CANARY）を応答にもログにも出さない
- * - DELETE /gmail/revoke: 失効の前に users.stop で古い watch を止める（#280。Gmail API は googleapis の google.gmail を差し替えた
- *   偽物）。順序は stop → 失効 → トークンの削除 → gmailState の削除。stop に失敗・時間切れでも続ける（watchStopped: false）。
- *   トークンが無ければ呼ばない（null）
+ * - DELETE /gmail/revoke: 失効の前に users.stop で古い watch を止める（#280。googleapis・OAuth2 クライアント・gaxios は本物で、
+ *   通信〔gaxios の fetchImplementation〕だけ偽物）。POST https://gmail.googleapis.com/gmail/v1/users/me/stop に Bearer で送る。
+ *   順序は（期限切れなら取り直し →）stop → 失効 → トークンの削除 → gmailState の削除。取り直したトークンは Firestore に書かない。
+ *   取り直しも stop も再試行しない。stop に失敗・時間切れでも続ける（watchStopped: false）。トークンが無ければ呼ばない（null）
  * - 管理 API のレート制限: 接続元の IP（X-Forwarded-For の末尾）で数え、認証の前後で枠を分ける。認証の無い連打で、
  *   認証に成功する管理者の要求が 429 にならない。/callback 以外の全ルートに同じ上限が付く（ルーターのスタックを走査）
+ * - ADMIN_SECRET が 32 文字より短ければ、プロセスごとに 1 回だけ固定文で warn する（値・長さは出さない。認証は変えない）
  * - トークンの保存（auth.ts）: OAuth のコールバックの初回保存は文書を作り、アクセストークンの更新の保存は文書があるときだけ書く
  *   （更新の途中で revoke に消された文書を作り直さない。Firestore と Google の OAuth は偽物）
  *
@@ -168,37 +170,78 @@ async function revokeChecks() {
     );
   const byToken = (map) => (token, init) => map[token === REFRESH ? 'refresh' : 'access'](token, init);
 
-  // Gmail API（users.stop）の偽物。auth.ts は呼ぶたびに googleapis の google.gmail を引くので、差し替えが効く
-  // （googleapis の通信は globalThis.fetch を使わない〔gaxios は Node では node-fetch〕ので、fetch の偽物では受けられない）
-  const { google: googleapis } = require('googleapis');
-  const realGmail = googleapis.gmail;
-  const okStop = async () => ({ data: '' });
-  const gmailStop = { calls: [], respond: okStop };
-  googleapis.gmail = (options) => ({
-    users: {
-      stop: async (params, callOptions) => {
-        const credentials = options.auth.credentials;
-        gmailStop.calls.push({
-          version: options.version,
-          userId: params.userId,
-          refresh: credentials.refresh_token,
-          access: credentials.access_token,
-          callOptions,
-        });
-        events.push('stop');
-        return gmailStop.respond(params, callOptions);
-      },
-    },
+  // 保存してあるトークン（既定は期限内。期限切れ・期限なしは上書きで作る）
+  const storedToken = (overrides = {}) => ({
+    refresh_token: REFRESH,
+    access_token: ACCESS,
+    expiry_date: Date.now() + 3600 * 1000,
+    ...overrides,
   });
-  // gaxios の HTTP の失敗の形（送った要求のヘッダー〔アクセストークン〕と応答の本文を持つ）。どちらにも目印を入れる
-  const gaxiosError = (status) =>
-    Object.assign(new Error(`Request failed with status code ${status} ${CANARY}`), {
-      name: 'GaxiosError',
+
+  // Gmail API（users.stop）とアクセストークンの取り直しの偽物。googleapis・OAuth2 クライアント・gaxios は本物を通し、
+  // 通信（gaxios の fetchImplementation）だけを差し替える（gaxios は Node では node-fetch を使い、globalThis.fetch を通らない）。
+  // auth.ts は呼ぶたびに googleapis の google.auth.OAuth2 を引くので、fetchImplementation を足すサブクラスに差し替える
+  const { google: googleapis } = require('googleapis');
+  const RealOAuth2 = googleapis.auth.OAuth2;
+  const GMAIL_STOP_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/stop';
+  const TOKEN_URL = 'https://oauth2.googleapis.com/token';
+  const REFRESHED = `ya29.refreshed-${CANARY}`;
+  const noContent = () => new Response(null, { status: 204 });
+  const refreshedToken = () =>
+    new Response(
+      JSON.stringify({ access_token: REFRESHED, expires_in: 3599, token_type: 'Bearer', scope: 'https://www.googleapis.com/auth/gmail.readonly' }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  // Google の API の失敗（応答の本文に目印）
+  const apiError = (status) => () =>
+    new Response(JSON.stringify({ error: { code: status, message: `Invalid Credentials ${CANARY}` } }), {
       status,
-      code: String(status),
-      config: { headers: { Authorization: `Bearer ${ACCESS}` } },
-      response: { status, data: { error: { message: `Invalid Credentials ${CANARY}` } } },
+      headers: { 'content-type': 'application/json' },
     });
+  const gmailApi = { stopCalls: [], tokenCalls: [], stopRespond: noContent, tokenRespond: refreshedToken };
+  const gaxiosFetch = async (input, init = {}) => {
+    const reqUrl = String(input);
+    if (reqUrl === TOKEN_URL) {
+      gmailApi.tokenCalls.push({ method: init.method, body: String(init.body) });
+      events.push('refresh');
+      return gmailApi.tokenRespond(init);
+    }
+    if (reqUrl.startsWith('https://gmail.googleapis.com/')) {
+      gmailApi.stopCalls.push({ url: reqUrl, method: init.method, authorization: new Headers(init.headers).get('authorization') });
+      events.push('stop');
+      return gmailApi.stopRespond(init);
+    }
+    throw new Error('unexpected gaxios fetch in smoke test');
+  };
+  googleapis.auth.OAuth2 = class extends RealOAuth2 {
+    constructor(options, ...rest) {
+      super(
+        options && typeof options === 'object'
+          ? { ...options, transporterOptions: { ...options.transporterOptions, fetchImplementation: gaxiosFetch } }
+          : options,
+        ...rest
+      );
+    }
+  };
+
+  // Firestore の偽物（取り直したアクセストークンを書かないことを確かめる。router の参照は上の gmailTokenRef の偽物）
+  const firestoreModule = require('firebase-admin/firestore');
+  const realGetFirestore = firestoreModule.getFirestore;
+  const firestoreWrites = [];
+  firestoreModule.getFirestore = () => ({
+    collection: (c) => ({
+      doc: (d) => ({
+        get: async () => ({ exists: false, data: () => undefined }),
+        set: async () => {
+          firestoreWrites.push(`set ${c}/${d}`);
+        },
+        update: async () => {
+          firestoreWrites.push(`update ${c}/${d}`);
+        },
+        delete: async () => {},
+      }),
+    }),
+  });
 
   const { gmailRouter } = require('../dist/gmail/adminRouter');
   const app = express();
@@ -214,7 +257,9 @@ async function revokeChecks() {
     fake.tokenDeletes = 0;
     fake.stateDeletes = 0;
     google.calls = [];
-    gmailStop.calls = [];
+    gmailApi.stopCalls = [];
+    gmailApi.tokenCalls = [];
+    firestoreWrites.length = 0;
     events.length = 0;
     const logs = [];
     const original = { log: console.log, warn: console.warn, error: console.error };
@@ -244,7 +289,7 @@ async function revokeChecks() {
     check('トークンと gmailState の両方を消す', fake.tokenDeletes === 1 && fake.stateDeletes === 1, fake);
     check('トークンが無ければ Google へ送らず googleRevoked: null', google.calls.length === 0 && ok.body.googleRevoked === null, ok.body);
     check('トークンが無ければ users.stop を呼ばず watchStopped: null',
-      gmailStop.calls.length === 0 && ok.body.watchStopped === null, { calls: gmailStop.calls.length, watchStopped: ok.body.watchStopped });
+      gmailApi.stopCalls.length === 0 && ok.body.watchStopped === null, { calls: gmailApi.stopCalls.length, watchStopped: ok.body.watchStopped });
 
     fake.failStateDelete = true;
     const ng = await revoke();
@@ -261,7 +306,7 @@ async function revokeChecks() {
     check('やり直せば消せる（トークンが無くても進む）', retry.status === 200 && retry.body.watchStateCleared === true, retry);
 
     // --- Google が refresh_token の失効を受け付けた（access_token は既に無効で 400） ---
-    fake.tokenData = { refresh_token: REFRESH, access_token: ACCESS, expiry_date: 0 };
+    fake.tokenData = storedToken();
     google.respond = byToken({ refresh: ok200, access: rejected400 });
     const revoked = await revoke();
     check('失効できたら 200・success: true・googleRevoked: true',
@@ -285,44 +330,77 @@ async function revokeChecks() {
     check('失効できたら固定文で log する',
       revoked.logs.some((l) => l.level === 'log' && l.args[0] === 'Gmail token revoked on Google side'), revoked.logs.map((l) => l.args[0]));
     check('トークンを応答にもログにも出さない（失効できたとき）', noCanary(revoked));
-    // users.stop（古い watch を止める）
-    const stopCall = gmailStop.calls[0];
+    // users.stop（古い watch を止める。googleapis・OAuth2 クライアント・gaxios は本物、通信だけ偽物）
+    const stopCall = gmailApi.stopCalls[0];
     check('トークンがあれば users.stop を 1 回呼び、止められたら watchStopped: true',
-      gmailStop.calls.length === 1 && revoked.body.watchStopped === true, { calls: gmailStop.calls.length, watchStopped: revoked.body.watchStopped });
-    check('stop は gmail v1 の userId: me に、保存してあるトークン（revoke が失効させるもの）で送る',
-      !!stopCall && stopCall.version === 'v1' && stopCall.userId === 'me' && stopCall.refresh === REFRESH && stopCall.access === ACCESS,
-      stopCall && { version: stopCall.version, userId: stopCall.userId });
-    check('stop には待ち時間（5 秒）を付け、再試行しない',
-      !!stopCall && !!stopCall.callOptions && stopCall.callOptions.timeout === 5000 && stopCall.callOptions.retry === false,
-      stopCall && stopCall.callOptions);
+      gmailApi.stopCalls.length === 1 && revoked.body.watchStopped === true, { calls: gmailApi.stopCalls.length, watchStopped: revoked.body.watchStopped });
+    check('stop は POST https://gmail.googleapis.com/gmail/v1/users/me/stop に、保存してあるアクセストークンを Bearer で送る',
+      !!stopCall && stopCall.url === GMAIL_STOP_URL && stopCall.method === 'POST' && stopCall.authorization === `Bearer ${ACCESS}`,
+      stopCall && { url: stopCall.url, method: stopCall.method, bearer: String(stopCall.authorization).startsWith('Bearer ') });
+    check('期限内のアクセストークンなら取り直さない', gmailApi.tokenCalls.length === 0, gmailApi.tokenCalls.length);
     check('順序は stop → 失効（refresh_token → access_token）→ トークンの削除 → gmailState の削除（失効の後は stop できない）',
       sameJson(events, ['stop', 'revoke:refresh', 'revoke:access', 'token:delete', 'state:delete']), events);
     check('stop できたら固定文で log する',
       revoked.logs.some((l) => l.level === 'log' && l.args[0] === 'Gmail watch stopped before revoking the token' && l.args.length === 1),
       revoked.logs.map((l) => l.args[0]));
 
-    // --- stop に失敗した（トークンが無効など。gaxios の失敗の形。要求のヘッダーと応答の本文に目印） ---
-    fake.tokenData = { refresh_token: REFRESH, access_token: ACCESS, expiry_date: 0 };
+    // --- アクセストークンが期限切れ（/gmail/refresh-token は expiry_date: 0 を書く）・期限が無い: 先に取り直して stop ---
+    for (const [label, token] of [['expiry_date: 0', storedToken({ expiry_date: 0 })], ['expiry_date なし', storedToken({ expiry_date: undefined })],
+      ['期限切れ', storedToken({ expiry_date: Date.now() - 1000 })]]) {
+      fake.tokenData = token;
+      google.respond = ok200;
+      const refreshed = await revoke();
+      check(`${label}: refresh_token で 1 回取り直し、取り直したアクセストークンで stop する（watchStopped: true）`,
+        refreshed.body.watchStopped === true && gmailApi.tokenCalls.length === 1 && gmailApi.tokenCalls[0].method === 'POST' &&
+          gmailApi.tokenCalls[0].body.includes('grant_type=refresh_token') &&
+          gmailApi.stopCalls.length === 1 && gmailApi.stopCalls[0].authorization === `Bearer ${REFRESHED}`,
+        { tokenCalls: gmailApi.tokenCalls.length, stopCalls: gmailApi.stopCalls.length, watchStopped: refreshed.body.watchStopped });
+      check(`${label}: 取り直したトークンを Firestore に書かない`, firestoreWrites.length === 0, firestoreWrites);
+      check(`${label}: 順序は 取り直し → stop → 失効 → 削除`,
+        sameJson(events, ['refresh', 'stop', 'revoke:refresh', 'revoke:access', 'token:delete', 'state:delete']), events);
+      check(`${label}: 取り直したトークンを応答にもログにも出さない`, noCanary(refreshed));
+    }
+
+    // --- 取り直しに失敗（500）: 再試行しない（google-auth-library が付ける再試行を外している） ---
+    fake.tokenData = storedToken({ expiry_date: 0 });
+    gmailApi.tokenRespond = apiError(500);
+    const refreshFailed = await revoke();
+    gmailApi.tokenRespond = refreshedToken;
+    check('取り直しが 500 なら再試行せず（1 回だけ）、stop も送らず watchStopped: false で続ける',
+      gmailApi.tokenCalls.length === 1 && gmailApi.stopCalls.length === 0 && refreshFailed.body.watchStopped === false &&
+        refreshFailed.body.googleRevoked === true && fake.tokenDeletes === 1, { tokenCalls: gmailApi.tokenCalls.length, body: refreshFailed.body });
+    check('トークン・応答の本文を応答にもログにも出さない（取り直しの失敗）', noCanary(refreshFailed));
+
+    // --- stop に失敗した（無効なトークンの 401。応答の本文・要求のヘッダーに目印） ---
+    fake.tokenData = storedToken();
     google.respond = ok200;
-    gmailStop.respond = () => Promise.reject(gaxiosError(400));
+    gmailApi.stopRespond = apiError(401);
     const stopFailed = await revoke();
     check('stop に失敗しても revoke は続ける（watchStopped: false。success は失効の結果のまま true）',
       stopFailed.status === 200 && stopFailed.body.success === true && stopFailed.body.watchStopped === false &&
         stopFailed.body.googleRevoked === true && stopFailed.body.watchStateCleared === true, stopFailed.body);
+    check('stop の 401 の後に取り直して送り直さない（stop 1 回・取り直し 0 回）',
+      gmailApi.stopCalls.length === 1 && gmailApi.tokenCalls.length === 0, { stopCalls: gmailApi.stopCalls.length, tokenCalls: gmailApi.tokenCalls.length });
     check('stop に失敗しても、失効・トークンの削除・gmailState の削除をその順に行う',
       sameJson(events, ['stop', 'revoke:refresh', 'revoke:access', 'token:delete', 'state:delete']) &&
         fake.tokenDeletes === 1 && fake.stateDeletes === 1, events);
     const stopWarn = stopFailed.logs.find((l) => l.level === 'warn' && l.args[0] === 'Failed to stop Gmail watch before revoking the token');
-    check('stop の失敗は固定文と errorFields（名前・コード・HTTP の状態）で warn する',
-      !!stopWarn && stopWarn.args.length === 2 &&
-        sameJson(stopWarn.args[1], { errorName: 'GaxiosError', errorCode: '400', errorStatus: 400 }),
+    check('stop の失敗は固定文と errorFields（名前・コード・HTTP の状態だけ）で warn する',
+      !!stopWarn && stopWarn.args.length === 2 && stopWarn.args[1].errorStatus === 401 &&
+        Object.keys(stopWarn.args[1]).every((k) => ['errorName', 'errorCode', 'errorCause', 'errorStatus'].includes(k)),
       stopFailed.logs.map((l) => l.args));
     check('トークン・Gmail の応答の本文・例外の文言を応答にもログにも出さない（stop の失敗）', noCanary(stopFailed));
 
-    // --- stop が時間切れ（gaxios の打ち切りの形。本当の時間切れは下で直接確かめる） ---
-    fake.tokenData = { refresh_token: REFRESH, access_token: ACCESS, expiry_date: 0 };
-    gmailStop.respond = () =>
-      Promise.reject(Object.assign(new Error(`The operation was aborted due to timeout ${CANARY}`), { name: 'GaxiosError', code: 'TimeoutError' }));
+    // --- stop が 500: 再試行しない ---
+    fake.tokenData = storedToken();
+    gmailApi.stopRespond = apiError(500);
+    const stop500 = await revoke();
+    check('stop が 500 でも送り直さない（1 回だけ）・watchStopped: false', gmailApi.stopCalls.length === 1 && stop500.body.watchStopped === false,
+      { stopCalls: gmailApi.stopCalls.length, watchStopped: stop500.body.watchStopped });
+
+    // --- stop が時間切れ（打ち切りの形。本当の時間切れは下で直接確かめる） ---
+    fake.tokenData = storedToken();
+    gmailApi.stopRespond = () => Promise.reject(new DOMException(`The operation was aborted due to timeout ${CANARY}`, 'TimeoutError'));
     const stopTimedOut = await revoke();
     check('stop が時間切れでも revoke は続け、watchStopped: false・トークンを消す',
       stopTimedOut.status === 200 && stopTimedOut.body.watchStopped === false && stopTimedOut.body.success === true &&
@@ -330,19 +408,19 @@ async function revokeChecks() {
     check('トークン・例外の文言を応答にもログにも出さない（stop の時間切れ）', noCanary(stopTimedOut));
 
     // --- OAuth の設定（GMAIL_CLIENT_ID）が無い: stop のクライアントを作れない ---
-    fake.tokenData = { refresh_token: REFRESH, access_token: ACCESS, expiry_date: 0 };
-    gmailStop.respond = okStop;
+    fake.tokenData = storedToken();
+    gmailApi.stopRespond = noContent;
     delete process.env.GMAIL_CLIENT_ID;
     const noConfig = await revoke();
     process.env.GMAIL_CLIENT_ID = 'dummy-client-id-for-smoke';
     const noConfigWarn = noConfig.logs.find((l) => l.level === 'warn' && l.args[0] === 'Failed to stop Gmail watch before revoking the token');
     check('OAuth の設定が無ければ stop を送らず watchStopped: false で、失効と削除は続ける',
-      gmailStop.calls.length === 0 && noConfig.body.watchStopped === false && noConfig.body.googleRevoked === true &&
+      gmailApi.stopCalls.length === 0 && noConfig.body.watchStopped === false && noConfig.body.googleRevoked === true &&
         fake.tokenDeletes === 1 && fake.stateDeletes === 1 && !!noConfigWarn && noConfigWarn.args[1].errorName === 'GmailCredentialsMissingError',
       noConfig.body);
 
     // --- トークンの削除に失敗した（500。stop・失効の結果も返す） ---
-    fake.tokenData = { refresh_token: REFRESH, access_token: ACCESS, expiry_date: 0 };
+    fake.tokenData = storedToken();
     fake.failTokenDelete = true;
     const tokenDeleteFailed = await revoke();
     fake.failTokenDelete = false;
@@ -352,11 +430,12 @@ async function revokeChecks() {
     check('トークンを応答にもログにも出さない（トークンの削除の失敗）', noCanary(tokenDeleteFailed));
 
     // --- Google が失効を受け付けない（2xx 以外。応答の本文に目印） ---
-    fake.tokenData = { refresh_token: REFRESH, access_token: ACCESS, expiry_date: 0 };
+    fake.tokenData = storedToken();
     google.respond = rejected400;
     const rejected = await revoke();
     check('Google が 400 なら 200・success: false・googleRevoked: false',
       rejected.status === 200 && rejected.body.success === false && rejected.body.googleRevoked === false, rejected.body);
+    check('success: false の 200 にも stop の結果（watchStopped: true）を付ける', rejected.body.watchStopped === true, rejected.body);
     check('400 の HTTP の状態を応答に載せる',
       sameJson(rejected.body.googleRevoke, {
         refreshToken: { result: 'rejected', status: 400 },
@@ -371,7 +450,7 @@ async function revokeChecks() {
     check('トークン・Google の応答の本文を応答にもログにも出さない（400）', noCanary(rejected));
 
     // --- タイムアウト（中断） ---
-    fake.tokenData = { refresh_token: REFRESH, access_token: ACCESS, expiry_date: 0 };
+    fake.tokenData = storedToken();
     google.respond = aborted;
     const timedOut = await revoke();
     check('タイムアウトなら success: false・googleRevoked: false（HTTP の状態は無し）',
@@ -383,7 +462,7 @@ async function revokeChecks() {
     check('トークン・例外の文言を応答にもログにも出さない（タイムアウト）', noCanary(timedOut));
 
     // --- 通信の失敗 ---
-    fake.tokenData = { refresh_token: REFRESH, access_token: ACCESS, expiry_date: 0 };
+    fake.tokenData = storedToken();
     google.respond = networkError;
     const network = await revoke();
     check('通信に失敗したら success: false・googleRevoked: false',
@@ -399,7 +478,7 @@ async function revokeChecks() {
     check('トークン・例外の文言を応答にもログにも出さない（通信の失敗）', noCanary(network));
 
     // --- refresh_token はタイムアウト、access_token は受け付けた（access_token の失効で refresh_token も失効する） ---
-    fake.tokenData = { refresh_token: REFRESH, access_token: ACCESS, expiry_date: 0 };
+    fake.tokenData = storedToken();
     google.respond = byToken({ refresh: aborted, access: ok200 });
     const either = await revoke();
     check('どちらかが受け付けられれば googleRevoked: true・success: true',
@@ -414,7 +493,7 @@ async function revokeChecks() {
         sameJson(accessOnly.body.googleRevoke.refreshToken, { result: 'skipped' }), accessOnly.body);
 
     // --- Google が受け付けず、gmailState も消せない ---
-    fake.tokenData = { refresh_token: REFRESH, access_token: ACCESS, expiry_date: 0 };
+    fake.tokenData = storedToken();
     google.respond = rejected400;
     fake.failStateDelete = true;
     const both = await revoke();
@@ -444,33 +523,100 @@ async function revokeChecks() {
       direct && direct.revoked === false && direct.refreshToken.result === 'timeout' && direct.accessToken.result === 'timeout' &&
         Date.now() - started < 2000, direct);
 
-    // --- stop の本当の時間切れ（応答の返らない stop。全体の上限を短くして直接呼ぶ） ---
-    gmailStop.calls = [];
-    gmailStop.respond = () => new Promise(() => {});
+    // --- stop の本当の時間切れ（全体の上限を 30ms にして直接呼ぶ） ---
+    // 偽物は中断の合図を無視して 1.5 秒後に成功を返す（各要求の待ち時間では止まらない）。全体の打ち切り（Promise.race）が
+    // 無ければ true になるので、ここで捕まる
+    gmailApi.stopCalls = [];
+    gmailApi.stopRespond = () => new Promise((resolve) => setTimeout(() => resolve(noContent()), 1500));
     const stopStarted = Date.now();
     const stopWarns = [];
     console.warn = (...args) => stopWarns.push(args);
     let stopDirect;
     try {
-      stopDirect = await auth.stopGmailWatchOnGoogle({ refresh_token: REFRESH, access_token: ACCESS }, 30);
+      stopDirect = await auth.stopGmailWatchOnGoogle(storedToken(), 30);
     } finally {
       console.warn = originalWarn;
     }
-    check('stop が待ち時間を過ぎたら打ち切って false（応答が返らなくても待たない）',
-      stopDirect === false && gmailStop.calls.length === 1 && Date.now() - stopStarted < 2000, stopDirect);
+    const stopElapsed = Date.now() - stopStarted;
+    check('stop が待ち時間を過ぎたら打ち切って false（応答を待たない）',
+      stopDirect === false && gmailApi.stopCalls.length === 1 && stopElapsed < 1000, { stopDirect, stopElapsed });
     check('stop の時間切れは固定文と TimeoutError で warn する',
       stopWarns.length === 1 && stopWarns[0][0] === 'Failed to stop Gmail watch before revoking the token' &&
         sameJson(stopWarns[0][1], { errorName: 'TimeoutError' }), stopWarns);
     const noTokenStop = [await auth.stopGmailWatchOnGoogle(undefined, 30), await auth.stopGmailWatchOnGoogle({ refresh_token: '', access_token: null }, 30)];
-    check('トークンが無ければ stop は何も送らず null', sameJson(noTokenStop, [null, null]) && gmailStop.calls.length === 1, noTokenStop);
+    check('トークンが無ければ stop は何も送らず null', sameJson(noTokenStop, [null, null]) && gmailApi.stopCalls.length === 1, noTokenStop);
   } finally {
     globalThis.fetch = httpFetch;
-    googleapis.gmail = realGmail;
+    googleapis.auth.OAuth2 = RealOAuth2;
+    firestoreModule.getFirestore = realGetFirestore;
     for (const [key, value] of [['GMAIL_CLIENT_ID', savedEnv.id], ['GMAIL_CLIENT_SECRET', savedEnv.secret], ['GMAIL_REDIRECT_URI', savedEnv.redirect]]) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
     server.close();
+  }
+}
+
+/**
+ * ADMIN_SECRET が推奨（32 文字）より短いときの warn（adminRouter.ts の warnIfWeakAdminSecret）
+ *
+ * プロセスごとに 1 回だけで、値も長さも出さない。短くても認証は従来どおり（503 にしない）。フラグはプロセス内で
+ * 1 回しか立たないので、ADMIN_SECRET を使うほかのチェックより先に走らせる。
+ */
+async function weakAdminSecretChecks() {
+  console.log('\nADMIN_SECRET が短いときの warn（プロセスごとに 1 回・値と長さを出さない）');
+
+  // テスト用のダミー値（本物の秘密値ではない）。31 文字と 32 文字（境目）
+  const SHORT = 'CANARY-short-admin-secret-31chr';
+  const LONG = 'CANARY-long-admin-secret-32chars';
+  const WARN = 'ADMIN_SECRET is shorter than the recommended 32 characters; replace it with a random value (e.g. openssl rand -base64 32)';
+  if (SHORT.length !== 31 || LONG.length !== 32) throw new Error('test secrets have unexpected lengths');
+
+  auth.gmailTokenRef = () => ({ get: async () => ({ exists: false, data: () => undefined }), delete: async () => {} });
+  watch.gmailStateRef = () => ({ delete: async () => {} });
+  const { gmailRouter, MIN_ADMIN_SECRET_LENGTH } = require('../dist/gmail/adminRouter');
+  const app = express();
+  app.use('/gmail', gmailRouter);
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const url = `http://127.0.0.1:${server.address().port}/gmail/revoke`;
+  // 1 回の DELETE /gmail/revoke（接続元はほかのチェックと分ける）と、その間のログ
+  const call = async (secret, bearer) => {
+    process.env.ADMIN_SECRET = secret;
+    const logs = [];
+    const saved = { log: console.log, warn: console.warn, error: console.error };
+    for (const level of Object.keys(saved)) {
+      console[level] = (...args) => logs.push({ level, args, text: util.format(...args) });
+    }
+    try {
+      const res = await fetch(url, { method: 'DELETE', headers: { Authorization: `Bearer ${bearer}`, 'X-Forwarded-For': '198.51.100.60' } });
+      await res.text();
+      return { status: res.status, logs };
+    } finally {
+      Object.assign(console, saved);
+    }
+  };
+  const weakWarns = (r) => r.logs.filter((l) => l.args[0] === WARN);
+
+  try {
+    check('推奨の最短の長さは 32', MIN_ADMIN_SECRET_LENGTH === 32, MIN_ADMIN_SECRET_LENGTH);
+    const long = await call(LONG, LONG);
+    check('32 文字なら warn しない（認証は 200）', long.status === 200 && weakWarns(long).length === 0, long.logs.map((l) => l.args[0]));
+    const first = await call(SHORT, SHORT);
+    const warned = weakWarns(first);
+    check('31 文字なら固定文で 1 回 warn する', warned.length === 1 && warned[0].level === 'warn' && warned[0].args.length === 1,
+      first.logs.map((l) => l.args));
+    check('warn に値（目印）も長さ（31）も出さない', first.logs.every((l) => !l.text.includes('CANARY') && !/\b31\b/.test(l.text)),
+      first.logs.map((l) => l.text));
+    check('短くても認証は従来どおり（正しい値は 200。503 にしない）', first.status === 200, first.status);
+    const second = await call(SHORT, SHORT);
+    check('warn はプロセスごとに 1 回だけ（2 回目は出さない）', second.status === 200 && weakWarns(second).length === 0,
+      second.logs.map((l) => l.args[0]));
+    const wrong = await call(SHORT, LONG);
+    check('短くても違う値は 401（warn も出さない）', wrong.status === 401 && weakWarns(wrong).length === 0, wrong.status);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 }
 
@@ -737,8 +883,22 @@ async function tokenSaveChecks() {
   }
 }
 
+// どこかで await が返らずにイベントループが空になると、下の .then を通らずに終了コード 0 で終わる。それを失敗にする
+let finished = false;
+process.on('exit', (code) => {
+  if (!finished && code === 0) {
+    console.log('  FAIL チェックが最後まで進まずに終わった（返らない await）');
+    process.exitCode = 1;
+  }
+});
+
 (async () => {
-  for (const [name, fn] of [['revoke', revokeChecks], ['レート制限', rateLimitChecks], ['トークンの保存', tokenSaveChecks]]) {
+  for (const [name, fn] of [
+    ['ADMIN_SECRET が短いときの warn', weakAdminSecretChecks],
+    ['revoke', revokeChecks],
+    ['レート制限', rateLimitChecks],
+    ['トークンの保存', tokenSaveChecks],
+  ]) {
     try {
       await fn();
     } catch (error) {
@@ -748,6 +908,7 @@ async function tokenSaveChecks() {
   }
 })()
   .then(() => {
+    finished = true;
     if (failed > 0) {
       console.error(`\n${failed} check(s) failed`);
       process.exit(1);

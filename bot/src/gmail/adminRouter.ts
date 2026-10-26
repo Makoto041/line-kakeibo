@@ -26,6 +26,26 @@ import type { GoogleRevokeResult } from "./index";
 import { stopGmailWatchOnGoogle } from "./auth";
 
 /**
+ * ADMIN_SECRET の推奨の最短の長さ（前後の空白を落とした後）
+ *
+ * 総当たりへの耐性は秘密値の強度（128 bit 以上のランダム。`openssl rand -base64 32` で 44 文字）に置く。
+ * 認証前のレート制限は推測の回数を制限しない（adminPreAuthLimiter）。
+ */
+export const MIN_ADMIN_SECRET_LENGTH = 32;
+let weakAdminSecretWarned = false;
+
+/**
+ * ADMIN_SECRET が推奨より短ければ、プロセスごとに 1 回だけ固定文で warn する（値も長さも出さない）
+ *
+ * 本番の秘密値の長さは確かめていないので、短くても管理 API は止めない（503 にすると管理の操作ができなくなる）。
+ */
+function warnIfWeakAdminSecret(adminSecret: string): void {
+  if (weakAdminSecretWarned || adminSecret.length >= MIN_ADMIN_SECRET_LENGTH) return;
+  weakAdminSecretWarned = true;
+  console.warn("ADMIN_SECRET is shorter than the recommended 32 characters; replace it with a random value (e.g. openssl rand -base64 32)");
+}
+
+/**
  * Admin認証ミドルウェア
  * `Authorization: Bearer <ADMIN_SECRET>` ヘッダーでのみ認証する。
  *
@@ -42,6 +62,7 @@ const requireAdminAuth = (req: Request, res: Response, next: express.NextFunctio
     console.error("ADMIN_SECRET is not configured");
     return res.status(503).json({ error: "Admin API is not configured" });
   }
+  warnIfWeakAdminSecret(adminSecret);
 
   // 比較は定数時間（adminAuth.ts の secretsMatch）
   if (!isAdminAuthorized(req.headers.authorization, adminSecret)) {
@@ -63,17 +84,19 @@ export const gmailRouter = express.Router();
 /**
  * 管理 API のレート制限
  *
- * キーは接続元の IP（householdApi.ts の clientIpKey。X-Forwarded-For の末尾 = Google のフロントエンドが足した接続元の IP）。
- * `trust proxy` は設定していないので、既定のキー（req.ip）では Cloud Run の前段のアドレスにまとまり、認証の無い要求の連打で
- * 正規の管理者（トークンの漏洩で revoke を急いで呼ぶときを含む）も 429 になりえた。
+ * キーは接続元の IP（householdApi.ts の clientIpKey。X-Forwarded-For の末尾。Google のフロントエンドが接続元の IP を
+ * 足す前提で、実測では確かめていない）。`trust proxy` は設定していないので、既定のキー（req.ip）では Cloud Run の前段の
+ * アドレスにまとまり、認証の無い要求の連打で正規の管理者（トークンの漏洩で revoke を急いで呼ぶときを含む）も 429 になりえた。
  *
  * 枠は認証の前後で分ける。
  * - adminPreAuthLimiter（認証の前）: 認証に失敗する要求（Bearer が無い・違う・ADMIN_SECRET が未設定）だけを数える。認証に
- *   成功する要求は skip で数えも止めもしない（キーが共通のアドレスにまとまっても、認証の無い連打で管理者は 429 にならない）
+ *   成功する要求は skip で数えも止めもしない（キーが共通のアドレスにまとまっても、認証の無い連打で管理者は 429 にならない）。
+ *   そのため、この枠は推測の回数を制限しない（枠を使い切っても正しい秘密値の要求は通るので、推測を続けられる）。目的は
+ *   連打による負荷の分離と、認証に失敗する要求の可視化。総当たりへの耐性は ADMIN_SECRET の強度による（MIN_ADMIN_SECRET_LENGTH）
  * - adminPostAuthLimiter（認証の後）: 認証に成功した要求の上限（Gmail・分類・LINE を呼ぶ操作の連打を抑える）
  *
- * skipFailedRequests / skipSuccessfulRequests は使わない（要求が届いた時点で数え、応答の後に戻すだけなので、枠が尽きて
- * いる間は管理者の要求も 429 になる）。数はインスタンスのメモリで数える。
+ * 失敗を数えて枠を超えたら正しい秘密値の要求も 429 にする形（skip を外す・skipFailedRequests / skipSuccessfulRequests）は
+ * 採らない。キーが共通のアドレスにまとまる環境では、認証の無い連打で正規の管理者が締め出されるため。数はインスタンスのメモリで数える。
  */
 const ADMIN_RATE_LIMIT_PER_MINUTE = 30;
 /** IP をキーにする limiter の検証のうち、clientIpKey と合わないもの（`trust proxy` 無しの X-Forwarded-For など）を切る */

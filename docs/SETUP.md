@@ -52,7 +52,7 @@ npm install          # npm workspaces（bot / web）をまとめて入れる
 |---|---|
 | `LINE_CHANNEL_SECRET` / `LINE_CHANNEL_TOKEN` | Messaging API チャネルのシークレットと長期アクセストークン |
 | `LINE_LIFF_CHANNEL_ID` | LINE Login チャネルの ID（`/auth/line` で ID トークンの `aud` を検証する） |
-| `ADMIN_SECRET` | 管理 API（`/gmail/*`）の Bearer トークン |
+| `ADMIN_SECRET` | 管理 API（`/gmail/*`）の Bearer トークン。**32 文字以上のランダムな値が必須**（`openssl rand -base64 32` などで作る。128 bit 以上）。総当たりへの耐性はこの値の強度だけによる（認証前のレート制限は推測の回数を制限しない。[SECURITY_OPERATIONS.md](./SECURITY_OPERATIONS.md) §10）。32 文字より短いと、管理 API の最初の要求で固定文の警告（`ADMIN_SECRET is shorter than the recommended 32 characters; ...`）が出る（管理 API は止めない） |
 | `TYPESAFE_API_KEY` | カテゴリ分類のメイン（TypeSafe AI の Jev） |
 | `GEMINI_API_KEY` | カテゴリ分類の退避先（Jev が失敗したとき）・フィードバック解析 |
 | `GEMINI_MODEL` | 任意。メインのモデルを固定する（Flash-Lite のみ。未設定なら利用できる一番新しい Flash-Lite） |

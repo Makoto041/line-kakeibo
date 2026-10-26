@@ -441,22 +441,33 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
 
 ## 10. 管理 API（`/gmail/*`）のレート制限
 
-`bot/src/gmail/adminRouter.ts`。`ADMIN_SECRET`（`Authorization: Bearer`）で守る管理 API に、総当たりと連打を抑える上限を付ける。
+`bot/src/gmail/adminRouter.ts`。`ADMIN_SECRET`（`Authorization: Bearer`）で守る管理 API の上限。
 
-- **キーは接続元の IP**: `X-Forwarded-For` の末尾（Google のフロントエンドが足す接続元の IP）で数える。`/household` の
-  認証前の上限と同じ関数（`householdApi.ts` の `clientIpKey`）を使う。`trust proxy` は設定していないので、`req.ip` は
-  Cloud Run の前段のアドレスにまとまる。以前は既定のキー（`req.ip`）だったため、認証の無い要求を 1 分に 30 回送り続ければ、
-  正規の管理者（トークンが漏れたときに revoke を急いで呼ぶ場合を含む）も 429 で止められえた。クライアントが送った
-  `X-Forwarded-For` はその前に並ぶだけなので、末尾は詐称できない。
-- **枠を認証の前後で分ける**（`/callback` 以外の全ルート。`adminGuards`）:
+- **総当たりへの耐性は `ADMIN_SECRET` の強度による**（128 bit 以上のランダム。`openssl rand -base64 32` などで作り、
+  32 文字以上にする。`docs/SETUP.md`・`bot/.env.example`）。下の認証前の枠は推測の回数を制限しない。前後の空白を落として
+  32 文字より短いと、管理 API の最初の要求で固定文の警告（`ADMIN_SECRET is shorter than the recommended 32 characters; ...`）を
+  プロセスごとに 1 回出す（値も長さも出さない）。本番の値の長さは確かめていないので、短くても 503 にはしない
+  （管理の操作が止まるため）。この警告が出たら、`firebase functions:secrets:set ADMIN_SECRET` で差し替えて再デプロイする。
+- **キーは接続元の IP**: `X-Forwarded-For` の末尾で数える。`/household` の認証前の上限と同じ関数（`householdApi.ts` の
+  `clientIpKey`）を使う。Google のフロントエンドが末尾に接続元の IP を足す前提で、実測では確かめていない（#173 の docs にも
+  実測の記述は無い）。`trust proxy` は設定していないので、`req.ip` は Cloud Run の前段のアドレスにまとまる。以前は既定の
+  キー（`req.ip`）だったため、認証の無い要求を 1 分に 30 回送り続ければ、正規の管理者（トークンが漏れたときに revoke を
+  急いで呼ぶ場合を含む）もこの limiter で 429 になりえた。
+- **枠を認証の前後で分ける**（`/callback` 以外の全ルート。並びは `adminGuards`）:
   - 認証の前（`adminPreAuthLimiter`）: 認証に失敗する要求だけを数える（接続元ごとに 30 回/分）。認証に成功する要求は
-    `skip` で数えも止めもしない。キーが共通のアドレスにまとまった場合（前段がさらに増えた場合）でも、認証の無い連打で
-    管理者の要求は 429 にならない。
+    `skip` で数えも止めもしない。**推測の回数は制限しない**（枠を使い切った接続元でも、正しい値の要求は通るので、
+    200 が返るまで推測を続けられる）。目的は、連打による負荷の分離と、認証に失敗する要求の可視化（401 の warn と 429）。
+    以前（`req.ip` で、成功も失敗も 30 回/分/インスタンス）は推測の回数も抑えていたので、その点は後退している。
   - 認証の後（`adminPostAuthLimiter`）: 認証に成功した要求の上限（接続元ごとに 30 回/分）。取込・分類・LINE の通知を
     呼ぶ操作の連打を抑える。
-  - `skipFailedRequests` / `skipSuccessfulRequests` は使わない。要求が届いた時点で数え、応答の後に戻すだけなので、
-    枠が尽きている間は管理者の要求も 429 になるため。
+- **採らなかった案**: `skip` をやめて「認証に失敗した要求だけを数え、枠を超えたら正しい値の要求も 429 にする」
+  （`skipSuccessfulRequests` など）と、推測の回数は抑えられる。ただし、接続元が共通のアドレスにまとまる環境
+  （`X-Forwarded-For` の末尾が Google のフロントエンドの付けた値でない・読めない場合）では、認証の無い連打で正規の
+  管理者が締め出される。上のとおり末尾の値は実測で確かめていないので、締め出しを避ける側を選び、総当たりへの耐性は
+  秘密値の強度に置く。
 - `/callback`（Google からのリダイレクト先。Admin 認証なし）は、接続元ごとに 5 分で 20 回。
-- **残る制約**: 数はインスタンスのメモリで数える（`api` は maxInstances: 5 なので、最大その倍数まで通る）。
+- **残る制約**: 数はインスタンスのメモリで数える（`api` は maxInstances: 5 なので、最大その倍数まで通る）。アプリ内の
+  limiter で 429 にならなくても、認証の無い要求を並行で大量に送られると、インスタンスが埋まり Cloud Run 自体が
+  429 / 503 を返しうる。
 - テストは `bot/scripts/smoke-gmail-watch.js`（ルーターのスタックを走査して全ルートに同じ並びが付くこと、
-  `X-Forwarded-For` の末尾で枠が分かれること、認証の無い連打で管理者の要求が 429 にならないこと）。
+  `X-Forwarded-For` の末尾で枠が分かれること、認証の無い連打で管理者の要求が 429 にならないこと、短い `ADMIN_SECRET` の警告）。

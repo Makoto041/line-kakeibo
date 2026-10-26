@@ -431,15 +431,17 @@ curl -H "Authorization: Bearer $ADMIN_SECRET" https://...
 
 > クエリパラメータ（`?adminSecret=`）での認証は廃止した。URL はアクセスログやブラウザ履歴に残り、秘密値の漏洩経路になるため。比較は定数時間（SHA-256 ダイジェスト同士の `timingSafeEqual`。`adminAuth.ts`）で行う。
 
-**レート制限**（`adminRouter.ts`）: 接続元の IP ごとに数える。キーは `X-Forwarded-For` の末尾（Google のフロントエンドが足す接続元の IP。`householdApi.ts` の `clientIpKey` を共有）。`trust proxy` を設定していないので、既定のキー（`req.ip`）では Cloud Run の前段のアドレスにまとまってしまうため。`/callback` 以外の全ルートで、枠を認証の前後で分ける（[SECURITY_OPERATIONS.md](./SECURITY_OPERATIONS.md) §10）。
+**総当たりへの耐性**は `ADMIN_SECRET` の強度による（32 文字以上のランダム。`openssl rand -base64 32` などで作る。[SETUP.md](./SETUP.md)）。下のレート制限は推測の回数を制限しない。32 文字より短いと、固定文の警告をプロセスごとに 1 回出す（管理 API は止めない）。
 
-| 枠 | 数えるもの | 上限 |
+**レート制限**（`adminRouter.ts`）: 接続元の IP ごとに数える。キーは `X-Forwarded-For` の末尾（`householdApi.ts` の `clientIpKey` を共有。Google のフロントエンドが接続元の IP を足す前提で、実測では確かめていない）。`trust proxy` を設定していないので、既定のキー（`req.ip`）では Cloud Run の前段のアドレスにまとまってしまうため。`/callback` 以外の全ルートで、枠を認証の前後で分ける（[SECURITY_OPERATIONS.md](./SECURITY_OPERATIONS.md) §10）。
+
+| 枠 | 数えるもの・目的 | 上限 |
 |----|-----------|------|
-| 認証の前 | 認証に失敗する要求だけ（Bearer が無い・違う・`ADMIN_SECRET` が未設定）。認証に成功する要求は数えも止めもしない | 接続元ごとに 30 回/分 |
-| 認証の後 | 認証に成功した要求 | 接続元ごとに 30 回/分 |
+| 認証の前 | 認証に失敗する要求だけ（Bearer が無い・違う・`ADMIN_SECRET` が未設定）。認証に成功する要求は数えも止めもしない。目的は連打による負荷の分離と、認証に失敗する要求の可視化。**推測の回数は制限しない**（枠を使い切っても正しい値は通る） | 接続元ごとに 30 回/分 |
+| 認証の後 | 認証に成功した要求（取込・分類・LINE を呼ぶ操作の連打を抑える） | 接続元ごとに 30 回/分 |
 | `/callback` | すべての要求（Admin 認証なし） | 接続元ごとに 5 分で 20 回 |
 
-認証の無い要求を連打されても、正規の管理者の要求（トークンが漏れたときの revoke など）は 429 にならない。超えたら 429。
+認証の無い要求を連打されても、正規の管理者の要求（トークンが漏れたときの revoke など）はアプリ内の limiter では 429 にならない。超えたら 429。
 
 ### 使用例
 
@@ -464,7 +466,8 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 1. 保存してあるトークンで Gmail の watch を止める（`users.stop`。`auth.ts` の `stopGmailWatchOnGoogle`）。失効させた後は stop できないので、失効より先に呼ぶ。結果は `watchStopped`（止められたら `true`、止められなかったら `false`、トークンが保存されていなければ呼ばずに `null`）
    - 止められなくても（トークンが無効・取り消し済み・期限切れで取り直せない、待ち時間切れ、通信の失敗）revoke は続ける。`success` は `watchStopped` で変えない。止められなかった古い watch は期限（最大 7 日）まで通知を送りうるが、取り込まれない（下の表の後の注記）
    - 共有のクライアントは使わず、手順 2. で失効させるのと同じトークンでクライアントを作る。アクセストークンが期限切れなら refresh_token で取り直すが、Firestore には保存しない（保存すると、失効させない新しいアクセストークンが削除までの間 Firestore に残る）
-   - 待ち時間は、アクセストークンの取り直しを含めた全体で 5 秒。再試行はしない
+   - 送るのは、アクセストークンの取り直し（期限切れのときだけ）と stop の、それぞれ 1 回まで。再試行はしない（google-auth-library は取り直しの要求に自前の再試行の設定〔POST も対象〕を付けるので、このクライアントの送信の手前〔interceptor〕で外している）。期限（`expiry_date`）が無い・0（`/gmail/refresh-token` が書く）のときは、期限切れとして先に取り直す（期限が無いと、ライブラリは stop の 401 の後に取り直して stop を送り直すため）
+   - 待ち時間は、取り直しを含めた全体で 5 秒（打ち切る）。各要求にも 5 秒の待ち時間を付けるので、打ち切った後に送信中の要求が残っても、その待ち時間で終わる
    - `users.stop` は `gmail.readonly` のスコープで呼べる（googleapis の gmail v1 の型定義〔`users.stop` の説明〕が、使えるスコープに `gmail.readonly` を挙げている）
    - 時間の上限: stop 5 秒＋失効 5 秒 × 2 = Google への送信は最大 15 秒。あとは Firestore の get / delete × 3（待ち時間は付けていない）。関数 `api` の既定のタイムアウト（60 秒）に収める
 2. 保存してあるトークンを Google 側で失効させる（`auth.ts` の `revokeGmailTokenOnGoogle`）。`POST https://oauth2.googleapis.com/revoke` に、トークンを `application/x-www-form-urlencoded` の本文（`token=...`）で送る（URL のクエリには載せない）。refresh_token を先に、access_token を後に送る。1 回の待ち時間は 5 秒（最大 2 回）
@@ -539,7 +542,8 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 
 - OAuth2 のクライアント ID / シークレットは Secret Manager、発行されたトークンは Firestore `system/gmailToken`（クライアントからは読めない）
 - 連携をやめるときは `/api/gmail/revoke` を呼ぶ。古い watch も止める（`watchStopped`。止められなくても、トークンが無いので通知は取り込まれない。§10「revoke の応答」）。応答が `googleRevoked: false`（Google が失効を受け付けなかった）なら、Google アカウントの「サードパーティのアクセス」から手動で外す（§10「revoke の応答」）
-- 管理 API はレート制限を認証の前後で分けている（§10「認証方法」）。認証の無い要求の連打で、トークンが漏れたときの revoke が 429 で止められることはない
+- 管理 API はレート制限を認証の前後で分けている（§10「認証方法」）。認証の無い要求の連打で、トークンが漏れたときの revoke がアプリ内の limiter で 429 になることはない。ただし、認証の無い要求を並行で大量に送られると、関数のインスタンス（`api` は maxInstances: 5）が埋まり、Cloud Run 自体が 429 / 503 を返しうる。revoke が通らないときは、下の 1.（Google アカウントから手動で外す）で許可を外す
+- 管理 API の総当たりへの耐性は `ADMIN_SECRET` の強度による（32 文字以上のランダム。§10「認証方法」）
 - **トークンが漏れた疑いがあるとき**は、`/api/gmail/revoke` の結果にかかわらず、次も行う
   1. 連携していた Google アカウントで [サードパーティ製のアプリとサービスとの接続](https://myaccount.google.com/connections) を開き、このアプリが一覧から外れていることを確かめる。残っていれば手動で外す（手動で外すと、そのクライアントに与えた許可がまとめて外れ、発行済みのトークンがすべて無効になる）
   2. `googleRevoked: true` でも、それで完了とは見なさない。revoke が Google に送るのは Firestore に保存してある最新のトークンだけである。`/gmail/auth` は `prompt: 'consent'` で認可するため、認可し直すたびに新しい refresh_token が発行され、古い refresh_token が残りうる（Google の文書は「失効でそのプロジェクトへの許可がまとめて外れる」とするが、確かめていない）。1. の手動の確認で、許可が外れていることを確かめる
