@@ -12,10 +12,16 @@
 import { google, Auth } from 'googleapis';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { GmailToken } from './types';
+import { errorFields } from '../logSafe';
 import * as crypto from 'crypto';
 
 // OAuth stateの有効期限（10分）
 const STATE_EXPIRY_MS = 10 * 60 * 1000;
+
+/** Google の OAuth のトークンの失効先（https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke） */
+const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
+/** Google への失効の要求 1 回あたりの待ち時間（refresh_token と access_token で最大 2 回） */
+const GOOGLE_REVOKE_TIMEOUT_MS = 5000;
 
 /**
  * Gmail のトークンが保存されていない（OAuth の設定前・/gmail/revoke の後）
@@ -29,6 +35,22 @@ export class GmailTokenMissingError extends Error {
     this.name = 'GmailTokenMissingError';
   }
 }
+
+/**
+ * 更新したアクセストークンを保存しようとしたら、トークンの文書が無かった（更新の途中で /gmail/revoke に消された）
+ *
+ * 文書は作り直さない（saveRefreshedTokenToFirestore）。取込（handler.ts）はこれを投げて失敗し、Pub/Sub の再送で
+ * トークンが無い（GmailTokenMissingError）と分かって終える。
+ */
+export class GmailTokenDeletedError extends Error {
+  constructor() {
+    super('Gmail token was deleted while refreshing it');
+    this.name = 'GmailTokenDeletedError';
+  }
+}
+
+/** Firestore の gRPC のコード NOT_FOUND（update で文書が無いとき） */
+const FIRESTORE_NOT_FOUND = 5;
 
 // OAuth2クライアント
 let oauth2Client: Auth.OAuth2Client | null = null;
@@ -187,13 +209,35 @@ export function gmailTokenRef() {
 }
 
 /**
- * トークンをFirestoreに保存
+ * OAuth のコールバックで受け取ったトークンを Firestore に保存する（文書が無ければ作り、あれば置き換える）
  */
 async function saveTokenToFirestore(token: GmailToken): Promise<void> {
   await gmailTokenRef().set({
     ...token,
     updatedAt: Timestamp.now(),
   });
+}
+
+/**
+ * 更新したアクセストークンを Firestore に保存する（文書があるときだけ書く）
+ *
+ * set で書くと、更新の途中で /gmail/revoke がトークンを消したときに、消したトークンを作り直してしまう
+ * （revoke の後も取込が古いトークンで動き続ける）。update は文書が無ければ NOT_FOUND で失敗するので、
+ * そのときは作らずに GmailTokenDeletedError を投げる。
+ */
+async function saveRefreshedTokenToFirestore(token: GmailToken): Promise<void> {
+  try {
+    await gmailTokenRef().update({
+      ...token,
+      updatedAt: Timestamp.now(),
+    });
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === FIRESTORE_NOT_FOUND) {
+      console.warn('Gmail token was deleted while refreshing it; not recreating it (revoked)');
+      throw new GmailTokenDeletedError();
+    }
+    throw error;
+  }
 }
 
 /**
@@ -244,8 +288,8 @@ async function refreshAccessToken(refreshToken: string): Promise<GmailToken> {
     scope: credentials.scope || '',
   };
 
-  // 更新したトークンをFirestoreに保存
-  await saveTokenToFirestore(newToken);
+  // 更新したトークンをFirestoreに保存（文書が消えていたら作り直さずに投げる）
+  await saveRefreshedTokenToFirestore(newToken);
 
   console.log('Gmail access token refreshed successfully');
   return newToken;
@@ -287,6 +331,97 @@ export async function getGmailClient() {
   }
 
   return google.gmail({ version: 'v1', auth: client });
+}
+
+/**
+ * Google の失効の要求 1 回分の結果。トークン・Google の応答の本文・例外の文言は持たない（管理 API の応答とログにそのまま出す）
+ *
+ * - revoked: Google が 2xx を返した（文書では成功は 200）
+ * - rejected: Google が 2xx 以外を返した（文書では失敗は 400。期限切れ・取り消し済みのトークンもこれになる）
+ * - timeout: 待ち時間（GOOGLE_REVOKE_TIMEOUT_MS）を過ぎた
+ * - network_error: 通信に失敗した（応答が無い）
+ * - skipped: そのトークンが保存されていないので送っていない
+ */
+export type GoogleRevokeAttempt =
+  | { result: 'revoked'; status: number }
+  | { result: 'rejected'; status: number }
+  | { result: 'timeout' }
+  | { result: 'network_error' }
+  | { result: 'skipped' };
+
+/** Google 側の失効の結果（revokeGmailTokenOnGoogle） */
+export interface GoogleRevokeResult {
+  /** どちらかのトークンで Google が失効を受け付けた（2xx） */
+  revoked: boolean;
+  refreshToken: GoogleRevokeAttempt;
+  accessToken: GoogleRevokeAttempt;
+}
+
+/** トークンを 1 つ Google で失効させる */
+async function revokeOneTokenOnGoogle(
+  kind: 'refresh_token' | 'access_token',
+  token: string,
+  timeoutMs: number
+): Promise<GoogleRevokeAttempt> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    // トークンは本文（application/x-www-form-urlencoded）で送る。URL のクエリに載せると、通信の途中や通信先のログに残りうる
+    const response = await fetch(GOOGLE_REVOKE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token }).toString(),
+      signal: controller.signal,
+    });
+    // 応答の本文（エラーの説明）は使わないので、読まずに閉じる
+    await response.body?.cancel().catch(() => undefined);
+    return response.ok ? { result: 'revoked', status: response.status } : { result: 'rejected', status: response.status };
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { result: 'timeout' };
+    }
+    console.warn('Failed to reach Google to revoke a Gmail token', { kind, ...errorFields(error) });
+    return { result: 'network_error' };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/**
+ * 保存してあるトークンを Google で失効させる（DELETE /gmail/revoke）。トークンが 1 つも無ければ何も送らずに null を返す
+ *
+ * refresh_token を先に、access_token を後に送る。Google の文書（Token revocation）は「access_token を失効させると、
+ * 対応する refresh_token も失効する」と明記している。逆向き（refresh_token → access_token）は明記が無い
+ * （「失効はそのプロジェクトに与えた権限をすべて外し、発行済みのアクセス・リフレッシュトークンを無効にする」という
+ * 一般的な記述だけ）ので、両方送る。どちらかが受け付けられれば、許可は外れている（revoked: true）。
+ * refresh_token の失効が通った後の access_token は、既に無効なので 400 になりうるが、結果は変えない。
+ */
+export async function revokeGmailTokenOnGoogle(
+  tokenData: { refresh_token?: unknown; access_token?: unknown } | undefined,
+  timeoutMs: number = GOOGLE_REVOKE_TIMEOUT_MS
+): Promise<GoogleRevokeResult | null> {
+  const refresh = nonEmptyString(tokenData?.refresh_token);
+  const access = nonEmptyString(tokenData?.access_token);
+  if (!refresh && !access) {
+    return null;
+  }
+
+  const skipped: GoogleRevokeAttempt = { result: 'skipped' };
+  const refreshResult = refresh ? await revokeOneTokenOnGoogle('refresh_token', refresh, timeoutMs) : skipped;
+  const accessResult = access ? await revokeOneTokenOnGoogle('access_token', access, timeoutMs) : skipped;
+  const revoked = refreshResult.result === 'revoked' || accessResult.result === 'revoked';
+
+  // ログには結果だけを出す（トークンは出さない）
+  if (revoked) {
+    console.log('Gmail token revoked on Google side', { refresh: refreshResult, access: accessResult });
+  } else {
+    console.warn('Gmail token was not revoked on Google side', { refresh: refreshResult, access: accessResult });
+  }
+  return { revoked, refreshToken: refreshResult, accessToken: accessResult };
 }
 
 /**
