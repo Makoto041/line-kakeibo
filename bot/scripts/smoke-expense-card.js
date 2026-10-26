@@ -1083,7 +1083,7 @@ async function saveFlowChecks() {
   });
   /** 失敗の記録の前回までの値（messageId → { attempts, firstFailedAt?, lastFailedAt? }）。空なら初回の失敗 */
   let priorFailures = {};
-  /** recordMessageFailure が書いた値（{ [messageId]: { attempts, lastError, firstFailedAt, lastFailedAt } }） */
+  /** recordMessageFailure が書いた値（{ [messageId]: { attempts, errorName ほか最後の失敗の種類, firstFailedAt, lastFailedAt } }） */
   const failureWrites = [];
   /** history.list が返すメッセージ */
   let historyMessageIds = ['msg-pubsub'];
