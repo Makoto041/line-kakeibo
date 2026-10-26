@@ -43,7 +43,8 @@ function getOAuth2Client() {
     const redirectUri = process.env.GMAIL_REDIRECT_URI;
 
     if (!clientId || !clientSecret || !redirectUri) {
-      throw new Error('Gmail OAuth2 credentials not configured');
+      // 固定文の例外には名前を付ける（ログは文言を出さず errorName で見分けるため。logSafe.ts の errorFields）
+      throw Object.assign(new Error('Gmail OAuth2 credentials not configured'), { name: 'GmailCredentialsMissingError' });
     }
 
     oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
@@ -152,7 +153,9 @@ export async function handleOAuthCallback(code: string, state: string): Promise<
   // stateパラメータを検証（CSRF保護）
   const isValidState = await validateAndConsumeState(state);
   if (!isValidState) {
-    throw new Error('Invalid or expired OAuth state. Please start the authentication process again.');
+    throw Object.assign(new Error('Invalid or expired OAuth state. Please start the authentication process again.'), {
+      name: 'GmailOAuthStateError',
+    });
   }
 
   const client = getOAuth2Client();
@@ -160,7 +163,7 @@ export async function handleOAuthCallback(code: string, state: string): Promise<
   const { tokens } = await client.getToken(code);
 
   if (!tokens.access_token || !tokens.refresh_token) {
-    throw new Error('Failed to obtain tokens from OAuth2 callback');
+    throw Object.assign(new Error('Failed to obtain tokens from OAuth2 callback'), { name: 'GmailOAuthTokenError' });
   }
 
   const gmailToken: GmailToken = {
@@ -230,7 +233,7 @@ async function refreshAccessToken(refreshToken: string): Promise<GmailToken> {
   const { credentials } = await client.refreshAccessToken();
 
   if (!credentials.access_token) {
-    throw new Error('Failed to refresh access token');
+    throw Object.assign(new Error('Failed to refresh access token'), { name: 'GmailTokenRefreshError' });
   }
 
   const newToken: GmailToken = {

@@ -393,7 +393,8 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
 - **ID は `maskId` で伏せる**: LINE の userId / groupId、Firebase の uid、支出・世帯・固定費・Gmail のメッセージの ID は、
   末尾 4 文字だけを出す。
 - **例外は `errorFields(error)` で種類だけを出す**: 名前（`errorName`）、コード（`errorCode`。Firestore の gRPC のコードなどの数、
-  `ECONNRESET` のような英大文字・数字・`_` だけの文字列、`auth/id-token-expired` のような Firebase の形の文字列のときだけ）、
+  `ECONNRESET` のような英大文字・数字・`_` だけの文字列、`auth/id-token-expired` のような Firebase の形の文字列、
+  gaxios の打ち切り・中断の `TimeoutError` / `AbortError` のときだけ）、
   原因のコード（`errorCause`。`fetch failed` の `cause.code`）、HTTP の状態（`errorStatus`。LINE の API・Gmail API・axios）。
   例外そのもの・文言（`message`）・原因の文言は出さない。理由は次のとおり。
   - Firestore のエラーの文言には文書のパスが入る（例: `NOT_FOUND: No document to update: …/documents/groupMembers/{groupId}_{lineId}`）。
@@ -402,5 +403,11 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
   - 生の例外には、送ったリクエストの設定（gaxios・axios の `config`。Authorization ヘッダーのアクセストークン・GitHub のトークン）や、
     応答のヘッダー・本文（LINE の `HTTPFetchError`）が入る。
 - 例外として、Gemini の API のエラーは HTTP ステータスと API のエラー文の先頭 300 文字を出す（§7）。
+- 自前の固定文の例外は名前を付けて投げる（`TimeoutError`・`LineCredentialsMissingError`・`GmailTokenMissingError` など）。
+  文言を出さないログでも、`errorName` で原因を見分けられるようにするため。
+- **既知の限界**: 関数の外へ投げた例外は、`console.*` を通らずに実行環境（functions-framework）が `err.stack`
+  （名前・文言・スタック）を Cloud Logging に出す。Gmail の Pub/Sub の再送のために `bot/src/gmail/handler.ts` の
+  `handleGmailPubSub` が投げ直す例外（Firestore・Gmail API・LINE の失敗）と、スケジュール関数（`renewGmailWatch`・
+  `postRecurringExpenses`）の失敗がこれに当たる。投げ直さないと再送・再試行が働かないため、そのままにしている。
 - テストは `bot/scripts/smoke-log-safety.js`（例外の文言・文書のパス・ヘッダーに入れた目印がログに出ないこと）。
   HTTP の応答や管理 API の戻り値（`/gmail/*` の `error`・`message`）は対象外（ログではない）。

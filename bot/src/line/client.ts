@@ -17,7 +17,8 @@ export function getLineClient(): messagingApi.MessagingApiClient {
     const channelSecret = process.env.LINE_CHANNEL_SECRET;
 
     if (!channelAccessToken || !channelSecret) {
-      throw new Error('LINE credentials not configured');
+      // 名前を付ける（ログは文言を出さず errorName で見分けるため。logSafe.ts の errorFields）
+      throw Object.assign(new Error('LINE credentials not configured'), { name: 'LineCredentialsMissingError' });
     }
 
     lineClient = new messagingApi.MessagingApiClient({
