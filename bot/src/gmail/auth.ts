@@ -36,6 +36,22 @@ export class GmailTokenMissingError extends Error {
   }
 }
 
+/**
+ * 更新したアクセストークンを保存しようとしたら、トークンの文書が無かった（更新の途中で /gmail/revoke に消された）
+ *
+ * 文書は作り直さない（saveRefreshedTokenToFirestore）。取込（handler.ts）はこれを投げて失敗し、Pub/Sub の再送で
+ * トークンが無い（GmailTokenMissingError）と分かって終える。
+ */
+export class GmailTokenDeletedError extends Error {
+  constructor() {
+    super('Gmail token was deleted while refreshing it');
+    this.name = 'GmailTokenDeletedError';
+  }
+}
+
+/** Firestore の gRPC のコード NOT_FOUND（update で文書が無いとき） */
+const FIRESTORE_NOT_FOUND = 5;
+
 // OAuth2クライアント
 let oauth2Client: Auth.OAuth2Client | null = null;
 
@@ -193,13 +209,35 @@ export function gmailTokenRef() {
 }
 
 /**
- * トークンをFirestoreに保存
+ * OAuth のコールバックで受け取ったトークンを Firestore に保存する（文書が無ければ作り、あれば置き換える）
  */
 async function saveTokenToFirestore(token: GmailToken): Promise<void> {
   await gmailTokenRef().set({
     ...token,
     updatedAt: Timestamp.now(),
   });
+}
+
+/**
+ * 更新したアクセストークンを Firestore に保存する（文書があるときだけ書く）
+ *
+ * set で書くと、更新の途中で /gmail/revoke がトークンを消したときに、消したトークンを作り直してしまう
+ * （revoke の後も取込が古いトークンで動き続ける）。update は文書が無ければ NOT_FOUND で失敗するので、
+ * そのときは作らずに GmailTokenDeletedError を投げる。
+ */
+async function saveRefreshedTokenToFirestore(token: GmailToken): Promise<void> {
+  try {
+    await gmailTokenRef().update({
+      ...token,
+      updatedAt: Timestamp.now(),
+    });
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === FIRESTORE_NOT_FOUND) {
+      console.warn('Gmail token was deleted while refreshing it; not recreating it (revoked)');
+      throw new GmailTokenDeletedError();
+    }
+    throw error;
+  }
 }
 
 /**
@@ -250,8 +288,8 @@ async function refreshAccessToken(refreshToken: string): Promise<GmailToken> {
     scope: credentials.scope || '',
   };
 
-  // 更新したトークンをFirestoreに保存
-  await saveTokenToFirestore(newToken);
+  // 更新したトークンをFirestoreに保存（文書が消えていたら作り直さずに投げる）
+  await saveRefreshedTokenToFirestore(newToken);
 
   console.log('Gmail access token refreshed successfully');
   return newToken;

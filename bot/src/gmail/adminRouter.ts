@@ -227,6 +227,9 @@ function googleRevokeFields(google: GoogleRevokeResult | null) {
  * - 200 success: false・googleRevoked: false … 2・3 は済んだが、Google が失効を受け付けなかった（2xx 以外・タイムアウト・通信の失敗）。
  *   やり直しても Google へは送られない（トークンはもう無い）ので、Google アカウントから手動で外す（message で案内する）
  * - 500 watchStateCleared: false … 3 に失敗した。やり直す（googleRevoked も返す。false なら手動で外す案内も error に入れる）
+ * - 500（error だけ）… トークンの get / delete に失敗した。やり直す（Google へ送った後なら googleRevoked も返す。
+ *   Google の失効が通った後に delete だけ失敗したときは、やり直すと残っているトークンを Google に送り直し、400 で
+ *   success: false と手動の案内になる〔安全側〕）
  */
 gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
   let google: GoogleRevokeResult | null | undefined;

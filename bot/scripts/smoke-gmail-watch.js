@@ -7,6 +7,8 @@
  * - DELETE /gmail/revoke: Google 側の失効（#284。Google の失効先は fetch の偽物）。refresh_token を先に本文（form）で送り、
  *   URL にトークンを載せない。Google が受け付けなければ googleRevoked: false・success: false（トークンは消す）。
  *   トークン・Google の応答の本文・例外の文言（目印 CANARY）を応答にもログにも出さない
+ * - トークンの保存（auth.ts）: OAuth のコールバックの初回保存は文書を作り、アクセストークンの更新の保存は文書があるときだけ書く
+ *   （更新の途中で revoke に消された文書を作り直さない。Firestore と Google の OAuth は偽物）
  *
  * Firestore を使う確認（トランザクション・merge・renewWatch が stop を呼ばないこと）は
  * emulator-gmail-import.js（npm -w bot run test:emulator）。
@@ -320,11 +322,157 @@ async function revokeChecks() {
   }
 }
 
-revokeChecks()
-  .catch((error) => {
-    failed++;
-    console.log('  FAIL revoke のチェックが例外で止まった', error && error.name);
-  })
+/**
+ * トークンの保存（auth.ts）。OAuth のコールバックの初回保存は文書を作り、アクセストークンの更新の保存は
+ * 文書があるときだけ書く（更新の途中で revoke に消された文書を作り直さない）
+ *
+ * Firestore は偽物（firebase-admin/firestore の getFirestore を差し替える。update は文書が無ければ NOT_FOUND〔code 5〕で
+ * 失敗する、実物と同じ振る舞い）。Google の OAuth（getToken・refreshAccessToken）も偽物で、通信はしない。
+ */
+async function tokenSaveChecks() {
+  console.log('\nトークンの保存（Firestore と Google の OAuth は偽物）');
+
+  const TOKEN_PATH = 'system/gmailToken';
+  // 目印。NOT_FOUND の文言（文書のパスが入る）に入れ、ログに出ないことを確かめる
+  const CANARY = 'CANARY-token-save-5c1e';
+  const store = new Map();
+  const docRef = (path) => ({
+    get: async () => ({ exists: store.has(path), data: () => (store.has(path) ? { ...store.get(path) } : undefined) }),
+    set: async (data) => {
+      store.set(path, { ...data });
+    },
+    update: async (data) => {
+      if (!store.has(path)) {
+        throw Object.assign(new Error(`5 NOT_FOUND: No document to update: projects/demo/databases/(default)/documents/${path} ${CANARY}`), {
+          code: 5,
+        });
+      }
+      store.set(path, { ...store.get(path), ...data });
+    },
+    delete: async () => {
+      store.delete(path);
+    },
+  });
+  const fakeDb = { collection: (c) => ({ doc: (d) => docRef(`${c}/${d}`) }) };
+
+  const firestoreModule = require('firebase-admin/firestore');
+  const { google } = require('googleapis');
+  const proto = google.auth.OAuth2.prototype;
+  const original = {
+    getFirestore: firestoreModule.getFirestore,
+    getToken: proto.getToken,
+    refreshAccessToken: proto.refreshAccessToken,
+    env: { id: process.env.GMAIL_CLIENT_ID, secret: process.env.GMAIL_CLIENT_SECRET, redirect: process.env.GMAIL_REDIRECT_URI },
+  };
+  // テスト用のダミー値（本物の秘密値ではない）
+  process.env.GMAIL_CLIENT_ID = 'dummy-client-id-for-smoke';
+  process.env.GMAIL_CLIENT_SECRET = 'dummy-client-secret-for-smoke';
+  process.env.GMAIL_REDIRECT_URI = 'http://127.0.0.1/dummy-callback';
+
+  const oauth = { refreshCalls: 0, onRefresh: null };
+  firestoreModule.getFirestore = () => fakeDb;
+  proto.getToken = async () => ({
+    tokens: {
+      access_token: 'ya29.initial',
+      refresh_token: '1//initial',
+      expiry_date: Date.now() + 3600 * 1000,
+      token_type: 'Bearer',
+      scope: 'https://www.googleapis.com/auth/gmail.readonly',
+    },
+  });
+  proto.refreshAccessToken = async () => {
+    oauth.refreshCalls++;
+    if (oauth.onRefresh) await oauth.onRefresh();
+    return {
+      credentials: {
+        access_token: 'ya29.refreshed',
+        expiry_date: Date.now() + 3600 * 1000,
+        token_type: 'Bearer',
+        scope: 'https://www.googleapis.com/auth/gmail.readonly',
+      },
+    };
+  };
+
+  // console.log / warn / error を util.format の形で集める
+  const withLogs = async (fn) => {
+    const logs = [];
+    const saved = { log: console.log, warn: console.warn, error: console.error };
+    for (const level of Object.keys(saved)) {
+      console[level] = (...args) => logs.push({ level, args, text: util.format(...args) });
+    }
+    try {
+      return { value: await fn(), logs };
+    } catch (error) {
+      return { error, logs };
+    } finally {
+      Object.assign(console, saved);
+    }
+  };
+  const expiredToken = () => ({
+    access_token: 'ya29.old',
+    refresh_token: '1//initial',
+    expiry_date: 0, // 期限切れ（getGmailClient が更新する）
+    token_type: 'Bearer',
+    scope: 'https://www.googleapis.com/auth/gmail.readonly',
+  });
+
+  try {
+    // --- 初回の保存（OAuth のコールバック。トークンの文書はまだ無い） ---
+    store.clear();
+    store.set('system/oauthState', { state: 'smoke-state', adminVerified: true, expiresAt: { toMillis: () => Date.now() + 60_000 } });
+    const initial = await withLogs(() => auth.handleOAuthCallback('smoke-code', 'smoke-state'));
+    const saved = store.get(TOKEN_PATH);
+    check('初回の保存（OAuth のコールバック）は、文書が無くても作る',
+      !initial.error && !!saved && saved.access_token === 'ya29.initial' && saved.refresh_token === '1//initial' && !!saved.updatedAt,
+      { error: initial.error && initial.error.name, saved });
+
+    // --- 既存の文書の更新（従来どおり） ---
+    store.set(TOKEN_PATH, { ...expiredToken(), updatedAt: 'before' });
+    oauth.refreshCalls = 0;
+    oauth.onRefresh = null;
+    const refreshed = await withLogs(() => auth.getGmailClient());
+    const updated = store.get(TOKEN_PATH);
+    check('期限切れなら更新し、既存の文書に新しいアクセストークンを書く（refresh_token は変えない）',
+      !refreshed.error && oauth.refreshCalls === 1 && !!updated && updated.access_token === 'ya29.refreshed' &&
+        updated.refresh_token === '1//initial' && updated.expiry_date > Date.now() && updated.updatedAt !== 'before',
+      { error: refreshed.error && refreshed.error.name, updated });
+
+    // --- 更新の途中で revoke がトークンの文書を消した ---
+    store.set(TOKEN_PATH, expiredToken());
+    oauth.refreshCalls = 0;
+    oauth.onRefresh = async () => {
+      store.delete(TOKEN_PATH);
+    };
+    const raced = await withLogs(() => auth.getGmailClient());
+    check('更新の保存は、文書が消えていたら作り直さない', !store.has(TOKEN_PATH), store.get(TOKEN_PATH));
+    check('そのときは GmailTokenDeletedError を投げる（取込を失敗させ、再送でトークンが無いと分かって終える）',
+      oauth.refreshCalls === 1 && !!raced.error && raced.error.name === 'GmailTokenDeletedError',
+      raced.error ? raced.error.name : 'resolved');
+    const deletedLog = raced.logs.find((l) => l.level === 'warn' && l.args[0] === 'Gmail token was deleted while refreshing it; not recreating it (revoked)');
+    check('固定文だけで warn し、NOT_FOUND の文言（文書のパス）を出さない',
+      !!deletedLog && deletedLog.args.length === 1 && raced.logs.every((l) => !l.text.includes(CANARY)),
+      raced.logs.map((l) => l.text));
+  } finally {
+    firestoreModule.getFirestore = original.getFirestore;
+    proto.getToken = original.getToken;
+    proto.refreshAccessToken = original.refreshAccessToken;
+    for (const [key, value] of [['GMAIL_CLIENT_ID', original.env.id], ['GMAIL_CLIENT_SECRET', original.env.secret], ['GMAIL_REDIRECT_URI', original.env.redirect]]) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+(async () => {
+  for (const [name, fn] of [['revoke', revokeChecks], ['トークンの保存', tokenSaveChecks]]) {
+    try {
+      await fn();
+    } catch (error) {
+      failed++;
+      console.log(`  FAIL ${name} のチェックが例外で止まった`, error && error.name);
+    }
+  }
+})()
   .then(() => {
     if (failed > 0) {
       console.error(`\n${failed} check(s) failed`);
