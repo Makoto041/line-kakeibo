@@ -330,7 +330,7 @@ await test('★ 精算済み: status を戻せない', async () => {
   await assertFails(updateDoc(doc(userB, 'expenses/expSettled'), { status: 'advance_pending' }));
 });
 // web の編集ドロワーは精算済みの支出では amount / date / payerId / payerDisplayName を送らない
-// （web/app/expenses/page.tsx の handleEditSave）。
+// （web/app/(app)/expenses/page.tsx の handleEditSave）。
 await test('精算済み: メモ・カテゴリの修正（web の送信形）は許可される', async () => {
   await assertSucceeds(updateDoc(doc(userA, 'expenses/expSettled'), {
     description: '立替（修正）', category: '日用品', includeInTotal: true, updatedAt: new Date(),
