@@ -6,7 +6,8 @@
  * あわせて、失敗の記録（system/gmailFailures）の firstFailedAt と諦める条件（試行 3 回以上 かつ 最初の失敗から 6 時間以上。
  * 再送で回数だけすぐ増えても諦めない）、失敗の記録にエラーの文言を保存しないこと（以前の記録の lastError を消す）、
  * 消されたメール（messages.get の 404）を失敗として数えず読み飛ばすことも確かめる。
- * 偽の通知の極端に大きい historyId で保存値がメールボックスの現在位置を超えず、そのあとの正当な通知で取込が続くことも確かめる。
+ * 保存する historyId は通知の値ではなく常にメールボックスの現在位置で（#298）、偽の通知（極端に大きい・保存値と現在位置の間・小さい）の
+ * あとも正当な通知で取込が続くことも確かめる。
  *
  * Gmail・分類器・LINE は偽物に差し替える（dist の exports を書き換える。呼び出し側は呼ぶときに exports を参照する）。
  * 支出の保存・印・重複判定・historyId（system/gmailState）は本物のコードでエミュレータに書く。
@@ -71,10 +72,10 @@ let historyError = null;
 /** messages.get が 404 を返す（届いたあとに消された）メール */
 const missingMails = new Set();
 /**
- * history.list・getProfile の応答の historyId（メールボックスの現在位置。取込は保存する historyId の上限にする）。
- * 既定は、このテストの通知の historyId（1001 から）より大きい値
+ * history.list・getProfile の応答の historyId（メールボックスの現在位置。取込はこれを保存する。#298）。
+ * 通知ごと（pubsub）に進める（Gmail の動きに合わせる。新しいメールが届けば位置が進む）。通知の historyId（1001 から）とは違う値にする
  */
-const DEFAULT_MAILBOX_POSITION = '1000000';
+let defaultMailboxPosition = '1000000';
 /**
  * 開始位置を見るメールボックス（null なら historyMessageIds をそのまま返す）。
  * `{ position, records: [{ historyId, messageId }] }`: history.list は startHistoryId より後の records だけを返し、
@@ -96,12 +97,12 @@ gmailAuth.getGmailClient = async () => ({
           return { data: { history: ids.map((id) => ({ messagesAdded: [{ message: { id } }] })), historyId: mailbox.position } };
         }
         return {
-          data: { history: [{ messagesAdded: historyMessageIds.map((id) => ({ message: { id } })) }], historyId: DEFAULT_MAILBOX_POSITION },
+          data: { history: [{ messagesAdded: historyMessageIds.map((id) => ({ message: { id } })) }], historyId: defaultMailboxPosition },
         };
       },
     },
     // history.list が 404 のときの現在位置
-    getProfile: async () => ({ data: { historyId: mailbox ? mailbox.position : DEFAULT_MAILBOX_POSITION } }),
+    getProfile: async () => ({ data: { historyId: mailbox ? mailbox.position : defaultMailboxPosition } }),
     messages: {
       get: async ({ id }) => {
         // 消されたメールは Gmail API が 404 を返す（gaxios 7 は JSON のエラーの code を error.code に入れる）
@@ -192,7 +193,9 @@ let historySeq = 1000;
 /** Pub/Sub の通知 1 回分（例外は返す） */
 async function pubsub(ids) {
   historyMessageIds = ids;
-  return notify(String(++historySeq));
+  ++historySeq;
+  defaultMailboxPosition = String(1000000 + historySeq);
+  return notify(String(historySeq));
 }
 /** historyId を指定した Pub/Sub の通知 1 回分（例外は返す） */
 async function notify(historyId) {
@@ -565,29 +568,47 @@ async function notify(historyId) {
     check('404: 支出は残る（1 件）', (await expensesOf(id)).length === 1);
   }
 
-  console.log('\n[偽の通知の極端に大きい historyId のあとも、正当な通知で取込が続く（取りこぼさない）]');
+  console.log('\n[保存する historyId は常にメールボックスの現在位置。偽の通知のあとも、正当な通知で取込が続く（取りこぼさない）]');
   {
     // 取込は 5000 まで済んでいて、メールボックスの現在位置も 5000
     await db.doc('system/gmailState').set({ historyId: '5000' }, { merge: true });
     mailbox = { position: '5000', records: [] };
     try {
       const forged = await quiet(() => notify('18446744073709551615'));
-      check('偽の通知: 投げない', forged === 'ok', String(forged));
-      check('偽の通知: 保存する historyId はメールボックスの現在位置（5000）を超えない', (await historyIdNow()) === '5000', await historyIdNow());
-      check(
-        '偽の通知: 固定文の警告を出す',
-        lastLogs.some((l) => l.startsWith('warn Gmail notification historyId is ahead of the mailbox; saving the mailbox position instead')),
-        lastLogs
-      );
+      check('偽の通知（極端に大きい）: 投げない', forged === 'ok', String(forged));
+      check('偽の通知（極端に大きい）: 保存する historyId はメールボックスの現在位置（5000）のまま', (await historyIdNow()) === '5000', await historyIdNow());
+      check('偽の通知（極端に大きい）: 警告を出さない（通知の値を使わないので、上限の警告も無い）', !lastLogs.some((l) => l.startsWith('warn')), lastLogs);
 
-      // そのあとにメールが届き、Gmail が正当な通知を送る
+      // そのあとにメールが届き（5100）、ほかの変更で現在位置は 5150。Gmail が正当な通知（5100）を送る
       const id = 'msg-after-forged-0021';
       mails[id] = cardMail('2026/10/26 12:10', '偽の通知のあとの店', 2100);
       mailbox.records.push({ historyId: '5100', messageId: id });
-      mailbox.position = '5100';
+      mailbox.position = '5150';
       const r = await quiet(() => notify(5100));
       check('正当な通知: 取込が続き、支出を保存してカードを送る', r === 'ok' && (await expensesOf(id)).length === 1 && accepted.has(cardNoticeRetryKey(id)), String(r));
-      check('正当な通知: historyId は通知の値まで進む（数値のまま）', (await historyIdNow()) === 5100, await historyIdNow());
+      check('正当な通知（5100）: 通知の値ではなく、応答の現在位置（"5150"。文字列）まで進む', (await historyIdNow()) === '5150', await historyIdNow());
+
+      // 偽の通知の値が保存値と現在位置の間（5160）: 保存値から処理し（5200 のメールも取り込む）、現在位置（5300）を保存する
+      const id2 = 'msg-forged-between-0022';
+      mails[id2] = cardMail('2026/10/26 12:20', '間の通知のあとの店', 2200);
+      mailbox.records.push({ historyId: '5200', messageId: id2 });
+      mailbox.position = '5300';
+      const r2 = await quiet(() => notify('5160'));
+      check('偽の通知（保存値と現在位置の間）: 保存値からの範囲を処理する（5200 のメールを取り込む）', r2 === 'ok' && (await expensesOf(id2)).length === 1, String(r2));
+      check('偽の通知（保存値と現在位置の間）: 通知の値（5160）ではなく、現在位置（5300）を保存する', (await historyIdNow()) === '5300', await historyIdNow());
+
+      // 偽の通知の値が保存値より小さい（1）: 同じく保存値から処理し、現在位置（5400）を保存する
+      const id3 = 'msg-forged-small-0023';
+      mails[id3] = cardMail('2026/10/26 12:30', '小さい通知のあとの店', 2300);
+      mailbox.records.push({ historyId: '5400', messageId: id3 });
+      mailbox.position = '5400';
+      const r3 = await quiet(() => notify('1'));
+      check(
+        '偽の通知（保存値より小さい）: 保存値からの範囲を処理し、現在位置（5400）を保存する',
+        r3 === 'ok' && (await expensesOf(id3)).length === 1 && (await historyIdNow()) === '5400',
+        { r: String(r3), historyId: await historyIdNow() }
+      );
+      check('ここまでのメールは 1 通ずつ（取りこぼし・二重登録が無い）', (await expensesOf(id)).length === 1 && (await expensesOf(id2)).length === 1 && (await expensesOf(id3)).length === 1);
     } finally {
       mailbox = null;
     }

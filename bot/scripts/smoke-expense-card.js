@@ -1090,8 +1090,8 @@ async function saveFlowChecks() {
   /** 次の history.list で投げる例外（null なら historyMessageIds を返す） */
   let historyError = null;
   /**
-   * history.list の応答の historyId（メールボックスの現在位置。保存する historyId の上限）。undefined なら応答に入れない。
-   * 既定は、このテストで使う通知の historyId より大きい値（正当な通知では通知の値まで進む）
+   * history.list の応答の historyId（メールボックスの現在位置。取込が保存する historyId）。undefined なら応答に入れない。
+   * 既定は、このテストで使う通知の historyId のどれとも違う値（保存したのが通知の値ではなく現在位置だと分かるように）
    */
   const MAILBOX_HISTORY_ID = '1000000';
   let mailboxHistoryId = MAILBOX_HISTORY_ID;
@@ -1752,8 +1752,8 @@ async function saveFlowChecks() {
     historyBefore = historyUpdates.length;
     r = await handle(pubsubData({ emailAddress: 'someone@example.com', historyId: 401 }));
     check(
-      '数値の historyId（Gmail の形）は処理し、型を変えずに渡す',
-      r === 'ok' && historyUpdates.length === historyBefore + 1 && historyUpdates[historyUpdates.length - 1] === 401,
+      '数値の historyId（Gmail の形）の通知も処理し、保存するのは応答の現在位置（文字列。通知の値 401 ではない）',
+      r === 'ok' && historyUpdates.length === historyBefore + 1 && historyUpdates[historyUpdates.length - 1] === MAILBOX_HISTORY_ID,
       JSON.stringify(historyUpdates.slice(-1))
     );
 
@@ -1859,32 +1859,33 @@ async function saveFlowChecks() {
       historyMessageIds = ['msg-pubsub'];
     }
 
-    // (k) 保存する historyId に、メールボックスの現在位置で上限を掛ける（偽の通知の極端に大きい historyId で保存値を先へ飛ばさない）
-    console.log('\n[保存する historyId の上限（メールボックスの現在位置）]');
+    // (k) 保存する historyId は常にメールボックスの現在位置（#298。通知の historyId は使わない。偽の通知で保存値を動かさない）
+    console.log('\n[保存する historyId はメールボックスの現在位置（通知の値は使わない）]');
     {
-      const { capHistoryId } = gmailWatch;
+      const { mailboxHistoryIdToSave } = gmailWatch;
       /** detail を JSON で出す（失敗したときに読めるように） */
       const checkJson = (name, cond, detail) => check(name, cond, detail === undefined ? undefined : JSON.stringify(detail));
       const FORGED = '18446744073709551615';
-      const sameCap = (c, historyId, capped) => c !== null && c.historyId === historyId && c.capped === capped;
-      checkJson('capHistoryId: 通知 < 現在位置 → 通知の値', sameCap(capHistoryId('300', '1000'), '300', false), capHistoryId('300', '1000'));
-      checkJson('capHistoryId: 同じ値 → 通知の値', sameCap(capHistoryId('1000', '1000'), '1000', false), capHistoryId('1000', '1000'));
-      checkJson('capHistoryId: 数値の通知は型を変えずに返す', sameCap(capHistoryId(300, '1000'), 300, false), capHistoryId(300, '1000'));
-      checkJson('capHistoryId: 通知 > 現在位置 → 現在位置', sameCap(capHistoryId(FORGED, '1000'), '1000', true), capHistoryId(FORGED, '1000'));
-      checkJson('capHistoryId: 数値の現在位置で上限を掛けたら文字列にする', sameCap(capHistoryId('2000', 1000), '1000', true), capHistoryId('2000', 1000));
-      checkJson(
-        'capHistoryId: uint64 の桁でも BigInt で比べる（Number では同じ値になる 2 つ）',
-        sameCap(capHistoryId(FORGED, '18446744073709551614'), '18446744073709551614', true) &&
-          sameCap(capHistoryId('18446744073709551614', FORGED), '18446744073709551614', false),
-        [capHistoryId(FORGED, '18446744073709551614'), capHistoryId('18446744073709551614', FORGED)]
-      );
-      const unusable = [undefined, null, '', 'abc', '-1', -1, 1.5];
-      checkJson('capHistoryId: 現在位置が無い・数値として読めない → null（進めない）', unusable.every((m) => capHistoryId('300', m) === null), unusable.map((m) => capHistoryId('300', m)));
-      checkJson('capHistoryId: 通知が数値として読めない → 現在位置', sameCap(capHistoryId('abc', '1000'), '1000', true), capHistoryId('abc', '1000'));
-
-      // 先頭ゼロ・桁あふれの historyId（BigInt では小さい数と同じになり、上限をすり抜けて長い文字列のまま保存されうる）
-      const { isUsableHistoryId, resolveWatchHistoryId } = gmailWatch;
       const PADDED = '0'.repeat(100000) + '1005';
+      checkJson(
+        'mailboxHistoryIdToSave: 10 進の正規の形の文字列はそのまま返す',
+        ['0', '1000', FORGED].every((v) => mailboxHistoryIdToSave(v) === v),
+        ['0', '1000', FORGED].map((v) => mailboxHistoryIdToSave(v))
+      );
+      checkJson(
+        'mailboxHistoryIdToSave: 数値の現在位置は 10 進の文字列にする',
+        mailboxHistoryIdToSave(1000) === '1000' && mailboxHistoryIdToSave(0) === '0',
+        [mailboxHistoryIdToSave(1000), mailboxHistoryIdToSave(0)]
+      );
+      const unusableMailbox = [undefined, null, '', 'abc', '-1', -1, 1.5, '00', '01010', PADDED, '18446744073709551616', '100000000000000000000', 1e20];
+      checkJson(
+        'mailboxHistoryIdToSave: 無い・数値として読めない・先頭ゼロ・uint64 超 → null（進めない）',
+        unusableMailbox.every((m) => mailboxHistoryIdToSave(m) === null),
+        unusableMailbox.map((m) => [String(m).slice(0, 24), mailboxHistoryIdToSave(m)])
+      );
+
+      // 先頭ゼロ・桁あふれの historyId（BigInt では小さい数と同じになり、大小の比較をすり抜けて長い文字列のまま保存されうる）
+      const { isUsableHistoryId, resolveWatchHistoryId } = gmailWatch;
       const usable = ['0', '1005', '10000000000000000000', '18446744073709551615', 0, 1005];
       const notUsable = ['00', '01005', PADDED, '18446744073709551616', '99999999999999999999', '100000000000000000000', 1e20, -1, 1.5];
       checkJson('isUsableHistoryId: 10 進の正規の形で uint64 以下の値は使える（数値も）', usable.every((v) => isUsableHistoryId(v) === true), usable.map((v) => isUsableHistoryId(v)));
@@ -1893,61 +1894,68 @@ async function saveFlowChecks() {
         notUsable.every((v) => isUsableHistoryId(v) === false),
         notUsable.map((v) => [String(v).slice(0, 24), isUsableHistoryId(v)])
       );
-      checkJson('capHistoryId: 先頭ゼロの通知は読めない値として現在位置にする（上限をすり抜けない）', sameCap(capHistoryId('01005', '1010'), '1010', true), capHistoryId('01005', '1010'));
-      checkJson('capHistoryId: 長いゼロ埋めの通知も現在位置にする', sameCap(capHistoryId(PADDED, '1010'), '1010', true), capHistoryId(PADDED, '1010') && capHistoryId(PADDED, '1010').historyId.length);
-      checkJson('capHistoryId: 先頭ゼロの現在位置は読めない値（null。進めない）', capHistoryId('1005', '01010') === null, capHistoryId('1005', '01010'));
       const replaced = resolveWatchHistoryId('0001000', '500');
       checkJson('resolveWatchHistoryId: 先頭ゼロで保存された値は watch の更新で応答の値に置き換える（replaced）', replaced.historyId === '500' && replaced.source === 'replaced', replaced);
 
-      const CAP_WARN = 'Gmail notification historyId is ahead of the mailbox; saving the mailbox position instead';
       const MISSING_WARN = 'Gmail did not return the mailbox historyId; keeping the saved historyId (the range is processed again on the next notification)';
-      const capWarnsSince = (start) => warnsSince(start).filter((args) => args[0] === CAP_WARN || args[0] === MISSING_WARN);
+      const missingWarnsSince = (start) => warnsSince(start).filter((args) => args[0] === MISSING_WARN);
       const lastUpdate = () => historyUpdates[historyUpdates.length - 1];
       const logSince = (start, text) => allLines.slice(start).find((l) => l.args[0] === text);
       const notFound = () => Object.assign(new Error('Requested entity was not found.'), { code: 404 });
 
-      // 正当な通知（現在位置 ≥ 通知）: 通知の値まで進め、警告を出さない。history.list が成功したら getProfile は呼ばない
+      // 正当な通知: 通知の値（501）ではなく、応答の現在位置まで進め、警告を出さない。history.list が成功したら getProfile は呼ばない
       from = allLines.length;
       historyBefore = historyUpdates.length;
       let profileBefore = profileCalls;
       r = await handle(pubsubData({ emailAddress: 'someone@example.com', historyId: '501' }));
       checkJson(
-        '正当な通知（現在位置 > 通知）: 通知の値まで進め、上限の警告を出さない',
-        r === 'ok' && historyUpdates.length === historyBefore + 1 && lastUpdate() === '501' && capWarnsSince(from).length === 0,
-        { r: String(r), last: lastUpdate(), warns: capWarnsSince(from) }
+        '正当な通知（通知 501 < 現在位置）: 現在位置（1000000）を保存し、通知の値は保存しない・警告を出さない',
+        r === 'ok' && historyUpdates.length === historyBefore + 1 && lastUpdate() === MAILBOX_HISTORY_ID && warnsSince(from).length === 0,
+        { r: String(r), last: lastUpdate(), warns: warnsSince(from) }
       );
       checkJson('history.list が成功したときは getProfile を呼ばない（API の呼び出しを増やさない）', profileCalls === profileBefore, profileCalls - profileBefore);
+
+      // 数値の通知（Gmail の形）: 保存するのは応答の現在位置の文字列（#295 までは通知の数値をそのまま保存していた）
       mailboxHistoryId = '600';
       r = await handle(pubsubData({ emailAddress: 'someone@example.com', historyId: 600 }));
       checkJson(
-        '現在位置と同じ通知（数値）: 通知の値を型を変えずに保存し、警告を出さない',
-        r === 'ok' && lastUpdate() === 600 && capWarnsSince(from).length === 0,
-        { r: String(r), last: lastUpdate(), warns: capWarnsSince(from) }
+        '現在位置と同じ値の数値の通知: 現在位置を文字列（"600"）で保存する（数値の型は保たない）',
+        r === 'ok' && lastUpdate() === '600' && typeof lastUpdate() === 'string',
+        { r: String(r), last: lastUpdate() }
       );
 
-      // 偽の通知（極端に大きい historyId）: 現在位置で保存し、メールの処理は続ける。警告は固定文で、値もアドレスも出さない
-      before = counts();
-      from = allLines.length;
-      historyBefore = historyUpdates.length;
-      r = await handle(pubsubData({ emailAddress: 'someone@example.com', historyId: FORGED }));
-      checkJson(
-        '通知 > 現在位置: 現在位置（600）で保存する',
-        r === 'ok' && historyUpdates.length === historyBefore + 1 && lastUpdate() === '600',
-        { r: String(r), updates: historyUpdates.slice(historyBefore) }
-      );
-      checkJson('通知 > 現在位置: メールの処理は続ける（保存して送る）', gmailSaved.length === before.saved + 1 && gmailCards.length === before.cards + 1, counts());
-      let warns = capWarnsSince(from);
-      checkJson(
-        '通知 > 現在位置: 固定文の警告を 1 回だけ出し、通知の値・現在位置・アドレスを出さない（source だけ）',
-        JSON.stringify(warns) === JSON.stringify([[CAP_WARN, { source: 'history.list' }]]) && !/18446744073709551615|600|someone@example\.com/.test(JSON.stringify(warns)),
-        warns
-      );
-      const processedLog = logSince(from, 'Processed Gmail messages; updated historyId');
-      checkJson(
-        '通知 > 現在位置: 更新のログには保存した値（現在位置）を出し、通知の値は出さない',
-        processedLog && processedLog.args[1].historyId === '600' && !JSON.stringify(processedLog.args).includes(FORGED),
-        processedLog && processedLog.args
-      );
+      // 偽の通知（連携中のアドレスを書けば照合は通る）: 通知の値がどれでも、保存するのは現在位置（保存値 100 < 現在位置 600）。
+      // メールの処理は続ける（範囲は保存値から処理するので、通知の値で処理の範囲も変わらない）
+      for (const [label, historyId] of [
+        ['極端に大きい（uint64 の最大）', FORGED],
+        ['現在位置より大きい', '601'],
+        ['保存値と現在位置の間', '300'],
+        ['保存値と同じ', '100'],
+        ['保存値より小さい', '1'],
+        ['ゼロ（文字列）', '0'],
+        ['ゼロ（数値）', 0],
+      ]) {
+        before = counts();
+        from = allLines.length;
+        historyBefore = historyUpdates.length;
+        r = await handle(pubsubData({ emailAddress: 'someone@example.com', historyId }));
+        checkJson(
+          `偽の通知（${label}）: 現在位置（"600"）を保存する`,
+          r === 'ok' && JSON.stringify(historyUpdates.slice(historyBefore)) === JSON.stringify(['600']),
+          { r: String(r), updates: historyUpdates.slice(historyBefore) }
+        );
+        checkJson(
+          `偽の通知（${label}）: メールの処理は続け（保存して送る）、警告を出さない`,
+          gmailSaved.length === before.saved + 1 && gmailCards.length === before.cards + 1 && warnsSince(from).length === 0,
+          { counts: counts(), warns: warnsSince(from) }
+        );
+        const processedLog = logSince(from, 'Processed Gmail messages; updated historyId');
+        checkJson(
+          `偽の通知（${label}）: 更新のログには保存した値（現在位置）を出す`,
+          processedLog && processedLog.args[1].historyId === '600',
+          processedLog && processedLog.args
+        );
+      }
 
       // 先頭ゼロ・桁あふれの historyId の通知: 読めない通知として捨てる（Gmail を呼ばず、保存もせず、値をログに出さない）
       mailboxHistoryId = '1010';
@@ -1964,7 +1972,7 @@ async function saveFlowChecks() {
         historyBefore = historyUpdates.length;
         const callsBefore = gmailClientCalls;
         r = await handle(pubsubData({ emailAddress: 'someone@example.com', historyId }));
-        warns = warnsSince(from);
+        const warns = warnsSince(from);
         checkJson(
           `通知の historyId が${label}: 投げずに捨て、Gmail を呼ばず historyId も進めない`,
           r === 'ok' && gmailClientCalls === callsBefore && historyUpdates.length === historyBefore,
@@ -1983,8 +1991,8 @@ async function saveFlowChecks() {
       from = allLines.length;
       historyBefore = historyUpdates.length;
       r = await handle(pubsubData({ emailAddress: 'someone@example.com', historyId: '650' }));
-      checkJson('応答に historyId が無い: 投げずに終え、historyId を進めない', r === 'ok' && historyUpdates.length === historyBefore, String(r));
-      warns = capWarnsSince(from);
+      checkJson('応答に historyId が無い: 投げずに終え、historyId を進めない（通知の値でも進めない）', r === 'ok' && historyUpdates.length === historyBefore, String(r));
+      let warns = missingWarnsSince(from);
       checkJson(
         '応答に historyId が無い: 固定文の警告を 1 回だけ出す（source だけ）',
         JSON.stringify(warns) === JSON.stringify([[MISSING_WARN, { source: 'history.list' }]]),
@@ -2007,13 +2015,13 @@ async function saveFlowChecks() {
       );
       systemDocs.delete(noticeId);
 
-      // 複数ページ: 最後のページ（nextPageToken の無い応答）の historyId を現在位置にする
+      // 複数ページ: 最後のページ（nextPageToken の無い応答）の historyId を保存する（前のページの値も通知の値も使わない）
       try {
         historyPages = [{ ids: ['msg-pubsub'], historyId: '700' }, { ids: [], historyId: '800' }];
         r = await handle(pubsubData({ historyId: '900' }));
-        checkJson('複数ページ・通知 > 最後のページ: 最後のページの historyId（800）で保存する', r === 'ok' && lastUpdate() === '800', { r: String(r), last: lastUpdate() });
+        checkJson('複数ページ・通知 900 > 最後のページ: 最後のページの historyId（800）を保存する', r === 'ok' && lastUpdate() === '800', { r: String(r), last: lastUpdate() });
         r = await handle(pubsubData({ historyId: '750' }));
-        checkJson('複数ページ・通知 ≤ 最後のページ: 通知の値（750）で保存する', r === 'ok' && lastUpdate() === '750', { r: String(r), last: lastUpdate() });
+        checkJson('複数ページ・通知 750 < 最後のページ: 通知の値ではなく、最後のページの historyId（800）を保存する', r === 'ok' && lastUpdate() === '800', { r: String(r), last: lastUpdate() });
         historyPages = [{ ids: ['msg-pubsub'], historyId: '700' }, { ids: [] }];
         historyBefore = historyUpdates.length;
         r = await handle(pubsubData({ historyId: '760' }));
@@ -2022,29 +2030,33 @@ async function saveFlowChecks() {
         historyPages = null;
       }
 
-      // history.list が 404（開始位置が古すぎる）: getProfile の historyId（現在位置）で上限を掛ける
+      // history.list が 404（開始位置が古すぎる）: getProfile の historyId（現在位置）を保存する
       historyError = notFound();
       from = allLines.length;
       profileBefore = profileCalls;
       r = await handle(pubsubData({ historyId: '801' }));
       checkJson(
-        '404・正当な通知: getProfile を 1 回呼び、通知の値まで進める（警告なし）',
-        r === 'ok' && profileCalls === profileBefore + 1 && lastUpdate() === '801' && capWarnsSince(from).length === 0,
-        { r: String(r), profileCalls: profileCalls - profileBefore, last: lastUpdate(), warns: capWarnsSince(from) }
+        '404・正当な通知: getProfile を 1 回呼び、getProfile の現在位置（1000000）を保存する（通知の値 801 ではない。警告なし）',
+        r === 'ok' && profileCalls === profileBefore + 1 && lastUpdate() === MAILBOX_HISTORY_ID && missingWarnsSince(from).length === 0,
+        { r: String(r), profileCalls: profileCalls - profileBefore, last: lastUpdate(), warns: missingWarnsSince(from) }
       );
       profileHistoryId = '900';
       historyError = notFound();
       from = allLines.length;
       r = await handle(pubsubData({ emailAddress: 'someone@example.com', historyId: FORGED }));
-      checkJson('404・通知 > 現在位置: getProfile の現在位置（900）で保存する', r === 'ok' && lastUpdate() === '900', { r: String(r), last: lastUpdate() });
-      warns = capWarnsSince(from);
-      checkJson('404・通知 > 現在位置: 固定文の警告を 1 回だけ出す（source: getProfile）', JSON.stringify(warns) === JSON.stringify([[CAP_WARN, { source: 'getProfile' }]]), warns);
+      checkJson('404・偽の大きい通知: getProfile の現在位置（900）を保存する', r === 'ok' && lastUpdate() === '900', { r: String(r), last: lastUpdate() });
+      checkJson('404・偽の大きい通知: 警告を出さない（現在位置は取れた）', missingWarnsSince(from).length === 0, missingWarnsSince(from));
       const skipLog = logSince(from, 'Gmail historyId is too old (Gmail keeps ~1 week); skipping ahead, and mail in between is NOT imported');
       checkJson(
-        '404・通知 > 現在位置: 先へ飛ばしたログの to は保存した値（通知の値を出さない）',
-        skipLog && skipLog.args[1].to === '900' && !JSON.stringify(skipLog.args).includes(FORGED),
+        '404: 先へ飛ばしたログは固定文と桁数だけで、保存値（100）・現在位置（900）・通知の値を出さない',
+        skipLog && JSON.stringify(skipLog.args[1]) === JSON.stringify({ fromDigits: 3, toDigits: 3 }) && !/100|900|18446744073709551615/.test(JSON.stringify(skipLog.args)),
         skipLog && skipLog.args
       );
+      profileHistoryId = 950;
+      historyError = notFound();
+      r = await handle(pubsubData({ historyId: '1' }));
+      checkJson('404・getProfile の historyId が数値: 10 進の文字列（"950"）で保存する', r === 'ok' && lastUpdate() === '950', { r: String(r), last: lastUpdate() });
+      profileHistoryId = MAILBOX_HISTORY_ID;
 
       // 404・getProfile に historyId が無い / getProfile が失敗: 進めず、飛ばしたメールの印も消さない
       seedNotice(1 * HOUR);
@@ -2056,11 +2068,11 @@ async function saveFlowChecks() {
         historyBefore = historyUpdates.length;
         r = await handle(pubsubData({ historyId: '901' }));
         checkJson(
-          '404・getProfile に historyId が無い: 投げずに終え、進めず、印も消さない',
+          '404・getProfile に historyId が無い: 投げずに終え、進めず（通知の値でも進めない）、印も消さない',
           r === 'ok' && historyUpdates.length === historyBefore && systemDocs.has(noticeId),
           { r: String(r), docs: [...systemDocs.keys()] }
         );
-        warns = capWarnsSince(from);
+        warns = missingWarnsSince(from);
         checkJson('404・getProfile に historyId が無い: 固定文の警告を 1 回だけ出す（source: getProfile）', JSON.stringify(warns) === JSON.stringify([[MISSING_WARN, { source: 'getProfile' }]]), warns);
 
         profileHistoryId = MAILBOX_HISTORY_ID;
