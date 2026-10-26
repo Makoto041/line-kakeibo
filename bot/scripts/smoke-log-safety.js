@@ -11,6 +11,7 @@
  * - gmail/parser.ts（解析の例外）・gmail/cardNotice.ts（文字列のコードの検査）・gmail/handler.ts（force-process・process-latest）
  * - gmail/adminRouter.ts（OAuth のコールバックの失敗。gaxios のエラーはアクセストークン入りのヘッダーを持つ）
  * - line/webhookApp.ts と line/postback.ts（postback の例外のログが 1 回だけ。LINE の HTTPFetchError は応答の本文とヘッダーを持つ）
+ * - line/postback.ts（認可の拒否と不正な postback のログ。action は既知の名前だけ、ID は伏せる）
  * - line/client.ts（返信の失敗）・line/groupEvents.ts（退出の処理の失敗）
  *
  * household API の例外ハンドラは smoke-household-api.js、要望のコマンドは smoke-feedback-command.js、
@@ -118,6 +119,8 @@ function fakeDoc(collection, id) {
     delete: async () => throwIfFailing(),
   };
 }
+// トランザクションは postback の認可の拒否（applyExpenseChange）を確かめるときだけ動かす。それ以外は従来どおり「not faked」で失敗させる
+let transactionsEnabled = false;
 const fakeDb = {
   collection: (name) => ({
     ...fakeQuery(),
@@ -127,9 +130,11 @@ const fakeDb = {
       return { id: 'new-doc' };
     },
   }),
-  runTransaction: async () => {
+  runTransaction: async (fn) => {
     throwIfFailing();
-    throw new Error('runTransaction is not faked');
+    if (!transactionsEnabled) throw new Error('runTransaction is not faked');
+    // 読み取りは文書の参照の偽物（docOverrides）をそのまま使う。書き込みは何もしない
+    return fn({ get: (ref) => ref.get(), update: () => {}, set: () => {} });
   },
 };
 fromBot('firebase-admin/firestore').getFirestore = () => fakeDb;
@@ -157,9 +162,11 @@ const lineHttpError = (status) =>
   });
 const lineCalls = { reply: 0, push: 0 };
 let replyFailure = null;
+let lastReply = null; // 最後の返信の要求（{ replyToken, messages }）
 const proto = lineSdk.messagingApi.MessagingApiClient.prototype;
-proto.replyMessage = async () => {
+proto.replyMessage = async (request) => {
   lineCalls.reply++;
+  lastReply = request;
   if (replyFailure) throw replyFailure;
   return {};
 };
@@ -436,13 +443,81 @@ async function main() {
         errorLines.length === 1 && errorLines[0].args[0] === 'Postback processing error',
         allText()
       );
-      checkLine('postback', 'Postback processing error', 'error', { errorName: 'Error', errorCode: 5 });
+      checkLine('postback', 'Postback processing error', 'error', { action: 'confirm', errorName: 'Error', errorCode: 5 });
       checkLine('postback', 'Failed to load LINE profile for payer', 'warn', { user: '…cd99', errorName: 'HTTPFetchError', errorStatus: 404 });
       checkNoLeak('postback');
     } finally {
       dbFailure = null;
       await new Promise((resolve) => server.close(resolve));
     }
+  }
+
+  console.log('\n[line/postback.ts: 認可の拒否・不正な postback]');
+  {
+    const { handlePostback, postbackActionForLog } = require('../dist/line/postback');
+    const actionOf = (data) => postbackActionForLog({ postback: { data } });
+    check(
+      'postbackActionForLog: 既知の action（旧UIの名前を含む）はそのまま',
+      actionOf(JSON.stringify({ action: 'confirm' })) === 'confirm' && actionOf(JSON.stringify({ action: 'shared' })) === 'shared'
+    );
+    check(
+      'postbackActionForLog: 未知の action・文字列でない action・JSON でない data・data が無いときは unknown',
+      [
+        JSON.stringify({ action: CANARY }),
+        JSON.stringify({ action: '__proto__' }),
+        JSON.stringify({ action: 'constructor' }),
+        JSON.stringify({ action: ['confirm'] }),
+        JSON.stringify('confirm'),
+        'null',
+        `action=${CANARY}`,
+        undefined,
+      ].every((data) => actionOf(data) === 'unknown') && postbackActionForLog({}) === 'unknown'
+    );
+
+    // 世帯のある支出で、押した人（LINE_ID）のメンバー文書が無い（= 世帯のメンバーでない）。支出 ID・世帯 ID に目印を入れる
+    const MEMBERS_ONLY_TEXT = '変更できるのは、世帯のメンバーだけです';
+    const deniedExpenseId = `exp_${CANARY}_d001`;
+    const deniedPath = `expenses/${deniedExpenseId}`;
+    const deniedData = { groupId: `grp_${CANARY}_0005`, amount: 100, description: 'x', category: 'その他', status: 'pending' };
+    docOverrides.set(deniedPath, {
+      get: async () => ({ exists: true, data: () => deniedData, get: (key) => deniedData[key] }),
+    });
+    const postbackEvent = (data) => ({
+      type: 'postback',
+      replyToken: 'reply-token',
+      source: { type: 'group', groupId: 'C_line_group_0002', userId: LINE_ID },
+      postback: { data: JSON.stringify(data) },
+    });
+    try {
+      // confirm は applyAsMember（トランザクション内の判定）、show_category_select はカルーセルを返す前の判定
+      for (const action of ['confirm', 'show_category_select']) {
+        lastReply = null;
+        transactionsEnabled = true;
+        await capture(async () => {
+          await handlePostback(postbackEvent({ action, expenseId: deniedExpenseId }));
+        });
+        transactionsEnabled = false;
+        check(`${action}: 返信は変えない（世帯のメンバーだけ）`, lastReply?.messages?.[0]?.text === MEMBERS_ONLY_TEXT, lastReply);
+        checkLine(action, 'Postback rejected: the presser is not a member of the household', 'warn', { user: '…cd99', expense: '…d001', action });
+        checkNoLeak(`${action} の拒否`);
+      }
+    } finally {
+      transactionsEnabled = false;
+      docOverrides.delete(deniedPath);
+    }
+
+    // 不正な postback（支出 ID が文書 ID として不正）。押した人は伏せて出し、action と支出 ID は出さない
+    await capture(async () => {
+      await handlePostback(postbackEvent({ action: CANARY, expenseId: `${CANARY}/${LINE_ID}` }));
+    });
+    checkLine('不正な postback', 'Not a valid postback, skipping', 'log', { user: '…cd99' });
+    const invalidLine = findLine('Not a valid postback, skipping');
+    check(
+      '不正な postback: 押した人のほかは出さない（検証に通らなかった支出 ID は伏せた形でも出さない）',
+      !!invalidLine && JSON.stringify(Object.keys(invalidLine.args[1] ?? {})) === JSON.stringify(['user']),
+      allText()
+    );
+    checkNoLeak('不正な postback');
   }
 
   console.log('\n[line/client.ts: 返信の失敗 → push]');

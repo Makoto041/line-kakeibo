@@ -280,6 +280,7 @@ export async function generateJson<T = unknown>(
         // API のエラー（ApiError）。文言は API のエラー本文（JSON）全体で長くなりうるので切り詰める
         console.error('Gemini request failed', {
           status,
+          // eslint-disable-next-line no-restricted-syntax -- 例外として API のエラー文の先頭 300 文字を出す（docs/SECURITY_OPERATIONS.md §7・§9）
           error: String((error as Error)?.message ?? '').slice(0, 300),
         });
       } else {

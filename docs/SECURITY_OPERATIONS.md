@@ -403,11 +403,38 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
   - 生の例外には、送ったリクエストの設定（gaxios・axios の `config`。Authorization ヘッダーのアクセストークン・GitHub のトークン）や、
     応答のヘッダー・本文（LINE の `HTTPFetchError`）が入る。
 - 例外として、Gemini の API のエラーは HTTP ステータスと API のエラー文の先頭 300 文字を出す（§7）。
+  次の ESLint の規則の唯一の例外で、`bot/src/geminiClient.ts` のその行に `eslint-disable-next-line` と理由を付けている。
+- **ESLint で検査する**: `bot/eslint.config.mjs` の `no-restricted-syntax`（`bot/src/**/*.ts` の `console.log` / `warn` / `error` /
+  `info` / `debug`。error）で、次の書き方を報告する。
+  - 1 つ目の引数のテンプレートリテラルと、値（識別子）を含む `+` の連結（`'saved ' + id`）。固定の文字列どうしの連結
+    （長い固定文の折り返し）は対象外。
+  - `e` / `err` / `error` / 〜`Error` という名前の変数をそのまま渡すこと（`isError` / `hasError` のように `is` / `has` の次が
+    大文字の名前は真偽値とみなして除く）。引数・オブジェクトの値（`{ error }`・入れ子を含む）・
+    展開（`{ ...error }`）・配列・`` `${error}` ``・`'…' + error`・`String(error)`・`JSON.stringify(error)`・`error ?? null`・
+    `as` / `!` を付けたものが対象。`errorFields(error)` のように関数に渡す・`error.response?.status` のようにプロパティを読む・
+    `typeof error` / `instanceof` は対象外。
+  - `.message` / `.stack` を読むこと（`(error as Error).message`・`err?.message`・関数の引数の中を含む）。
+    名前が `message` のプロパティはすべて対象にしている（LINE のイベントの `event.message.text` も利用者の入力のため）。
+  - **誤検知の例と回避策**: 次は値をそのまま出さないが報告される。ログの外で別の名前の変数に入れてから渡すか
+    （`const messageType = event.message.type;` → `{ type: messageType }`）、その行に理由付きの
+    `eslint-disable-next-line no-restricted-syntax -- 理由` を付ける。誤検知の除外は次の「例外」に当たらないので、この節への追記は要らない。
+    - `console.log('Unhandled', { type: event.message.type })`（LINE のイベントの `message` が `.message` の規則に当たる）
+    - 〜`Error` という名前の、例外でない値（`{ validationError: '金額が空' }` のような固定の値を入れた変数）
+  - **例外**（値を出すことを認めるもの）を足すときは、この節に理由を書いてから、その行に
+    `eslint-disable-next-line no-restricted-syntax -- 理由` を付ける。今は上の Gemini の行だけ。
+  - **検出できないもの**（レビューで見る）: 名前と書き方で判定するため、別の名前の変数（`ex`・`reason`）、分割代入した `message`、
+    一度変数に入れた文言、`ok && error`（`&&` の右側。`error && error.code` を誤検知しないため対象外）、`console['error'](…)` の
+    ように角かっこで呼ぶもの、タグ付きテンプレート（`` String.raw`…${id}` ``）、1 つ目の引数に変数をそのまま渡すもの。
+  - **テストと強制**: CI の lint（`ci-cd.yml` の `npm run lint`）は失敗しても落ちない（`|| echo` で警告にする）。この規則は
+    `bot/scripts/smoke-log-lint.js`（`npm -w bot test`。CI の build-and-test で実行）で強制する。違反と適合の例の文字列を ESLint の
+    Node API で検査するほか、実際の `bot/src/**/*.ts` を検査して、この規則の報告（と、使われなくなった `eslint-disable`）が 0 件で、
+    規則の重さが error であることを確かめる。手元では `npm -w bot run lint`（違反があると終了コードが 1）でも気づける。
 - 自前の固定文の例外は名前を付けて投げる（`TimeoutError`・`LineCredentialsMissingError`・`GmailTokenMissingError` など）。
   文言を出さないログでも、`errorName` で原因を見分けられるようにするため。
 - **既知の限界**: 関数の外へ投げた例外は、`console.*` を通らずに実行環境（functions-framework）が `err.stack`
   （名前・文言・スタック）を Cloud Logging に出す。Gmail の Pub/Sub の再送のために `bot/src/gmail/handler.ts` の
   `handleGmailPubSub` が投げ直す例外（Firestore・Gmail API・LINE の失敗）と、スケジュール関数（`renewGmailWatch`・
   `postRecurringExpenses`）の失敗がこれに当たる。投げ直さないと再送・再試行が働かないため、そのままにしている。
-- テストは `bot/scripts/smoke-log-safety.js`（例外の文言・文書のパス・ヘッダーに入れた目印がログに出ないこと）。
+- テストは `bot/scripts/smoke-log-safety.js`（例外の文言・文書のパス・ヘッダーに入れた目印がログに出ないこと。
+  postback の認可の拒否のログ〔押した人・支出の ID は伏せ、action は既知の名前だけ〕を含む）。
   HTTP の応答や管理 API の戻り値（`/gmail/*` の `error`・`message`）は対象外（ログではない）。
