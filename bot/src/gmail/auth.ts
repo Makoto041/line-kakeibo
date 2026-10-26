@@ -22,6 +22,8 @@ const STATE_EXPIRY_MS = 10 * 60 * 1000;
 const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 /** Google への失効の要求 1 回あたりの待ち時間（refresh_token と access_token で最大 2 回） */
 const GOOGLE_REVOKE_TIMEOUT_MS = 5000;
+/** watch の停止（users.stop）の待ち時間。アクセストークンの取り直しを含めた全体の上限 */
+const GMAIL_WATCH_STOP_TIMEOUT_MS = 5000;
 
 /**
  * Gmail のトークンが保存されていない（OAuth の設定前・/gmail/revoke の後）
@@ -56,19 +58,26 @@ const FIRESTORE_NOT_FOUND = 5;
 let oauth2Client: Auth.OAuth2Client | null = null;
 
 /**
+ * OAuth2 のクライアントの設定（環境変数）。足りなければ投げる
+ */
+function oauth2ClientConfig() {
+  const clientId = process.env.GMAIL_CLIENT_ID;
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+  const redirectUri = process.env.GMAIL_REDIRECT_URI;
+
+  if (!clientId || !clientSecret || !redirectUri) {
+    // 固定文の例外には名前を付ける（ログは文言を出さず errorName で見分けるため。logSafe.ts の errorFields）
+    throw Object.assign(new Error('Gmail OAuth2 credentials not configured'), { name: 'GmailCredentialsMissingError' });
+  }
+  return { clientId, clientSecret, redirectUri };
+}
+
+/**
  * OAuth2クライアントを取得
  */
 function getOAuth2Client() {
   if (!oauth2Client) {
-    const clientId = process.env.GMAIL_CLIENT_ID;
-    const clientSecret = process.env.GMAIL_CLIENT_SECRET;
-    const redirectUri = process.env.GMAIL_REDIRECT_URI;
-
-    if (!clientId || !clientSecret || !redirectUri) {
-      // 固定文の例外には名前を付ける（ログは文言を出さず errorName で見分けるため。logSafe.ts の errorFields）
-      throw Object.assign(new Error('Gmail OAuth2 credentials not configured'), { name: 'GmailCredentialsMissingError' });
-    }
-
+    const { clientId, clientSecret, redirectUri } = oauth2ClientConfig();
     oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
   }
   return oauth2Client;
@@ -422,6 +431,78 @@ export async function revokeGmailTokenOnGoogle(
     console.warn('Gmail token was not revoked on Google side', { refresh: refreshResult, access: accessResult });
   }
   return { revoked, refreshToken: refreshResult, accessToken: accessResult };
+}
+
+/**
+ * 保存してあるトークンで Gmail の watch を止める（users.stop。DELETE /gmail/revoke が Google の失効の前に呼ぶ）
+ *
+ * 止めないと、古いアカウントの watch が期限（最大 7 日）まで同じ topic に通知を送り続ける。トークンを失効させた後は
+ * stop できないので、失効より先に呼ぶ。
+ * - トークンが 1 つも無ければ何も送らずに null
+ * - 止められたら true。止められなかった（トークンが無効・取り消し済み・期限切れで取り直せない、待ち時間切れ、通信の失敗、
+ *   OAuth の設定が無い）ときは false。投げない（revoke は続ける）
+ *
+ * 共有のクライアント（getOAuth2Client）は使わず、渡されたトークン（revoke が Google に送るのと同じもの）で別のクライアントを作る。
+ * アクセストークンが期限切れなら、クライアントが refresh_token で取り直すが、Firestore には保存しない（getGmailClient は保存する。
+ * 保存すると、revoke が失効させない新しいアクセストークンが、削除までの間 Firestore に残る）。
+ *
+ * 送るのは、アクセストークンの取り直し（期限切れのときだけ）と stop の、それぞれ 1 回まで。
+ * - 再試行はしない。google-auth-library は取り直しの要求に自前の再試行の設定（POST も対象）を付けるので、要求ごとの
+ *   retry: false では止まらない。このクライアントの送信の手前（interceptor）で、すべての要求の再試行を外す
+ * - 期限（expiry_date）が分からない（無い・0）ときは、期限切れとして先に取り直す。期限が無いと、ライブラリは stop の 401 の後に
+ *   取り直して stop を送り直すため
+ * - 待ち時間は全体で timeoutMs（Promise.race で打ち切る）。各要求にも同じ待ち時間を付けるので、打ち切った後に送信中の要求が
+ *   残っても、その待ち時間で終わる
+ *
+ * users.stop は gmail.readonly のスコープで呼べる（googleapis の gmail v1 の型定義の users.stop の説明が、使えるスコープに
+ * gmail.readonly を挙げている）。
+ */
+export async function stopGmailWatchOnGoogle(
+  tokenData: { refresh_token?: unknown; access_token?: unknown; expiry_date?: unknown } | undefined,
+  timeoutMs: number = GMAIL_WATCH_STOP_TIMEOUT_MS
+): Promise<boolean | null> {
+  const refresh = nonEmptyString(tokenData?.refresh_token);
+  const access = nonEmptyString(tokenData?.access_token);
+  if (!refresh && !access) {
+    return null;
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(
+      () => reject(Object.assign(new Error('Gmail watch stop timed out'), { name: 'TimeoutError' })),
+      timeoutMs
+    );
+  });
+  try {
+    const { clientId, clientSecret, redirectUri } = oauth2ClientConfig();
+    const client = new google.auth.OAuth2({ clientId, clientSecret, redirectUri, transporterOptions: { timeout: timeoutMs } });
+    client.transporter.interceptors.request.add({
+      resolved: async (config) => {
+        config.retry = false;
+        delete config.retryConfig;
+        return config;
+      },
+    });
+    const expiry = tokenData?.expiry_date;
+    const knownExpiry = typeof expiry === 'number' && Number.isFinite(expiry) && expiry > 0 ? expiry : undefined;
+    client.setCredentials({
+      access_token: access,
+      refresh_token: refresh,
+      // 1 = 期限切れ（先に取り直す）。refresh_token が無ければ取り直せないので、期限は付けない
+      expiry_date: knownExpiry ?? (refresh ? 1 : undefined),
+    });
+    const gmail = google.gmail({ version: 'v1', auth: client });
+    await Promise.race([gmail.users.stop({ userId: 'me' }, { timeout: timeoutMs, retry: false }), deadline]);
+    console.log('Gmail watch stopped before revoking the token');
+    return true;
+  } catch (error) {
+    // 例外は種類だけを出す（gaxios の例外は、送った要求のヘッダー〔アクセストークン〕を持つ）
+    console.warn('Failed to stop Gmail watch before revoking the token', errorFields(error));
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /**
