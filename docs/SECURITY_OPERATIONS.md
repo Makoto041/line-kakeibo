@@ -1,4 +1,4 @@
-# セキュリティ運用メモ（世帯メンバー・ルール・Storage・外部送信）
+# セキュリティ運用メモ（世帯メンバー・ルール・Storage・外部送信・ログ）
 
 家計簿の Web アクセス権は Firestore の `groupMembers/{groupId}_{lineId}` の `isActive == true` で決まる
 （`firestore.rules` / `storage.rules` の両方がこれを見る）。この文書は、その運用と一度だけ必要な設定をまとめる。
@@ -31,7 +31,7 @@
     ルールで証明できるようにするため。更新・削除・レシート操作はできない。
   - 無効化の対象は、その LINE グループに紐づくアプリ内グループ（`groups.lineGroupId` が一致）のメンバーシップだけ。
     世帯グループが LINE グループに紐づいていない（`list` の「LINE:」が `(なし)`）と何も無効化できず、bot は
-    `No app group is linked to LINE group ...` の警告ログを出す。したがって `list` で世帯グループに LINE の ID が
+    `No app group is linked to the LINE group; cannot deactivate the leaving members. ...` の警告ログを出す。したがって `list` で世帯グループに LINE の ID が
     表示されていることを確認しておく（§2 マージ前に確認すること）。
 - bot 自身がグループから外された場合（`leave` イベント）は、メンバーシップを変更しない。誤操作で世帯全員の Web アクセスを失わないようにするため。
 
@@ -77,8 +77,8 @@ node scripts/manage-group-members.mjs backfill-group-id --apply
 bot は、発言元の LINE グループに紐づくグループ（`groups.lineGroupId` が一致）で発言者が有効なメンバーでない限り、
 LINE グループでの発言を `groupId` も `lineGroupId` も持たない個人支出として保存する（`bot/src/expenseGroupScope.ts`）。
 (a) か (b) が崩れていると、マージ直後からオーナー本人の LINE グループでの発言が Web 一覧・LINE 集計・精算から消える。
-このとき bot は `... is not an active member of the group linked to LINE group ...; saving as personal expense` の
-警告ログ（`console.warn`）を出す。
+このとき bot は `Poster is not an active member of the group linked to the LINE group; saving as personal expense` の
+警告ログ（`console.warn`。利用者と LINE グループの ID は伏せる）を出す。
 
 **マージ前後に一度やること**:
 
@@ -382,3 +382,32 @@ Gemini での整理に失敗したときも、例外の文言（本文や応答�
 （利用者ごとの文書をトランザクションで更新）に置き換える。`express-rate-limit`（`/household` などで使用）は HTTP の要求を
 数える Express のミドルウェアで、1 回の webhook に複数のイベントが入りうるコマンドの件数には使えず、既定の保存先も
 インスタンスのメモリなので、再利用していない。
+
+## 9. ログの規約（bot）
+
+Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残さないための書き方。`bot/src/logSafe.ts` のヘルパーを使う。
+
+- **固定文とオブジェクトで出す**: `console.error('固定文', { user: maskId(lineId), ...errorFields(error) })` のように、
+  1 つ目の引数は固定の文字列にする。値をテンプレートリテラル（書式文字列）に埋め込まない（`%s` などの書式の解釈や、
+  改行でログ行を偽造されるのを防ぐ。CodeQL の `js/tainted-format-string` の対象）。
+- **ID は `maskId` で伏せる**: LINE の userId / groupId、Firebase の uid、支出・世帯・固定費・Gmail のメッセージの ID は、
+  末尾 4 文字だけを出す。
+- **例外は `errorFields(error)` で種類だけを出す**: 名前（`errorName`）、コード（`errorCode`。Firestore の gRPC のコードなどの数、
+  `ECONNRESET` のような英大文字・数字・`_` だけの文字列、`auth/id-token-expired` のような Firebase の形の文字列、
+  gaxios の打ち切り・中断の `TimeoutError` / `AbortError` のときだけ）、
+  原因のコード（`errorCause`。`fetch failed` の `cause.code`）、HTTP の状態（`errorStatus`。LINE の API・Gmail API・axios）。
+  例外そのもの・文言（`message`）・原因の文言は出さない。理由は次のとおり。
+  - Firestore のエラーの文言には文書のパスが入る（例: `NOT_FOUND: No document to update: …/documents/groupMembers/{groupId}_{lineId}`）。
+    文書 ID に LINE の ID を使う文書がある。
+  - `JSON.parse` の `SyntaxError` の文言には、解釈しようとした文字列（利用者の入力・API の応答）の一部が入る。
+  - 生の例外には、送ったリクエストの設定（gaxios・axios の `config`。Authorization ヘッダーのアクセストークン・GitHub のトークン）や、
+    応答のヘッダー・本文（LINE の `HTTPFetchError`）が入る。
+- 例外として、Gemini の API のエラーは HTTP ステータスと API のエラー文の先頭 300 文字を出す（§7）。
+- 自前の固定文の例外は名前を付けて投げる（`TimeoutError`・`LineCredentialsMissingError`・`GmailTokenMissingError` など）。
+  文言を出さないログでも、`errorName` で原因を見分けられるようにするため。
+- **既知の限界**: 関数の外へ投げた例外は、`console.*` を通らずに実行環境（functions-framework）が `err.stack`
+  （名前・文言・スタック）を Cloud Logging に出す。Gmail の Pub/Sub の再送のために `bot/src/gmail/handler.ts` の
+  `handleGmailPubSub` が投げ直す例外（Firestore・Gmail API・LINE の失敗）と、スケジュール関数（`renewGmailWatch`・
+  `postRecurringExpenses`）の失敗がこれに当たる。投げ直さないと再送・再試行が働かないため、そのままにしている。
+- テストは `bot/scripts/smoke-log-safety.js`（例外の文言・文書のパス・ヘッダーに入れた目印がログに出ないこと）。
+  HTTP の応答や管理 API の戻り値（`/gmail/*` の `error`・`message`）は対象外（ログではない）。

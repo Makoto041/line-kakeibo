@@ -34,7 +34,7 @@ import { getPendingAdvances, type Expense } from './firestore';
 import { readActiveMember } from './householdMembers';
 import { getLineClient } from './line/client';
 import { buildSettlementSummaryMessages } from './line/settlementSummaryMessage';
-import { errorMessage, maskId } from './logSafe';
+import { errorFields, maskId } from './logSafe';
 import {
   MAX_RECURRING_PER_GROUP,
   RECURRING_COLLECTION,
@@ -200,7 +200,7 @@ export function householdErrorHandler(err: unknown, req: Request, res: Response,
     sendError(res, status, 'invalid_request');
     return;
   }
-  console.error('household: unexpected error:', errorMessage(err));
+  console.error('household: unexpected error', errorFields(err));
   sendError(res, 500, 'internal');
 }
 
@@ -217,10 +217,10 @@ async function checkIdToken(token: string, checkRevoked: boolean): Promise<Token
   } catch (error) {
     const code = (error as { code?: unknown })?.code;
     if (typeof code === 'string' && code.startsWith('auth/') && code !== 'auth/internal-error') {
-      console.warn(`household: ID token rejected (${code})`);
+      console.warn('household: ID token rejected', errorFields(error));
       return { status: 401 };
     }
-    console.error('household: ID token verification failed:', typeof code === 'string' ? code : errorMessage(error));
+    console.error('household: ID token verification failed', errorFields(error));
     return { status: 500 };
   }
 }
@@ -254,7 +254,7 @@ async function requireLineUser(req: Request, res: Response, next: NextFunction) 
   const decoded = signed.decoded;
   const lineId = (decoded as { lineId?: unknown }).lineId;
   if (decoded.firebase?.sign_in_provider !== 'custom' || !isValidDocId(lineId)) {
-    console.warn(`household: token without LINE identity (uid ${maskId(decoded.uid)})`);
+    console.warn('household: token without LINE identity', { uid: maskId(decoded.uid) });
     sendError(res, 403, 'forbidden');
     return;
   }
@@ -403,13 +403,13 @@ async function loadAdvances(groupId: string, scope: AdvanceScope): Promise<Advan
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 
-/** ハンドラの例外を 500 にする（原因はログに message だけ出す） */
+/** ハンドラの例外を 500 にする（原因はログに種類だけ出す。errorFields） */
 function route(name: string, handler: Handler) {
   return async (req: Request, res: Response) => {
     try {
       await handler(req, res);
     } catch (error) {
-      console.error("household handler error", { handler: name, error: errorMessage(error) });
+      console.error("household handler error", { handler: name, ...errorFields(error) });
       if (!res.headersSent) sendError(res, 500, 'internal');
     }
   };
@@ -456,8 +456,8 @@ householdRouter.post(
       return;
     }
     if ('forbidden' in result) {
-      // ID は利用者の入力なので、改行などでログ行を偽造されないよう JSON 文字列にして出す
-      console.warn(`household confirm: forbidden (expense ${JSON.stringify(expenseId)}, user ${maskId(lineId)})`);
+      // ID は利用者の入力なので、書式文字列に埋め込まず伏せてオブジェクトで出す
+      console.warn('household confirm: forbidden', { expense: maskId(expenseId), user: maskId(lineId) });
       sendError(res, 403, 'forbidden');
       return;
     }
@@ -468,9 +468,11 @@ householdRouter.post(
 
     const record = result.record;
     const updatedAt = written.update?.updatedAt instanceof Date ? written.update.updatedAt : new Date();
-    console.log(
-      `household confirm: expense ${JSON.stringify(expenseId)} by ${maskId(lineId)} (status: ${JSON.stringify(record.status ?? null)})`
-    );
+    console.log('household confirm', {
+      expense: maskId(expenseId),
+      user: maskId(lineId),
+      status: typeof record.status === 'string' ? record.status : null,
+    });
     res.status(200).json({
       ok: true,
       expense: {
@@ -661,7 +663,7 @@ householdRouter.post(
     } catch (error) {
       if (!pushError) throw error;
       const failure: { status: unknown; error: unknown } = pushError;
-      console.error('household settlement summary: push failed', { group: maskId(groupId), status: failure.status, error: errorMessage(failure.error) });
+      console.error('household settlement summary: push failed', { group: maskId(groupId), status: failure.status, ...errorFields(failure.error) });
       sendError(res, 502, failure.status === 429 ? 'line_limit' : 'line_failed');
       return;
     }

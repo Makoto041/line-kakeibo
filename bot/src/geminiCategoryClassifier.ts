@@ -3,7 +3,7 @@ import { CANONICAL_CATEGORIES, normalizeCategoryName } from './categoryNormaliza
 import { CATEGORY_GUIDE } from './categoryGuide';
 import { generateJson, isGeminiConfigured, Type, type Schema } from './geminiClient';
 import { classifyWithJev, isJevConfigured } from './jevCategoryClassifier';
-import { maskId } from './logSafe';
+import { errorFields, maskId } from './logSafe';
 
 /** カテゴリがどこで決まったか（キーワード辞書・Jev・Gemini） */
 export type ClassificationProvider = 'dictionary' | 'jev' | 'gemini';
@@ -230,7 +230,7 @@ async function categoriesFor(lineId: string): Promise<string[]> {
   } catch (error) {
     console.warn('Failed to get categories from Firestore, using default categories', {
       user: maskId(lineId),
-      error: (error as Error)?.message,
+      ...errorFields(error),
     });
     // 失敗したときの一覧はキャッシュしない（Firestore の復旧後、次の呼び出しで読み直す）
     return [...DEFAULT_CATEGORIES];

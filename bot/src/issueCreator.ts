@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { generateJson, isGeminiConfigured, ThinkingLevel } from './geminiClient';
-import { errorMessage, errorName } from './logSafe';
+import { errorFields, errorName } from './logSafe';
 
 export type RequirementType = '機能要件' | '非機能要件';
 
@@ -296,7 +296,7 @@ export async function createIssueFromFeedback(
 
     const issueUrl: string = response.data.html_url;
     const issueNumber: number = response.data.number;
-    console.log(`GitHub Issue created: #${issueNumber} ${issueUrl}`);
+    console.log('GitHub Issue created', { issueNumber, issueUrl });
 
     return {
       success: true,
@@ -308,11 +308,11 @@ export async function createIssueFromFeedback(
     };
   } catch (error) {
     // axios のエラーオブジェクトをそのまま出すと、リクエスト設定（Authorization ヘッダー＝
-    // GITHUB_TOKEN）までログに残る。ステータスとメッセージだけを出す。
+    // GITHUB_TOKEN）までログに残る。エラーの種類と HTTP ステータスだけを出す。
     if (axios.isAxiosError(error)) {
-      console.error('GitHub Issue creation error:', error.response?.status ?? 'no response', error.message);
+      console.error('GitHub Issue creation error', { ...errorFields(error), status: error.response?.status ?? 'no response' });
     } else {
-      console.error('GitHub Issue creation error:', errorMessage(error));
+      console.error('GitHub Issue creation error', errorFields(error));
     }
     return {
       success: false,

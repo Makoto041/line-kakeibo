@@ -28,7 +28,7 @@ show_help() {
     echo "  -m, --member            メンバー表示問題関連"
     echo "  -g, --gemini            Gemini分類関連"
     echo "  -f, --follow            リアルタイム監視（Ctrl+Cで終了）"
-    echo "  -t, --timeout           タイムアウトエラーのみ"
+    echo "  -t, --timeout           タイムアウト関連（timeout / timed out / TimeoutError。大文字小文字を区別しない）"
     echo ""
     echo "例:"
     echo "  ./scripts/view-logs.sh                 # 最新50件"
@@ -70,7 +70,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -t|--timeout)
-            FILTER="AND textPayload=~\"timeout\""
+            # =~ は RE2 で大文字小文字を区別する。ログは errorName: 'TimeoutError'・「... timed out」の形でも出るので (?i) を付ける
+            FILTER="AND textPayload=~\"(?i)(timeout|timed out)\""
             shift
             ;;
         -f|--follow)

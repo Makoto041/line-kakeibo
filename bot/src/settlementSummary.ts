@@ -24,7 +24,7 @@ import type { DocumentReference, Firestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { GroupMember } from './firestore';
 import { sortActiveMembers, type HouseholdMember } from './householdMembers';
-import { errorMessage, maskId } from './logSafe';
+import { errorFields, maskId } from './logSafe';
 import { amountOf, computePeriodSplit, isSplitCounted, periodPool, type PeriodSplit, type SplitExpense } from './periodSplit';
 import { dayjs, JST } from './time';
 
@@ -336,11 +336,11 @@ export async function sendDueSettlementSummaries(
       result.sent += 1;
       console.log('settlement summary: sent', { group: maskId(target.groupId), endDate: range.endDate });
       await ref.update({ sentAt: FieldValue.serverTimestamp() }).catch((error: unknown) => {
-        console.warn('settlement summary: failed to record sentAt', { group: maskId(target.groupId), error: errorMessage(error) });
+        console.warn('settlement summary: failed to record sentAt', { group: maskId(target.groupId), ...errorFields(error) });
       });
     } catch (error) {
       result.failed += 1;
-      console.error('settlement summary: failed', { group: maskId(target.groupId), error: errorMessage(error) });
+      console.error('settlement summary: failed', { group: maskId(target.groupId), ...errorFields(error) });
       // 送れなかった印を残さない（次の実行で送り直す）
       if (pendingMarker) await pendingMarker.delete().catch(() => undefined);
     }
@@ -447,7 +447,7 @@ export async function sendSettlementSummaryNow(
         }
       })
       .catch((error: unknown) => {
-        console.warn('settlement summary: failed to record a manual send', { group: maskId(groupId), error: errorMessage(error) });
+        console.warn('settlement summary: failed to record a manual send', { group: maskId(groupId), ...errorFields(error) });
       });
   }
   return { ok: true, range, interim };

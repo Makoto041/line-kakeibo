@@ -3,14 +3,14 @@
  */
 
 import { deactivateLineGroupMembers } from "../firestore";
-import { maskId } from "../logSafe";
+import { errorFields, maskId } from "../logSafe";
 import { pushText } from "./client";
 import { forgetCachedProfiles } from "./expenseFlow";
 
 export async function handleJoin(event: any) {
   try {
     // イベント全体には replyToken や ID が含まれるためそのまま出さない
-    console.log(`Bot joined group: ${maskId(event.source?.groupId)}`);
+    console.log("Bot joined group", { lineGroup: maskId(event.source?.groupId) });
 
     const lineGroupId = event.source.groupId;
     if (!lineGroupId) {
@@ -25,22 +25,20 @@ export async function handleJoin(event: any) {
     try {
       await pushText(lineGroupId, "家計簿ボットがグループに参加しました！\n\n「500 ランチ」のように金額と内容を送ると支出を記録\n「家計簿」で支出一覧を表示\nレシート画像はWebで支出に添付できます\n\nグループメンバーの支出が自動的に共有されます");
 
-      console.log(
-        `Bot successfully joined and sent welcome to LINE group: ${maskId(lineGroupId)}`
-      );
+      console.log("Bot successfully joined and sent welcome to the LINE group", { lineGroup: maskId(lineGroupId) });
     } catch (messageError) {
-      console.error("Failed to send welcome message:", messageError);
+      console.error("Failed to send welcome message", errorFields(messageError));
       // Don't throw error - bot should still remain in group
     }
   } catch (error) {
-    console.error("Join event handling error:", error);
+    console.error("Join event handling error", errorFields(error));
     // Don't throw error to prevent bot from appearing broken
   }
 }
 
 export async function handleMemberJoined(event: any) {
   try {
-    console.log(`Member joined event: group=${maskId(event.source?.groupId)}`);
+    console.log("Member joined event", { lineGroup: maskId(event.source?.groupId) });
 
     const lineGroupId = event.source.groupId;
     if (!lineGroupId) {
@@ -57,16 +55,14 @@ export async function handleMemberJoined(event: any) {
         // Use pushMessage instead of replyMessage for better compatibility
         await pushText(lineGroupId, "新しいメンバーがグループに参加しました！\n家計簿ボットで支出を記録・共有できます。\n\n「家計簿」と送信すると使い方を確認できます。");
 
-        console.log(
-          `Successfully sent welcome message for new member in group: ${maskId(lineGroupId)}`
-        );
+        console.log("Successfully sent welcome message for new member", { lineGroup: maskId(lineGroupId) });
       } catch (messageError) {
-        console.error("Failed to send member welcome message:", messageError);
+        console.error("Failed to send member welcome message", errorFields(messageError));
         // Don't throw error - this is not critical
       }
     }
   } catch (error) {
-    console.error("Member joined event handling error:", error);
+    console.error("Member joined event handling error", errorFields(error));
     // Don't throw error to prevent bot from appearing broken
   }
 }
@@ -92,12 +88,10 @@ export async function handleMemberLeft(event: any) {
 
     const count = await deactivateLineGroupMembers(lineGroupId, userIds);
     forgetCachedProfiles(lineGroupId, userIds);
-    console.log(
-      `Member left group ${maskId(lineGroupId)}: ${userIds.length} user(s), ${count} membership(s) deactivated`
-    );
+    console.log("Member left group", { lineGroup: maskId(lineGroupId), users: userIds.length, deactivated: count });
   } catch (error) {
     // 失敗しても webhook 全体は成功扱いにする（LINE の再送で二重処理しても冪等）。
-    console.error("Member left event handling error:", error);
+    console.error("Member left event handling error", errorFields(error));
   }
 }
 
@@ -108,5 +102,5 @@ export async function handleMemberLeft(event: any) {
  * 失うのを避けるため（個々の退出は memberLeft で扱う）。記録だけ残す。
  */
 export function handleLeave(event: any) {
-  console.warn(`Bot left group: ${maskId(event.source?.groupId)} (memberships unchanged)`);
+  console.warn("Bot left group (memberships unchanged)", { lineGroup: maskId(event.source?.groupId) });
 }

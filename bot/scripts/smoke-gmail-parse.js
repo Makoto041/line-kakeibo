@@ -234,10 +234,11 @@ check('どの結果も boolean', [evening, midnight, altFormat, dateOnly, oneDig
 // ------------------------------------------------------------
 console.log('\nisSMBCGoldVISANL (sender check)');
 
-// 厳密判定で弾いたときの console.warn を拾う（出力を汚さないよう差し替える）
+// 厳密判定で弾いたときの console.warn を拾う（出力を汚さないよう差し替える）。引数はそのまま持つ
 const realWarn = console.warn;
 let warnings = [];
-console.warn = (...args) => { warnings.push(args.join(' ')); };
+console.warn = (...args) => { warnings.push(args); };
+const warnedText = (args) => require('util').format(...args);
 function judge(from, body) {
   warnings = [];
   return isSMBCGoldVISANL(from, body);
@@ -301,13 +302,13 @@ check('本文キーワードで弾いたときは送信元の警告を出さな�
 judge('"vpass.ne.jp" <x@evil.example>', validBody);
 check('許可ドメインを騙る送信元は警告に実ドメインだけを出す',
   warnings.length === 1 &&
-    warnings[0].includes('SMBC sender rejected by strict From check') &&
-    warnings[0].includes('domain=evil.example') &&
-    !warnings[0].includes('x@'),
+    warnings[0][0] === 'SMBC sender rejected by strict From check' &&
+    warnings[0][1]?.domain === 'evil.example' &&
+    !warnedText(warnings[0]).includes('x@'),
   JSON.stringify(warnings));
 judge('x@evil.example <statement@vpass.ne.jp>', validBody);
 check('アドレスを取り出せない形は domain=none で警告する',
-  warnings.length === 1 && warnings[0].includes('domain=none') && !warnings[0].includes('statement@'),
+  warnings.length === 1 && warnings[0][1]?.domain === 'none' && !warnedText(warnings[0]).includes('statement@'),
   JSON.stringify(warnings));
 check('無関係なメールは弾くが警告は出さない',
   judge('friend@example.com', validBody) === false && warnings.length === 0, JSON.stringify(warnings));

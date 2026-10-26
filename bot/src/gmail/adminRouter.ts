@@ -7,6 +7,7 @@
 import express, { Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { isAdminAuthorized } from "../adminAuth";
+import { errorFields } from "../logSafe";
 import {
   getAuthUrl,
   handleOAuthCallback,
@@ -77,7 +78,7 @@ gmailRouter.get("/auth", adminApiLimiter as any, requireAdminAuth, async (_req, 
       note: "This URL is valid for 10 minutes. State parameter provides CSRF protection.",
     });
   } catch (error) {
-    console.error("Failed to generate auth URL:", error);
+    console.error("Failed to generate auth URL", errorFields(error));
     res.status(500).json({ error: (error as Error).message });
   }
 });
@@ -115,7 +116,7 @@ gmailRouter.get("/callback", gmailCallbackLimiter as any, async (req, res) => {
     await handleOAuthCallback(code, state);
     res.send("Gmail OAuth2 authentication successful! You can close this window.");
   } catch (error) {
-    console.error("OAuth callback failed:", error);
+    console.error("OAuth callback failed", errorFields(error));
     res.status(500).json({ error: (error as Error).message });
   }
 });
@@ -140,7 +141,7 @@ gmailRouter.post("/register-watch", adminApiLimiter as any, requireAdminAuth, as
       expiresAt: new Date(watchState.watchExpiration).toISOString(),
     });
   } catch (error) {
-    console.error("Failed to register watch:", error);
+    console.error("Failed to register watch", errorFields(error));
     res.status(500).json({ error: (error as Error).message });
   }
 });
@@ -164,7 +165,7 @@ gmailRouter.get("/status", adminApiLimiter as any, requireAdminAuth, async (_req
       ...status,
     });
   } catch (error) {
-    console.error("Failed to get watch status:", error);
+    console.error("Failed to get watch status", errorFields(error));
     res.status(500).json({ error: (error as Error).message });
   }
 });
@@ -188,7 +189,7 @@ gmailRouter.post("/refresh-token", adminApiLimiter as any, requireAdminAuth, asy
 
     res.json({ success: true, message: "Token marked as expired. Next API call will refresh it." });
   } catch (error) {
-    console.error("Failed to refresh token:", error);
+    console.error("Failed to refresh token", errorFields(error));
     res.status(500).json({ error: (error as Error).message });
   }
 });
@@ -219,13 +220,13 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
         if (response.ok) {
           console.log('Gmail token revoked on Google side');
         } else {
-          console.warn(`Failed to revoke token on Google side: HTTP ${response.status}`);
+          console.warn('Failed to revoke token on Google side', { status: response.status });
         }
       } catch (revokeError) {
         if (revokeError instanceof Error && revokeError.name === 'AbortError') {
           console.warn('Token revocation timed out (5s)');
         } else {
-          console.warn('Failed to revoke token on Google side (may already be invalid):', revokeError);
+          console.warn('Failed to revoke token on Google side (may already be invalid)', errorFields(revokeError));
         }
       }
     }
@@ -255,7 +256,7 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
       message: "Token revoked and deleted. Please re-authenticate via /api/gmail/auth"
     });
   } catch (error) {
-    console.error("Failed to revoke token:", error);
+    console.error("Failed to revoke token", errorFields(error));
     res.status(500).json({ error: (error as Error).message });
   }
 });
@@ -269,7 +270,7 @@ gmailRouter.post("/process-latest", adminApiLimiter as any, requireAdminAuth, as
     const result = await processLatestEmail();
     res.json(result);
   } catch (error) {
-    console.error("Failed to process latest email:", error);
+    console.error("Failed to process latest email", errorFields(error));
     res.status(500).json({ error: (error as Error).message });
   }
 });
@@ -358,7 +359,7 @@ gmailRouter.post("/test-process", adminApiLimiter as any, requireAdminAuth, asyn
       }
     });
   } catch (error) {
-    console.error("Failed to test process:", error);
+    console.error("Failed to test process", errorFields(error));
     res.status(500).json({ error: (error as Error).message });
   }
 });
@@ -376,7 +377,7 @@ gmailRouter.post("/force-process/:messageId", adminApiLimiter as any, requireAdm
     const result = await forceProcessMessage(messageId as string);
     res.json(result);
   } catch (error) {
-    console.error("Failed to force process:", error);
+    console.error("Failed to force process", errorFields(error));
     res.status(500).json({ error: (error as Error).message });
   }
 });

@@ -3,6 +3,7 @@
  */
 
 import { createGroup, getGroupMembers, getUserGroups } from "../../firestore";
+import { errorFields } from "../../logSafe";
 import { replyText } from "../client";
 
 export async function handleGroupCommand(event: any, text: string): Promise<boolean> {
@@ -43,7 +44,7 @@ async function createGroupCommand(event: any, text: string): Promise<void> {
 
     await replyText(event.replyToken, message);
   } catch (error) {
-    console.error("Error creating group:", error);
+    console.error("Error creating group", errorFields(error));
     await replyText(event.replyToken, "グループの作成に失敗しました。もう一度お試しください。");
   }
 }
@@ -68,7 +69,7 @@ async function listGroupsCommand(event: any): Promise<void> {
 
     await replyText(event.replyToken, message);
   } catch (error) {
-    console.error("Error getting groups:", error);
+    console.error("Error getting groups", errorFields(error));
     await replyText(event.replyToken, "グループ情報の取得に失敗しました。");
   }
 }
