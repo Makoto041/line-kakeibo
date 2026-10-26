@@ -342,7 +342,7 @@ async function revokeOneTokenOnGoogle(
     if (error instanceof Error && error.name === 'AbortError') {
       return { result: 'timeout' };
     }
-    console.warn('Failed to reach Google to revoke a Gmail token', { token: kind, ...errorFields(error) });
+    console.warn('Failed to reach Google to revoke a Gmail token', { kind, ...errorFields(error) });
     return { result: 'network_error' };
   } finally {
     clearTimeout(timeoutId);
@@ -373,16 +373,17 @@ export async function revokeGmailTokenOnGoogle(
   }
 
   const skipped: GoogleRevokeAttempt = { result: 'skipped' };
-  const refreshToken = refresh ? await revokeOneTokenOnGoogle('refresh_token', refresh, timeoutMs) : skipped;
-  const accessToken = access ? await revokeOneTokenOnGoogle('access_token', access, timeoutMs) : skipped;
-  const revoked = refreshToken.result === 'revoked' || accessToken.result === 'revoked';
+  const refreshResult = refresh ? await revokeOneTokenOnGoogle('refresh_token', refresh, timeoutMs) : skipped;
+  const accessResult = access ? await revokeOneTokenOnGoogle('access_token', access, timeoutMs) : skipped;
+  const revoked = refreshResult.result === 'revoked' || accessResult.result === 'revoked';
 
+  // ログには結果だけを出す（トークンは出さない）
   if (revoked) {
-    console.log('Gmail token revoked on Google side', { refreshToken, accessToken });
+    console.log('Gmail token revoked on Google side', { refresh: refreshResult, access: accessResult });
   } else {
-    console.warn('Gmail token was not revoked on Google side', { refreshToken, accessToken });
+    console.warn('Gmail token was not revoked on Google side', { refresh: refreshResult, access: accessResult });
   }
-  return { revoked, refreshToken, accessToken };
+  return { revoked, refreshToken: refreshResult, accessToken: accessResult };
 }
 
 /**
