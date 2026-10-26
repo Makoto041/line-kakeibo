@@ -573,30 +573,30 @@ test('精算サマリーの文言の組み立ては bot と同じ（デモの出
     { mention: 'Aさん' },
     { text: ' から ' },
     { mention: 'Bさん' },
-    { text: ' へ ¥63,245 の送金をお願いします。' },
+    { text: ' へ ¥56,620 の送金をお願いします。' },
   ]);
   const f = DEMO_SUMMARY.flex;
-  assert.deepEqual([f.people, f.amount, f.caption], ['Aさん  →  Bさん', '¥63,245', 'AさんがBさんに送金']);
+  assert.deepEqual([f.people, f.amount, f.caption], ['Aさん  →  Bさん', '¥56,620', 'AさんがBさんに送金']);
   assert.deepEqual(f.rows, [
-    { label: '合計（21件・除外1件）', value: '¥164,410' },
-    { label: '1人あたり（÷ 2）', value: '¥82,205' },
-    { label: '− Aさんの支払い', value: '¥18,960' },
+    { label: '合計（21件・除外1件）', value: '¥157,080' },
+    { label: '1人あたり（÷ 2）', value: '¥78,540' },
+    { label: '− Aさんの支払い', value: '¥21,920' },
   ]);
-  assert.deepEqual(f.othersRow, { label: 'Bさん・カード・共通口座の支払い', value: '¥145,450' });
+  assert.deepEqual(f.othersRow, { label: 'Bさん・カード・共通口座の支払い', value: '¥135,160' });
   assert.deepEqual(
     f.categories.map((c) => [c.category, c.amountText, c.percentage]),
     [
-      ['住居費', '¥85,000', 51.7],
-      ['食費', '¥39,950', 24.3],
-      ['娯楽', '¥17,840', 10.9],
-      ['通信費', '¥7,600', 4.6],
-      ['光熱費', '¥6,920', 4.2],
+      ['住居費', '¥64,870', 41.3],
+      ['食費', '¥46,000', 29.3],
+      ['娯楽', '¥20,430', 13],
+      ['通信費', '¥9,140', 5.8],
+      ['光熱費', '¥8,970', 5.7],
     ]
   );
-  assert.equal(f.others, 'ほか 3カテゴリ ¥7,100');
+  assert.equal(f.others, 'ほか 3カテゴリ ¥7,670');
   assert.equal(f.pending, null);
   // カテゴリ別と「ほか」を足すと合計になる
-  assert.equal(f.categories.reduce((sum, c) => sum + c.amount, 0) + 7100, SPLIT.total);
+  assert.equal(f.categories.reduce((sum, c) => sum + c.amount, 0) + 7670, SPLIT.total);
 
   // 10月（立替・要確認あり）の組み立て: 立替の行と要確認の注意
   const oct = DEMO_MONTHS[DEMO_DEFAULT_MONTH_INDEX];
@@ -607,8 +607,8 @@ test('精算サマリーの文言の組み立ては bot と同じ（デモの出
     pool: periodPool(DEMO_EXPENSES, DEMO_HOUSEHOLD_ID, oct.range),
   });
   assert.equal(octSummary.flex.rows[0].label, '合計（23件・除外3件・立替1件は全額で別）');
-  assert.deepEqual(octSummary.flex.rows.at(-1), { label: '− Aさんの立替（全額）', value: '¥6,800' });
-  assert.equal(octSummary.flex.pending, '要確認が 2件（¥3,530）あります。確認すると、この期間の合計に入ります');
+  assert.deepEqual(octSummary.flex.rows.at(-1), { label: '− Aさんの立替（全額）', value: '¥7,860' });
+  assert.equal(octSummary.flex.pending, '要確認が 2件（¥4,070）あります。確認すると、この期間の合計に入ります');
 });
 
 test('精算サマリーの数え方（折半の対象・要確認・割合・上位 5 つ）は bot と同じ', () => {
@@ -641,5 +641,5 @@ test('精算サマリーの数え方（折半の対象・要確認・割合・�
   });
   assert.deepEqual(broken.flex.categories.map((c) => [c.category, c.amountText]), [['食費', '¥1,000']]);
   assert.equal(broken.flex.pending, '要確認が 2件（¥500）あります。確認すると、この期間の合計に入ります');
-  assert.deepEqual([S.formatYenExact(82205), S.formatYenExact(160426.5)], ['¥82,205', '¥160,426.5']);
+  assert.deepEqual([S.formatYenExact(78540), S.formatYenExact(160426.5)], ['¥78,540', '¥160,426.5']);
 });
