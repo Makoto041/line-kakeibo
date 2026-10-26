@@ -5,7 +5,8 @@
  * 保存してある historyId を watch の応答（= 今のメールボックスの位置）で上書きしないことを確かめる。
  * 上書きすると、取込が失敗して historyId が止まっている間の範囲が二度と処理されない。
  * あわせて、watch の登録・更新が連携中のアカウントのアドレス（getProfile）を保存し、取込（handleGmailPubSub）が
- * 通知の emailAddress と照合して、違うアカウントの通知では historyId を更新しないことを確かめる（#280）。
+ * 通知の emailAddress と照合して、違うアカウントの通知では historyId を更新しないこと、保存してあるアドレスが古いだけ
+ * （getProfile が通知と同じ）なら保存値を書き直して処理を続けることを確かめる（#280）。
  * Gmail API は呼ばない（dist/gmail/auth の getGmailClient を偽物に差し替える）。
  *
  * emulator-household-api.js と同じ形で実行する（npm -w bot run test:emulator から続けて動く）。
@@ -320,7 +321,12 @@ async function main() {
     let doc = await readState();
     check('古いアカウントの通知: 投げない（ack）', r === 'ok', String(r));
     check('古いアカウントの通知: history.list を呼ばない', fakeGmail.historyListCalls === 0, fakeGmail.historyListCalls);
-    check('古いアカウントの通知: historyId を更新しない（新しいアカウントの位置が先へ飛ばない）', doc.historyId === '700', doc);
+    check('古いアカウントの通知: getProfile で確かめるのは 1 回だけ', fakeGmail.profileCalls === 1, fakeGmail.profileCalls);
+    check(
+      '古いアカウントの通知: historyId もアドレスも変えない（新しいアカウントの位置が先へ飛ばない）',
+      doc.historyId === '700' && doc.emailAddress === 'new@example.com',
+      doc
+    );
 
     // 新しいアカウントの通知（大文字小文字が違っても同じアカウント）
     r = await quietly(() => handleGmailPubSub(notification('New@Example.com', 800)));
@@ -334,6 +340,44 @@ async function main() {
     r = await quietly(() => handleGmailPubSub(notification('someone@example.com', '300')));
     doc = await readState();
     check('アドレスが保存されていない: 以前どおり処理して historyId を進める', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '300', { r: String(r), doc });
+  }
+
+  console.log('取込: 保存してあるアドレスが古い（プライマリアドレスの変更）ときは追従する');
+  {
+    // 保存値は変更前のアドレス。連携中のアカウント（トークン）と通知は新しいアドレス
+    await clearFirestore();
+    await seedState({ historyId: '100', emailAddress: 'old-primary@example.com' });
+    resetFake({ profileAddress: 'new-primary@example.com' });
+    let r = await quietly(() => handleGmailPubSub(notification('New-Primary@example.com', '300')));
+    let doc = await readState();
+    check('getProfile を 1 回呼び、保存値を新しいアドレスに書き直す', fakeGmail.profileCalls === 1 && doc.emailAddress === 'new-primary@example.com', doc);
+    check('そのまま処理して historyId を進める（watchExpiration は変えない）', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '300' && doc.watchExpiration === OLD_EXPIRATION, { r: String(r), doc });
+
+    // 書き直した後は、新しいアドレスの通知は getProfile なしで一致する
+    resetFake({ profileAddress: 'new-primary@example.com' });
+    r = await quietly(() => handleGmailPubSub(notification('new-primary@example.com', '400')));
+    doc = await readState();
+    check('書き直した後: getProfile を呼ばずに処理する', r === 'ok' && fakeGmail.profileCalls === 0 && doc.historyId === '400', { r: String(r), doc });
+
+    // 本当に別のアカウントの通知（getProfile も通知と違う）→ 読み飛ばす
+    resetFake({ profileAddress: 'new-primary@example.com' });
+    r = await quietly(() => handleGmailPubSub(notification('someone-else@example.com', 999999)));
+    doc = await readState();
+    check(
+      '別のアカウントの通知: 投げず、history.list を呼ばず、historyId もアドレスも変えない',
+      r === 'ok' && fakeGmail.profileCalls === 1 && fakeGmail.historyListCalls === 0 && doc.historyId === '400' && doc.emailAddress === 'new-primary@example.com',
+      { r: String(r), doc }
+    );
+
+    // getProfile の一時的な失敗 → 投げて再送させる
+    resetFake({ profileAddress: 'new-primary@example.com', profileError: Object.assign(new Error('Backend Error'), { code: 503 }) });
+    r = await quietly(() => handleGmailPubSub(notification('someone-else@example.com', 999999)));
+    doc = await readState();
+    check(
+      'getProfile が失敗: 投げて再送させ、historyId もアドレスも変えない',
+      r instanceof Error && fakeGmail.historyListCalls === 0 && doc.historyId === '400' && doc.emailAddress === 'new-primary@example.com',
+      { r: String(r), doc }
+    );
   }
 
   console.log(`\ngmail import emulator: ${passed} passed, ${failed} failed`);

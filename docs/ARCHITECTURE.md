@@ -144,7 +144,8 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
     （取込は保存してある historyId からの全範囲を処理するので、捨てた範囲は次の新しい通知で処理される）
   ※ 通知の emailAddress を、watch の登録・更新で system/gmailState に保存した連携中のアカウントのアドレス（getProfile）と照合する
     （大文字小文字は区別しない）。違う・無いときは history.list を呼ばず historyId も更新せずに終える（切り替える前のアカウントの
-    watch は最大 7 日通知しうるため。GMAIL_AUTO_SPEC §3.2・§11.2）。アドレスが保存されていない状態では照合せず以前どおり処理する
+    watch は最大 7 日通知しうるため。GMAIL_AUTO_SPEC §3.2・§11.2）。ただし getProfile（1 回だけ呼ぶ）が通知と同じなら、
+    保存値が古いだけ（アドレスの変更）なので書き直して処理を続ける。アドレスが保存されていない状態では照合せず以前どおり処理する
 ```
 
 ### 4.3 Web 閲覧・編集

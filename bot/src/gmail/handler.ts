@@ -8,7 +8,7 @@
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { formatJST, toJSTDateString } from '../time';
 import { getGmailClient, GmailTokenMissingError } from './auth';
-import { getWatchState, isUsableHistoryId, normalizeEmailAddress, updateHistoryId } from './watch';
+import { getWatchState, isUsableHistoryId, normalizeEmailAddress, updateHistoryId, updateLinkedEmailAddress } from './watch';
 import {
   isSMBCGoldVISANL,
   parseSMBCCardEmail,
@@ -145,7 +145,8 @@ export type NotificationAccountCheck = 'match' | 'mismatch' | 'unchecked';
  * Pub/Sub の通知が、連携中のアカウント（registerWatch が system/gmailState に保存したアドレス）のものか
  *
  * - `match`: 同じアドレス（大文字小文字と前後の空白は無視する）
- * - `mismatch`: 違うアドレス、または通知にアドレスが無い（確かめられない）。取込は読み飛ばし、historyId を更新しない。
+ * - `mismatch`: 違うアドレス、または通知にアドレスが無い（確かめられない）。取込は、保存してあるアドレスが古いだけでなければ
+ *   （followLinkedAddressChange）読み飛ばし、historyId を更新しない。
  *   アカウントを切り替えたあとも、古いアカウントの watch は最大 7 日通知しうる（/gmail/revoke は watch を止めない）。
  *   その通知の historyId は別のメールボックスの番号なので、updateHistoryId（前進のみ）に渡すと、値が大きければ保存されて
  *   新しいアカウントの位置が先へ飛び、取りこぼす。読み飛ばしても取りこぼさない（取込は保存してある historyId からの
@@ -157,6 +158,28 @@ export function notificationAccountOf(notified: unknown, linked: unknown): Notif
   const linkedAddress = normalizeEmailAddress(linked);
   if (linkedAddress === null) return 'unchecked';
   return normalizeEmailAddress(notified) === linkedAddress ? 'match' : 'mismatch';
+}
+
+/**
+ * 照合が合わなかった（`mismatch`）通知について、保存してあるアドレスが古いだけかを確かめる
+ *
+ * 連携中のアカウント（トークンのアカウント）のアドレスを users.getProfile で取り、通知のアドレスと同じなら、
+ * 保存してあるアドレスが古い（プライマリアドレスの変更など）だけなので、保存値を書き直して true を返す（取込を続ける）。
+ * 照合の誤判定で取込が止まらないようにするため。違うアカウントの通知・偽の通知は getProfile のアドレスと一致しないので false。
+ * 呼ぶのは mismatch の通知 1 件につき最大 1 回（通知にアドレスが無ければ呼ばずに false）。
+ * getProfile・保存値の書き直しの失敗は一時的な失敗として投げる（Pub/Sub に再送させる）。アドレスはログに出さない。
+ */
+async function followLinkedAddressChange(
+  gmail: Awaited<ReturnType<typeof getGmailClient>>,
+  notified: string | null
+): Promise<boolean> {
+  const notifiedAddress = normalizeEmailAddress(notified);
+  if (notifiedAddress === null) return false;
+  const profile = await gmail.users.getProfile({ userId: 'me' });
+  if (normalizeEmailAddress(profile.data.emailAddress) !== notifiedAddress) return false;
+  await updateLinkedEmailAddress(notifiedAddress);
+  console.warn('Linked Gmail address changed; updated the saved address to the current profile and processing the notification');
+  return true;
 }
 
 /**
@@ -351,7 +374,8 @@ async function clearMessageFailure(messageId: string): Promise<void> {
  * ただし同じメッセージが試行 MAX_MESSAGE_ATTEMPTS 回以上、かつ最初の失敗から MESSAGE_ABANDON_AFTER_MS 以上
  * 失敗し続けたら、その1通は諦めて先へ進む（恒久的に処理できない1通で以降の取り込みが止まらないようにする。`shouldAbandon`）。
  * メールが消されていた（messages.get が 404）ときは失敗として数えず、読み飛ばす（processMessage）。
- * 通知が連携中のアカウントのものでなければ（notificationAccountOf）、history.list を呼ばず、historyId も更新せずに終える。
+ * 通知が連携中のアカウントのものでなければ（notificationAccountOf。保存してあるアドレスが古いだけのときは
+ * followLinkedAddressChange で書き直して続ける）、history.list を呼ばず、historyId も更新せずに終える。
  *
  * @param notifiedEmailAddress 通知の emailAddress（emailAddressOfPubSubData。無ければ null）
  */
@@ -379,7 +403,7 @@ async function processNewEmails(newHistoryId: string, notifiedEmailAddress: stri
   // 通知が連携中のアカウントのものか確かめる（notificationAccountOf。アドレスはログに出さない）。
   // 違うアカウント（切り替える前のアカウントの watch など）の通知は、やり直しても変わらないので投げずに終える
   const account = notificationAccountOf(notifiedEmailAddress, watchState.emailAddress);
-  if (account === 'mismatch') {
+  if (account === 'mismatch' && !(await followLinkedAddressChange(gmail, notifiedEmailAddress))) {
     console.warn('Gmail Pub/Sub notification is not for the linked account; dropping it without updating historyId');
     return;
   }

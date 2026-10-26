@@ -217,6 +217,16 @@ export async function getWatchState(): Promise<GmailWatchState | null> {
   };
 }
 
+/**
+ * 連携中のアカウントのアドレス（emailAddress）だけを書き直す
+ *
+ * 取込（handler.ts）が、保存してあるアドレスが古い（プライマリアドレスの変更など）と分かったときに使う。
+ * historyId・watchExpiration は変えない。文書が無い（/gmail/revoke の後）ときは作らずに投げる（update は NOT_FOUND）。
+ */
+export async function updateLinkedEmailAddress(emailAddress: string): Promise<void> {
+  await gmailStateRef().update({ emailAddress, updatedAt: Timestamp.now() });
+}
+
 /** historyId は uint64 の文字列。桁があふれるので BigInt で比較する */
 function isNewerHistoryId(candidate: string, current: string): boolean {
   try {
