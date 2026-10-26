@@ -442,7 +442,7 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
     `console.error(err)`（`util.inspect`）で出すと `cause` の文言・項目まで出るため。
   - `importMoneyForward`・`syncUserLinks` は何もしない関数で、投げない。HTTP の関数（`webhook`・`api`）のルートは、
     例外を受けて固定文で応答する。
-- **既知の例外（アプリ側では防げない）: 解析できない本文が、そのままログに出る**: HTTP の関数（`webhook`・`api`。
+- **既知の例外（アプリ側では安全に防げない）: 解析できない本文が、そのままログに出る**: HTTP の関数（`webhook`・`api`。
   どちらも認証なしで呼べる）では、functions-framework がアプリより先に本文を解析する（body-parser）。
   解析に失敗すると（`Content-Type: application/json` の壊れた JSON など）、そのエラー（`type: 'entity.parse.failed'`。`body` に生の本文、
   文言に本文の断片）が functions-framework の Express の既定のエラー処理に渡り、`console.error(err)` で本文ごと出る
