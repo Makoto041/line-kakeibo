@@ -889,10 +889,10 @@ const LATE_NIGHT = new Date('2026-03-14T16:30:00.000Z'); // JST 3/15 01:30
   });
   check('店名を読むと例外になる入力でも投げずに undefined', !threw && failed1.result === undefined, JSON.stringify(failed1.result));
   check(
-    '失敗は warn を 1 行（固定文＋{ source, error }）',
+    '失敗は warn を 1 行（固定文＋{ source, errorName }。例外の文言は出さない）',
     failed1.lines.length === 1 && failed1.lines[0].level === 'warn' &&
       failed1.lines[0].args[0] === 'Subcategory resolution failed' &&
-      sameJson(Object.keys(failed1.lines[0].args[1]), ['source', 'error']) && failed1.lines[0].args[1].source === 'merchant',
+      sameJson(failed1.lines[0].args[1], { source: 'merchant', errorName: 'Error' }),
     JSON.stringify(failed1.lines)
   );
   const failedNull = captureConsole(() => merchantSubCategoryOf('食費', null));

@@ -1,6 +1,6 @@
 import { findAppUidByLineId, createUserLink } from './firestore';
 import { getAuth } from 'firebase-admin/auth';
-import { maskId } from './logSafe';
+import { errorFields, maskId } from './logSafe';
 
 /**
  * LINE UserIdからappUidを取得する
@@ -8,20 +8,20 @@ import { maskId } from './logSafe';
  */
 export async function getAppUidByLineId(lineId: string): Promise<string | null> {
   try {
-    console.log(`Resolving appUid for lineId: ${maskId(lineId)}`);
+    console.log('Resolving appUid for the LINE user', { user: maskId(lineId) });
     
     // 新しい1:1マッピング構造で検索
     const appUid = await findAppUidByLineId(lineId);
     
     if (appUid) {
-      console.log(`Found existing appUid: ${maskId(appUid)} for lineId: ${maskId(lineId)}`);
+      console.log('Found existing appUid', { appUid: maskId(appUid), user: maskId(lineId) });
       return appUid;
     }
     
-    console.log(`No existing appUid found for lineId: ${maskId(lineId)}`);
+    console.log('No existing appUid found', { user: maskId(lineId) });
     return null;
   } catch (error) {
-    console.error('Error resolving appUid from lineId:', error);
+    console.error('Error resolving appUid from lineId', errorFields(error));
     return null;
   }
 }
@@ -40,7 +40,7 @@ export async function getOrCreateAppUidForLineId(lineId: string): Promise<string
     }
     
     // 存在しない場合は新しい匿名ユーザーを作成
-    console.log(`Creating new anonymous user for lineId: ${maskId(lineId)}`);
+    console.log('Creating new anonymous user', { user: maskId(lineId) });
     
     const auth = getAuth();
     const userRecord = await auth.createUser({
@@ -48,14 +48,14 @@ export async function getOrCreateAppUidForLineId(lineId: string): Promise<string
     });
     
     appUid = userRecord.uid;
-    console.log(`Created new appUid: ${maskId(appUid)} for lineId: ${maskId(lineId)}`);
+    console.log('Created new appUid', { appUid: maskId(appUid), user: maskId(lineId) });
     
     // userLinksドキュメントを作成
     await createUserLink(appUid, lineId);
     
     return appUid;
   } catch (error) {
-    console.error('Error getting or creating appUid for lineId:', error);
+    console.error('Error getting or creating appUid for lineId', errorFields(error));
     return null;
   }
 }
@@ -70,14 +70,14 @@ export async function resolveAppUidForExpense(lineId: string): Promise<string | 
     const appUid = await getOrCreateAppUidForLineId(lineId);
     
     if (!appUid) {
-      console.error(`Failed to resolve or create appUid for lineId: ${maskId(lineId)}`);
+      console.error('Failed to resolve or create appUid', { user: maskId(lineId) });
       return null;
     }
     
-    console.log(`Resolved appUid: ${maskId(appUid)} for expense from lineId: ${maskId(lineId)}`);
+    console.log('Resolved appUid for the expense', { appUid: maskId(appUid), user: maskId(lineId) });
     return appUid;
   } catch (error) {
-    console.error('Error resolving appUid for expense:', error);
+    console.error('Error resolving appUid for expense', errorFields(error));
     return null;
   }
 }

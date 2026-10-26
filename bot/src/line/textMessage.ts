@@ -6,6 +6,7 @@
  */
 
 import { parseTextExpense } from "../textParser";
+import { errorFields } from "../logSafe";
 import { pushText } from "./client";
 import { handleCommand } from "./commands";
 import { processExpenseInBackground } from "./expenseFlow";
@@ -38,17 +39,17 @@ export async function handleTextMessage(event: any) {
     try {
       await processExpenseInBackground(event, parsed, event.replyToken);
     } catch (error) {
-      console.error("Background expense processing failed:", error);
+      console.error("Background expense processing failed", errorFields(error));
       // Send error notification
       await pushText(
         targetId,
         "支出の保存で問題が発生しました。データが正しく記録されていない可能性があります。"
       ).catch((pushError) =>
-        console.error("Failed to send error notification:", pushError)
+        console.error("Failed to send error notification", errorFields(pushError))
       );
     }
   } catch (error) {
-    console.error("Text message handling error:", error);
+    console.error("Text message handling error", errorFields(error));
     // エラーが発生した場合、可能であればユーザーに通知
     try {
       const targetId = event.source.type === "group"
@@ -56,7 +57,7 @@ export async function handleTextMessage(event: any) {
         : event.source.userId;
       await pushText(targetId, "メッセージの処理中にエラーが発生しました。もう一度お試しください。");
     } catch (notifyError) {
-      console.error("Failed to send error notification:", notifyError);
+      console.error("Failed to send error notification", errorFields(notifyError));
     }
   }
 }

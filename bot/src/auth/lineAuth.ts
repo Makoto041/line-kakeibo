@@ -2,6 +2,7 @@ import express, { Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { getAuth } from "firebase-admin/auth";
 import { getOrCreateAppUidForLineId } from "../linkUserResolver";
+import { errorFields } from "../logSafe";
 import { applyWebCorsHeaders } from "../webOrigins";
 
 // ============================================
@@ -78,7 +79,7 @@ authRouter.post("/line", authLimiter as any, async (req: Request, res: Response)
         signal: controller.signal,
       });
       if (!verifyResponse.ok) {
-        console.warn(`LINE ID token verify failed: HTTP ${verifyResponse.status}`);
+        console.warn("LINE ID token verify failed", { status: verifyResponse.status });
         return res.status(401).json({ error: "Invalid ID token" });
       }
       verifyData = (await verifyResponse.json()) as typeof verifyData;
@@ -120,8 +121,8 @@ authRouter.post("/line", authLimiter as any, async (req: Request, res: Response)
     const customToken = await getAuth().createCustomToken(appUid, { lineId: sub });
     return res.status(200).json({ customToken });
   } catch (error) {
-    // 生トークンを含めないよう message のみログ
-    console.error("Auth /line error:", (error as Error).message);
+    // 生トークンを含めないよう、例外は種類だけをログに出す
+    console.error("Auth /line error", errorFields(error));
     return res.status(401).json({ error: "Authentication failed" });
   }
 });

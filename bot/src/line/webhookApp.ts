@@ -7,7 +7,7 @@
 import express, { Express, Request, Response } from "express";
 import { middleware, SignatureValidationFailed, JSONParseError } from "@line/bot-sdk";
 import { isGeminiAvailable } from "../geminiCategoryClassifier";
-import { errorMessage } from "../logSafe";
+import { errorFields } from "../logSafe";
 import { getLineClient, replyText } from "./client";
 import { handleJoin, handleLeave, handleMemberJoined, handleMemberLeft } from "./groupEvents";
 import { handlePostback } from "./postback";
@@ -35,7 +35,7 @@ const limitWebhookBody = (req: Request, res: Response, next: express.NextFunctio
     ? rawBody.length
     : Number(req.headers["content-length"] || 0);
   if (size > WEBHOOK_BODY_LIMIT_BYTES) {
-    console.warn(`Rejected webhook request: body too large (${size} bytes)`);
+    console.warn("Rejected webhook request: body too large", { bytes: size });
     return res.status(413).end();
   }
   return next();
@@ -78,7 +78,7 @@ webhookApp.use(
 webhookApp.post("/webhook", async (req: Request, res: Response) => {
   try {
     const events = Array.isArray(req.body?.events) ? req.body.events : [];
-    console.log("Received webhook events:", events.length);
+    console.log("Received webhook events", { count: events.length });
 
     // Process events sequentially to avoid reply token issues and resource conflicts
     for (const event of events) {
@@ -89,7 +89,7 @@ webhookApp.post("/webhook", async (req: Request, res: Response) => {
           try {
             await replyText(event.replyToken, "画像からの読み取り機能は終了しました。\nテキストで入力してください。\n例:「500 ランチ」「6/29 4800 家賃」");
           } catch (replyError) {
-            console.warn("Failed to send OCR discontinued notice:", replyError);
+            console.warn("Failed to send OCR discontinued notice", errorFields(replyError));
           }
         } else if (event.type === "message" && event.message.type === "text") {
           // テキストメッセージの処理
@@ -100,12 +100,12 @@ webhookApp.post("/webhook", async (req: Request, res: Response) => {
           // インスタンスのCPUが凍結されるため、fire-and-forgetだと返信前に処理が止まり、
           // 解凍時には replyToken が失効して返信が届かない。await して応答前に返信を送る。
           await handleTextMessage(event).catch(error => {
-            console.error("Text processing error:", error);
+            console.error("Text processing error", errorFields(error));
           });
         } else if (event.type === "postback") {
-          // Postbackイベント処理
+          // Postbackイベント処理（例外のログはここで 1 回だけ出す。handlePostback は投げ直すだけ）
           await handlePostback(event).catch(error => {
-            console.error("Postback processing error:", error);
+            console.error("Postback processing error", errorFields(error));
           });
         } else if (event.type === "join") {
           await handleJoin(event);
@@ -116,11 +116,11 @@ webhookApp.post("/webhook", async (req: Request, res: Response) => {
         } else if (event.type === "leave") {
           handleLeave(event);
         } else {
-          console.log("Unhandled event type:", event.type);
+          console.log("Unhandled event type", { type: event.type });
         }
 
       } catch (error) {
-        console.error("Event processing error:", error);
+        console.error("Event processing error", errorFields(error));
 
         // Send error response to LINE if possible and reply token is available
         if (
@@ -130,7 +130,7 @@ webhookApp.post("/webhook", async (req: Request, res: Response) => {
           try {
             await replyText(event.replyToken, "申し訳ございませんが、一時的なエラーが発生しました。しばらく後でお試しください。");
           } catch (replyError) {
-            console.error("Failed to send error reply:", replyError);
+            console.error("Failed to send error reply", errorFields(replyError));
           }
         }
       }
@@ -139,7 +139,7 @@ webhookApp.post("/webhook", async (req: Request, res: Response) => {
     // Send 200 response after processing all events
     res.status(200).end();
   } catch (error) {
-    console.error("Webhook handler error", error);
+    console.error("Webhook handler error", errorFields(error));
     res.status(500).end();
   }
 });
@@ -161,7 +161,7 @@ webhookApp.get("/health", async (_req: Request, res: Response) => {
       },
     });
   } catch (error) {
-    console.error("Health check failed:", error);
+    console.error("Health check failed", errorFields(error));
     res.status(500).json({
       status: "unhealthy",
       error: (error as Error).message,
@@ -189,6 +189,6 @@ webhookApp.use((err: unknown, _req: Request, res: Response, _next: express.NextF
     console.warn("Rejected webhook request: body too large");
     return res.status(413).end();
   }
-  console.error("Unhandled webhook app error:", errorMessage(err));
+  console.error("Unhandled webhook app error", errorFields(err));
   return res.status(500).end();
 });
