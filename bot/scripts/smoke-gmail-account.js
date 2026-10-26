@@ -10,7 +10,9 @@
  *   watch の状態の読み取りの失敗 → 投げる / 保存してある historyId が使えない形 → 照合の前に getProfile の現在位置で置き換えて終える（#300）。
  *   処理したときに保存するのは、通知の値ではなく history.list の応答の現在位置（#298）
  * - registerWatch（Gmail と Firestore は偽物）: getProfile のアドレスを保存する・watch の後に呼ぶ・失敗したら投げる・
- *   応答にアドレスが無ければ保存してある値を変えない・別のアカウントなら固定文で警告する
+ *   応答にアドレスが無ければ保存してある値を変えない・別のアカウントなら固定文で警告する・
+ *   watch の応答の historyId が無い・使えない形（先頭ゼロ・21 桁・uint64 超・数字以外）なら書かない（保存値が使える形なら残して続け、
+ *   そうでなければ何も書かずに投げる。値はログにも例外の文言にも出さない）
  *
  * どのログにもメールアドレスを出さないことも確かめる。Firestore を使う確認は emulator-gmail-import.js。
  *
@@ -351,13 +353,16 @@ async function flowChecks() {
 async function registerWatchChecks() {
   console.log('\n[registerWatch（Gmail と Firestore は偽物）]');
   const calls = [];
+  const EXPIRATION = String(Date.UTC(2026, 10, 2));
+  const defaultWatchReply = () => ({ data: { historyId: '500', expiration: EXPIRATION } });
+  let watchReply = defaultWatchReply();
   let profileReply = { data: { emailAddress: 'Linked@Example.com' } };
   let profileError = null;
   gmailAuth.getGmailClient = async () => ({
     users: {
       watch: async () => {
         calls.push('watch');
-        return { data: { historyId: '500', expiration: String(Date.UTC(2026, 10, 2)) } };
+        return watchReply;
       },
       getProfile: async (params) => {
         calls.push(`getProfile:${params && params.userId}`);
@@ -382,6 +387,7 @@ async function registerWatchChecks() {
     storedDoc = doc;
     writes.length = 0;
     calls.length = 0;
+    watchReply = defaultWatchReply();
     profileReply = { data: { emailAddress: 'Linked@Example.com' } };
     profileError = null;
   };
@@ -444,6 +450,82 @@ async function registerWatchChecks() {
   profileReply = { data: { emailAddress: 'LINKED@example.com' } };
   ({ lines } = await captureConsole(() => gmailWatch.registerWatch()));
   check('同じアカウント（大文字小文字だけ違う）: 警告を出さない', !lines.some((l) => l.level === 'warn'), lines);
+
+  // watch の応答の historyId の形（取込と同じ mailboxHistoryIdToSave で確かめてから書く）
+  const KEPT_LOG = 'Gmail watch response has no usable historyId; kept the stored historyId';
+  const NOTHING_LOG = 'Gmail watch response has no usable historyId and no usable historyId is stored; saved nothing (register the watch again)';
+  const warnArgs = (ls) => JSON.stringify(ls.filter((l) => l.level === 'warn').map((l) => l.args));
+
+  reset(undefined);
+  watchReply = { data: { historyId: 500, expiration: EXPIRATION } };
+  ({ result, lines } = await captureConsole(() => gmailWatch.registerWatch()));
+  check(
+    '応答の historyId が数値 500・保存値なし: 10 進の文字列（"500"）で書き、警告を出さない',
+    writes.length === 1 && writes[0].data.historyId === '500' && result && result.historyId === '500' && warnArgs(lines) === '[]',
+    { result: String(result), writes, lines }
+  );
+
+  reset({ historyId: '100' });
+  watchReply = { data: { historyId: '500' } };
+  ({ result } = await captureConsole(() => gmailWatch.registerWatch()));
+  check(
+    '応答に expiration が無い: 以前どおり getProfile の前に投げ、何も書かない',
+    result instanceof Error && JSON.stringify(calls) === JSON.stringify(['watch']) && writes.length === 0,
+    { result: String(result), calls, writes }
+  );
+
+  for (const [label, value] of [
+    ['先頭ゼロ', '000500'],
+    ['21 桁', '100000000000000000500'],
+    ['uint64 を超える 20 桁', '18446744073709551616'],
+    ['数字以外を含む', '5e2'],
+    ['無い', undefined],
+  ]) {
+    const reply = () => ({ data: { ...(value === undefined ? {} : { historyId: value }), expiration: EXPIRATION } });
+    const leaks = (ls, error) => value !== undefined && (JSON.stringify(ls).includes(value) || String(error && error.message).includes(value));
+
+    reset(undefined);
+    watchReply = reply();
+    ({ result, lines } = await captureConsole(() => gmailWatch.registerWatch()));
+    check(
+      `応答の historyId が${label}・保存値なし: 投げ（GmailWatchHistoryIdError）、gmailState に何も書かない`,
+      result instanceof Error && result.name === 'GmailWatchHistoryIdError' && writes.length === 0,
+      { result: String(result), writes }
+    );
+    check(
+      `応答の historyId が${label}・保存値なし: 固定文の警告 1 行だけで、ログにも例外の文言にも値を出さない`,
+      warnArgs(lines) === JSON.stringify([[NOTHING_LOG]]) && !leaks(lines, result),
+      { lines, message: result && result.message }
+    );
+
+    reset({ historyId: '0001000', emailAddress: 'linked@example.com' });
+    watchReply = reply();
+    ({ result, lines } = await captureConsole(() => gmailWatch.registerWatch()));
+    check(
+      `応答の historyId が${label}・保存値も使えない形: 投げ、何も書かない（保存値は取込が getProfile の現在位置に置き換える）`,
+      result instanceof Error && result.name === 'GmailWatchHistoryIdError' && writes.length === 0 && warnArgs(lines) === JSON.stringify([[NOTHING_LOG]]),
+      { result: String(result), writes, lines }
+    );
+
+    reset({ historyId: '100', emailAddress: 'linked@example.com' });
+    watchReply = reply();
+    ({ result, lines } = await captureConsole(() => gmailWatch.registerWatch()));
+    check(
+      `応答の historyId が${label}・保存値 100: 投げず、historyId は書かずに残し、watchExpiration・アドレスは書く`,
+      !(result instanceof Error) &&
+        result.historyId === '100' &&
+        writes.length === 1 &&
+        !('historyId' in writes[0].data) &&
+        writes[0].data.watchExpiration === Number(EXPIRATION) &&
+        writes[0].data.emailAddress === 'linked@example.com',
+      { result: String(result), writes }
+    );
+    check(
+      `応答の historyId が${label}・保存値 100: 固定文の警告 1 行だけで、値を出さない`,
+      warnArgs(lines) === JSON.stringify([[KEPT_LOG]]) && !leaks(lines, null),
+      lines
+    );
+  }
 }
 
 flowChecks()

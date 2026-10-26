@@ -4,6 +4,7 @@
  * watch の登録・更新（registerWatch / renewWatch。管理 API の register-watch も registerWatch）が、
  * 保存してある historyId を watch の応答（= 今のメールボックスの位置）で上書きしないことを確かめる。
  * 上書きすると、取込が失敗して historyId が止まっている間の範囲が二度と処理されない。
+ * watch の応答の historyId が使えない形なら書かないこと（保存値が使える形なら残し、そうでなければ何も書かずに投げる）も確かめる。
  * あわせて、watch の登録・更新が連携中のアカウントのアドレス（getProfile）を保存し、取込（handleGmailPubSub）が
  * 通知の emailAddress と照合して、違うアカウントの通知では historyId を更新しないこと、保存してあるアドレスが古いだけ
  * （getProfile が通知と同じ）なら保存値を書き直して処理を続けることを確かめる（#280）。
@@ -234,6 +235,34 @@ async function main() {
     const state = await registerWatch();
     const doc = await readState();
     check('数値として読めない値は応答の値に置き換える', doc.historyId === '500' && state.historyId === '500', doc);
+  }
+
+  console.log('registerWatch: watch の応答の historyId が使えない形（先頭ゼロ）');
+  {
+    await clearFirestore();
+    resetFake({ historyId: '000500' });
+    let r = await quietly(() => registerWatch());
+    check('保存値なし: 投げ、gmailState を作らない', r instanceof Error && r.name === 'GmailWatchHistoryIdError' && (await readState()) === null, String(r));
+
+    await clearFirestore();
+    await seedState({ historyId: 'broken', note: 'keep-me' });
+    r = await quietly(() => registerWatch());
+    let doc = await readState();
+    check(
+      '保存値も使えない形: 投げ、gmailState を変えない',
+      r instanceof Error && doc.historyId === 'broken' && doc.watchExpiration === OLD_EXPIRATION && doc.updatedAt.toMillis() === OLD_UPDATED_AT.toMillis() && doc.emailAddress === undefined,
+      { r: String(r), doc }
+    );
+
+    await clearFirestore();
+    await seedState({ historyId: '100', note: 'keep-me' });
+    r = await quietly(() => registerWatch());
+    doc = await readState();
+    check(
+      '保存値 100: 投げず、historyId を残し、watchExpiration・アドレスは更新する',
+      r === 'ok' && doc.historyId === '100' && doc.watchExpiration === expectedExpiration && doc.emailAddress === 'linked@example.com' && doc.note === 'keep-me',
+      { r: String(r), doc }
+    );
   }
 
   console.log('registerWatch: /gmail/revoke の後（gmailState を消した後）');

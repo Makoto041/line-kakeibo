@@ -328,11 +328,13 @@ function historyIdToSave(mailboxHistoryId: unknown, source: 'history.list' | 'ge
  * そのときの保存値はこのメールボックスの位置ではなく（#295 より前に偽の通知で入った値・revoke をせずにアカウントを切り替えた後の値）、
  * 前進のみの更新では直らないので、手で直すまで何も取り込まれない（直し方は docs/GMAIL_AUTO_SPEC.md §11.2）。同時に走った実行による
  * 正当な巻き戻しの回避（updateHistoryId の `Skipping historyId rollback`）と見分けられるよう、別の警告にする。
+ * 直すのは、同じ警告が複数の通知で続くときだけ（Gmail が一時的に食い違った位置を返す可能性は確かめていないため。直すと
+ * 保存値から今の位置までのメールは取り込まれない）。警告の文にもそう書く。
  * 呼び出し側は historyId を書かず、送信待ちの印も消さずに終える。値は出さず、桁数と、どの応答の現在位置か（source）だけを出す。
  */
 function warnIfMailboxBehindStart(next: string, startHistoryId: string, source: 'history.list' | 'getProfile'): boolean {
   if (!isMailboxBehindStart(next, startHistoryId)) return false;
-  console.warn('Stored Gmail historyId is ahead of the mailbox; nothing is imported until it is reset (see GMAIL_AUTO_SPEC 11.2)', {
+  console.warn('Stored Gmail historyId is ahead of the mailbox; nothing is imported until it is reset (reset it only if this repeats on later notifications; see GMAIL_AUTO_SPEC 11.2)', {
     source,
     storedDigits: startHistoryId.length,
     mailboxDigits: next.length,
@@ -368,13 +370,16 @@ async function recoverUnusableHistoryId(gmail: Awaited<ReturnType<typeof getGmai
     console.warn('Stored Gmail historyId is not usable and getProfile returned no historyId; keeping it (retried on the next notification)');
     return;
   }
+  // 印を消す対象（失敗の記録）は、置き換えを確定させる前に読む。確定の後に読むと、置き換えた位置から始めた実行が記録した失敗
+  // （その位置より後のメール。再処理される）の印まで消しうる。failedMessageIds は投げない（読めなければ空）
+  const failed = await failedMessageIds();
   if (!(await replaceUnusableHistoryId(next))) {
     // watch の更新・ほかの実行が先に置き換えた、または revoke で消えた
     console.log('Stored Gmail historyId was already replaced or removed; skipping');
     return;
   }
   console.error('Stored Gmail historyId was not usable; replaced it with the mailbox position, and mail before it is NOT imported');
-  await discardCardNotices(await failedMessageIds(), 'history_skipped');
+  await discardCardNotices(failed, 'history_skipped');
 }
 
 /**
@@ -476,9 +481,11 @@ async function clearMessageFailure(messageId: string): Promise<void> {
  * （最初の要求の時点の位置 M1。#300）。googleapis の型定義が次の開始位置として保存してよいとするのは最後のページ（nextPageToken の
  * 無い応答）の値だが、ページ送りが最初の要求の時点で区切られるなら、最後のページの値では途中に増えた記録を取りこぼす。M1 なら、
  * （保存値, M1］の記録は全ページのどこかに載っていて、この実行は全ページを処理し終えてから保存するので取りこぼさない。M1 より後の
- * 記録が後のページに載っても、次の実行で M1 から処理し直すだけ（重複は gmailMessageId で弾く）。諦めたメールは前の実行でも
- * 見ていた（試行 3 回以上）ので記録は M1 以下で、M1 に進めたあと再処理されない（印を消してよい）。最初のページに historyId が
- * 無ければ、後のページの値は使わず historyId を進めない。保存値より前の位置は updateHistoryId が書かない（前進のみ。同時に
+ * 記録が後のページに載っても、次の実行で M1 から処理し直すだけ（重複は gmailMessageId で弾く）。諦めたメールは最初の失敗から
+ * 6 時間以上たっている（shouldAbandon の MESSAGE_ABANDON_AFTER_MS。firstFailedAtOf は常に now 以前の読める時刻を返すので、
+ * 時間の条件は外れない）。関数のタイムアウトは 300 秒（index.ts の gmailPubSubHandler）なので、最初の失敗はこの実行が始まる前で、
+ * そのメールの記録は最初の要求の時点で載っていた（M1 以下）。M1 に進めたあとは再処理されない（印を消してよい）。
+ * 最初のページに historyId が無ければ、後のページの値は使わず historyId を進めない。保存値より前の位置は updateHistoryId が書かない（前進のみ。同時に
  * 走った実行が先に進めていたときなど）。
  * history.list が 404（開始位置が古すぎる）のときは、users.getProfile の historyId を現在位置にする（失敗したら投げて再送させる）。
  * どちらの経路でも、現在位置が実行の開始位置（保存値）より前なら、保存値がこのメールボックスの位置でないので、固定文の警告を
@@ -636,13 +643,14 @@ async function processNewEmails(notifiedEmailAddress: string | null): Promise<vo
         fromDigits: startHistoryId.length,
         toDigits: next.length,
       });
+      // 失敗の記録は、historyId の更新を確定させる前に読む（確定の後に、新しい位置から始めた実行が記録した失敗の印まで消しうる
+      // 範囲を縮める。recoverUnusableHistoryId と同じ）。ほかの実行がすでに next 以上へ進めていて、そこから始めた実行が読む前に
+      // 失敗を記録していた場合は、その印も消えうる（窓は狭い）。failedMessageIds は投げない（読めなければ空）
+      const failed = await failedMessageIds();
       await updateHistoryId(next);
       // 飛ばした範囲のメールは再処理しないので、送信待ちのカードの印も消す。
       // 範囲のメッセージは取れないため、取れる範囲（失敗の記録と、この実行で失敗したもの）だけを対象にする
-      await discardCardNotices(
-        [...(await failedMessageIds()), ...retryableFailures, ...abandonedFailures],
-        'history_skipped'
-      );
+      await discardCardNotices([...failed, ...retryableFailures, ...abandonedFailures], 'history_skipped');
     } else {
       throw error;
     }
