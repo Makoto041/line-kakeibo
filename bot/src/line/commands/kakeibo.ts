@@ -11,7 +11,7 @@ import { getMonthlyBudget, getMonthlyGroupSummary } from "../../firestore";
 import { isHouseholdMember } from "../../expenseGroupScope";
 import { getCategoryEmoji } from "../../gmail/types";
 import { readActiveMember } from "../../householdMembers";
-import { errorMessage, maskId } from "../../logSafe";
+import { errorFields, maskId } from "../../logSafe";
 import { dayjs, nowJST } from "../../time";
 import { replyMessages, replyText } from "../client";
 import {
@@ -95,7 +95,7 @@ async function resolveSummaryAccess(event: {
     console.warn("Kakeibo summary refused: household membership lookup failed", {
       user: maskId(userId),
       group: maskId(lineGroupId),
-      error: errorMessage(error),
+      ...errorFields(error),
     });
     return { allowed: false, text: LOOKUP_FAILED_TEXT };
   }
@@ -111,7 +111,8 @@ export async function handleKakeiboCommand(event: any, text: string): Promise<bo
   // 所属の確認と集計の取得を、あわせて 8 秒で打ち切る
   const timeoutPromise = new Promise<never>(
     (_, reject) =>
-      setTimeout(() => reject(new Error("Summary fetch timeout")), 8000)
+      // 名前を TimeoutError にする（ログは文言を出さず errorName で見分けるため）
+      setTimeout(() => reject(Object.assign(new Error("Summary fetch timeout"), { name: "TimeoutError" })), 8000)
   );
 
   // 集計を読む前に、返してよいかを確かめる（だめなら支出も予算も読まない）。
@@ -121,14 +122,14 @@ export async function handleKakeiboCommand(event: any, text: string): Promise<bo
     access = await Promise.race([resolveSummaryAccess(event), timeoutPromise]);
   } catch (error) {
     // resolveSummaryAccess は失敗を拒否にして返すので、ここに来るのは打ち切りのときだけ
-    console.warn("Kakeibo summary refused: household membership lookup timed out", { error: errorMessage(error) });
+    console.warn("Kakeibo summary refused: household membership lookup timed out", errorFields(error));
     access = { allowed: false, text: LOOKUP_FAILED_TEXT };
   }
   if (!access.allowed) {
     try {
       await replyText(event.replyToken, access.text);
     } catch (replyError) {
-      console.error("Failed to send the kakeibo refusal", { error: errorMessage(replyError) });
+      console.error("Failed to send the kakeibo refusal", errorFields(replyError));
     }
     return true;
   }
@@ -194,7 +195,7 @@ export async function handleKakeiboCommand(event: any, text: string): Promise<bo
       await replyMessages(event.replyToken, [flexMessage]);
     }
   } catch (error) {
-    console.error("Error fetching expenses:", error);
+    console.error("Error fetching expenses", errorFields(error));
 
     // Fallback response (テキストメッセージ。集計を返してよい人にだけ届く。集計は含めず、リンクは ID なし)
     try {
@@ -205,7 +206,7 @@ export async function handleKakeiboCommand(event: any, text: string): Promise<bo
         }\nWebアプリで詳細を確認してください：\n${webAppUrl}`
       );
     } catch (replyError) {
-      console.error("Failed to send fallback reply:", replyError);
+      console.error("Failed to send fallback reply", errorFields(replyError));
     }
   }
   return true;

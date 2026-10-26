@@ -8,6 +8,7 @@
 import { ParsedCardNotification, SMBC_CARD_FILTER } from './types';
 import { getFirestore } from 'firebase-admin/firestore';
 import { formatJST, parseJSTWallClock } from '../time';
+import { errorFields } from '../logSafe';
 
 /**
  * ヘッダー値から quoted-string（"..."）とコメント（(...)）を取り除く。
@@ -142,7 +143,7 @@ export function isSMBCGoldVISANL(from: string, body: string): boolean {
     const lowerFrom = typeof from === 'string' ? from.toLowerCase() : '';
     if (SMBC_CARD_FILTER.fromDomains.some((d) => lowerFrom.includes(d))) {
       const domain = sender ? sender.slice(sender.lastIndexOf('@') + 1) : 'none';
-      console.warn(`SMBC sender rejected by strict From check: domain=${domain}`);
+      console.warn('SMBC sender rejected by strict From check', { domain });
     }
     return false;
   }
@@ -261,7 +262,7 @@ export function parseSMBCCardEmail(
       messageId,
     };
   } catch (error) {
-    console.error('Failed to parse SMBC card email:', error);
+    console.error('Failed to parse SMBC card email', errorFields(error));
     return null;
   }
 }

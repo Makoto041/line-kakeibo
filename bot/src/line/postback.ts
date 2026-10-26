@@ -27,7 +27,7 @@ import {
 } from '../expenseActions';
 import { subCategoriesOf } from '../categoryTaxonomy';
 import { fallbackDisplayName, readActiveMember } from '../householdMembers';
-import { errorMessage, maskId } from '../logSafe';
+import { errorFields, maskId } from '../logSafe';
 import {
   buildCategorySelectCarousel,
   buildExpenseCardFromRecord,
@@ -137,72 +137,69 @@ async function replyUpdatedCard(
 
 /**
  * Postbackイベントを処理
+ *
+ * 例外はそのまま投げる（ログは呼び出し側の webhookApp.ts が 1 回だけ出す）
  */
 export async function handlePostback(event: PostbackEvent): Promise<void> {
+  const data = event.postback.data;
+
+  // JSONパースを試行
+  let actionData: ExtendedPostbackActionData;
   try {
-    const data = event.postback.data;
+    actionData = JSON.parse(data);
+  } catch {
+    console.log('Non-JSON postback data, skipping', { length: String(data ?? '').length });
+    return;
+  }
 
-    // JSONパースを試行
-    let actionData: ExtendedPostbackActionData;
-    try {
-      actionData = JSON.parse(data);
-    } catch {
-      console.log(`Non-JSON postback data, skipping (length=${String(data ?? '').length})`);
-      return;
-    }
+  // 有効なPostbackかチェック。支出 ID は Firestore の文書 ID として安全な文字列だけを受け付ける
+  // （/household API と同じ isValidDocId。不正なら、支出が無いときと同じく何もしない。Firestore も LINE も呼ばない）
+  if (!actionData || typeof actionData !== 'object' || !actionData.action || !isValidDocId(actionData.expenseId)) {
+    console.log('Not a valid postback, skipping');
+    return;
+  }
 
-    // 有効なPostbackかチェック。支出 ID は Firestore の文書 ID として安全な文字列だけを受け付ける
-    // （/household API と同じ isValidDocId。不正なら、支出が無いときと同じく何もしない。Firestore も LINE も呼ばない）
-    if (!actionData || typeof actionData !== 'object' || !actionData.action || !isValidDocId(actionData.expenseId)) {
-      console.log('Not a valid postback, skipping');
-      return;
-    }
+  switch (actionData.action) {
+    case 'set_split':
+      await handleSetSplit(event, actionData, actionData.to === 'personal' ? 'personal' : 'shared');
+      break;
+    case 'set_payer':
+      await handleSetPayer(event, actionData);
+      break;
+    case 'set_advance':
+      await handleSetAdvance(event, actionData, actionData.to !== 'off');
+      break;
+    case 'confirm':
+      await handleConfirm(event, actionData);
+      break;
+    case 'edit':
+      await handleEdit(event, actionData);
+      break;
+    case 'show_category_select':
+      await handleShowCategorySelect(event, actionData);
+      break;
+    case 'set_category':
+      await handleSetCategory(event, actionData);
+      break;
+    case 'show_list':
+      await handleShowList(event);
+      break;
 
-    switch (actionData.action) {
-      case 'set_split':
-        await handleSetSplit(event, actionData, actionData.to === 'personal' ? 'personal' : 'shared');
-        break;
-      case 'set_payer':
-        await handleSetPayer(event, actionData);
-        break;
-      case 'set_advance':
-        await handleSetAdvance(event, actionData, actionData.to !== 'off');
-        break;
-      case 'confirm':
-        await handleConfirm(event, actionData);
-        break;
-      case 'edit':
-        await handleEdit(event, actionData);
-        break;
-      case 'show_category_select':
-        await handleShowCategorySelect(event, actionData);
-        break;
-      case 'set_category':
-        await handleSetCategory(event, actionData);
-        break;
-      case 'show_list':
-        await handleShowList(event);
-        break;
+    // 旧UIのカードから押された場合。送信済みメッセージは編集できないので、
+    // 過去に配信したカードのボタンを現行の処理へ読み替える。
+    case 'shared':
+      await handleSetSplit(event, actionData, 'shared');
+      break;
+    case 'personal':
+      await handleSetSplit(event, actionData, 'personal');
+      break;
+    case 'advance':
+      await handleSetAdvance(event, actionData, true);
+      break;
 
-      // 旧UIのカードから押された場合。送信済みメッセージは編集できないので、
-      // 過去に配信したカードのボタンを現行の処理へ読み替える。
-      case 'shared':
-        await handleSetSplit(event, actionData, 'shared');
-        break;
-      case 'personal':
-        await handleSetSplit(event, actionData, 'personal');
-        break;
-      case 'advance':
-        await handleSetAdvance(event, actionData, true);
-        break;
-
-      default:
-        // 値は利用者の入力なのでログに出さない（型だけ）
-        console.warn('Unknown postback action', { type: typeof actionData.action, expense: maskId(actionData.expenseId) });
-    }
-  } catch (error) {
-    console.error('Failed to handle postback:', error);
-    throw error;
+    default:
+      // 値は利用者の入力なのでログに出さない（型だけ）
+      console.warn('Unknown postback action', { type: typeof actionData.action, expense: maskId(actionData.expenseId) });
   }
 }
 
@@ -251,7 +248,7 @@ async function profileName(event: PostbackEvent, userId: string): Promise<string
         : await client.getProfile(userId);
     return profile.displayName || '';
   } catch (error) {
-    console.warn('Failed to load LINE profile for payer', { user: maskId(userId), error: errorMessage(error) });
+    console.warn('Failed to load LINE profile for payer', { user: maskId(userId), ...errorFields(error) });
     return '';
   }
 }

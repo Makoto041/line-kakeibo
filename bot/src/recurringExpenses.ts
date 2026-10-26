@@ -17,7 +17,7 @@
 import type { DocumentData, Firestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import { CANONICAL_CATEGORIES } from './categoryNormalization';
-import { errorMessage, maskId } from './logSafe';
+import { errorFields, maskId } from './logSafe';
 import { CREATOR_PLACEHOLDER_NAME, fallbackDisplayName } from './householdMembers';
 import { dayjs, JST } from './time';
 
@@ -365,7 +365,7 @@ export async function postDueRecurringExpenses(db: Firestore, now: Date = new Da
       }
     } catch (error) {
       summary.failed += 1;
-      console.error('recurring: failed to post', { item: maskId(item.id), error: errorMessage(error) });
+      console.error('recurring: failed to post', { item: maskId(item.id), ...errorFields(error) });
     }
   }
   return summary;

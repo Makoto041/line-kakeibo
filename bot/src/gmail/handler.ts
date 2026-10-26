@@ -28,7 +28,7 @@ import type { ClassificationResult } from '../geminiCategoryClassifier';
 import type { CardUsageInfo, CategoryOrigin } from '../line/flexMessage';
 import { subCategoriesOf } from '../categoryTaxonomy';
 import { resolveSubCategory } from '../subCategoryRules';
-import { errorCauseCode, errorMessage, errorName, maskId } from '../logSafe';
+import { errorFields, maskId } from '../logSafe';
 import { cardNoticeFor, deliverPendingCardNotice, discardCardNotices } from './cardNotice';
 import type { CardNoticeDelivery } from './cardNotice';
 
@@ -65,7 +65,7 @@ export function merchantSubCategoryOf(
     }
     return sub ?? undefined;
   } catch (error) {
-    console.warn('Subcategory resolution failed', { source: 'merchant', error: errorMessage(error) });
+    console.warn('Subcategory resolution failed', { source: 'merchant', ...errorFields(error) });
     return undefined;
   }
 }
@@ -279,22 +279,8 @@ export function isStaleGmailEvent(eventTime: string | undefined, now: Date): boo
   return now.getTime() - publishedAt > STALE_GMAIL_EVENT_MS;
 }
 
-/**
- * ログに出す例外の種類（メッセージには入力や文書のパスが入りうるので出さない）
- *
- * errorCode は数か、英大文字・数字・`_` だけの 64 文字以内の文字列のときだけ出す（logSafe.ts の errorCauseCode と同じ形の検査）。
- * errorCause は原因のコード（fetch の通信の失敗の ECONNRESET など。errorCauseCode）。
- */
-export function errorFields(error: unknown): { errorName: string; errorCode?: string | number; errorCause?: string } {
-  const fields: { errorName: string; errorCode?: string | number; errorCause?: string } = { errorName: errorName(error) };
-  const code = (error as { code?: unknown } | null | undefined)?.code;
-  if ((typeof code === 'number' && Number.isFinite(code)) || (typeof code === 'string' && /^[A-Z0-9_]{1,64}$/.test(code))) {
-    fields.errorCode = code;
-  }
-  const cause = errorCauseCode(error);
-  if (cause) fields.errorCause = cause;
-  return fields;
-}
+/** ログに出す例外の種類（logSafe.ts に移した。smoke-gmail-retry.js がここから読むので export を残す） */
+export { errorFields };
 
 /** Gmail API の 404（gaxios 7 は JSON のエラーの code を error.code に、HTTP の状態を error.status に入れる） */
 function isGmailNotFound(error: unknown): boolean {
@@ -484,7 +470,7 @@ async function processNewEmails(newHistoryId: string, notifiedEmailAddress: stri
 
     // 全ページ処理完了後にhistoryIdを更新
     await updateHistoryId(newHistoryId);
-    console.log(`Processed ${processedMessageIds.length} messages, updated historyId to ${newHistoryId}`);
+    console.log('Processed Gmail messages; updated historyId', { messages: processedMessageIds.length, historyId: String(newHistoryId) });
 
     // historyId を進めたので、諦めたメールはもう再処理されない。送信待ちのカードの印も残さない
     // （店名・金額・日付が残り続けないように。cardNotice.ts）
@@ -492,10 +478,10 @@ async function processNewEmails(newHistoryId: string, notifiedEmailAddress: stri
   } catch (error: any) {
     // historyIdが古すぎる場合は最新に更新（history.list の 404。messages.get の 404 は processMessage の中で読み飛ばすので、ここには来ない）
     if (error.code === 404) {
-      console.error(
-        `History ID ${startHistoryId} is too old (Gmail keeps ~1 week). ` +
-          `Skipping to ${newHistoryId}; mail in between is NOT imported.`
-      );
+      console.error('Gmail historyId is too old (Gmail keeps ~1 week); skipping ahead, and mail in between is NOT imported', {
+        from: String(startHistoryId),
+        to: String(newHistoryId),
+      });
       await updateHistoryId(newHistoryId);
       // 飛ばした範囲のメールは再処理しないので、送信待ちのカードの印も消す。
       // 範囲のメッセージは取れないため、取れる範囲（失敗の記録と、この実行で失敗したもの）だけを対象にする
@@ -735,7 +721,7 @@ export async function processLatestEmail(): Promise<{
       message: 'No new SMBC Gold VISA NL emails found',
     };
   } catch (error) {
-    console.error('processLatestEmail error:', error);
+    console.error('processLatestEmail error', errorFields(error));
     return {
       success: false,
       message: `Error: ${(error as Error).message}`,
@@ -759,7 +745,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
     // 冪等性: 既存の支出があればそれを返す（重複作成を防ぐ）
     const existingExpenseId = await getExpenseIdByGmailMessageId(messageId);
     if (existingExpenseId) {
-      console.log(`Expense already exists for messageId ${messageId}: ${existingExpenseId}`);
+      console.log('Expense already exists for the Gmail message', { message: maskId(messageId), expense: maskId(existingExpenseId) });
       const cardNotice = await deliverPendingCardNotice(messageId);
       return {
         success: true,
@@ -849,7 +835,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
     // アトミックに重複チェック＋保存
     const { expenseId, alreadyExists } = await saveGmailExpenseAtomic(expense as any, notice);
     if (alreadyExists) {
-      console.log(`Duplicate detected (atomic): messageId: ${messageId}, existingId: ${expenseId}`);
+      console.log('Skipping a duplicate Gmail expense (atomic, force)', { message: maskId(messageId), expense: maskId(expenseId) });
       const cardNotice = await deliverPendingCardNotice(messageId);
       return {
         success: true,
@@ -859,7 +845,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
         cardNotice,
       };
     }
-    console.log(`Expense saved from Gmail (force): ${expenseId}`);
+    console.log('Expense saved from Gmail (force)', { expense: maskId(expenseId) });
 
     // LINEグループに通知（新規作成時のみ。失敗したら印が残り、もう一度呼べば送り直す）
     if (lineGroupId) {
@@ -874,7 +860,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
       alreadyExists: false,
     };
   } catch (error) {
-    console.error('forceProcessMessage error:', error);
+    console.error('forceProcessMessage error', errorFields(error));
     return {
       success: false,
       message: `Error: ${(error as Error).message}`,

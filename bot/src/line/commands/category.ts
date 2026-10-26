@@ -4,6 +4,7 @@
 
 import { toCanonicalCategoryName } from "../../categoryNormalization";
 import { getUserSettings, saveUserSettings } from "../../firestore";
+import { errorFields } from "../../logSafe";
 import { replyText } from "../client";
 
 /**
@@ -44,7 +45,7 @@ export async function handleCategoryCommand(event: any, text: string): Promise<b
         currentCategory = userSettings.defaultCategory;
       }
     } catch (error) {
-      console.warn("Failed to get current category setting:", error);
+      console.warn("Failed to get current category setting", errorFields(error));
     }
 
     await replyText(event.replyToken, `利用可能なカテゴリー:\n\n${CATEGORY_BULLETS}\n\n現在のデフォルト: ${currentCategory}\n\n設定方法:\n「カテゴリー 食費」のように送信してください`);
@@ -74,7 +75,7 @@ export async function handleCategoryCommand(event: any, text: string): Promise<b
 
     await replyText(event.replyToken, `デフォルトカテゴリーを「${category}」に設定しました！\n\n今後の支出入力は自動的に「${category}」カテゴリーになります。\n\n変更するには「カテゴリー [新しいカテゴリー]」と送信してください。`);
   } catch (error) {
-    console.error("Error saving user settings:", error);
+    console.error("Error saving user settings", errorFields(error));
     await replyText(event.replyToken, "カテゴリーの設定に失敗しました。もう一度お試しください。");
   }
   return true;

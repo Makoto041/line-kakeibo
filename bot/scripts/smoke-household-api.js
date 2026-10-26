@@ -338,7 +338,7 @@ console.log('\ndecideSetCategory の中項目（#235。大項目が変わると�
     const d = thrown.result;
     check('resolveSubCategory が投げても大項目の変更は続く', !('reject' in d) && d.update.category === '食費' && d.update.confirmed === true, JSON.stringify(d));
     check('そのとき中項目は消す（update は番兵、cardPatch は undefined のキー）', isFieldDelete(d.update.subCategory) && 'subCategory' in d.cardPatch && d.cardPatch.subCategory === undefined);
-    check('原因はオブジェクトでログに出す（書式文字列に埋め込まない）', thrown.warns.length === 1 && typeof thrown.warns[0][0] === 'string' && !thrown.warns[0][0].includes('boom') && thrown.warns[0][1] && thrown.warns[0][1].error === 'boom', JSON.stringify(thrown.warns));
+    check('原因は種類だけをオブジェクトでログに出す（書式文字列に埋め込まない・文言を出さない）', thrown.warns.length === 1 && typeof thrown.warns[0][0] === 'string' && thrown.warns[0][1] && thrown.warns[0][1].errorName === 'Error' && !require('util').format(...thrown.warns[0]).includes('boom'), JSON.stringify(thrown.warns));
 
     const broken = { category: 'その他', status: 'shared', subCategory: '映画' };
     Object.defineProperty(broken, 'description', { enumerable: true, get() { throw new Error('getter'); } });
@@ -508,16 +508,24 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
   }
   {
     const res = fakeRes();
-    // 500 のときの console.error（household: unexpected error: boom）は期待どおりなので出さない
+    // 500 のときの console.error（household: unexpected error）は期待どおりなので出さない
     const origError = console.error;
     const errors = [];
-    console.error = (...args) => errors.push(args.join(' '));
+    console.error = (...args) => errors.push(args);
+    // 本文の JSON の解析の失敗のように、文言に入力の断片が入りうる例外
+    const err = Object.assign(new SyntaxError('Unexpected token 秘密CANARY in JSON'), { code: 'ERR_CANARY_7' });
     try {
-      householdErrorHandler(new Error('boom'), { headers: { origin: 'https://evil.example.com' }, method: 'POST' }, res, () => {});
+      householdErrorHandler(err, { headers: { origin: 'https://evil.example.com' }, method: 'POST' }, res, () => {});
     } finally {
       console.error = origError;
     }
-    check('500 は原因をログに出す', errors.length === 1 && errors[0].includes('boom'));
+    const logged = errors.map((args) => require('util').format(...args)).join('\n');
+    check(
+      '500 は原因の種類だけを固定文 + オブジェクトでログに出す（文言を出さない）',
+      errors.length === 1 && errors[0][0] === 'household: unexpected error' && errors[0][1]?.errorName === 'SyntaxError' &&
+        errors[0][1]?.errorCode === 'ERR_CANARY_7' && !logged.includes('CANARY in') && !logged.includes('秘密'),
+      logged
+    );
     check('その他の例外は 500 internal', res.statusCode === 500 && deepEqual(res.body, { error: 'internal' }));
     check('許可外のオリジンには ACAO を付けない', res.headers['access-control-allow-origin'] === undefined);
   }

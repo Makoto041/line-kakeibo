@@ -7,6 +7,7 @@
  */
 
 import { messagingApi } from '@line/bot-sdk';
+import { errorFields } from '../logSafe';
 
 let lineClient: messagingApi.MessagingApiClient | null = null;
 
@@ -16,7 +17,8 @@ export function getLineClient(): messagingApi.MessagingApiClient {
     const channelSecret = process.env.LINE_CHANNEL_SECRET;
 
     if (!channelAccessToken || !channelSecret) {
-      throw new Error('LINE credentials not configured');
+      // 名前を付ける（ログは文言を出さず errorName で見分けるため。logSafe.ts の errorFields）
+      throw Object.assign(new Error('LINE credentials not configured'), { name: 'LineCredentialsMissingError' });
     }
 
     lineClient = new messagingApi.MessagingApiClient({
@@ -62,10 +64,7 @@ export async function replyWithPushFallback(
       await client.replyMessage({ replyToken, messages });
       return 'reply';
     } catch (replyError) {
-      console.warn(
-        'replyMessage failed (token expired or already used), falling back to pushMessage:',
-        replyError
-      );
+      console.warn('replyMessage failed (token expired or already used), falling back to pushMessage', errorFields(replyError));
     }
   }
 

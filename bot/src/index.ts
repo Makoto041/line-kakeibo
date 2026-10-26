@@ -23,6 +23,7 @@ import { postDueRecurringExpenses } from "./recurringExpenses";
 import { sendDueSettlementSummaries } from "./settlementSummary";
 import { buildSettlementSummaryMessages } from "./line/settlementSummaryMessage";
 import { getLineClient } from "./line/client";
+import { errorFields } from "./logSafe";
 
 dotenv.config();
 
@@ -38,14 +39,14 @@ if (!getApps().length) {
     });
     console.log("Firebase Admin SDK initialized successfully");
   } catch (error) {
-    console.error("Firebase initialization error:", error);
+    console.error("Firebase initialization error", errorFields(error));
   }
 }
 
 // Local development only (not in Cloud Functions)
 if (require.main === module) {
   app.listen(port, () => {
-    console.log(`Bot server listening on port ${port}`);
+    console.log("Bot server listening", { port });
   });
 }
 
