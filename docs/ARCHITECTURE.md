@@ -155,7 +155,7 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
     現在位置が実行の開始時に読んだ保存値より前なら（競合では起きない。保存値がこのメールボックスの位置でない）、固定文の警告を出して
     書かずに終える（同じ警告が複数の通知で続くときだけ GMAIL_AUTO_SPEC §11.2 の手順で直す。#300）。保存してある historyId が使えない形（先頭ゼロなど）なら、
     history.list を呼ばず、トランザクションの中でまだ使えない形のときだけ getProfile の現在位置に置き換える（#300。
-    watch の更新・/gmail/register-watch でも watch の応答の値に置き換わる。GMAIL_AUTO_SPEC §3.2）
+    watch の更新・/gmail/register-watch でも、watch の応答の値が使える形のときだけ、その値に置き換わる。GMAIL_AUTO_SPEC §3.2）
 ```
 
 ### 4.3 Web 閲覧・編集

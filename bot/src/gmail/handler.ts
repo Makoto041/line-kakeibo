@@ -643,8 +643,9 @@ async function processNewEmails(notifiedEmailAddress: string | null): Promise<vo
         fromDigits: startHistoryId.length,
         toDigits: next.length,
       });
-      // 失敗の記録は、historyId の更新を確定させる前に読む（確定の後に、新しい位置から始めた実行が記録した失敗の印まで消さない。
-      // recoverUnusableHistoryId と同じ）。failedMessageIds は投げない（読めなければ空）
+      // 失敗の記録は、historyId の更新を確定させる前に読む（確定の後に、新しい位置から始めた実行が記録した失敗の印まで消しうる
+      // 範囲を縮める。recoverUnusableHistoryId と同じ）。ほかの実行がすでに next 以上へ進めていて、そこから始めた実行が読む前に
+      // 失敗を記録していた場合は、その印も消えうる（窓は狭い）。failedMessageIds は投げない（読めなければ空）
       const failed = await failedMessageIds();
       await updateHistoryId(next);
       // 飛ばした範囲のメールは再処理しないので、送信待ちのカードの印も消す。
