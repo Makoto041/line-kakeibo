@@ -5,12 +5,12 @@ import { useSearchParams } from "next/navigation";
 import { Paperclip, Check, RefreshCw, Camera, Upload, Image as ImageIcon } from "lucide-react";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { db, storage, ensureFirebaseInitialized } from "../../lib/firebase";
-import { isSafeImageUrl } from "../../lib/imageUrl";
-import { compressImage } from "../../lib/imageCompress";
-import { yen } from "../../lib/money";
-import { waitForLineAuth, LINE_AUTH_TIMEOUT, urlWithoutLiffReturnParams } from "../../lib/lineAuth";
-import { isValidDocId } from "../../lib/householdContract";
+import { db, storage, ensureFirebaseInitialized } from "@/lib/firebase";
+import { isSafeImageUrl } from "@/lib/imageUrl";
+import { compressImage } from "@/lib/imageCompress";
+import { yen } from "@/lib/money";
+import { waitForLineAuth, LINE_AUTH_TIMEOUT, urlWithoutLiffReturnParams } from "@/lib/lineAuth";
+import { isValidDocId } from "@/lib/householdContract";
 import dayjs from "dayjs";
 
 // storage.rules と揃える（SVG・GIF は不可、上限 5MB）

@@ -3,17 +3,17 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Wallet, CalendarRange, Repeat } from 'lucide-react';
-import RecurringExpensesPanel from '../../components/RecurringExpensesPanel';
-import InstallAppCard from '../../components/settings/InstallAppCard';
-import SettlementNotifyCard from '../../components/settings/SettlementNotifyCard';
-import { useLineAuth, DEFAULT_BUDGET_CONFIG, type BudgetConfig } from '../../lib/hooks';
-import { fetchDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, DEFAULT_SETTINGS, type DateRangeSettings } from '../../lib/dateSettings';
+import RecurringExpensesPanel from '@/components/RecurringExpensesPanel';
+import InstallAppCard from '@/components/settings/InstallAppCard';
+import SettlementNotifyCard from '@/components/settings/SettlementNotifyCard';
+import { useLineAuth, DEFAULT_BUDGET_CONFIG, type BudgetConfig } from '@/lib/hooks';
+import { fetchDateRangeSettings, saveDateRangeSettings, migrateLocalToFirestore, DEFAULT_SETTINGS, type DateRangeSettings } from '@/lib/dateSettings';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
-import { getCategoryVisual } from '../../lib/categoryVisuals';
-import { CANONICAL_CATEGORIES } from '../../lib/categoryNormalization';
-import { getCached, setCached } from '../../lib/swrCache';
-import { yen } from '../../lib/money';
+import { db } from '@/lib/firebase';
+import { getCategoryVisual } from '@/lib/categoryVisuals';
+import { CANONICAL_CATEGORIES } from '@/lib/categoryNormalization';
+import { getCached, setCached } from '@/lib/swrCache';
+import { yen } from '@/lib/money';
 import dayjs from 'dayjs';
 
 // カテゴリ別予算の項目は正準カテゴリ（bot/分類器・支出データと統一）。

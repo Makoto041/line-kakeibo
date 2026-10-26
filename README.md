@@ -90,7 +90,7 @@ line-kakeibo/
 │  ├─ src/               # index.ts（webhook・API）, householdApi.ts, recurringExpenses.ts, line/, gmail/ など
 │  └─ scripts/           # スモーク・エミュレータのテスト
 ├─ web/                  # Next.js（Vercel）
-│  ├─ app/               # ホーム / expenses / settlement / settings / attach / dashboard / link / privacy / terms
+│  ├─ app/               # layout・404・manifest。画面は (app)/（ホーム / expenses / settlement / settings / attach / dashboard / link / privacy / terms。AppShell で包む）
 │  ├─ components/        # 画面部品
 │  ├─ lib/               # Firebase クライアント・hooks・ロジック（純関数）
 │  └─ __tests__/         # node --test

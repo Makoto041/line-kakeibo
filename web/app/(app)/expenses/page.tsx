@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { useLineAuth, useExpenses, useGroupMembers, useHousehold, invalidateStatsCache } from "../../lib/hooks";
+import { useLineAuth, useExpenses, useGroupMembers, useHousehold, invalidateStatsCache } from "@/lib/hooks";
 import {
   countPending,
   parseSegment,
@@ -14,7 +14,7 @@ import {
   summarizeExpenses,
   type Segment,
   type SortKey,
-} from "../../lib/expenseState";
+} from "@/lib/expenseState";
 import {
   validateEditForm,
   buildEditUpdate,
@@ -28,22 +28,22 @@ import {
   buildSubCategoryOptions,
   changeEditCategory,
   type EditForm,
-} from "../../lib/expenseEdit";
-import { subCategoriesOf } from "../../lib/categoryTaxonomy";
-import { confirmExpense, isHouseholdApiConfigured, householdErrorCode } from "../../lib/householdApi";
-import type { Expense } from "../../lib/hooks";
-import PreviewModeBanner from "../../components/PreviewModeBanner";
-import ExpenseControls from "../../components/expenses/ExpenseControls";
-import ExpenseEmptyState from "../../components/expenses/ExpenseEmptyState";
-import ExpenseCard from "../../components/expenses/ExpenseCard";
-import EditDrawer from "../../components/expenses/EditDrawer";
-import ReceiptModal from "../../components/expenses/ReceiptModal";
-import { CANONICAL_CATEGORIES, normalizeCategoryName } from "../../lib/categoryNormalization";
+} from "@/lib/expenseEdit";
+import { subCategoriesOf } from "@/lib/categoryTaxonomy";
+import { confirmExpense, isHouseholdApiConfigured, householdErrorCode } from "@/lib/householdApi";
+import type { Expense } from "@/lib/hooks";
+import PreviewModeBanner from "@/components/PreviewModeBanner";
+import ExpenseControls from "@/components/expenses/ExpenseControls";
+import ExpenseEmptyState from "@/components/expenses/ExpenseEmptyState";
+import ExpenseCard from "@/components/expenses/ExpenseCard";
+import EditDrawer from "@/components/expenses/EditDrawer";
+import ReceiptModal from "@/components/expenses/ReceiptModal";
+import { CANONICAL_CATEGORIES, normalizeCategoryName } from "@/lib/categoryNormalization";
 import dayjs from "dayjs";
-import { fetchDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "../../lib/dateSettings";
+import { fetchDateRangeSettings, getEffectiveDateRange, getDisplayTitle, DEFAULT_SETTINGS, type DateRangeSettings } from "@/lib/dateSettings";
 import { doc, getDoc } from "firebase/firestore";
-import { db, ensureFirebaseInitialized } from "../../lib/firebase";
-import { getCached, setCached } from "../../lib/swrCache";
+import { db, ensureFirebaseInitialized } from "@/lib/firebase";
+import { getCached, setCached } from "@/lib/swrCache";
 
 // Suspense boundary for useSearchParams
 export default function ExpensesPage() {

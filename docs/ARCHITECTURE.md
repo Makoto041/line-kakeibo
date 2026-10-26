@@ -152,7 +152,8 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
 
 ```text
 Web を開く（LINE の「家計簿一覧を見る」/「修正」リンク、または直接）
-  → initLineAuth()（lib/lineAuth.ts）: LIFF 初期化 → 未ログインなら LINE ログインへ
+  → AppShell（app/(app)/layout.tsx。(app) の画面だけを包む）のマウント時に
+     initLineAuth()（lib/lineAuth.ts）: LIFF 初期化 → 未ログインなら LINE ログインへ（404 など (app) の外では始めない）
   → LIFF の ID トークンを POST /auth/line（api 関数）へ → LINE の verify API で検証
   → Firebase カスタムトークン（uid=appUid, claim lineId）で signInWithCustomToken
   → useLineAuth: lineId は ID トークンのクレームからのみ取得（URL の ?lineId= は使わない。前回確かめた
@@ -325,7 +326,9 @@ line-kakeibo/
 │  ├─ scripts/               # smoke-*.js（npm test）/ emulator-*.js（test:emulator）/ firebase.emulator.json / eval/（分類の評価。実データは *.local.json でコミットしない）
 │  └─ .env.example
 ├─ web/                      # Next.js 16 (Vercel)
-│  ├─ app/                   # / , /expenses , /settlement , /settings , /attach , /link , /dashboard , /terms , /privacy
+│  ├─ app/                   # layout.tsx（html・フォント・テーマ・metadata。AppShell は含まない）/ not-found.tsx（404。AppShell の外でナビなし）
+│  ├─ app/(app)/             # ルートグループ（URL に出ない）: / , /expenses , /settlement , /settings , /attach , /link , /dashboard , /terms , /privacy
+│  │                         # layout.tsx が AppShell（ナビと、LINE ログイン・PWA の起動）で包む。グループの外のページは AppShell・lineAuth を読み込まない
 │  ├─ app/manifest.ts        # PWA の manifest（apple-icon.png / favicon.ico も app/ に置く）
 │  ├─ components/            # Charts, PeriodSplitCard（精算の取得・保存）・PeriodSplitView（精算の表示）, LeftoverAdvancesCard（全額にする前の立替のお知らせ）, RecurringExpensesPanel, GuestGuide,
 │  │                         # layout/(AppShell, Sidebar, BottomTabBar, TopBar, nav), theme/,
