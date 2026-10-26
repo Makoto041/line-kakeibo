@@ -76,7 +76,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.15.6 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.15.7 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
@@ -130,7 +130,7 @@ flowchart LR
             <tr><td class="name">api</td><td>HTTPS</td><td class="region us">us-central1</td><td>LIFF ログイン <code>/auth/line</code>、Web 向け <code>/household/*</code>、Gmail 管理 <code>/gmail/*</code></td></tr>
             <tr><td class="name">gmailPubSubHandler</td><td>Pub/Sub</td><td class="region">asia-northeast1</td><td>カード利用通知メールの取込。失敗したら Pub/Sub が再送する（10〜600 秒の間隔で最大 24 時間。12 時間より古い通知は捨てる）。タイムアウト 300 秒</td></tr>
             <tr><td class="name">postRecurringExpenses</td><td>毎日 09:10 JST</td><td class="region">asia-northeast1</td><td>毎日のバッチ。引き落とし日を迎えた固定費を支出に計上（同じ月に 2 回は入らない）。期間の起算日には精算サマリーを LINE グループへメンション付きで送る（スケジュールの無料枠を使い切っているため相乗り）</td></tr>
-            <tr><td class="name">renewGmailWatch</td><td>6 日ごと 03:00 JST</td><td class="region">asia-northeast1</td><td>Gmail watch（7 日で失効）の更新。取込の位置（historyId）は変えない。失敗したら 2 回までやり直す</td></tr>
+            <tr><td class="name">renewGmailWatch</td><td>6 日ごと 03:00 JST</td><td class="region">asia-northeast1</td><td>Gmail watch（7 日で失効）の更新。取込の位置（historyId）は変えない。連携中のアカウントのアドレスを保存し直す（通知の照合用）。失敗したら 2 回までやり直す</td></tr>
             <tr><td class="name">importMoneyForward</td><td>毎日 05:00 JST</td><td class="region">asia-northeast1</td><td>廃止。旧 MoneyForward CSV 取込（一度も機能していなかった）。消すと CI の非対話デプロイが止まるため、何もしない関数として名前だけ残置</td></tr>
             <tr><td class="name">syncUserLinks</td><td>Firestore onCreate</td><td class="region">asia-northeast1</td><td>何もしない。消すと CI の非対話デプロイが止まるため残置</td></tr>
           </tbody>
@@ -159,6 +159,7 @@ flowchart LR
           <h3>カード利用メール</h3>
           <ol>
             <li>Gmail の新着を Pub/Sub で受信</li>
+            <li>通知のアドレスを、watch の登録・更新で保存した連携中のアカウントと照合する。違えば取込の位置を変えずに終える（切り替える前のアカウントの watch は最大 7 日通知しうるため）。連携中のアカウントの現在のアドレスが通知と同じなら、保存値が古いだけなので書き直して続ける。アドレスが保存される前は照合しない</li>
             <li>本文から金額・店名・利用日時を抽出</li>
             <li>店名からカテゴリを分類し、食費・娯楽なら中項目も決める（時刻の書かれたメールの飲食店は朝・昼・夜ご飯）</li>
             <li>日付+金額 → 店名の類似 → 時刻 ±1 分で重複を除外</li>
