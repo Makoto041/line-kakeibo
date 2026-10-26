@@ -51,19 +51,25 @@ export interface ErrorFields {
  * - errorName: 名前（errorName）
  * - errorCode: `error.code`。有限の数（Firestore の gRPC のコード〔5 = NOT_FOUND など〕・Gmail API の HTTP のコード）か、
  *   英大文字・数字・`_` だけの 64 文字以内の文字列（ECONNRESET・ERR_BAD_REQUEST など。errorCauseCode と同じ形）か、
- *   Firebase の形（`auth/id-token-expired` のような、英小文字の区分と英小文字・数字・`-` だけの名前）の文字列のときだけ
+ *   Firebase の形（`auth/id-token-expired` のような、英小文字の区分と英小文字・数字・`-` だけの名前）の文字列、
+ *   許可リストの文字列（ERROR_CODE_ALLOWLIST。gaxios は打ち切り・中断のとき DOMException の名前〔TimeoutError / AbortError〕を
+ *   code に入れる）のときだけ
  * - errorCause: 原因のコード（fetch の通信の失敗の ECONNRESET など。errorCauseCode）
  * - errorStatus: `error.status` が 100〜599 の整数のとき（LINE の HTTPFetchError・Gmail API・axios の HTTP の状態）
  *
  * 文言（message）・原因の文言・例外そのものは出さない。
  */
+/** errorFields の errorCode に、形の検査とは別に出してよい文字列（gaxios の打ち切り・中断。gaxios の common.js の GaxiosError） */
+const ERROR_CODE_ALLOWLIST: ReadonlySet<string> = new Set(['TimeoutError', 'AbortError']);
+
 export function errorFields(error: unknown): ErrorFields {
   const fields: ErrorFields = { errorName: errorName(error) };
   const e = error as { code?: unknown; status?: unknown } | null | undefined;
   const code = e?.code;
   if (
     (typeof code === 'number' && Number.isFinite(code)) ||
-    (typeof code === 'string' && (/^[A-Z0-9_]{1,64}$/.test(code) || /^[a-z]{1,16}\/[a-z0-9-]{1,64}$/.test(code)))
+    (typeof code === 'string' &&
+      (/^[A-Z0-9_]{1,64}$/.test(code) || /^[a-z]{1,16}\/[a-z0-9-]{1,64}$/.test(code) || ERROR_CODE_ALLOWLIST.has(code)))
   ) {
     fields.errorCode = code;
   }

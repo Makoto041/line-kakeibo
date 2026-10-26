@@ -195,6 +195,16 @@ async function main() {
       (code) => errorFields(Object.assign(new Error('x'), { code })).errorCode === undefined
     )
   );
+  check(
+    'gaxios の打ち切り・中断のコード（TimeoutError・AbortError）は許可リストとして出す',
+    ['TimeoutError', 'AbortError'].every((code) => errorFields(Object.assign(new Error('x'), { name: 'GaxiosError', code })).errorCode === code)
+  );
+  check(
+    '許可リスト以外の、大文字小文字の混ざった文字列のコードは出さない',
+    ['SyntaxError', 'timeoutError', 'TimeoutErrorX', 'Timeout Error', `${CANARY}Error`].every(
+      (code) => errorFields(Object.assign(new Error('x'), { code })).errorCode === undefined
+    )
+  );
   check('HTTP の状態（100〜599 の整数）は errorStatus に出す', errorFields(lineHttpError(429)).errorStatus === 429 && errorFields(lineHttpError(429)).errorName === 'HTTPFetchError');
   check('範囲外・数でない status は出さない', [0, 99, 600, 429.5, '429', NaN].every((status) => errorFields(Object.assign(new Error('x'), { status })).errorStatus === undefined));
   check('Error でないもの（文字列・null・undefined）でも投げない', errorFields('boom').errorName === 'string' && errorFields(null).errorName === 'object' && errorFields(undefined).errorName === 'undefined');
