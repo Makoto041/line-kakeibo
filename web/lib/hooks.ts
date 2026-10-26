@@ -19,6 +19,7 @@ import { db, auth, getFirebaseStatus, ensureFirebaseInitialized } from './fireba
 import { initLineAuth } from './lineAuth';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
+import { sumCategoryTotals } from './budgetAnalytics';
 import { getCached, setCached, hasCached, clearCached, updateCachedByPrefix } from './swrCache';
 import { timestampToMillis } from './expenseState';
 import { buildExpenseUpdate, shouldClearSubCategory } from './expenseEdit';
@@ -775,10 +776,8 @@ export function useMonthlyStats(userId: string | null, year: number, month: numb
         
         const totalAmount = includedExpenses.reduce((sum, expense) => sum + expense.amount, 0);
         
-        const categoryTotals = includedExpenses.reduce((acc, expense) => {
-          acc[expense.category] = (acc[expense.category] || 0) + expense.amount;
-          return acc;
-        }, {} as Record<string, number>);
+        // カテゴリは正準名にまとめて数える（旧名の 娯楽費・交際費 なども 娯楽 に。ホームの内訳と同じ。#243）
+        const categoryTotals = sumCategoryTotals(includedExpenses, (category) => normalizeCategoryName(category));
         
         const dailyTotals = includedExpenses.reduce((acc, expense) => {
           acc[expense.date] = (acc[expense.date] || 0) + expense.amount;
