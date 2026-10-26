@@ -68,25 +68,25 @@ test('ホームの数字: 月の合計・件数・カテゴリ別（合計に含
       return [s.totalAmount, s.expenseCount];
     }),
     [
-      [170080, 19],
-      [164410, 21],
-      [161460, 24],
+      [164470, 19],
+      [157080, 21],
+      [150540, 24],
     ]
   );
   const oct = demoStats(DEMO_EXPENSES, OCT.range);
   assert.deepEqual(oct.categoryTotals, {
-    住居費: 85000,
-    サブスク: 1490,
-    食費: 39170,
-    日用品: 3920,
-    光熱費: 7480,
-    衣服: 6800,
-    通信費: 7600,
-    娯楽: 6580,
-    交通費: 3420,
+    住居費: 64870,
+    サブスク: 1190,
+    食費: 42010,
+    日用品: 4520,
+    光熱費: 9410,
+    衣服: 7860,
+    通信費: 9140,
+    娯楽: 7600,
+    交通費: 3940,
   });
   assert.equal(Object.values(oct.dailyTotals).reduce((a, b) => a + b, 0), oct.totalAmount);
-  // 判断インサイト（予算 22 万円・10月24日時点）
+  // 判断インサイト（デモの予算・10月24日時点）
   const insights = computePeriodInsights({
     stats: oct,
     prevStats: demoStats(DEMO_EXPENSES, SEP.range),
@@ -97,7 +97,7 @@ test('ホームの数字: 月の合計・件数・カテゴリ別（合計に含
   });
   assert.deepEqual(
     [insights.budgetPct, insights.budgetRemaining, insights.daysLeft, insights.perDayAvailable, insights.momPct],
-    [73, 58540, 7, 8362, -2]
+    [77, 45760, 7, 6537, -4]
   );
 });
 
@@ -117,30 +117,30 @@ test('内訳: 10月の食費・娯楽は中項目の段が出る（中項目が 
   assert.deepEqual(
     groupDrill(items.filter((i) => i.category === '食費'), 'subCategory').map((g) => [g.key, g.total]),
     [
-      ['食料品（スーパー）', 19690],
-      ['夜ご飯', 5400],
-      ['外食', 6380],
-      ['デリバリー・テイクアウト', 2980],
-      ['昼ご飯', 2080],
-      ['カフェ', 1240],
-      ['朝ご飯', 760],
-      ['コンビニ', 640],
-    ].sort((a, b) => b[1] - a[1])
+      ['食料品（スーパー）', 20300],
+      ['外食', 7360],
+      ['夜ご飯', 5470],
+      ['デリバリー・テイクアウト', 3430],
+      ['昼ご飯', 2400],
+      ['カフェ', 1430],
+      ['朝ご飯', 880],
+      ['コンビニ', 740],
+    ]
   );
 });
 
 test('支出一覧の数字: 10月の支払った人ごとの合計と除外の件数', () => {
   const summary = summarizeExpenses(inMonth(OCT), payerName);
   assert.equal(summary.count, 27);
-  assert.equal(summary.total, 161460);
+  assert.equal(summary.total, 150540);
   assert.equal(summary.excludedCount, 3);
   assert.deepEqual(
     summary.payers.map((p) => [p.name, p.total, p.count]),
     [
-      ['共通口座', 94090, 3],
-      ['クレジットカード', 24330, 5],
-      ['Bさん', 21620, 8],
-      ['Aさん', 21420, 11],
+      ['共通口座', 75200, 3],
+      ['クレジットカード', 27600, 5],
+      ['Aさん', 24720, 11],
+      ['Bさん', 23020, 8],
     ]
   );
   assert.equal(countPending(inMonth(OCT)), 2);
@@ -150,12 +150,12 @@ test('精算の数字: 送金する人ごとの送金額（10月は立替（全�
   const a = split(OCT, DEMO_MEMBER_A);
   assert.deepEqual(
     [a.total, a.count, a.excludedCount, a.advanceCount, a.half, a.targetPaid, a.targetAdvanced, a.counterpartAdvanced],
-    [154660, 23, 3, 1, 77330, 14620, 6800, 0]
+    [142680, 23, 3, 1, 71340, 16860, 7860, 0]
   );
-  assert.deepEqual(a.transfer, { fromLineId: DEMO_MEMBER_A, toLineId: DEMO_MEMBER_B, amount: 55910 });
-  assert.deepEqual(split(OCT, DEMO_MEMBER_B).transfer, { fromLineId: DEMO_MEMBER_B, toLineId: DEMO_MEMBER_A, amount: 62510 });
-  assert.deepEqual(split(SEP, DEMO_MEMBER_A).transfer, { fromLineId: DEMO_MEMBER_A, toLineId: DEMO_MEMBER_B, amount: 63245 });
-  assert.deepEqual(split(AUG, DEMO_MEMBER_A).transfer, { fromLineId: DEMO_MEMBER_A, toLineId: DEMO_MEMBER_B, amount: 48970 });
+  assert.deepEqual(a.transfer, { fromLineId: DEMO_MEMBER_A, toLineId: DEMO_MEMBER_B, amount: 46620 });
+  assert.deepEqual(split(OCT, DEMO_MEMBER_B).transfer, { fromLineId: DEMO_MEMBER_B, toLineId: DEMO_MEMBER_A, amount: 56180 });
+  assert.deepEqual(split(SEP, DEMO_MEMBER_A).transfer, { fromLineId: DEMO_MEMBER_A, toLineId: DEMO_MEMBER_B, amount: 56620 });
+  assert.deepEqual(split(AUG, DEMO_MEMBER_A).transfer, { fromLineId: DEMO_MEMBER_A, toLineId: DEMO_MEMBER_B, amount: 39895 });
 });
 
 test('支払った人（Aさん・Bさん・カード・共通口座）と状態（立替（全額）・除外・要確認）が10月にそろっている', () => {
