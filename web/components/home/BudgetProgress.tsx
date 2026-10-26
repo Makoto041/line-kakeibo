@@ -29,7 +29,16 @@ function paceBadge(pace: Pace): string {
   return 'bg-rose-500/12 text-rose-600 dark:text-rose-400';
 }
 
-export function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | null; budgetConfig: BudgetConfig | null }) {
+export function BudgetProgress({
+  stats,
+  budgetConfig,
+  now,
+}: {
+  stats: ExpenseStats | null;
+  budgetConfig: BudgetConfig | null;
+  /** ペースと理想の進み具合を測る日（既定は今日） */
+  now?: Date;
+}) {
   if (!budgetConfig) return null;
   const categoryTotals = stats?.categoryTotals || {};
   const { categoryBudgets, monthlyBudget } = budgetConfig;
@@ -41,8 +50,8 @@ export function BudgetProgress({ stats, budgetConfig }: { stats: ExpenseStats | 
   const totalActual = stats?.totalAmount || 0;
   const totalPct = monthlyBudget > 0 ? (totalActual / monthlyBudget) * 100 : 0;
   const totalRemaining = monthlyBudget - totalActual;
-  const totalPace = calculatePace(totalActual, monthlyBudget);
-  const idealProgress = calcIdealProgress();
+  const totalPace = calculatePace(totalActual, monthlyBudget, now);
+  const idealProgress = calcIdealProgress(now);
 
   return (
     <GlassCard className="p-5">
