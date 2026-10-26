@@ -235,8 +235,17 @@ test('起点のファイルが見つかる（ルートのレイアウト・Provi
     'app/demo/home/page.tsx',
     'app/demo/expenses/page.tsx',
     'app/demo/settlement/page.tsx',
+    'app/demo/line/page.tsx',
+    'app/demo/gmail/page.tsx',
+    'app/demo/settlement-summary/page.tsx',
     'components/demo/DemoShell.tsx',
+    'components/demo/LineChat.tsx',
+    'components/demo/LineExpenseCard.tsx',
+    'components/demo/GmailFlow.tsx',
+    'components/demo/LineSettlementSummary.tsx',
     'lib/demo/demoData.ts',
+    'lib/demo/demoLine.ts',
+    'lib/demo/demoSummary.ts',
   ]) {
     assert.ok(existsSync(path.join(WEB_DIR, file)), `${file} が無い`);
     assert.ok(ROOT_ENTRIES.includes(file) || DEMO_FILES.includes(file), `${file} を起点に入れていない`);

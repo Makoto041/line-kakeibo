@@ -13,11 +13,27 @@ export interface DemoScene {
 
 export const DEMO_INDEX_HREF = '/demo/';
 
+// 入れる（LINE・カード利用の取込）→ 見る（ホーム・支出一覧）→ 精算する（精算・LINE に届く精算サマリー）の順
 export const demoScenes: readonly DemoScene[] = [
+  { key: 'line', href: '/demo/line/', label: 'LINE', description: 'LINE に「ランチ 850」と送ると、分類して確認カードが返る' },
+  { key: 'gmail', href: '/demo/gmail/', label: 'Gmail', description: 'カード利用のメールを取り込み、分類してグループに知らせる' },
   { key: 'home', href: '/demo/home/', label: 'ホーム', description: '月の支出と予算。カテゴリから中項目、明細まで潜れる' },
   { key: 'expenses', href: '/demo/expenses/', label: '支出一覧', description: '検索・絞り込み・並び替えと、支払った人ごとの合計' },
   { key: 'settlement', href: '/demo/settlement/', label: '精算', description: 'ふたりで折半したときに、どちらがいくら送るか' },
+  {
+    key: 'settlement-summary',
+    href: '/demo/settlement-summary/',
+    label: '精算サマリー',
+    description: '毎月の起算日に、送金額と内訳が LINE に届く',
+  },
 ];
+
+/** key の場面。無ければ投げる（場面の中からほかの場面へリンクするときに使う。リンクは scene.href の形で書く） */
+export function sceneOf(key: string): DemoScene {
+  const scene = demoScenes.find((s) => s.key === key);
+  if (!scene) throw new Error(`デモの場面が無い: ${key}`);
+  return scene;
+}
 
 function stripSlash(path: string): string {
   return path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path;

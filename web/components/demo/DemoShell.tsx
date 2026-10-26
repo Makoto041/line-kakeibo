@@ -3,7 +3,7 @@
 // デモ（/demo 以下）の枠: 「架空のデータです」の帯、場面のタブ（前へ / 次へ）、テーマの切り替え、背景。
 // 本番のナビ（AppShell）は使わない（LINE ログイン・Firebase を読み込まないため）。リンクは /demo 以下だけ。
 // 場面の中身は各ページが DemoClientOnly で包み、マウントしてから描く（枠と目次はサーバーで描く。404 の本文はブラウザ側で描かれる）。
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Info, Wallet } from 'lucide-react';
@@ -40,6 +40,15 @@ export default function DemoShell({ children }: { children: ReactNode }) {
   const prev = current > 0 ? demoScenes[current - 1] : null;
   const next = current < 0 ? demoScenes[0] ?? null : demoScenes[current + 1] ?? null;
 
+  // 狭い画面ではタブが横にあふれるので、今の場面のタブを帯の中央へ寄せる（帯の中だけを動かし、ページは動かさない）
+  const tabsRef = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    const list = tabsRef.current;
+    const active = list?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!list || !active) return;
+    list.scrollLeft = active.offsetLeft - (list.clientWidth - active.offsetWidth) / 2;
+  }, [current]);
+
   return (
     <div className="min-h-dvh pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
       <div className="app-bg-blob" aria-hidden />
@@ -63,7 +72,7 @@ export default function DemoShell({ children }: { children: ReactNode }) {
         </div>
         <nav aria-label="デモの場面" className="mx-auto flex w-full max-w-5xl items-center gap-2 px-4 py-3 md:px-8">
           <StepLink scene={prev} dir="prev" />
-          <ol className="flex min-w-0 flex-1 gap-1 overflow-x-auto rounded-xl bg-fg/[0.04] p-1">
+          <ol ref={tabsRef} className="relative flex min-w-0 flex-1 gap-1 overflow-x-auto rounded-xl bg-fg/[0.04] p-1">
             {demoScenes.map((scene, i) => {
               const Icon = sceneIcon(scene.key);
               const active = i === current;

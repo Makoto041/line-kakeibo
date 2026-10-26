@@ -20,7 +20,7 @@ import {
   DEMO_TODAY,
   demoStats,
 } from '../lib/demo/demoData.ts';
-import { DEMO_INDEX_HREF, demoScenes, sceneIndexOf } from '../lib/demo/demoScenes.ts';
+import { DEMO_INDEX_HREF, demoScenes, sceneIndexOf, sceneOf } from '../lib/demo/demoScenes.ts';
 import {
   GMAIL_SYSTEM_LINE_ID,
   RECURRING_SYSTEM_LINE_ID,
@@ -233,19 +233,28 @@ test('場面の一覧: リンクは /demo/ 以下（末尾スラッシュ付き�
   assert.equal(DEMO_INDEX_HREF, '/demo/');
   assert.deepEqual(
     demoScenes.map((s) => s.key),
-    ['home', 'expenses', 'settlement']
+    // 入れる（LINE・カード利用の取込）→ 見る → 精算する の順
+    ['line', 'gmail', 'home', 'expenses', 'settlement', 'settlement-summary']
   );
   assert.equal(new Set(demoScenes.map((s) => s.key)).size, demoScenes.length);
   for (const s of demoScenes) {
     assert.match(s.href, /^\/demo\/[a-z-]+\/$/, s.href);
     assert.ok(s.label && s.description, s.key);
   }
-  assert.equal(sceneIndexOf('/demo/home/'), 0);
-  assert.equal(sceneIndexOf('/demo/expenses'), 1);
-  assert.equal(sceneIndexOf('/demo/settlement/'), 2);
+  demoScenes.forEach((s, i) => assert.equal(sceneIndexOf(s.href), i, s.href));
+  assert.equal(sceneIndexOf('/demo/line/'), 0);
+  assert.equal(sceneIndexOf('/demo/home/'), 2);
+  assert.equal(sceneIndexOf('/demo/expenses'), 3);
+  assert.equal(sceneIndexOf('/demo/settlement/'), 4);
+  // 精算（/demo/settlement/）と、名前が同じ文字で始まる精算サマリーを取り違えない
+  assert.equal(sceneIndexOf('/demo/settlement-summary/'), 5);
+  assert.equal(sceneIndexOf('/demo/settlement-summary'), 5);
   assert.equal(sceneIndexOf('/demo/'), -1);
   assert.equal(sceneIndexOf('/demo/xyz/'), -1);
   assert.equal(sceneIndexOf('/demo/home/xyz/'), -1); // 場面の下の存在しない URL（404）は場面にしない
   assert.equal(sceneIndexOf('/demo'), -1);
   assert.equal(sceneIndexOf(null), -1);
+  // 場面の中から別の場面へのリンクに使う
+  assert.equal(sceneOf('expenses').href, '/demo/expenses/');
+  assert.throws(() => sceneOf('xyz'));
 });
