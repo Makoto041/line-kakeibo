@@ -198,8 +198,8 @@ console.log('\ndecideSetCategory（LINE のカテゴリ選択。postback の set
         };
   }
 
-  // 正準名・揃えられない名前（趣味・カスタム名）は、切り出す前と同じ更新内容（＋中項目の削除）
-  for (const category of ['食費', '通信費', 'その他', '医療・健康', '趣味', '推し活']) {
+  // 正準名・揃えられない名前（カスタム名）は、切り出す前と同じ更新内容（＋中項目の削除）
+  for (const category of ['食費', '通信費', 'その他', '医療・健康', '推し活']) {
     for (const status of statuses) {
       const data = { status, amount: 1000, includeInTotal: false };
       const actual = decideSetCategory(category)(data);
@@ -212,12 +212,14 @@ console.log('\ndecideSetCategory（LINE のカテゴリ選択。postback の set
     }
   }
 
-  // カルーセルの旧名は正準名で保存する（それ以外は従来と同じ）
+  // カルーセル・LINE の入力の旧名は正準名で保存する（それ以外は従来と同じ）
   const legacyNames = [
     ['医療費', '医療・健康'],
     ['娯楽費', '娯楽'],
     ['衣服費', '衣服'],
     ['教育費', '教育'],
+    ['趣味', '娯楽'],
+    ['貯蓄', '貯金'],
   ];
   for (const [label, canonical] of legacyNames) {
     for (const status of statuses) {
@@ -260,6 +262,15 @@ console.log('\ndecideSetCategory の中項目（#235。大項目が変わると�
     check('保存済みの大項目の前後に空白があっても（「 食費 」→ 食費）同じ大項目として触らない', !hasSubKey(padded) && padded.update.category === '食費', JSON.stringify(padded));
     const storedMedical = decide('医療・健康', { category: '医療費', description: '病院', subCategory: 'x', status: 'shared' });
     check('保存済みが旧名（医療費）で正準名（医療・健康）を選んでも触らない', !hasSubKey(storedMedical) && storedMedical.update.category === '医療・健康', JSON.stringify(storedMedical));
+    // LINE の入力の旧名「趣味」（#243 で娯楽の別名にした）も、保存済みなら娯楽と同じ大項目として扱う
+    const storedHobby = decide('娯楽費', { category: '趣味', subCategory: '映画', description: '映画館', status: 'shared' });
+    check('保存済みが旧名（趣味）で娯楽費を選ぶと、娯楽にして中項目は決め直さない（#243）', !hasSubKey(storedHobby) && storedHobby.update.category === '娯楽', JSON.stringify(storedHobby));
+    const { subCategoriesOf } = require('../dist/categoryTaxonomy');
+    check(
+      '中項目の一覧は「趣味」でも娯楽のものを返す（#243）',
+      subCategoriesOf('娯楽').length > 0 && JSON.stringify(subCategoriesOf('趣味')) === JSON.stringify(subCategoriesOf('娯楽')),
+      JSON.stringify(subCategoriesOf('趣味'))
+    );
   }
 
   // 大項目が変わり、辞書で決まる
@@ -551,12 +562,16 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
       toSelectableCategoryName('医療費') === '医療・健康' && toSelectableCategoryName('娯楽費') === '娯楽' &&
         toSelectableCategoryName('衣服費') === '衣服' && toSelectableCategoryName('教育費') === '教育'
     );
+    check(
+      'LINE の入力の旧名（趣味・貯蓄）も正準名にして受け付ける（#243）',
+      toSelectableCategoryName('趣味') === '娯楽' && toSelectableCategoryName('貯蓄') === '貯金'
+    );
     check('前後の空白は除いて照合する', toSelectableCategoryName(' 食費 ') === '食費');
     check(
       '文字列以外は受け付けない',
       [undefined, null, 0, 123, true, {}, [], ['食費'], { name: '食費' }].every((v) => toSelectableCategoryName(v) === null)
     );
-    check('一覧に無い名前（空・趣味・カスタム名）は受け付けない', ['', ' ', '趣味', '推し活', 'food', '食費費'].every((v) => toSelectableCategoryName(v) === null));
+    check('一覧に無い名前（空・カスタム名）は受け付けない', ['', ' ', '推し活', 'food', '食費費'].every((v) => toSelectableCategoryName(v) === null));
     check(`上限は ${MAX_SELECTABLE_CATEGORY_LENGTH} 文字`, MAX_SELECTABLE_CATEGORY_LENGTH === 32);
     check(
       '上限ちょうどの長さ（空白で埋めた食費）は受け付け、1 文字超えると受け付けない（揃えれば一覧にある名前でも）',
@@ -773,7 +788,7 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
         ['配列', ['食費']],
         ['無し', undefined],
         ['空文字', ''],
-        ['一覧に無い名前', '趣味'],
+        ['一覧に無い名前', '推し活'],
         ['長すぎる値', 'あ'.repeat(200)],
         ['揃えれば一覧にあるが上限を超える長さ', '食費'.padStart(40, ' ')],
       ];
@@ -791,13 +806,16 @@ console.log('\nauthorizeExpenseWrite（偽のトランザクション）');
       }
       {
         docs.set('expenses/exp_cat', groupExpense({}));
-        const r = await press({ action: 'set_category', expenseId: 'exp_cat', category: '趣味' }, 'Ubob0001');
+        const r = await press({ action: 'set_category', expenseId: 'exp_cat', category: '推し活' }, 'Ubob0001');
         const w = r.warns.find((x) => x[0] === 'Rejected set_category: the category is not in the list');
-        check('拒否のログは型と長さだけ（支出 ID は伏せる）', w && w[1].type === 'string' && w[1].length === 2 && w[1].expense === '…_cat' && !JSON.stringify(w).includes('趣味'), JSON.stringify(r.warns));
+        check('拒否のログは型と長さだけ（支出 ID は伏せる）', w && w[1].type === 'string' && w[1].length === 3 && w[1].expense === '…_cat' && !JSON.stringify(w).includes('推し活'), JSON.stringify(r.warns));
       }
       docs.set('expenses/exp_cat', groupExpense({}));
       const alias = await press({ action: 'set_category', expenseId: 'exp_cat', category: '医療費' }, 'Ubob0001');
       check('カルーセルの旧名（医療費）は正準名（医療・健康）で保存する', alias.wrote && expense('exp_cat').category === '医療・健康');
+      docs.set('expenses/exp_cat', groupExpense({}));
+      const hobby = await press({ action: 'set_category', expenseId: 'exp_cat', category: '趣味' }, 'Ubob0001');
+      check('LINE の入力の旧名（趣味）も正準名（娯楽）で保存する（#243）', hobby.wrote && expense('exp_cat').category === '娯楽');
 
       // ---------------- confirm の認可（#266） ----------------
       console.log('  [confirm（OK）は世帯のメンバーだけ]');

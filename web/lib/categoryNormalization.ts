@@ -52,6 +52,9 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   'レジャー': '娯楽',
   '交友費': '娯楽',
   '交際費': '娯楽',
+  // LINE の入力で指定できる名前（bot の textParser.ts の VALID_CATEGORIES。#243）。部分一致を上から順に
+  // 見るので、教育の「本」より前に置く（「趣味の本」を娯楽にする）
+  '趣味': '娯楽',
 
   // 衣服
   '衣服費': '衣服',
@@ -146,6 +149,8 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   '投資': '貯金',
   '積立': '貯金',
   '定期預金': '貯金',
+  // LINE の入力で指定できる名前（bot の textParser.ts の VALID_CATEGORIES。#243）
+  '貯蓄': '貯金',
 };
 
 function normalizeString(s?: string): string {

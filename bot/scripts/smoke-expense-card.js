@@ -660,7 +660,7 @@ const LINE_INPUT_CATEGORIES = [
 ];
 const LINE_COMMAND_CATEGORIES = ['食費', '日用品', '交通費', '医療費', '娯楽費', '衣服費', '教育費', '通信費', 'その他'];
 const CAROUSEL_LABELS = ['食費', '日用品', '交通費', '医療費', '娯楽費', '衣服費', '教育費', '通信費', '光熱費', 'その他'];
-/** 旧名 → 正準名（正準名と、揃えられない「貯蓄」「趣味」は載せない） */
+/** 旧名 → 正準名（正準名は載せない） */
 const LEGACY_TO_CANONICAL = {
   医療費: '医療・健康',
   娯楽費: '娯楽',
@@ -668,6 +668,8 @@ const LEGACY_TO_CANONICAL = {
   教育費: '教育',
   投資: '貯金',
   交際費: '娯楽',
+  貯蓄: '貯金',
+  趣味: '娯楽',
 };
 const expectedCanonical = (name) => LEGACY_TO_CANONICAL[name] ?? name;
 
@@ -682,10 +684,12 @@ const expectedCanonical = (name) => LEGACY_TO_CANONICAL[name] ?? name;
   check('飲み会 → 食費（#235）', toCanonicalCategoryName('飲み会') === '食費', toCanonicalCategoryName('飲み会'));
   check('飲み会: normalizeCategoryName も食費', normalizeCategoryName('飲み会') === '食費', normalizeCategoryName('飲み会'));
   // normalizeCategoryName は「その他」や部分一致で寄せるが、保存ではカスタム名などを変えない
-  for (const name of ['貯蓄', '趣味', '推し活', '本田', 'ジム代', '日用品費', '', ' 推し活 ', 'constructor', '__proto__', 'toString']) {
+  for (const name of ['推し活', '本田', 'ジム代', '日用品費', '趣味の本', '', ' 推し活 ', 'constructor', '__proto__', 'toString']) {
     check(`揃えられない名前は変えない: ${JSON.stringify(name)}`, toCanonicalCategoryName(name) === name, JSON.stringify(toCanonicalCategoryName(name)));
   }
-  check('（参考）normalizeCategoryName なら「本田」は教育・「趣味」はその他になる', normalizeCategoryName('本田') === '教育' && normalizeCategoryName('趣味') === 'その他');
+  check('（参考）normalizeCategoryName なら「本田」は教育・「推し活」はその他になる', normalizeCategoryName('本田') === '教育' && normalizeCategoryName('推し活') === 'その他');
+  // 部分一致は ALIAS_TO_CANONICAL の上から順に見る。「趣味」が教育の「本」より後ろにあると教育になる
+  check('（参考）normalizeCategoryName なら「趣味の本」は娯楽になる（「趣味」は「本」より前）', normalizeCategoryName('趣味の本') === '娯楽', normalizeCategoryName('趣味の本'));
 
   check(
     '「カテゴリー」コマンドの選択肢はすべて正準名に揃う',
@@ -693,10 +697,27 @@ const expectedCanonical = (name) => LEGACY_TO_CANONICAL[name] ?? name;
     LINE_COMMAND_CATEGORIES.map(toCanonicalCategoryName).join(',')
   );
   check(
-    '入力で指定できる名前は「貯蓄」「趣味」以外すべて正準名に揃う',
-    LINE_INPUT_CATEGORIES.every((c) => ['貯蓄', '趣味'].includes(c) || CANONICAL_CATEGORIES.includes(toCanonicalCategoryName(c))),
+    '入力で指定できる名前はすべて正準名に揃う',
+    LINE_INPUT_CATEGORIES.every((c) => CANONICAL_CATEGORIES.includes(toCanonicalCategoryName(c))),
     LINE_INPUT_CATEGORIES.map(toCanonicalCategoryName).join(',')
   );
+}
+
+/**
+ * LINE で指定・選択できる名前が、Web の normalizeCategoryName（web/lib/categoryNormalization.ts。表は bot の写し）でも
+ * bot の保存と同じ正準名になること（#243）。片方の表だけに別名を足すと、LINE で保存した値が Web で別のカテゴリに入る。
+ * Web 側は Node の型除去で .ts を直接読む（smoke-settlement-summary.js と同じ）。末尾でほかの確かめの後に呼ぶ。
+ */
+async function webNormalizationChecks() {
+  const path = require('node:path');
+  const { pathToFileURL } = require('node:url');
+  console.log('\n[Web の normalizeCategoryName も bot と同じ正準名]');
+  const web = await import(pathToFileURL(path.join(__dirname, '../../web/lib/categoryNormalization.ts')).href);
+  for (const name of new Set([...LINE_INPUT_CATEGORIES, ...LINE_COMMAND_CATEGORIES, ...CAROUSEL_LABELS])) {
+    const expected = toCanonicalCategoryName(name);
+    check(`「${name}」→ Web も ${expected}`, web.normalizeCategoryName(name) === expected, web.normalizeCategoryName(name));
+  }
+  check('「趣味の本」→ Web も娯楽（「趣味」は「本」より前）', web.normalizeCategoryName('趣味の本') === '娯楽', web.normalizeCategoryName('趣味の本'));
 }
 
 {
@@ -770,7 +791,8 @@ const expectedCanonical = (name) => LEGACY_TO_CANONICAL[name] ?? name;
     ['食費', ['食費']],
     ['その他', ['その他']],
     ['サブスク', []],
-    ['趣味', []],
+    ['趣味', ['娯楽費']],
+    ['貯蓄', []],
   ];
   for (const [current, expected] of highlightCases) {
     const m = carousel(current);
@@ -2156,6 +2178,11 @@ saveFlowChecks()
   .catch((error) => {
     failed++;
     console.log(`  FAIL 保存データの確かめで例外 — ${error && error.stack}`);
+  })
+  .then(() => webNormalizationChecks())
+  .catch((error) => {
+    failed++;
+    console.log(`  FAIL Web の正規化との突き合わせで例外 — ${error && error.stack}`);
   })
   .finally(() => {
     console.log(failed === 0 ? '\nすべて通過' : `\n${failed} 件失敗`);
