@@ -39,7 +39,8 @@ const SUMMARY = buildDemoSettlementSummary({
   pool: periodPool(DEMO_EXPENSES, DEMO_HOUSEHOLD_ID, PERIOD.range),
 });
 
-// Flex の大きさ（px）: 文字 xxs 11 / xs 13 / sm 14 / md 16 / 3xl 35、余白 xs 2 / sm 4 / md 8 / lg 12 / xl 16、幅は mega の 300
+// Flex の大きさ（px）: 文字 xxs 11 / xs 13 / sm 14 / md 16 / 3xl 35、余白 xs 2 / sm 4 / md 8 / lg 12 / xl 16、幅は mega の 300。
+// 見出しのアイコン（icon・size md）は、確認カード（LineExpenseCard）と同じく 19px で描く
 function SummaryBubble({ summary }: { summary: DemoSettlementSummary }) {
   const { flex } = summary;
   return (

@@ -15,6 +15,7 @@ export function LinePhone({
   children,
   footer,
   bodyRef,
+  live,
 }: {
   title: string;
   memberCount: number;
@@ -23,6 +24,8 @@ export function LinePhone({
   children: ReactNode;
   footer?: ReactNode;
   bodyRef?: Ref<HTMLDivElement>;
+  /** 新しい発言を読み上げる（会話が増える場面） */
+  live?: boolean;
 }) {
   return (
     <div className="mx-auto w-full max-w-[380px] rounded-[2.6rem] bg-neutral-900 p-2 shadow-glass-lg ring-1 ring-black/10 dark:bg-black dark:ring-white/10">
@@ -46,7 +49,11 @@ export function LinePhone({
           <Search aria-hidden className="h-[18px] w-[18px] shrink-0 opacity-80" />
           <Menu aria-hidden className="h-[18px] w-[18px] shrink-0 opacity-80" />
         </div>
-        <div ref={bodyRef} className="relative min-h-0 flex-1 space-y-3 overflow-y-auto px-2.5 py-3">
+        <div
+          ref={bodyRef}
+          aria-live={live ? 'polite' : undefined}
+          className="relative min-h-0 flex-1 space-y-3 overflow-y-auto px-2.5 py-3"
+        >
           {children}
         </div>
         {footer}

@@ -3,7 +3,7 @@
 // デモの LINE の会話。スマホの枠の中のトークで、用意した文例（lib/demo/demoLine.ts の DEMO_CHAT_EXAMPLES）を選んで送ると、
 // 入力中の表示のあとに確認カード（LineExpenseCard）が返る。OK を押すと「この内容で確定」と発言し、確定のカードが返る（bot の postback と同じ）。
 // 自由入力はさせない（bot の判定をデモで再現できないため）。会話はこの画面の状態だけで、どこにも保存しない。
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Info, Plus, RotateCcw, SendHorizontal } from 'lucide-react';
 import { GlassCard } from '../home/GlassCard';
 import LineExpenseCard from './LineExpenseCard';
@@ -54,6 +54,8 @@ export default function LineChat() {
   // 返事を待つタイマー（同じ Set を使い続け、画面を離れたら止める）
   const timers = useRef<Set<number>>(new Set());
   const bodyRef = useRef<HTMLDivElement>(null);
+  // 文例のチップと送る文の欄のラベル（見えている説明の行）
+  const labelId = useId();
 
   const draft = DEMO_CHAT_EXAMPLES.find((e) => e.key === draftKey) ?? null;
 
@@ -71,7 +73,8 @@ export default function LineChat() {
     const last = body?.lastElementChild as HTMLElement | null | undefined;
     if (!body || !last) return;
     const top = last.offsetHeight > body.clientHeight ? last.offsetTop - 8 : body.scrollHeight;
-    body.scrollTo({ top, behavior: 'smooth' });
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    body.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
   }, [items]);
 
   const later = (ms: number, run: () => void) => {
@@ -136,8 +139,10 @@ export default function LineChat() {
 
   const footer = (
     <div className="shrink-0 border-t border-black/5 bg-white px-2.5 pb-3 pt-2 dark:border-white/5 dark:bg-[#20252f]">
-      <p className="mb-1.5 text-[11px] text-slate-500 dark:text-slate-400">文例を選んで送信（自由入力はできません）</p>
-      <div className="flex flex-wrap gap-1.5">
+      <p id={labelId} className="mb-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+        文例を選んで送信（自由入力はできません）
+      </p>
+      <div role="group" aria-labelledby={labelId} className="flex flex-wrap gap-1.5">
         {DEMO_CHAT_EXAMPLES.map((example) => {
           const selected = example.key === draftKey;
           return (
@@ -160,12 +165,12 @@ export default function LineChat() {
       </div>
       <div className="mt-2 flex items-center gap-2">
         <Plus aria-hidden className="h-5 w-5 shrink-0 text-slate-400" />
-        <p
-          aria-label="送る文"
-          className="min-w-0 flex-1 truncate rounded-full bg-slate-100 px-3 py-2 text-[14px] text-[#111] dark:bg-white/10 dark:text-white"
+        <output
+          aria-labelledby={labelId}
+          className="block min-w-0 flex-1 truncate rounded-full bg-slate-100 px-3 py-2 text-[14px] text-[#111] dark:bg-white/10 dark:text-white"
         >
           {draft ? draft.text : <span className="text-slate-400">上の文例を選んでください</span>}
-        </p>
+        </output>
         <button
           type="button"
           aria-label="送信"
@@ -188,6 +193,7 @@ export default function LineChat() {
         clock={clockOf(Math.max(START_MINUTES, minutes - 1))}
         footer={footer}
         bodyRef={bodyRef}
+        live
       >
         <DateDivider label={talkDateLabel(DEMO_TODAY)} />
         {items.length === 0 && (

@@ -265,6 +265,7 @@ test('「現在の設定」: 見出し・4 行のラベルの並び・アイコ�
   assert.match(section, new RegExp(`buttonLabel: '${L.CARD_TEXT.payerButton}',\\s*buttonTone: 'primary'`));
   includes(section, 'iconUrl: categoryIconUrl(category)', 'buildCurrentSettingsSection');
   includes(section, 'note: categoryOriginNote(categoryOrigin)', 'buildCurrentSettingsSection');
+  includes(section, 'subValue: cardSubCategoryOf(category, subCategory),', 'buildCurrentSettingsSection');
 
   const row = bodyOf(FLEX, 'settingRow');
   includes(row, `{ type: 'span', text: \`\${opts.label}${L.CARD_TEXT.labelSuffix}\`, color: '${L.CARD_COLORS.label}' }`, 'settingRow');
@@ -337,6 +338,37 @@ test('カードの中身: 文例のカード（未確認・辞書）、確定の
     ['hand-coins', '立替', 'なし（折半）', null, null, '自分が立替', 'primary'],
     ['cat-food', 'カテゴリ', '食費', '昼ご飯', '（Jev）', '変更', 'primary'],
   ]);
+});
+
+test('中項目と判定元は、保存・カードの組み立て・「現在の設定」の行まで渡される（受け渡しが抜けるとカードに出ない）', () => {
+  // 分割代入の行（const { …, categoryOrigin, … } = info）と取り違えないよう、呼び出しの引数の行（単独の `name,`）だけを見る
+  const passes = (source, name) => new RegExp(`^\\s*${name},(?:\\s*//.*)?$`, 'm').test(source);
+  const callOf = (body, call) => {
+    const start = body.indexOf(call);
+    const end = body.indexOf('\n  });', start);
+    assert.ok(start !== -1 && end !== -1, `${call} の呼び出しが読めない`);
+    return body.slice(start, end);
+  };
+  for (const fn of ['buildTextExpenseFlexMessage', 'buildCardUsageFlexMessage']) {
+    const call = callOf(bodyOf(FLEX, fn), 'return buildExpenseCard({');
+    for (const name of ['subCategory', 'categoryOrigin']) assert.ok(passes(call, name), `${fn} が buildExpenseCard に ${name} を渡していない`);
+  }
+  includes(
+    bodyOf(FLEX, 'buildExpenseCard'),
+    'buildCurrentSettingsSection({ expenseId, source, category, subCategory, categoryOrigin, status, advanceFull, payer })',
+    'buildExpenseCard'
+  );
+  // LINE の入力: 登録のカードの情報（textExpenseInfo）に中項目と判定元を入れる
+  const infoStart = EXPENSE_FLOW.indexOf('const textExpenseInfo: TextExpenseInfo = {');
+  const infoEnd = EXPENSE_FLOW.indexOf('\n      };', infoStart);
+  assert.ok(infoStart !== -1 && infoEnd !== -1, 'textExpenseInfo が読めない');
+  const infoBlock = EXPENSE_FLOW.slice(infoStart, infoEnd);
+  for (const name of ['subCategory', 'categoryOrigin']) assert.ok(passes(infoBlock, name), `textExpenseInfo に ${name} が無い`);
+  includes(EXPENSE_FLOW, 'await sendTextExpenseNotification(targetId, textExpenseInfo, replyToken);', 'expenseFlow.ts');
+  // カード利用: 通知の情報（cardUsageOf）に中項目と判定元を入れ、保存した中項目を渡す
+  const usage = bodyOf(GMAIL_HANDLER, 'cardUsageOf');
+  for (const name of ['subCategory', 'categoryOrigin']) assert.ok(passes(usage, name), `cardUsageOf に ${name} が無い`);
+  includes(GMAIL_HANDLER, 'cardUsageOf(parsed, category, expense.subCategory, categoryOrigin)', 'gmail/handler.ts');
 });
 
 // ---- 文例（LINE の手入力） --------------------------------------------------------------
@@ -592,5 +624,22 @@ test('精算サマリーの数え方（折半の対象・要確認・割合・�
   includes(build, 'const rest = sorted.slice(SUMMARY_TOP_CATEGORIES);', 'buildSettlementSummary');
   includes(build, 'othersPaid: split.total - split.targetPaid,', 'buildSettlementSummary');
   includes(bodyOf(PERIOD_SPLIT, 'formatYenExact'), "return `¥${rounded.toLocaleString('ja-JP', { maximumFractionDigits: 1 })}`;", 'formatYenExact');
+  // 金額は数値にできなければ 0（bot: amountOf）。カテゴリ別・要確認の合計に NaN を出さない
+  includes(bodyOf(PERIOD_SPLIT, 'amountOf'), 'return Number.isFinite(n) ? n : 0;', 'amountOf');
+  includes(build, 'byCategory.set(category, (byCategory.get(category) ?? 0) + amountOf(e));', 'buildSettlementSummary');
+  includes(build, 'pending: { count: pending.length, amount: pending.reduce((sum, e) => sum + amountOf(e), 0) },', 'buildSettlementSummary');
+  const broken = S.buildDemoSettlementSummary({
+    range: PERIOD.range,
+    members: DEMO_MEMBERS,
+    split: { ...SPLIT, total: 1000 },
+    pool: [
+      { amount: 1000, category: '食費', includeInTotal: true, status: 'shared' },
+      { amount: 'x', category: '食費', includeInTotal: true, status: 'shared' },
+      { amount: 500, category: '日用品', includeInTotal: false, inputSource: 'line_text' },
+      { amount: undefined, category: '日用品', includeInTotal: false, inputSource: 'line_text' },
+    ],
+  });
+  assert.deepEqual(broken.flex.categories.map((c) => [c.category, c.amountText]), [['食費', '¥1,000']]);
+  assert.equal(broken.flex.pending, '要確認が 2件（¥500）あります。確認すると、この期間の合計に入ります');
   assert.deepEqual([S.formatYenExact(82205), S.formatYenExact(160426.5)], ['¥82,205', '¥160,426.5']);
 });

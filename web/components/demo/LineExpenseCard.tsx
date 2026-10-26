@@ -1,6 +1,7 @@
 // デモの確認カード。bot の Flex Message（bot/src/line/flexMessage.ts の buildExpenseCard）を、同じ骨格・色・文言で描く。
 // 文言・色・アイコンは lib/demo/demoLine.ts から取り、ここには書かない（bot のソースとの一致は __tests__/demoCard.test.mjs）。
 // 大きさは Flex の値を px にしたもの（文字 xs 13 / sm 14 / md 16 / lg 19 / xl 22、余白 sm 4 / md 8 / lg 12 / xl 16、幅は kilo の 260）。
+// 見出しのアイコン（Flex の icon・size md）は、この表の文字の md（16）ではなく 19px で描く（見出しの文字と並べた見た目で決めた値）。
 // LINE と同じく、カードはテーマに関係なく白で描く。押して動くのは OK（呼び出し側が会話に足す）と「家計簿一覧を見る」（デモの支出一覧）だけで、
 // ほかのボタン（修正・レシート添付・行末のボタン）は見た目だけ。
 import Link from 'next/link';

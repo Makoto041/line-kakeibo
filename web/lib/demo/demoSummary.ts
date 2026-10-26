@@ -56,6 +56,12 @@ export function periodLabel(range: { startDate: string; endDate: string }): stri
 
 type SummaryExpense = Pick<Expense, 'amount' | 'category' | 'includeInTotal' | 'status' | 'advanceFull' | 'inputSource' | 'confirmed'>;
 
+/** 金額（bot: amountOf。数値にできなければ 0） */
+function amountOf(e: Pick<SummaryExpense, 'amount'>): number {
+  const n = Number(e.amount);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /** 折半の対象（bot: isSplitCounted。合計に含み、立替精算済み・立替（全額）でないもの） */
 function isSplitCounted(e: SummaryExpense): boolean {
   const fullAdvance = e.status === 'advance_pending' && e.advanceFull === true;
@@ -125,7 +131,7 @@ export function buildDemoSettlementSummary(input: {
   const byCategory = new Map<string, number>();
   for (const e of pool.filter(isSplitCounted)) {
     const category = typeof e.category === 'string' && e.category ? e.category : 'その他';
-    byCategory.set(category, (byCategory.get(category) ?? 0) + Number(e.amount));
+    byCategory.set(category, (byCategory.get(category) ?? 0) + amountOf(e));
   }
   const sorted = Array.from(byCategory, ([category, amount]) => ({
     category,
@@ -135,7 +141,7 @@ export function buildDemoSettlementSummary(input: {
   })).sort((a, b) => b.amount - a.amount);
   const rest = sorted.slice(SUMMARY_TOP_CATEGORIES);
   const pending = pool.filter(isPendingManual);
-  const pendingAmount = pending.reduce((sum, e) => sum + Number(e.amount), 0);
+  const pendingAmount = pending.reduce((sum, e) => sum + amountOf(e), 0);
 
   const countLabel = [
     `${split.count}件`,
