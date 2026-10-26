@@ -62,6 +62,46 @@ interface ExtendedPostbackActionData extends PostbackActionData {
   to?: 'shared' | 'personal' | 'on' | 'off';
 }
 
+/**
+ * ログに出してよい postback の action（handlePostback の switch が扱う名前。旧UIの shared / personal / advance を含む）
+ *
+ * action は利用者が送れる値なので、これ以外はログに出さず 'unknown' にする（actionForLog）。
+ */
+const KNOWN_ACTIONS: ReadonlySet<string> = new Set([
+  'set_split',
+  'set_payer',
+  'set_advance',
+  'confirm',
+  'edit',
+  'show_category_select',
+  'set_category',
+  'show_list',
+  'shared',
+  'personal',
+  'advance',
+]);
+
+/** ログに出す action（既知の名前だけ。それ以外は 'unknown'） */
+function actionForLog(action: unknown): string {
+  return typeof action === 'string' && KNOWN_ACTIONS.has(action) ? action : 'unknown';
+}
+
+/**
+ * postback のイベントから、ログに出す action を取り出す（webhookApp.ts の例外のログ用）
+ *
+ * data を JSON として解釈できない・action が既知の名前でないときは 'unknown'。
+ */
+export function postbackActionForLog(event: { postback?: { data?: unknown } }): string {
+  const data = event.postback?.data;
+  if (typeof data !== 'string') return 'unknown';
+  try {
+    const parsed: unknown = JSON.parse(data);
+    return actionForLog(typeof parsed === 'object' && parsed !== null ? (parsed as { action?: unknown }).action : undefined);
+  } catch {
+    return 'unknown';
+  }
+}
+
 /** 返信先（グループならグループ、そうでなければ本人） */
 function getReplyTarget(event: PostbackEvent): string | undefined {
   return event.source?.type === 'group'
@@ -155,7 +195,8 @@ export async function handlePostback(event: PostbackEvent): Promise<void> {
   // 有効なPostbackかチェック。支出 ID は Firestore の文書 ID として安全な文字列だけを受け付ける
   // （/household API と同じ isValidDocId。不正なら、支出が無いときと同じく何もしない。Firestore も LINE も呼ばない）
   if (!actionData || typeof actionData !== 'object' || !actionData.action || !isValidDocId(actionData.expenseId)) {
-    console.log('Not a valid postback, skipping');
+    // 支出 ID は検証に通らなかった入力なので、伏せた形（末尾 4 文字）でも出さない
+    console.log('Not a valid postback, skipping', { user: maskId(event.source?.userId) });
     return;
   }
 
@@ -217,7 +258,7 @@ async function handleSetSplit(
   const { expenseId } = actionData;
   const includeInTotal = to === 'shared';
 
-  const record = await applyAsMember(event, expenseId, () => (data) => {
+  const record = await applyAsMember(event, actionData, () => (data) => {
     if (data.status === 'advance_settled') return { reject: SETTLED_REJECTION };
 
     return {
@@ -259,6 +300,16 @@ const PRESSER_UNKNOWN_TEXT = '押した人を特定できなかったため、�
 /** 押した人が支出を変えてよい人でないときの返信 */
 const MEMBERS_ONLY_TEXT = '変更できるのは、世帯のメンバーだけです';
 
+/** 押した人が支出を変えてよい人でないときのログ（ID は伏せ、action は既知の名前だけ） */
+function logMembersOnlyRejection(userId: string, expenseId: string, action: unknown): void {
+  console.warn('Postback rejected: the presser is not a member of the household', {
+    user: maskId(userId),
+    expense: maskId(expenseId),
+    // ここに届く action は handlePostback の switch が通した既知の名前だけ。許可リストは多重の防御
+    action: actionForLog(action),
+  });
+}
+
 /**
  * 押した人が、この支出を変えてよい人か
  *
@@ -290,9 +341,10 @@ async function presserAsMember(
  */
 async function applyAsMember(
   event: PostbackEvent,
-  expenseId: string,
+  actionData: ExtendedPostbackActionData,
   decide: (presser: { lineId: string; displayName: string }) => ExpenseDecider
 ): Promise<Record<string, unknown> | null> {
+  const { expenseId } = actionData;
   const userId = event.source!.userId;
   if (!userId) {
     console.error('Cannot identify the presser: userId is missing', { expense: maskId(expenseId), sourceType: event.source!.type });
@@ -317,6 +369,7 @@ async function applyAsMember(
 
   if (!result) return null;
   if ('forbidden' in result) {
+    logMembersOnlyRejection(userId, expenseId, actionData.action);
     await replyText(event, MEMBERS_ONLY_TEXT);
     return null;
   }
@@ -330,7 +383,7 @@ async function applyAsMember(
 /** 支払った人を、押した人にする（［自分が払った］） */
 async function handleSetPayer(event: PostbackEvent, actionData: ExtendedPostbackActionData): Promise<void> {
   const { expenseId } = actionData;
-  const record = await applyAsMember(event, expenseId, (presser) => decideSetPayer(presser));
+  const record = await applyAsMember(event, actionData, (presser) => decideSetPayer(presser));
   if (!record) return;
   console.log('Expense payer set by the presser', { expense: maskId(expenseId) });
   await replyUpdatedCard(
@@ -348,7 +401,7 @@ async function handleSetPayer(event: PostbackEvent, actionData: ExtendedPostback
  */
 async function handleSetAdvance(event: PostbackEvent, actionData: ExtendedPostbackActionData, on: boolean): Promise<void> {
   const { expenseId } = actionData;
-  const record = await applyAsMember(event, expenseId, (presser) => (on ? decideSetAdvance(presser) : decideClearAdvance()));
+  const record = await applyAsMember(event, actionData, (presser) => (on ? decideSetAdvance(presser) : decideClearAdvance()));
   if (!record) return;
   console.log('Expense advance updated', { expense: maskId(expenseId), on });
   await replyUpdatedCard(event, expenseId, record, on ? '立替にしました（期間の精算で相手から全額を返してもらいます）' : '設定を更新しました');
@@ -368,7 +421,7 @@ async function handleConfirm(
   const { expenseId } = actionData;
 
   // 判定は Web の確認（/household API）と共通（expenseActions.ts）
-  const record = await applyAsMember(event, expenseId, () => decideConfirm());
+  const record = await applyAsMember(event, actionData, () => decideConfirm());
   if (!record) return;
 
   console.log('Expense confirmed', { expense: maskId(expenseId), status: record.status });
@@ -448,6 +501,7 @@ async function handleShowCategorySelect(
   const { data } = loaded;
 
   if (!(await presserAsMember(getFirestore(), data, userId))) {
+    logMembersOnlyRejection(userId, expenseId, actionData.action);
     await replyText(event, MEMBERS_ONLY_TEXT);
     return;
   }
@@ -498,7 +552,7 @@ async function handleSetCategory(
   // カルーセルの旧名（医療費・娯楽費など）は正準名に揃えて保存する（toSelectableCategoryName・decideSetCategory）。
   // 大項目が変わるときは、中項目を辞書と時刻のルールでサーバーが決め直す（決まらなければ消す）。
   // postback に中項目（subCategory）が入っていても使わない（渡すのは category だけ）。
-  const record = await applyAsMember(event, expenseId, () => decideSetCategory(category));
+  const record = await applyAsMember(event, actionData, () => decideSetCategory(category));
   if (!record) return;
 
   // 中項目は固定の一覧の語だけを出す（大項目が同じで触らなかったとき、Web で書かれた一覧に無い値が残っていることがある）
