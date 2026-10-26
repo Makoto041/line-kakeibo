@@ -3,6 +3,8 @@
 // （bot/src/line/settlementSummaryMessage.ts）を手で写したもの。文言・色は __tests__/demoCard.test.mjs で bot のソースと突き合わせる。
 // 送金額などの数字は、画面（components/demo/LineSettlementSummary.tsx）が本番と同じ computePeriodSplit・periodPool の結果を渡して出す
 // （手で書いた数字は置かない）。カテゴリ別・要確認の集計は bot と同じ数え方をここに書く（web の lib/periodSplit.ts に無いため）。
+// ただしカテゴリ名は、本番（bot）は正準名にまとめるが、ここは保存された名前のまま数える。デモの支出は正準名だけなので
+// 結果は同じ（__tests__/demoCard.test.mjs の断言が守る）。
 // node --test から直接読めるよう、型だけを import する。
 import type { Expense } from '../hooks';
 import type { PeriodSplit } from '../periodSplit';
@@ -127,7 +129,8 @@ export function buildDemoSettlementSummary(input: {
   const targetName = split.target?.displayName || 'メンバー';
   const counterpartName = split.counterpart?.displayName || 'メンバー';
 
-  // カテゴリ別（折半の対象だけ。割合は合計に対して小数 1 桁）
+  // カテゴリ別（折半の対象だけ。割合は合計に対して小数 1 桁）。本番は正準名にまとめる（toCanonicalCategoryName）が、
+  // デモの支出は正準名だけなので、保存された名前のまま数えても結果は同じ（__tests__/demoCard.test.mjs の断言が守る）
   const byCategory = new Map<string, number>();
   for (const e of pool.filter(isSplitCounted)) {
     const category = typeof e.category === 'string' && e.category ? e.category : 'その他';

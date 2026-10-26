@@ -2,6 +2,7 @@
 // useMonthlyStats（lib/hooks.ts）と同じく、正規化に normalizeCategoryName を渡す。node --test で実行する。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { buildCategoryBudgetRows, getActualSpending, sumCategoryTotals } from '../lib/budgetAnalytics.ts';
 import { normalizeCategoryName } from '../lib/categoryNormalization.ts';
@@ -50,6 +51,22 @@ test('予算カード: 交際費・投資は娯楽・貯金の予算に数え、
   for (const old of ['娯楽費', '交際費', '投資', '医療費', '推し活']) {
     assert.ok(!rows.some((r) => r.category === old), `「${old}」が別の行になっている`);
   }
+});
+
+test('useMonthlyStats は、カテゴリ別の合計を normalizeCategoryName を通した sumCategoryTotals で出す', () => {
+  // hooks.ts は firebase を import するので node --test から動かせない。ソースを文字列として読み、配線の行を確かめる
+  // （前例: demoCard.test.mjs が bot のソースを読む）。CI は web/ を作業ディレクトリにして実行するので、このファイルからの相対で読む
+  const hooks = readFileSync(new URL('../lib/hooks.ts', import.meta.url), 'utf8');
+  const start = hooks.search(/\bexport function useMonthlyStats\s*\(/);
+  assert.notEqual(start, -1, 'useMonthlyStats が無い');
+  const end = hooks.indexOf('\nexport ', start + 1);
+  const body = hooks.slice(start, end === -1 ? undefined : end);
+  assert.ok(
+    body.includes('const categoryTotals = sumCategoryTotals(includedExpenses, (category) => normalizeCategoryName(category));'),
+    'useMonthlyStats のカテゴリ別の合計が、normalizeCategoryName を通した sumCategoryTotals になっていない'
+  );
+  assert.ok(hooks.includes("import { normalizeCategoryName } from './categoryNormalization';"), 'normalizeCategoryName の import が無い');
+  assert.ok(hooks.includes("import { sumCategoryTotals } from './budgetAnalytics';"), 'sumCategoryTotals の import が無い');
 });
 
 test('予算カード: 旧名の予算キー（娯楽費）は、まとめた実支出を逆引きで数える', () => {

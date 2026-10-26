@@ -198,8 +198,9 @@ export function inDemoRange(e: Pick<Expense, 'date'>, range: { startDate: string
 }
 
 /**
- * 期間の集計（ホームの合計・件数・カテゴリ別・日別）。本番の useMonthlyStats（lib/hooks.ts）と同じ数え方:
- * 合計に含むもの（includeInTotal）だけを数え、カテゴリは保存された名前のまま、日別は date ごと
+ * 期間の集計（ホームの合計・件数・カテゴリ別・日別）。本番の useMonthlyStats（lib/hooks.ts）と同じく、
+ * 合計に含むもの（includeInTotal）だけを数え、日別は date ごと。カテゴリは、本番は正準名にまとめる（sumCategoryTotals）が、
+ * ここは保存された名前のまま数える。デモの支出は正準名だけなので結果は同じ（__tests__/demoCard.test.mjs の断言が守る）
  */
 export function demoStats(expenses: readonly Expense[], range: { startDate: string; endDate: string }): ExpenseStats {
   const included = expenses.filter((e) => inDemoRange(e, range) && e.includeInTotal);
