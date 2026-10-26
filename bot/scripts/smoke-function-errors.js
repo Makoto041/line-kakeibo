@@ -106,6 +106,9 @@ let historyError = null; // history.list が投げる例外
 let messageError = null; // メールの処理（最初の deliverPendingCardNotice）が投げる例外
 let watchState = { historyId: '100' }; // 連携中のアドレスは無い（照合しない）
 const historyUpdates = [];
+const MAILBOX_HISTORY_ID = '1000000';
+const PROFILE_HISTORY_ID = '2000000';
+const lastHistoryUpdate = () => historyUpdates[historyUpdates.length - 1];
 gmailAuth.getGmailClient = async () => {
   if (gmailClientError) throw gmailClientError;
   return {
@@ -113,12 +116,12 @@ gmailAuth.getGmailClient = async () => {
       history: {
         list: async () => {
           if (historyError) throw historyError;
-          // historyId はメールボックスの現在位置（取込が保存する historyId の上限）。このテストの通知より大きい値にする
-          return { data: { history: [{ messagesAdded: [{ message: { id: 'msg-0001' } }] }], historyId: '1000000' } };
+          // historyId はメールボックスの現在位置（取込が保存する historyId。#298）。このテストの通知のどれとも違う値にする
+          return { data: { history: [{ messagesAdded: [{ message: { id: 'msg-0001' } }] }], historyId: MAILBOX_HISTORY_ID } };
         },
       },
-      // history.list が 404 のときの現在位置
-      getProfile: async () => ({ data: { historyId: '1000000' } }),
+      // history.list が 404 のときの現在位置（history.list の値とも分ける）
+      getProfile: async () => ({ data: { historyId: PROFILE_HISTORY_ID } }),
     },
   };
 };
@@ -269,7 +272,11 @@ async function main() {
   messageError = null;
   priorFailures = {};
   write = lastFailureWrite(writesBefore);
-  check('諦めた（試行 3・7 時間）: 投げずに historyId を進める', r === 'ok' && historyUpdates.length === historyBefore + 1, String(r));
+  check(
+    '諦めた（試行 3・7 時間）: 投げずに historyId を応答の現在位置まで進める',
+    r === 'ok' && historyUpdates.length === historyBefore + 1 && lastHistoryUpdate() === MAILBOX_HISTORY_ID,
+    String(r)
+  );
   check('諦めた: 失敗の記録の以前の文言を消す', !!write && write.attempts === 3 && isDelete(write.lastError), util.inspect(write));
   check('諦めた: ログに元の文言が無い', !hasCanary(allText()), allText());
 
@@ -287,7 +294,11 @@ async function main() {
   historyBefore = historyUpdates.length;
   r = await handle('403');
   historyError = null;
-  check('history.list の 404（historyId が古すぎる）: 投げずに先へ飛ばす', r === 'ok' && historyUpdates.length === historyBefore + 1, String(r));
+  check(
+    'history.list の 404（historyId が古すぎる）: 投げずに getProfile の現在位置まで先へ飛ばす',
+    r === 'ok' && historyUpdates.length === historyBefore + 1 && lastHistoryUpdate() === PROFILE_HISTORY_ID,
+    String(r)
+  );
 
   r = await capture(async () => {
     try {
@@ -299,8 +310,13 @@ async function main() {
   });
   check('historyId の読めない通知: 投げない', r === 'ok', String(r));
 
+  historyBefore = historyUpdates.length;
   r = await handle('404');
-  check('成功: 投げずに historyId を進める', r === 'ok' && historyUpdates[historyUpdates.length - 1] === '404', String(r));
+  check(
+    '成功: 投げずに、応答の現在位置まで historyId を進める（通知の値 404 ではない）',
+    r === 'ok' && historyUpdates.length === historyBefore + 1 && lastHistoryUpdate() === MAILBOX_HISTORY_ID,
+    { r: String(r), last: lastHistoryUpdate() }
+  );
 
   console.log('\n[実行環境を通した呼び出し（別のプロセス。出力をすべて捕まえる）]');
   runRuntimeProbe();

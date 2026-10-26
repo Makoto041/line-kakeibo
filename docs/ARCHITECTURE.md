@@ -146,11 +146,13 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
     （大文字小文字は区別しない）。違う・無いときは history.list を呼ばず historyId も更新せずに終える（切り替える前のアカウントの
     watch は最大 7 日通知しうるため。GMAIL_AUTO_SPEC §3.2・§11.2）。ただし getProfile（1 回だけ呼ぶ）が通知と同じなら、
     保存値が古いだけ（アドレスの変更）なので書き直して処理を続ける。アドレスが保存されていない状態では照合せず以前どおり処理する
-  ※ 保存する historyId は、通知の値とメールボックスの現在位置（history.list の最後のページの historyId。404 のときは getProfile の
-    historyId）の小さい方（watch.ts の capHistoryId）。topic に publish できる者が偽った大きい historyId で保存値が先へ飛び、
-    以降の通知で何も取り込まれなくなるのを防ぐ（通知の historyId は 10 進の正規の形〔先頭ゼロなし・uint64 以下〕だけを受け付ける）。
-    上限を掛けたら固定文の警告を出して処理は続け、現在位置が取れなければ進めない
-    （範囲は次の通知でもう一度処理される。GMAIL_AUTO_SPEC §3.2）
+  ※ 保存する historyId は、常にメールボックスの現在位置（history.list の最後のページの historyId。404 のときは getProfile の
+    historyId。watch.ts の mailboxHistoryIdToSave。#298）。通知の historyId は取込を起こす合図としてだけ使い、保存しない
+    （topic に publish できる者が偽った通知で、保存値を Gmail の返していない番号に置かせない。通知の historyId は 10 進の正規の形
+    〔先頭ゼロなし・uint64 以下〕だけを受け付け、それ以外は捨てる）。取込は保存値から現在位置までを処理し終えてから保存するので
+    取りこぼさない。前進のみ（現在位置が保存値以下なら書かない）で、現在位置が取れなければ進めない
+    （範囲は次の通知でもう一度処理される）。保存してある historyId が使えない形（先頭ゼロなど）なら、Gmail API を呼ばずに終え、
+    次の watch の更新か /gmail/register-watch で watch の応答の値に置き換わる（GMAIL_AUTO_SPEC §3.2）
 ```
 
 ### 4.3 Web 閲覧・編集

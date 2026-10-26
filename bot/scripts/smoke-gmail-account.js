@@ -7,7 +7,8 @@
  *   一致 → 処理 / 不一致（getProfile も通知と違う）・通知にアドレスが無い → history.list を呼ばず historyId を更新しない（投げない）/
  *   保存してあるアドレスが古い（getProfile が通知と同じ。プライマリアドレスの変更）→ 保存値を書き直して処理 /
  *   getProfile・書き直しの失敗 → 投げる / アドレスが保存されていない → 照合せず以前どおり処理 / 大文字小文字の違い → 一致 /
- *   watch の状態の読み取りの失敗 → 投げる
+ *   watch の状態の読み取りの失敗 → 投げる / 保存してある historyId が使えない形 → 照合（getProfile）の前に終える（#298）。
+ *   処理したときに保存するのは、通知の値ではなく history.list の応答の現在位置（#298）
  * - registerWatch（Gmail と Firestore は偽物）: getProfile のアドレスを保存する・watch の後に呼ぶ・失敗したら投げる・
  *   応答にアドレスが無ければ保存してある値を変えない・別のアカウントなら固定文で警告する
  *
@@ -100,6 +101,8 @@ check('アドレスを渡さないとき: emailAddress の項目を含めない�
 
 async function flowChecks() {
   console.log('\n[handleGmailPubSub（Gmail・watch の状態・historyId の更新は偽物）]');
+  /** history.list の応答の historyId（メールボックスの現在位置。取込は通知の値ではなくこれを保存する。#298） */
+  const MAILBOX = '1000000';
   let watchState = null;
   let watchStateError = null;
   const historyUpdates = [];
@@ -136,8 +139,8 @@ async function flowChecks() {
         history: {
           list: async () => {
             historyListCalls++;
-            // historyId はメールボックスの現在位置（取込が保存する historyId の上限）。このテストの通知より大きい値にする
-            return { data: { history: [], historyId: '1000000' } };
+            // historyId はメールボックスの現在位置（取込が保存する historyId）。このテストの通知のどれとも違う値にする
+            return { data: { history: [], historyId: MAILBOX } };
           },
         },
         messages: {
@@ -169,8 +172,8 @@ async function flowChecks() {
   reset(stored('linked@example.com'));
   let { result, lines } = await captureConsole(() => handleGmailPubSub(pubsubData({ emailAddress: 'linked@example.com', historyId: 200 })));
   check(
-    '一致: history.list を引き、通知の historyId まで進める',
-    result === undefined && historyListCalls === 1 && JSON.stringify(historyUpdates) === JSON.stringify([200]),
+    '一致: history.list を引き、応答の現在位置まで進める（通知の値 200 ではない）',
+    result === undefined && historyListCalls === 1 && JSON.stringify(historyUpdates) === JSON.stringify([MAILBOX]),
     { result: String(result), historyListCalls, historyUpdates }
   );
   check('一致: 照合の警告を出さない', !lines.some((l) => l.level === 'warn'), lines);
@@ -217,8 +220,8 @@ async function flowChecks() {
     { profileCalls, addressUpdates }
   );
   check(
-    'アドレスの変更: そのまま処理して historyId を進める',
-    result === undefined && historyListCalls === 1 && JSON.stringify(historyUpdates) === JSON.stringify(['310']),
+    'アドレスの変更: そのまま処理して historyId を応答の現在位置まで進める',
+    result === undefined && historyListCalls === 1 && JSON.stringify(historyUpdates) === JSON.stringify([MAILBOX]),
     { result: String(result), historyListCalls, historyUpdates }
   );
   const followWarns = lines.filter((l) => l.level === 'warn');
@@ -265,8 +268,8 @@ async function flowChecks() {
   reset(stored(undefined));
   ({ result, lines } = await captureConsole(() => handleGmailPubSub(pubsubData({ emailAddress: 'someone@example.com', historyId: '400' }))));
   check(
-    'アドレスが保存されていない: 以前どおり history.list を引き、historyId を進める（取込を止めない）',
-    result === undefined && historyListCalls === 1 && JSON.stringify(historyUpdates) === JSON.stringify(['400']),
+    'アドレスが保存されていない: 以前どおり history.list を引き、historyId を応答の現在位置まで進める（取込を止めない）',
+    result === undefined && historyListCalls === 1 && JSON.stringify(historyUpdates) === JSON.stringify([MAILBOX]),
     { result: String(result), historyListCalls, historyUpdates }
   );
   const uncheckedLogs = lines.filter((l) => l.args[0] === 'Linked Gmail address is not saved yet; skipping the account check (saved on the next watch registration)');
@@ -278,8 +281,8 @@ async function flowChecks() {
   reset(stored(undefined));
   await captureConsole(() => handleGmailPubSub(pubsubData({ historyId: '401' })));
   check(
-    'アドレスが保存されていない・通知にも無い: 以前どおり処理する',
-    historyListCalls === 1 && JSON.stringify(historyUpdates) === JSON.stringify(['401']),
+    'アドレスが保存されていない・通知にも無い: 以前どおり処理する（応答の現在位置まで進める）',
+    historyListCalls === 1 && JSON.stringify(historyUpdates) === JSON.stringify([MAILBOX]),
     { historyListCalls, historyUpdates }
   );
 
@@ -290,10 +293,30 @@ async function flowChecks() {
     '大文字小文字の違い: 同じアカウントとして処理する（getProfile も保存値の書き直しも要らない）',
     result === undefined &&
       historyListCalls === 1 &&
-      JSON.stringify(historyUpdates) === JSON.stringify(['500']) &&
+      JSON.stringify(historyUpdates) === JSON.stringify([MAILBOX]) &&
       profileCalls === 0 &&
       addressUpdates.length === 0,
     { result: String(result), historyListCalls, historyUpdates, profileCalls, addressUpdates }
+  );
+
+  // 保存してある historyId が使えない形（#295 より前に偽の通知で入った先頭ゼロなど）: 照合より前に終える。
+  // 照合が合わない通知でも getProfile を呼ばない（Gmail API を呼ばない。#298）
+  reset({ ...stored('new@example.com'), historyId: '0000000000000000000000077777' });
+  ({ result, lines } = await captureConsole(() => handleGmailPubSub(pubsubData({ emailAddress: 'old@example.com', historyId: '700' }))));
+  check(
+    '保存してある historyId が使えない・通知が不一致: 投げず、getProfile・history.list を呼ばず、historyId もアドレスも変えない',
+    result === undefined && profileCalls === 0 && historyListCalls === 0 && historyUpdates.length === 0 && addressUpdates.length === 0,
+    { result: String(result), profileCalls, historyListCalls, historyUpdates, addressUpdates }
+  );
+  const unusableWarns = lines.filter((l) => l.level === 'warn');
+  check(
+    '保存してある historyId が使えない: 固定文の警告を 1 回だけ出し（照合の警告は出さない）、保存値もアドレスも出さない',
+    unusableWarns.length === 1 &&
+      unusableWarns[0].args.length === 1 &&
+      unusableWarns[0].args[0] === 'Stored Gmail historyId is not usable; skipping without calling Gmail' &&
+      !JSON.stringify(lines).includes('77777') &&
+      noAddressInLogs(lines),
+    lines
   );
 
   // 連携中のアドレスの取得（watch の状態の読み取り）の一時的な失敗 → 投げて再送させる

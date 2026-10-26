@@ -7,7 +7,8 @@
  * あわせて、watch の登録・更新が連携中のアカウントのアドレス（getProfile）を保存し、取込（handleGmailPubSub）が
  * 通知の emailAddress と照合して、違うアカウントの通知では historyId を更新しないこと、保存してあるアドレスが古いだけ
  * （getProfile が通知と同じ）なら保存値を書き直して処理を続けることを確かめる（#280）。
- * 取込が保存する historyId が、メールボックスの現在位置（history.list の応答の historyId）を超えないことも確かめる。
+ * 取込が保存する historyId が、通知の値ではなく常にメールボックスの現在位置（history.list の応答の historyId）であること、
+ * 現在位置が保存値以下なら進めないこと、保存してある historyId が使えない形なら Gmail を呼ばずに終えることも確かめる（#298）。
  * Gmail API は呼ばない（dist/gmail/auth の getGmailClient を偽物に差し替える）。
  *
  * emulator-household-api.js と同じ形で実行する（npm -w bot run test:emulator から続けて動く）。
@@ -43,9 +44,12 @@ const fakeGmail = {
   profileCalls: 0,
   // 取込（handler.ts）の history.list。メッセージは返さない（historyId の更新だけを見る）
   historyListCalls: 0,
-  // history.list の応答の historyId（メールボックスの現在位置。取込は保存する historyId の上限にする）。
-  // 既定は、このテストの通知の historyId より大きい値（watchHistoryId とは別にする）
+  // history.list の応答の historyId（メールボックスの現在位置。取込はこれを保存する。#298）。
+  // 既定は、このテストの通知の historyId のどれとも違う値（watchHistoryId とも別にする）
   mailboxHistoryId: '1000000',
+  // 次からの history.list が返す現在位置と、返すまでの待ち時間（同時実行のテスト。空なら mailboxHistoryId をすぐ返す）
+  listQueue: [],
+  listDelayMs: {},
   users: {
     watch: async (params) => {
       fakeGmail.watchCalls.push(params);
@@ -65,6 +69,11 @@ const fakeGmail = {
     history: {
       list: async () => {
         fakeGmail.historyListCalls++;
+        if (fakeGmail.listQueue.length > 0) {
+          const historyId = fakeGmail.listQueue.shift();
+          await new Promise((resolve) => setTimeout(resolve, fakeGmail.listDelayMs[historyId] || 0));
+          return { data: { history: [], historyId } };
+        }
         return { data: { history: [], historyId: fakeGmail.mailboxHistoryId } };
       },
     },
@@ -122,6 +131,8 @@ function resetFake({
   fakeGmail.profileError = profileError;
   fakeGmail.profileCalls = 0;
   fakeGmail.historyListCalls = 0;
+  fakeGmail.listQueue = [];
+  fakeGmail.listDelayMs = {};
 }
 
 /** Pub/Sub の通知の本文（Gmail の形: `{ emailAddress, historyId }` の base64） */
@@ -326,7 +337,8 @@ async function main() {
     await registerWatch();
     check('切替後: 新しいアカウントの位置とアドレスで始める', (await readState()).historyId === '700' && (await readState()).emailAddress === 'new@example.com');
 
-    // 古いアカウントの watch（revoke は stop しない）の通知。historyId は古いメールボックスの大きな値
+    // 古いアカウントの watch（revoke が止められなかった〔watchStopped: false〕・revoke をせずに認可し直した）の通知。
+    // historyId は古いメールボックスの大きな値
     resetFake({ historyId: '700', profileAddress: 'new@example.com' });
     let r = await quietly(() => handleGmailPubSub(notification('old@example.com', 999999)));
     let doc = await readState();
@@ -340,17 +352,26 @@ async function main() {
     );
 
     // 新しいアカウントの通知（大文字小文字が違っても同じアカウント）
+    fakeGmail.mailboxHistoryId = '850';
     r = await quietly(() => handleGmailPubSub(notification('New@Example.com', 800)));
     doc = await readState();
-    check('新しいアカウントの通知: 処理して historyId を進める', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === 800, { r: String(r), doc });
+    check(
+      '新しいアカウントの通知: 処理して historyId を応答の現在位置（"850"。文字列）まで進める（通知の 800 ではない）',
+      r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '850',
+      { r: String(r), doc }
+    );
 
     // アドレスが保存されていない（この照合の前に登録した watch）: 照合せず以前どおり処理する
     await clearFirestore();
     await seedState({ historyId: '100' });
-    resetFake();
+    resetFake({ mailboxHistoryId: '350' });
     r = await quietly(() => handleGmailPubSub(notification('someone@example.com', '300')));
     doc = await readState();
-    check('アドレスが保存されていない: 以前どおり処理して historyId を進める', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '300', { r: String(r), doc });
+    check(
+      'アドレスが保存されていない: 以前どおり処理して historyId を応答の現在位置（350）まで進める',
+      r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '350',
+      { r: String(r), doc }
+    );
   }
 
   console.log('取込: 保存してあるアドレスが古い（プライマリアドレスの変更）ときは追従する');
@@ -358,17 +379,21 @@ async function main() {
     // 保存値は変更前のアドレス。連携中のアカウント（トークン）と通知は新しいアドレス
     await clearFirestore();
     await seedState({ historyId: '100', emailAddress: 'old-primary@example.com' });
-    resetFake({ profileAddress: 'new-primary@example.com' });
+    resetFake({ profileAddress: 'new-primary@example.com', mailboxHistoryId: '350' });
     let r = await quietly(() => handleGmailPubSub(notification('New-Primary@example.com', '300')));
     let doc = await readState();
     check('getProfile を 1 回呼び、保存値を新しいアドレスに書き直す', fakeGmail.profileCalls === 1 && doc.emailAddress === 'new-primary@example.com', doc);
-    check('そのまま処理して historyId を進める（watchExpiration は変えない）', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '300' && doc.watchExpiration === OLD_EXPIRATION, { r: String(r), doc });
+    check(
+      'そのまま処理して historyId を応答の現在位置（350）まで進める（watchExpiration は変えない）',
+      r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '350' && doc.watchExpiration === OLD_EXPIRATION,
+      { r: String(r), doc }
+    );
 
     // 書き直した後は、新しいアドレスの通知は getProfile なしで一致する
-    resetFake({ profileAddress: 'new-primary@example.com' });
+    resetFake({ profileAddress: 'new-primary@example.com', mailboxHistoryId: '450' });
     r = await quietly(() => handleGmailPubSub(notification('new-primary@example.com', '400')));
     doc = await readState();
-    check('書き直した後: getProfile を呼ばずに処理する', r === 'ok' && fakeGmail.profileCalls === 0 && doc.historyId === '400', { r: String(r), doc });
+    check('書き直した後: getProfile を呼ばずに処理する（現在位置 450 まで進める）', r === 'ok' && fakeGmail.profileCalls === 0 && doc.historyId === '450', { r: String(r), doc });
 
     // 本当に別のアカウントの通知（getProfile も通知と違う）→ 読み飛ばす
     resetFake({ profileAddress: 'new-primary@example.com' });
@@ -376,7 +401,7 @@ async function main() {
     doc = await readState();
     check(
       '別のアカウントの通知: 投げず、history.list を呼ばず、historyId もアドレスも変えない',
-      r === 'ok' && fakeGmail.profileCalls === 1 && fakeGmail.historyListCalls === 0 && doc.historyId === '400' && doc.emailAddress === 'new-primary@example.com',
+      r === 'ok' && fakeGmail.profileCalls === 1 && fakeGmail.historyListCalls === 0 && doc.historyId === '450' && doc.emailAddress === 'new-primary@example.com',
       { r: String(r), doc }
     );
 
@@ -386,12 +411,12 @@ async function main() {
     doc = await readState();
     check(
       'getProfile が失敗: 投げて再送させ、historyId もアドレスも変えない',
-      r instanceof Error && fakeGmail.historyListCalls === 0 && doc.historyId === '400' && doc.emailAddress === 'new-primary@example.com',
+      r instanceof Error && fakeGmail.historyListCalls === 0 && doc.historyId === '450' && doc.emailAddress === 'new-primary@example.com',
       { r: String(r), doc }
     );
   }
 
-  console.log('取込: 保存する historyId はメールボックスの現在位置（history.list の応答の historyId）を超えない');
+  console.log('取込: 保存する historyId は常にメールボックスの現在位置（history.list の応答の historyId。通知の値は使わない。#298）');
   {
     // 連携中のアカウントのアドレスで偽った通知（照合は通る）。historyId は極端に大きい
     await clearFirestore();
@@ -399,22 +424,63 @@ async function main() {
     resetFake({ mailboxHistoryId: '700' });
     let r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '18446744073709551615')));
     let doc = await readState();
-    check('偽の通知: 投げずに、現在位置（700）で保存する', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '700', { r: String(r), doc });
+    check('偽の通知（極端に大きい）: 投げずに、現在位置（700）で保存する', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '700', { r: String(r), doc });
 
-    // 正当な通知は通知の値まで進む（現在位置は同じか先）
-    resetFake({ mailboxHistoryId: '800' });
+    // 正当な通知（数値。Gmail の形）も、保存するのは応答の現在位置（文字列）
+    resetFake({ mailboxHistoryId: '850' });
     r = await quietly(() => handleGmailPubSub(notification('linked@example.com', 800)));
     doc = await readState();
-    check('そのあとの正当な通知: 通知の値（800）まで進む', r === 'ok' && doc.historyId === 800, { r: String(r), doc });
+    check('そのあとの正当な通知（800）: 通知の値ではなく、応答の現在位置（"850"。文字列）まで進む', r === 'ok' && doc.historyId === '850', { r: String(r), doc });
 
     // 応答に historyId が無い（null）: 進めない
     resetFake({ mailboxHistoryId: null });
     r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '900')));
     doc = await readState();
-    check('応答に historyId が無い: 投げず、historyId を進めない', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === 800, { r: String(r), doc });
+    check('応答に historyId が無い: 投げず、historyId を進めない（通知の 900 へも進めない）', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '850', { r: String(r), doc });
+
+    // 偽の通知の値が、保存値と現在位置の間・保存値より小さい・ゼロ: どれも保存するのは現在位置
+    for (const [label, historyId, position] of [
+      ['保存値（850）と現在位置（1000）の間', '900', '1000'],
+      ['保存値（1000）より小さい', '1', '1100'],
+      ['ゼロ', '0', '1200'],
+      ['ゼロ（数値）', 0, '1250'],
+    ]) {
+      resetFake({ mailboxHistoryId: position });
+      r = await quietly(() => handleGmailPubSub(notification('linked@example.com', historyId)));
+      doc = await readState();
+      check(`偽の通知（${label}）: 現在位置（${position}）を保存する`, r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === position, { r: String(r), doc });
+    }
+
+    // 現在位置が保存値以下: 進めない（巻き戻さない）
+    resetFake({ mailboxHistoryId: '1250' });
+    r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '1300')));
+    doc = await readState();
+    check('現在位置 = 保存値（1250）: 保存値を変えない（通知の 1300 へも進めない）', r === 'ok' && doc.historyId === '1250', { r: String(r), doc });
+    resetFake({ mailboxHistoryId: '1200' });
+    r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '18446744073709551615')));
+    doc = await readState();
+    check('現在位置（1200）< 保存値（1250）: 巻き戻さない', r === 'ok' && doc.historyId === '1250', { r: String(r), doc });
+
+    // 同時に走った 2 つの取込: 小さい現在位置が後から書いても巻き戻らず、大きい方が残る（トランザクションと前進のみ）
+    resetFake();
+    fakeGmail.listQueue = ['1500', '1400'];
+    fakeGmail.listDelayMs = { 1500: 0, 1400: 300 };
+    // ログを止めるのは 1 回だけにする（quietly を重ねると、先に終わった方が止めたままの console を戻してしまう）
+    r = await quietly(() =>
+      Promise.all([
+        handleGmailPubSub(notification('linked@example.com', '1500')),
+        handleGmailPubSub(notification('linked@example.com', '1400')),
+      ])
+    );
+    doc = await readState();
+    check(
+      '同時に走った取込（現在位置 1500 が先に、1400 が後に書く）: 1500 が残る',
+      r === 'ok' && fakeGmail.historyListCalls === 2 && doc.historyId === '1500',
+      { r: String(r), doc }
+    );
   }
 
-  console.log('取込: 先頭ゼロ・桁あふれの historyId は使わない（上限をすり抜けて長い文字列が保存されないように）');
+  console.log('取込: 先頭ゼロ・桁あふれの historyId は使わない（大小の比較をすり抜けて長い文字列が保存されないように）');
   {
     await clearFirestore();
     await seedState({ historyId: '1000', emailAddress: 'linked@example.com' });
@@ -433,13 +499,25 @@ async function main() {
       );
     }
 
-    // すでに先頭ゼロの値が保存されていたら、次の watch の更新で応答の値に置き換えて直す
+    // すでに先頭ゼロの値が保存されていたら、取込は Gmail を呼ばずに終え（#298）、次の watch の更新で応答の値に置き換えて直す
     await clearFirestore();
     await seedState({ historyId: '0001000', emailAddress: 'linked@example.com' });
+    resetFake({ mailboxHistoryId: '1600' });
+    let r = await quietly(() => handleGmailPubSub(notification('someone-else@example.com', '1600')));
+    let doc = await readState();
+    check(
+      '先頭ゼロで保存された値: 取込は投げず、history.list・getProfile（照合）を呼ばず、保存値を変えない',
+      r === 'ok' && fakeGmail.historyListCalls === 0 && fakeGmail.profileCalls === 0 && doc.historyId === '0001000',
+      { r: String(r), historyListCalls: fakeGmail.historyListCalls, profileCalls: fakeGmail.profileCalls, doc: doc.historyId }
+    );
     resetFake({ historyId: '500' });
     const state = await renewWatch();
-    const doc = await readState();
+    doc = await readState();
     check('先頭ゼロで保存された値: watch の更新で応答の値（500）に置き換える', doc.historyId === '500' && state.historyId === '500', { doc: doc.historyId, state });
+    resetFake({ mailboxHistoryId: '1600' });
+    r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '1600')));
+    doc = await readState();
+    check('置き換えた後: 取込が再開し、現在位置（1600）まで進む', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '1600', { r: String(r), doc });
   }
 
   console.log(`\ngmail import emulator: ${passed} passed, ${failed} failed`);
