@@ -23,8 +23,8 @@ function stripSlash(path: string): string {
   return path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path;
 }
 
-/** 今の URL の場面の位置。目次・場面の外は -1 */
+/** 今の URL の場面の位置（末尾スラッシュをそろえて完全一致）。目次・場面の外（/demo/home/xyz/ などの 404）は -1 */
 export function sceneIndexOf(pathname: string | null | undefined): number {
   const path = stripSlash(pathname || '');
-  return demoScenes.findIndex((s) => path === stripSlash(s.href) || path.startsWith(s.href));
+  return demoScenes.findIndex((s) => path === stripSlash(s.href));
 }

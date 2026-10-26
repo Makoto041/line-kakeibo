@@ -2,7 +2,7 @@
 
 // デモ（/demo 以下）の枠: 「架空のデータです」の帯、場面のタブ（前へ / 次へ）、テーマの切り替え、背景。
 // 本番のナビ（AppShell）は使わない（LINE ログイン・Firebase を読み込まないため）。リンクは /demo 以下だけ。
-// 場面の中身は各ページが DemoClientOnly で包み、マウントしてから描く（枠・目次・404 はサーバーで描く）。
+// 場面の中身は各ページが DemoClientOnly で包み、マウントしてから描く（枠と目次はサーバーで描く。404 の本文はブラウザ側で描かれる）。
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';

@@ -10,7 +10,7 @@ export default function DemoIndexPage() {
       <div className="glass animate-fade-up rounded-2xl p-6 shadow-glass md:p-8">
         <h1 className="text-xl font-semibold tracking-tight text-fg md:text-2xl">ぶちこむ家計簿のデモ</h1>
         <p className="mt-2 text-sm text-muted">
-          ふたり暮らしの家計簿を、架空のデータで見られます。ログインは不要で、この画面での操作はどこにも保存されません。
+          ふたり暮らしの家計簿を、架空のデータで見られます。ログインは不要で、この画面での操作はどこにも保存されません（テーマの設定を除く）。
         </p>
         <p className="mt-4 flex items-start gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />

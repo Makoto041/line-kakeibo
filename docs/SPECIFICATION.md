@@ -277,7 +277,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | `/link` | アカウント連携確認画面（`token` + `lineId` クエリの存在チェックのみ。認証には関与しない） |
 | `/dashboard` | `/` へのリダイレクト（レガシー） |
 | `/terms` `/privacy` | 静的な規約・プライバシーページ |
-| `/demo` | **デモ**（職場の所感発表用。ログイン不要・架空データだけ。`app/demo/`、`(app)` の外）。目次と、ホーム（`/demo/home/`）・支出一覧（`/demo/expenses/`）・精算（`/demo/settlement/`）。本番と同じ部品・純関数に `lib/demo/demoData.ts` の架空データ（Aさん・Bさん、2026年8〜10月）を渡す。Firestore・LINE ログイン・bot の API・ブラウザの保存領域に触れず（`__tests__/demoIsolation.test.mjs`）、操作は保存しない。リンクは `/demo` 以下だけで、`/demo` 以下の存在しない URL はデモの 404（目次へ戻る）。**発表後に削除する**: `web/app/demo/`・`web/components/demo/`・`web/lib/demo/`・`web/__tests__/demo*.test.mjs` と、docs のこの行（表の下の「`/demo` を除く」も）・`ARCHITECTURE.md` と `architecture.html` の 1 行ずつ |
+| `/demo` | **デモ**（職場の所感発表用。ログイン不要・架空データだけ。`app/demo/`、`(app)` の外）。目次と、ホーム（`/demo/home/`）・支出一覧（`/demo/expenses/`）・精算（`/demo/settlement/`）。本番と同じ部品・純関数に `lib/demo/demoData.ts` の架空データ（Aさん・Bさん、2026年8〜10月）を渡す。Firestore・LINE ログイン・bot の API・ブラウザの保存領域に触れず（テーマの設定を除く。`ThemeToggle` が本番と同じキーの localStorage に書く。`__tests__/demoIsolation.test.mjs`）、操作は保存しない。リンクは `/demo` 以下だけで、`/demo` 以下の存在しない URL はデモの 404（目次へ戻る）。**発表後に削除する**: `web/app/demo/`・`web/components/demo/`・`web/lib/demo/`・`web/__tests__/demo*.test.mjs` と、docs のこの行（表の下の「`/demo` を除く」も）・`ARCHITECTURE.md` と `architecture.html` の 1 行ずつ |
 | （一致しない URL） | 404（`app/not-found.tsx`）。ナビは無く、「ホームへ戻る」（`/`）のリンクだけ。LINE ログインは始めない |
 
 上の画面（404 と `/demo` を除く）は `app/(app)/` に置く。`(app)` はルートグループで URL には出ない。

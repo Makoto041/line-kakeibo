@@ -175,7 +175,7 @@ export default function DemoHome() {
 
         {/* 本番と同じ並び: モバイルは予算が上、デスクトップは右の列 */}
         <div className="grid gap-4 lg:grid-cols-3 lg:items-start">
-          <div className="lg:sticky lg:top-40lg:col-span-1 lg:col-start-3 lg:row-start-1">
+          <div className="lg:sticky lg:top-40 lg:col-span-1 lg:col-start-3 lg:row-start-1">
             <BudgetProgress stats={stats} budgetConfig={DEMO_BUDGET} now={budgetNow} />
           </div>
           <div className="space-y-4 lg:col-span-2 lg:col-start-1 lg:row-start-1">

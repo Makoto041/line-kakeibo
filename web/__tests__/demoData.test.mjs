@@ -245,5 +245,7 @@ test('場面の一覧: リンクは /demo/ 以下（末尾スラッシュ付き�
   assert.equal(sceneIndexOf('/demo/settlement/'), 2);
   assert.equal(sceneIndexOf('/demo/'), -1);
   assert.equal(sceneIndexOf('/demo/xyz/'), -1);
+  assert.equal(sceneIndexOf('/demo/home/xyz/'), -1); // 場面の下の存在しない URL（404）は場面にしない
+  assert.equal(sceneIndexOf('/demo'), -1);
   assert.equal(sceneIndexOf(null), -1);
 });

@@ -36,8 +36,8 @@ const FORBIDDEN_LOCAL = [
   'components/PreviewModeBanner',
   'components/settings/', // InstallAppCard（lineAuth）・SettlementNotifyCard（householdApi）
 ];
-/** 値として import してはいけないパッケージ（Firebase の SDK・LIFF） */
-const FORBIDDEN_PACKAGE = /^(?:firebase|@line\/liff)(?:\/|$)/;
+/** 値として import してはいけないパッケージ（Firebase の SDK〔@firebase/* も〕・LIFF） */
+const FORBIDDEN_PACKAGE = /^(?:@?firebase|@line\/liff)(?:\/|$)/;
 
 // import / export … from の文。句に使える文字を絞り、関数の本体などまで読み進まないようにする。行頭（^）には依存しない
 const IMPORT_FROM = /\bimport\s+(type\s+)?([\w$*\s{},]+?)\s*from\s*(['"])([^'"\n]+)\3/g;
@@ -188,6 +188,9 @@ const BANNED_IN_DEMO = [
   [/document\.cookie/, 'document.cookie'],
   [/window\.open\b/, 'window.open'],
   [/\blocation\.(?:href|assign|replace)\b/, 'location の書き換え'],
+  [/\b(?:window|document|self|globalThis)\.location\s*=(?!=)/, 'location への代入'],
+  [/<form\b[^>]*\baction\s*=/, '<form action>'],
+  [/navigator\.serviceWorker/, 'navigator.serviceWorker'],
   [/\brouter\.(?:push|replace)\b/, 'router.push / replace'],
   [/\bredirect\s*\(/, 'redirect('],
   [/\bhttps?:\/\//, 'http(s):// の URL'],
@@ -318,6 +321,7 @@ test('検査が働くこと: たどった先で禁止したモジュールを値
   };
   flags("import { a } from 'react'; import { getAuth } from 'firebase/auth';", 'firebase/auth を値として');
   flags("import liff from '@line/liff';", '@line/liff を値として');
+  flags("import { initializeApp } from '@firebase/app';", '@firebase/app を値として');
   flags("import { type X } from '../../lib/hooks';", 'lib/hooks を値として');
   flags("const m = await import('../../lib/lineAuth');", 'lib/lineAuth を値として');
   flags('const m = await import(name);', '文字列でない');
@@ -361,4 +365,8 @@ test('デモの中身の検査が働くこと: 通信・保存・外部 URL・/d
   assert.equal(scan('<Link href={`/expenses?edit=${id}`}>編集</Link>').length, 1);
   assert.equal(scan('<Link href={makeHref(id)}>x</Link>').length, 1);
   assert.equal(scan("const s = { href: '/settings/' };").length, 1);
+  assert.equal(scan("window.location = '/x';").length, 1);
+  assert.equal(scan("const location = usePathname(); if (window.location === x) {}").length, 0);
+  assert.equal(scan('<form method="post" action="/api/x">').length, 1);
+  assert.equal(scan("navigator.serviceWorker.register('/sw.js')").length, 1);
 });
