@@ -1882,6 +1882,23 @@ async function saveFlowChecks() {
       checkJson('capHistoryId: 現在位置が無い・数値として読めない → null（進めない）', unusable.every((m) => capHistoryId('300', m) === null), unusable.map((m) => capHistoryId('300', m)));
       checkJson('capHistoryId: 通知が数値として読めない → 現在位置', sameCap(capHistoryId('abc', '1000'), '1000', true), capHistoryId('abc', '1000'));
 
+      // 先頭ゼロ・桁あふれの historyId（BigInt では小さい数と同じになり、上限をすり抜けて長い文字列のまま保存されうる）
+      const { isUsableHistoryId, resolveWatchHistoryId } = gmailWatch;
+      const PADDED = '0'.repeat(100000) + '1005';
+      const usable = ['0', '1005', '10000000000000000000', '18446744073709551615', 0, 1005];
+      const notUsable = ['00', '01005', PADDED, '18446744073709551616', '99999999999999999999', '100000000000000000000', 1e20, -1, 1.5];
+      checkJson('isUsableHistoryId: 10 進の正規の形で uint64 以下の値は使える（数値も）', usable.every((v) => isUsableHistoryId(v) === true), usable.map((v) => isUsableHistoryId(v)));
+      checkJson(
+        'isUsableHistoryId: 先頭ゼロ・"00"・uint64 超・21 桁以上は使えない',
+        notUsable.every((v) => isUsableHistoryId(v) === false),
+        notUsable.map((v) => [String(v).slice(0, 24), isUsableHistoryId(v)])
+      );
+      checkJson('capHistoryId: 先頭ゼロの通知は読めない値として現在位置にする（上限をすり抜けない）', sameCap(capHistoryId('01005', '1010'), '1010', true), capHistoryId('01005', '1010'));
+      checkJson('capHistoryId: 長いゼロ埋めの通知も現在位置にする', sameCap(capHistoryId(PADDED, '1010'), '1010', true), capHistoryId(PADDED, '1010') && capHistoryId(PADDED, '1010').historyId.length);
+      checkJson('capHistoryId: 先頭ゼロの現在位置は読めない値（null。進めない）', capHistoryId('1005', '01010') === null, capHistoryId('1005', '01010'));
+      const replaced = resolveWatchHistoryId('0001000', '500');
+      checkJson('resolveWatchHistoryId: 先頭ゼロで保存された値は watch の更新で応答の値に置き換える（replaced）', replaced.historyId === '500' && replaced.source === 'replaced', replaced);
+
       const CAP_WARN = 'Gmail notification historyId is ahead of the mailbox; saving the mailbox position instead';
       const MISSING_WARN = 'Gmail did not return the mailbox historyId; keeping the saved historyId (the range is processed again on the next notification)';
       const capWarnsSince = (start) => warnsSince(start).filter((args) => args[0] === CAP_WARN || args[0] === MISSING_WARN);
@@ -1931,6 +1948,35 @@ async function saveFlowChecks() {
         processedLog && processedLog.args[1].historyId === '600' && !JSON.stringify(processedLog.args).includes(FORGED),
         processedLog && processedLog.args
       );
+
+      // 先頭ゼロ・桁あふれの historyId の通知: 読めない通知として捨てる（Gmail を呼ばず、保存もせず、値をログに出さない）
+      mailboxHistoryId = '1010';
+      const DROP = 'Gmail Pub/Sub message has no usable historyId; dropping it (retrying does not help)';
+      for (const [label, historyId] of [
+        ['長いゼロ埋め（"0"×100000 + "1005"）', PADDED],
+        ['先頭ゼロ（"01005"）', '01005'],
+        ['"00"', '00'],
+        ['21 桁', '100000000000000000000'],
+        ['uint64 を超える 20 桁', '18446744073709551616'],
+        ['uint64 を超える数値', 1e20],
+      ]) {
+        from = allLines.length;
+        historyBefore = historyUpdates.length;
+        const callsBefore = gmailClientCalls;
+        r = await handle(pubsubData({ emailAddress: 'someone@example.com', historyId }));
+        warns = warnsSince(from);
+        checkJson(
+          `通知の historyId が${label}: 投げずに捨て、Gmail を呼ばず historyId も進めない`,
+          r === 'ok' && gmailClientCalls === callsBefore && historyUpdates.length === historyBefore,
+          { r: String(r), calls: gmailClientCalls - callsBefore, updates: historyUpdates.slice(historyBefore).map((v) => String(v).slice(0, 24)) }
+        );
+        checkJson(
+          `通知の historyId が${label}: ログは固定文の警告 1 行だけで、値を出さない`,
+          JSON.stringify(warns) === JSON.stringify([[DROP]]) && JSON.stringify(allLines.slice(from).map((l) => l.args)) === JSON.stringify([[DROP]]),
+          allLines.slice(from).map((l) => JSON.stringify(l.args).slice(0, 120))
+        );
+      }
+      mailboxHistoryId = MAILBOX_HISTORY_ID;
 
       // 応答に historyId が無い: 進めずに終える（範囲は次の通知でもう一度処理される）
       mailboxHistoryId = undefined;

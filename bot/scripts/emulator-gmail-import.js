@@ -414,6 +414,34 @@ async function main() {
     check('応答に historyId が無い: 投げず、historyId を進めない', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === 800, { r: String(r), doc });
   }
 
+  console.log('取込: 先頭ゼロ・桁あふれの historyId は使わない（上限をすり抜けて長い文字列が保存されないように）');
+  {
+    await clearFirestore();
+    await seedState({ historyId: '1000', emailAddress: 'linked@example.com' });
+    for (const [label, historyId] of [
+      ['長いゼロ埋め', '0'.repeat(100000) + '1005'],
+      ['先頭ゼロ', '01005'],
+      ['21 桁', '100000000000000000000'],
+    ]) {
+      resetFake({ mailboxHistoryId: '1010' });
+      const r = await quietly(() => handleGmailPubSub(notification('linked@example.com', historyId)));
+      const doc = await readState();
+      check(
+        `通知が${label}: 投げずに捨て、history.list を呼ばず、historyId を変えない`,
+        r === 'ok' && fakeGmail.historyListCalls === 0 && doc.historyId === '1000',
+        { r: String(r), historyListCalls: fakeGmail.historyListCalls, historyId: String(doc.historyId).slice(0, 24) }
+      );
+    }
+
+    // すでに先頭ゼロの値が保存されていたら、次の watch の更新で応答の値に置き換えて直す
+    await clearFirestore();
+    await seedState({ historyId: '0001000', emailAddress: 'linked@example.com' });
+    resetFake({ historyId: '500' });
+    const state = await renewWatch();
+    const doc = await readState();
+    check('先頭ゼロで保存された値: watch の更新で応答の値（500）に置き換える', doc.historyId === '500' && state.historyId === '500', { doc: doc.historyId, state });
+  }
+
   console.log(`\ngmail import emulator: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
   process.exit(0);

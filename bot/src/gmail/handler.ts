@@ -106,8 +106,9 @@ const getDefaultLineGroupId = (): string | undefined => {
 /**
  * Pub/Sub の通知の本文（base64 の JSON。`{ emailAddress, historyId }`）から historyId を取り出す
  *
- * JSON として読めない・オブジェクトでない・historyId が無い・数値として読めない（watch.ts の isUsableHistoryId）ときは null。
- * どれもやり直しても直らない。historyId は Gmail が数値で送るので、型は変えずにそのまま返す（以前と同じく、そのまま保存する）。
+ * JSON として読めない・オブジェクトでない・historyId が無い・数値として読めない（watch.ts の isUsableHistoryId。
+ * 先頭ゼロ・21 桁以上・uint64 を超える値も含む）ときは null。どれもやり直しても直らない。
+ * historyId は Gmail が数値で送るので、型は変えずにそのまま返す（保存するときはメールボックスの現在位置で上限を掛ける）。
  */
 export function historyIdOfPubSubData(data: unknown): string | number | null {
   if (typeof data !== 'string') return null;
@@ -149,8 +150,9 @@ export type NotificationAccountCheck = 'match' | 'mismatch' | 'unchecked';
  * - `mismatch`: 違うアドレス、または通知にアドレスが無い（確かめられない）。取込は、保存してあるアドレスが古いだけでなければ
  *   （followLinkedAddressChange）読み飛ばし、historyId を更新しない。
  *   アカウントを切り替えたあとも、古いアカウントの watch は最大 7 日通知しうる（/gmail/revoke は watch を止めない）。
- *   その通知の historyId は別のメールボックスの番号なので、updateHistoryId（前進のみ）に渡すと、値が大きければ保存されて
- *   新しいアカウントの位置が先へ飛び、取りこぼす。読み飛ばしても取りこぼさない（取込は保存してある historyId からの
+ *   その通知の historyId は別のメールボックスの番号。保存値が先へ飛んで取りこぼすことは、保存する historyId の上限
+ *   （メールボックスの現在位置。processNewEmails の historyIdToSave）で緩和済みで、この照合は、別のメールボックスの番号で
+ *   保存する位置がずれるのを防ぐためにある。読み飛ばしても取りこぼさない（取込は保存してある historyId からの
  *   全範囲を処理するので、その範囲は連携中のアカウントの次の通知で処理される）
  * - `unchecked`: 連携中のアドレスが保存されていない（この照合を入れる前に登録した watch の状態。次の watch の更新で保存される）。
  *   照合せずに以前どおり処理する（取込を止めない）
@@ -205,12 +207,12 @@ export async function handleGmailPubSub(data: string): Promise<void> {
     return;
   }
 
-  // historyId は数字だけ（isUsableHistoryId で確かめた）
+  // historyId は 20 桁以内の数字だけ（isUsableHistoryId で確かめた。長い値はここまで来ない）
   console.log('Gmail Pub/Sub received', { historyId: String(historyId) });
 
   try {
     // 新着メールを取得して処理（数値の historyId も以前どおりそのまま渡す。アドレスは連携中のアカウントとの照合に使う）
-    await processNewEmails(historyId as string, emailAddressOfPubSubData(data));
+    await processNewEmails(historyId, emailAddressOfPubSubData(data));
   } catch (error) {
     console.error('Failed to handle Gmail Pub/Sub', errorFields(error));
     // 投げることで Pub/Sub が再送する（投げるかどうかは元の例外と同じ）。文言は固定にする
@@ -302,7 +304,7 @@ function isGmailNotFound(error: unknown): boolean {
  * 現在位置が取れなければ null（呼び出し側は historyId を進めず、送信待ちの印も消さない）。
  */
 function historyIdToSave(
-  notified: string,
+  notified: string | number,
   mailboxHistoryId: unknown,
   source: 'history.list' | 'getProfile'
 ): CappedHistoryId | null {
@@ -417,7 +419,7 @@ async function clearMessageFailure(messageId: string): Promise<void> {
  * @param newHistoryId 通知の historyId（数値のこともある。handleGmailPubSub）
  * @param notifiedEmailAddress 通知の emailAddress（emailAddressOfPubSubData。無ければ null）
  */
-async function processNewEmails(newHistoryId: string, notifiedEmailAddress: string | null): Promise<void> {
+async function processNewEmails(newHistoryId: string | number, notifiedEmailAddress: string | null): Promise<void> {
   let gmail: Awaited<ReturnType<typeof getGmailClient>>;
   try {
     gmail = await getGmailClient();
