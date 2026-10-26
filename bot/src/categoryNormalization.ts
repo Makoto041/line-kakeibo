@@ -54,6 +54,9 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   'レジャー': '娯楽',
   '交友費': '娯楽',
   '交際費': '娯楽',
+  // LINE の入力で指定できる名前（textParser.ts の VALID_CATEGORIES。#243）。normalizeCategoryName は
+  // 部分一致を上から順に見るので、教育の「本」より前に置く（「趣味の本」を娯楽にする）
+  '趣味': '娯楽',
 
   // 衣服
   '衣服費': '衣服',
@@ -149,6 +152,8 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   '投資': '貯金',
   '積立': '貯金',
   '定期預金': '貯金',
+  // LINE の入力で指定できる名前（textParser.ts の VALID_CATEGORIES。#243）
+  '貯蓄': '貯金',
 };
 
 function normalizeString(s?: string): string {
@@ -253,8 +258,9 @@ export function normalizeCategoryName(
  * LINE の入力・「カテゴリー」コマンド・カテゴリ選択のカルーセルは「医療費」「娯楽費」のような
  * 旧名を使うため、正準名（医療・健康、娯楽）と別の名前で保存され、集計が 2 行に分かれていた。
  *
- * 完全一致だけを見る: 正準名はそのまま、エイリアス（ALIAS_TO_CANONICAL のキー）は正準名にする。
- * それ以外（「趣味」「貯蓄」や利用者のカスタム名）は変えずに返す。normalizeCategoryName は
+ * 完全一致だけを見る: 正準名はそのまま、エイリアス（ALIAS_TO_CANONICAL のキー。LINE の旧名 8 種
+ * 〔医療費・娯楽費・衣服費・教育費・交際費・投資・貯蓄・趣味〕を含む）は正準名にする。
+ * それ以外（利用者のカスタム名など）は変えずに返す。normalizeCategoryName は
  * 部分一致・キーワードで寄せ（「本田」→ 教育）、一覧に無い名前を「その他」にするので、保存には使わない。
  */
 export function toCanonicalCategoryName(name: string): string {
