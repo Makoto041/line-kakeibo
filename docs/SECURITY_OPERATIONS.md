@@ -452,7 +452,9 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
     signature-type・timeout・ignored-routes・log-execution-id だけ）。
   - 防ぐ方法は 2 つあるが、どちらも採らない。`console.error` をプロセス全体で包んで書き換える方法は、ほかのログ
     （実行環境・ライブラリのもの）まで変えうる。環境変数 `NODE_ENV=test` にする方法（Express が既定のエラー処理でログを
-    出さなくなる）は、functions-framework が関数の失敗の文言（`err.message`）を HTTP の応答で返すようになる。
+    出さなくなる）は、functions-framework が関数の失敗の文言（`err.message`）を HTTP の応答で返すようになる
+    （functions-framework の `logger.js` は `NODE_ENV !== 'production'` のときに文言を返す。本番は `NODE_ENV=production`
+    の前提で、そのときは状態だけを返す）。
   - 取り込みたくなければ、Cloud Logging の除外フィルタで取り込まないようにする（次の手順。オーナーが行い、エージェントは
     実行しない）。除外は記録を伏せるのではなく取り込まない（ログベースの指標・アラートにも使われない）。取り込み済みの
     ログは保持期間（`_Default` は 30 日）まで残る。
@@ -467,7 +469,7 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
        ```
 
     2. そろっていれば、同じ条件の除外を `_Default` シンクに足す（コンソールの「ログ ルーター」→ `_Default` の
-       「シンクを編集」→「除外フィルタを追加」。または次のコマンド）。
+       「シンクを編集」→「除外フィルタを追加」。または次のコマンド）。このコマンド・条件は本番では実行・確認していない。
 
        ```bash
        gcloud logging sinks update _Default --project=line-kakeibo-0410 \
