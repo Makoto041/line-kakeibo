@@ -7,6 +7,7 @@
  */
 
 import { messagingApi } from '@line/bot-sdk';
+import { errorFields } from '../logSafe';
 
 let lineClient: messagingApi.MessagingApiClient | null = null;
 
@@ -62,10 +63,7 @@ export async function replyWithPushFallback(
       await client.replyMessage({ replyToken, messages });
       return 'reply';
     } catch (replyError) {
-      console.warn(
-        'replyMessage failed (token expired or already used), falling back to pushMessage:',
-        replyError
-      );
+      console.warn('replyMessage failed (token expired or already used), falling back to pushMessage', errorFields(replyError));
     }
   }
 

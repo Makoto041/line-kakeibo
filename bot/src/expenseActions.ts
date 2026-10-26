@@ -9,7 +9,7 @@
 import { FieldValue, getFirestore, type DocumentData, type Transaction } from 'firebase-admin/firestore';
 import { toCanonicalCategoryName } from './categoryNormalization';
 import type { ExpenseStatusType } from './firestore';
-import { errorMessage, maskId } from './logSafe';
+import { errorFields, maskId } from './logSafe';
 import { resolveSubCategory, usedAtHasClockTime } from './subCategoryRules';
 
 /**
@@ -193,7 +193,7 @@ function subCategoryChange(
     const usedAt = source === 'merchant' ? storedUsedAtWithClockTime(data.usedAt) : undefined;
     sub = resolveSubCategory({ major: canonical, text: data.description, source, ...(usedAt ? { usedAt } : {}) });
   } catch (error) {
-    console.warn('Failed to resolve subCategory; clearing it', { error: errorMessage(error) });
+    console.warn('Failed to resolve subCategory; clearing it', errorFields(error));
     sub = null;
   }
 

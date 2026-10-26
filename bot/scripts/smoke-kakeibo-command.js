@@ -257,8 +257,9 @@ async function main() {
     checkRefused(r, LOOKUP_FAILED);
     const failedLog = logs.find((l) => l.args[0] === 'Kakeibo summary refused: household membership lookup failed');
     check(
-      '確認の失敗を固定文 + オブジェクトで warn に出す（ID は伏せる）',
-      failedLog?.level === 'warn' && failedLog.args[1]?.user === '…0001' && failedLog.args[1]?.error === 'firestore unavailable',
+      '確認の失敗を固定文 + オブジェクトで warn に出す（ID は伏せる。例外は種類だけで、文言は出さない）',
+      failedLog?.level === 'warn' && failedLog.args[1]?.user === '…0001' && failedLog.args[1]?.errorName === 'Error' &&
+        !require('util').format(...failedLog.args).includes('firestore unavailable'),
       JSON.stringify(failedLog?.args)
     );
   }
@@ -302,7 +303,7 @@ async function main() {
   check('拒否の文を 1 回だけ送ろうとする（2 回目の送信は無い）', r.tried.length === 1 && r.tried[0].messages[0]?.text?.startsWith(MEMBERS_ONLY), describe(r));
   check('「グループ全体の支出が確認できます」は送らない', !r.json.includes('グループ全体の支出が確認できます'), r.json);
   const refusalError = logs.find((l) => l.args[0] === 'Failed to send the kakeibo refusal');
-  check('失敗はメッセージだけをログに出す', refusalError?.level === 'error' && refusalError.args[1]?.error === 'reply failed', JSON.stringify(refusalError?.args));
+  check('失敗は種類だけをログに出す（文言は出さない）', refusalError?.level === 'error' && refusalError.args[1]?.errorName === 'Error' && !require('util').format(...refusalError.args).includes('reply failed'), JSON.stringify(refusalError?.args));
 
   console.log('\n# 集計の取得に失敗 → フォールバック文（集計なし・ID なしのリンク）');
   for (const [label, source, context] of [

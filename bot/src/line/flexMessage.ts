@@ -788,7 +788,7 @@ export async function sendCardUsageNotification(
   const message = buildCardUsageFlexMessage(info);
 
   await client.pushMessage({ to: lineGroupId, messages: [message] }, retryKey);
-  console.log(`Card usage notification sent to ${maskId(lineGroupId)}`);
+  console.log('Card usage notification sent', { lineGroup: maskId(lineGroupId) });
 }
 
 /**

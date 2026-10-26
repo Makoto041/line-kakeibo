@@ -13,7 +13,7 @@ import type { ClassificationResult } from "../geminiCategoryClassifier";
 import { getCategoryEmoji } from "../gmail/types";
 import { isHouseholdMember, resolveExpenseGroupScope } from "../expenseGroupScope";
 import { resolveAppUidForExpense } from "../linkUserResolver";
-import { errorMessage, maskId } from "../logSafe";
+import { errorFields, maskId } from "../logSafe";
 import { resolveSubCategory } from "../subCategoryRules";
 import { getPaymentMethodLabel, PaymentMethod } from "../textParser";
 import { getLineClient, replyText, replyWithPushFallback } from "./client";
@@ -69,7 +69,7 @@ async function retryWithTimeouts<T>(
       return await withTimeout(call(), attemptTimeoutsMs[i], `${label} timeout (attempt ${attempt})`);
     } catch (error) {
       lastError = error;
-      console.warn(`${label} failed`, { attempt, error: errorMessage(error) });
+      console.warn("Profile fetch attempt failed", { label, attempt, ...errorFields(error) });
       if (attempt < attemptTimeoutsMs.length) {
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
@@ -97,7 +97,7 @@ async function fetchGroupPosterProfile(lineGroupId: string, userId: string): Pro
       const profile = await withTimeout(client.getProfile(userId), 6000, "Individual profile timeout");
       return { type: "profile", data: profile };
     } catch (individualError) {
-      console.warn("Fallback getProfile also failed", { error: errorMessage(individualError) });
+      console.warn("Fallback getProfile also failed", errorFields(individualError));
       return { type: "profile", error: individualError, data: null };
     }
   }
@@ -167,7 +167,7 @@ export function textSubCategoryOf(category: string, description: string): string
     }
     return sub ?? undefined;
   } catch (error) {
-    console.warn("Subcategory resolution failed", { source: "text", error: errorMessage(error) });
+    console.warn("Subcategory resolution failed", { source: "text", ...errorFields(error) });
     return undefined;
   }
 }
@@ -186,7 +186,7 @@ export async function processExpenseInBackground(
         await replyText(
           replyToken,
           "支出を記録できませんでした。この Bot を友だち追加すると、支出を記録できるようになります。"
-        ).catch((replyError) => console.warn("Failed to reply to a message without userId:", replyError));
+        ).catch((replyError) => console.warn("Failed to reply to a message without userId", errorFields(replyError)));
       }
       return;
     }
@@ -325,7 +325,7 @@ export async function processExpenseInBackground(
         }
       } catch (groupError) {
         membershipLookupFailed = true;
-        console.error("Failed to setup group after profile fetch:", groupError);
+        console.error("Failed to setup group after profile fetch", errorFields(groupError));
       }
     }
 
@@ -341,7 +341,7 @@ export async function processExpenseInBackground(
       console.error("PROFILE ERROR: Failed to get user profile", {
         context,
         user: maskId(event.source.userId),
-        error: errorMessage(profileFetchError),
+        ...errorFields(profileFetchError),
       });
 
       const targetId = event.source.type === "group" ? event.source.groupId : event.source.userId;
@@ -407,9 +407,10 @@ export async function processExpenseInBackground(
     // なければ lineGroupId も付けず個人支出にする（LINE 集計・精算への混入防止）。
     const groupScope = resolveExpenseGroupScope(activeGroup, lineGroupId);
     if (lineGroupId && !groupScope.lineGroupId) {
-      console.warn(
-        `Poster ${maskId(event.source.userId)} is not an active member of the group linked to LINE group ${maskId(lineGroupId)}; saving as personal expense`
-      );
+      console.warn('Poster is not an active member of the group linked to the LINE group; saving as personal expense', {
+        user: maskId(event.source.userId),
+        lineGroup: maskId(lineGroupId),
+      });
     }
 
     // Create expense object with payment method
@@ -437,9 +438,11 @@ export async function processExpenseInBackground(
 
     // Save expense to database
     const expenseId = await saveExpense(expense);
-    console.log(
-      `Text expense saved with ID: ${expenseId} for lineId: ${maskId(event.source.userId)}, appUid: ${maskId(expense.appUid)}`
-    );
+    console.log('Text expense saved', {
+      expense: maskId(expenseId),
+      user: maskId(event.source.userId),
+      appUid: maskId(expense.appUid),
+    });
 
     // Flex Messageで確認通知を送信
     const targetId = event.source.type === "group"
@@ -476,7 +479,7 @@ export async function processExpenseInBackground(
     }
 
   } catch (error) {
-    console.error("Background expense processing error:", error);
+    console.error("Background expense processing error", errorFields(error));
     throw error; // Re-throw to trigger error notification
   }
 }

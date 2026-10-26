@@ -197,7 +197,7 @@ export async function updateHistoryId(historyId: string): Promise<void> {
     const current = snapshot.exists ? (snapshot.data()?.historyId as string | undefined) : undefined;
 
     if (current && !isNewerHistoryId(historyId, current)) {
-      console.log(`Skipping historyId rollback: current=${current}, incoming=${historyId}`);
+      console.log('Skipping historyId rollback', { current: String(current), incoming: String(historyId) });
       return;
     }
 

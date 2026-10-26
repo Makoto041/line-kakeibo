@@ -1,6 +1,6 @@
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { randomInt } from 'node:crypto';
-import { maskId } from './logSafe';
+import { errorFields, maskId } from './logSafe';
 import { dayjs } from './time';
 
 let db: ReturnType<typeof getFirestore> | null = null;
@@ -110,10 +110,10 @@ export async function saveExpense(expense: Omit<Expense, 'id' | 'createdAt' | 'u
       updatedAt: now
     });
 
-    console.log(`Expense saved with ID: ${docRef.id}, lineId: ${maskId(expense.lineId)}`);
+    console.log('Expense saved', { expense: maskId(docRef.id), user: maskId(expense.lineId) });
     return docRef.id;
   } catch (error) {
-    console.error('Error saving expense:', error);
+    console.error('Error saving expense', errorFields(error));
     throw error;
   }
 }
@@ -216,7 +216,7 @@ export async function saveGmailExpenseAtomic(
     });
     if (notice) transaction.set(notice.ref, notice.build(newDocRef.id));
 
-    console.log(`Expense saved with ID: ${newDocRef.id}, lineId: ${maskId(expense.lineId)}`);
+    console.log('Expense saved', { expense: maskId(newDocRef.id), user: maskId(expense.lineId) });
     return {
       expenseId: newDocRef.id,
       alreadyExists: false,
@@ -246,8 +246,8 @@ export async function getMonthlyBudget(
         }
       }
     } catch (error) {
-      // 注: ユーザー由来の id はフォーマット文字列に含めず引数で渡す（format string injection回避）
-      console.warn('Failed to read budgetSettings for id:', maskId(id), error);
+      // 注: ユーザー由来の id はフォーマット文字列に含めずオブジェクトで渡す（format string injection回避）。例外は種類だけ
+      console.warn('Failed to read budgetSettings', { id: maskId(id), ...errorFields(error) });
     }
   }
   return undefined;
@@ -342,7 +342,7 @@ export async function getMonthlyGroupSummary(
       recentExpenses: sortedExpenses.slice(0, recentLimit),
     };
   } catch (error) {
-    console.error('Error getting monthly group summary:', error);
+    console.error('Error getting monthly group summary', errorFields(error));
     throw error;
   }
 }
@@ -356,9 +356,9 @@ export async function createUserLink(appUid: string, lineId: string): Promise<vo
       createdAt: now,
       updatedAt: now
     });
-    console.log(`UserLink created: ${maskId(appUid)} -> ${maskId(lineId)}`);
+    console.log('UserLink created', { appUid: maskId(appUid), user: maskId(lineId) });
   } catch (error) {
-    console.error('Error creating user link:', error);
+    console.error('Error creating user link', errorFields(error));
     throw error;
   }
 }
@@ -377,7 +377,7 @@ export async function findAppUidByLineId(lineId: string): Promise<string | null>
     
     return snapshot.docs[0].id; // document ID is the appUid
   } catch (error) {
-    console.error('Error finding appUid by lineId:', error);
+    console.error('Error finding appUid by lineId', errorFields(error));
     throw error;
   }
 }
@@ -405,10 +405,14 @@ export async function createGroup(name: string, createdBy: string, lineGroupId?:
     // Add creator as first member
     await addGroupMember(docRef.id, createdBy, "作成者");
     
-    console.log(`Group created: ${docRef.id} by ${maskId(createdBy)}${lineGroupId ? ` (LINE Group: ${maskId(lineGroupId)})` : ''}`);
+    console.log('Group created', {
+      group: maskId(docRef.id),
+      by: maskId(createdBy),
+      ...(lineGroupId ? { lineGroup: maskId(lineGroupId) } : {}),
+    });
     return docRef.id;
   } catch (error) {
-    console.error('Error creating group:', error);
+    console.error('Error creating group', errorFields(error));
     throw error;
   }
 }
@@ -444,7 +448,7 @@ export async function addGroupMember(groupId: string, lineId: string, displayNam
         { merge: true }
       );
   } catch (error) {
-    console.error('Error adding group member:', error);
+    console.error('Error adding group member', errorFields(error));
     throw error;
   }
 }
@@ -479,7 +483,7 @@ export async function getUserGroups(lineId: string): Promise<Array<Group & { mem
     
     return groups;
   } catch (error) {
-    console.error('Error getting user groups:', error);
+    console.error('Error getting user groups', errorFields(error));
     throw error;
   }
 }
@@ -496,7 +500,7 @@ export async function getGroupMembers(groupId: string): Promise<GroupMember[]> {
       ...doc.data() as GroupMember
     }));
   } catch (error) {
-    console.error('Error getting group members:', error);
+    console.error('Error getting group members', errorFields(error));
     throw error;
   }
 }
@@ -533,7 +537,7 @@ export async function findLineGroupId(
       .get();
 
     if (existingGroupSnapshot.empty) {
-      console.log(`No app group linked to LINE group ${maskId(lineGroupId)} (auto-creation disabled)`);
+      console.log('No app group linked to the LINE group (auto-creation disabled)', { lineGroup: maskId(lineGroupId) });
       return null;
     }
 
@@ -546,12 +550,15 @@ export async function findLineGroupId(
     if (member?.isActive === true && userDisplayName && member.displayName !== userDisplayName) {
       await memberRef.update({ displayName: userDisplayName });
     } else if (!member?.isActive) {
-      console.log(`User ${maskId(lineUserId)} is not an active member of group ${groupId}; not adding automatically`);
+      console.log('User is not an active member of the group; not adding automatically', {
+        user: maskId(lineUserId),
+        group: maskId(groupId),
+      });
     }
 
     return groupId;
   } catch (error) {
-    console.error('Error finding LINE group:', error);
+    console.error('Error finding LINE group', errorFields(error));
     throw error;
   }
 }
@@ -580,8 +587,9 @@ export async function deactivateLineGroupMembers(
   if (groupsSnapshot.empty) {
     // 世帯グループが LINE グループに紐づいていないと、退出者の Web アクセスを外せない。
     console.warn(
-      `No app group is linked to LINE group ${maskId(lineGroupId)}; cannot deactivate ${lineUserIds.length} leaving member(s). ` +
-        'Check `node scripts/manage-group-members.mjs list` (LINE 欄) and deactivate them manually.'
+      'No app group is linked to the LINE group; cannot deactivate the leaving members. ' +
+        'Check `node scripts/manage-group-members.mjs list` (LINE 欄) and deactivate them manually.',
+      { lineGroup: maskId(lineGroupId), members: lineUserIds.length }
     );
     return 0;
   }
@@ -600,7 +608,7 @@ export async function deactivateLineGroupMembers(
         if (memberDoc.get('isActive') === false) continue;
         await memberDoc.ref.update({ isActive: false, leftAt: now, deactivatedReason: reason });
         deactivated++;
-        console.log(`Deactivated member ${maskId(lineUserId)} in group ${groupDoc.id} (${reason})`);
+        console.log('Deactivated a member', { user: maskId(lineUserId), group: maskId(groupDoc.id), reason });
       }
     }
   }
@@ -625,7 +633,7 @@ export async function getGroupByLineGroupId(lineGroupId: string): Promise<Group 
       ...doc.data() as Group
     };
   } catch (error) {
-    console.error('Error getting group by LINE group ID:', error);
+    console.error('Error getting group by LINE group ID', errorFields(error));
     throw error;
   }
 }
@@ -643,9 +651,9 @@ export async function saveUserSettings(lineId: string, defaultCategory: string):
       createdAt: Timestamp.now()
     }, { merge: true });
     
-    console.log('User settings saved for:', maskId(lineId));
+    console.log('User settings saved', { user: maskId(lineId) });
   } catch (error) {
-    console.error('Error saving user settings:', error);
+    console.error('Error saving user settings', errorFields(error));
     throw error;
   }
 }
@@ -664,7 +672,7 @@ export async function getUserSettings(lineId: string): Promise<UserSettings | nu
       ...doc.data() as UserSettings
     };
   } catch (error) {
-    console.error('Error getting user settings:', error);
+    console.error('Error getting user settings', errorFields(error));
     throw error;
   }
 }
@@ -743,7 +751,7 @@ export async function getAllUserCategories(lineId: string): Promise<Array<Catego
   } catch (error) {
     // 失敗は呼び出し側に伝える（categoriesFor が既定の 19 カテゴリを使い、キャッシュしない）。
     // 一部のカテゴリだけの一覧を返すと、それが分類の選択肢として 30 分キャッシュされてしまう
-    console.error('Error getting all user categories:', error);
+    console.error('Error getting all user categories', errorFields(error));
     throw error;
   }
 }
@@ -775,7 +783,7 @@ export async function getPendingAdvances(groupIdOrLineGroupId: string, isLineGro
       return bTime - aTime;
     });
   } catch (error) {
-    console.error('Error getting pending advances:', error);
+    console.error('Error getting pending advances', errorFields(error));
     throw error;
   }
 }

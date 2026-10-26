@@ -21,7 +21,7 @@ import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import type { DocumentReference } from 'firebase-admin/firestore';
 import { sendCardUsageNotification } from '../line/flexMessage';
 import type { CardUsageInfo } from '../line/flexMessage';
-import { maskId } from '../logSafe';
+import { errorFields, maskId } from '../logSafe';
 
 export const CARD_NOTICE_PREFIX = 'gmailCardNotice_';
 
@@ -94,13 +94,6 @@ export function cardNoticeFor(
 function millisOf(value: unknown): number {
   const ts = value as { toMillis?: () => number } | null | undefined;
   return typeof ts?.toMillis === 'function' ? ts.toMillis() : NaN;
-}
-
-/** ログに出す例外の種類（メッセージには文書のパスなどが入りうるので出さない） */
-function errorFields(error: unknown): { errorName: string; errorCode?: string | number } {
-  const errorName = error instanceof Error ? error.name : typeof error;
-  const code = (error as { code?: unknown } | null | undefined)?.code;
-  return typeof code === 'number' || typeof code === 'string' ? { errorName, errorCode: code } : { errorName };
 }
 
 async function removeNotice(ref: DocumentReference, log: Record<string, string>): Promise<void> {

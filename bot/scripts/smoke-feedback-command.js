@@ -17,6 +17,7 @@
  *   node bot/scripts/smoke-feedback-command.js
  */
 const path = require('path');
+const util = require('util');
 
 let failed = 0;
 function check(name, cond, detail) {
@@ -112,6 +113,7 @@ const {
   sanitizeIssueMarkdown,
   fencedOriginalText,
 } = require('../dist/issueCreator');
+const issueCreatorModule = require('../dist/issueCreator');
 
 // 処理中のログを集める（画面には出さない）。logs はケースごとに消し、allLogs は最後の確認に使う
 const logs = [];
@@ -464,6 +466,51 @@ async function main() {
     (_key, value) => (value instanceof Error ? `${value.name}: ${value.message}` : value)
   );
   check('ログに例外の文言（応答の断片）を出さない', !loggedHere.includes('CANARY') && !loggedHere.includes('秘密'), loggedHere);
+
+  console.log('\n# GitHub への送信が失敗したとき → ログには固定文とエラーの種類・HTTP ステータスだけを出す（#277）');
+  logs.length = 0;
+  putMember('G_house', 'U_ghfail');
+  const realPost = axios.post;
+  // axios のエラーは、送ったリクエストの設定（Authorization ヘッダー = GITHUB_TOKEN）と応答の本文を持つ
+  axios.post = async () => {
+    throw Object.assign(new Error('Request failed with status code 422 秘密CANARY'), {
+      isAxiosError: true,
+      code: 'ERR_BAD_REQUEST',
+      status: 422,
+      config: { headers: { Authorization: 'Bearer test-token-秘密CANARY' } },
+      response: { status: 422, data: { message: 'Validation Failed 秘密CANARY' } },
+    });
+  };
+  r = await send({ userId: 'U_ghfail', body: 'GitHub が失敗する要望' });
+  axios.post = realPost;
+  check('作れなかったと返す（例外にしない）', r.github === 0 && r.gemini === 1 && !/^Issueを作成しました/.test(r.reply ?? ''), detail(r));
+  const githubError = findLog('GitHub Issue creation error');
+  check(
+    '固定文 + オブジェクト（errorName・errorCode・status）で error に出す',
+    githubError?.level === 'error' && githubError.args.length === 2 && githubError.args[1].errorCode === 'ERR_BAD_REQUEST' && githubError.args[1].status === 422,
+    JSON.stringify(githubError?.args)
+  );
+  const githubLogged = logs.map((l) => util.format(...l.args)).join('\n');
+  check('ログに例外の文言・トークン・応答の本文を出さない', !githubLogged.includes('CANARY') && !githubLogged.includes('test-token'), githubLogged);
+
+  console.log('\n# Issue の作成が例外になったとき → ログには固定文とエラーの種類だけを出す（#277）');
+  logs.length = 0;
+  putMember('G_house', 'U_issuethrow');
+  const realCreate = issueCreatorModule.createIssueFromFeedback;
+  issueCreatorModule.createIssueFromFeedback = async () => {
+    throw Object.assign(new Error('unexpected 秘密CANARY'), { status: 502 });
+  };
+  r = await send({ userId: 'U_issuethrow', body: '作成が例外になる要望' });
+  issueCreatorModule.createIssueFromFeedback = realCreate;
+  check('作成に失敗したと返す', /Issueの作成に失敗しました/.test(r.reply ?? ''), detail(r));
+  const issueError = findLog('Error creating issue from feedback');
+  check(
+    '固定文 + オブジェクト（errorName・errorStatus）で error に出す',
+    issueError?.level === 'error' && issueError.args.length === 2 && issueError.args[1].errorName === 'Error' && issueError.args[1].errorStatus === 502,
+    JSON.stringify(issueError?.args)
+  );
+  const issueLogged = logs.map((l) => util.format(...l.args)).join('\n');
+  check('ログに例外の文言を出さない', !issueLogged.includes('CANARY'), issueLogged);
 
   console.log('\n# フィードバックでない入力は処理しない');
   r = await captureLogs(() => handleFeedbackCommand({ replyToken: 'reply-token', source: { type: 'user', userId: 'U_other' } }, '500 ランチ'));

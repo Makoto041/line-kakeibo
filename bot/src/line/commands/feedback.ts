@@ -20,7 +20,7 @@ import {
   FEEDBACK_TOO_LONG_MESSAGE,
   feedbackLength,
 } from "../../issueCreator";
-import { errorMessage, maskId } from "../../logSafe";
+import { errorFields, maskId } from "../../logSafe";
 import { replyText } from "../client";
 
 const FEEDBACK_PREFIXES = ["要望", "改善", "不具合", "フィードバック"];
@@ -118,7 +118,7 @@ export async function handleFeedbackCommand(event: any, text: string): Promise<b
   try {
     member = (await readActiveMember(getFirestore(), groupId, userId)) !== null;
   } catch (error) {
-    console.warn("Feedback rejected: household membership lookup failed", { user, error: errorMessage(error) });
+    console.warn("Feedback rejected: household membership lookup failed", { user, ...errorFields(error) });
     await replyText(event.replyToken, MEMBERSHIP_LOOKUP_FAILED_MESSAGE);
     return true;
   }
@@ -146,11 +146,11 @@ export async function handleFeedbackCommand(event: any, text: string): Promise<b
     const result = await createIssueFromFeedback(feedbackText);
     await replyText(event.replyToken, result.success ? `${result.message}\n\n${FEEDBACK_PUBLIC_NOTICE}` : result.message);
   } catch (error) {
-    console.error("Error creating issue from feedback:", error);
+    console.error("Error creating issue from feedback", errorFields(error));
     try {
       await replyText(event.replyToken, "Issueの作成に失敗しました。\n時間をおいてもう一度お試しください。");
     } catch (replyError) {
-      console.error("Failed to send feedback error reply:", replyError);
+      console.error("Failed to send feedback error reply", errorFields(replyError));
     }
   }
   return true;
