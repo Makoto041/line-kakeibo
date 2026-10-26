@@ -185,7 +185,7 @@ viewport-fit=cover: ノッチ・ホームバーは env(safe-area-inset-*) で避
 
 ### 4.4 精算（期間の折半）
 
-- 精算タブ（`/settlement`）は**期間の精算（折半）**（`components/PeriodSplitCard.tsx` + `lib/periodSplit.ts`）。表示期間内の世帯の支出（合計に含むもの。立替精算済みと立替（全額）は除く）を 2 人で折半し、`groups.splitSettings.collectFromLineId`（`POST /household/split-settings` で保存）に指定したメンバーの支払い分を引き、立替（全額）を足し引きして集金額を出す（集金額 = 合計 ÷ 2 − 集金するメンバーの支払い ＋ 相手の立替 − 集金するメンバーの立替）。クライアント側の純関数で計算し、記録は残さない。bot の `periodSplit.ts` も同じ式
+- 精算タブ（`/settlement`）は**期間の精算（折半）**（`components/PeriodSplitCard.tsx` + `components/PeriodSplitView.tsx` + `lib/periodSplit.ts`）。`PeriodSplitCard` は期間の設定・明細の取得と集金するメンバーの保存を受け持ち、表示は `PeriodSplitView` に渡す（明細・期間・見出し・内訳シートのリンクを props で受け取り、hooks / householdApi / firebase / lineAuth / dateSettings / recurringApi を値として import しない。`__tests__/periodSplitView.test.mjs` で確かめる）。表示期間内の世帯の支出（合計に含むもの。立替精算済みと立替（全額）は除く）を 2 人で折半し、`groups.splitSettings.collectFromLineId`（`POST /household/split-settings` で保存）に指定したメンバーの支払い分を引き、立替（全額）を足し引きして集金額を出す（集金額 = 合計 ÷ 2 − 集金するメンバーの支払い ＋ 相手の立替 − 集金するメンバーの立替）。クライアント側の純関数で計算し、記録は残さない。bot の `periodSplit.ts` も同じ式
 - 誰が払ったかは支出の支払った人（`payerId`、無ければ `lineId`）で数える。LINE のカードの［自分が払った］（`set_payer`）で押した人に変えられる（世帯の有効メンバーだけ）
 - **立替**は「押した人が払って、相手の分を立て替えた」支出。LINE のカードの［自分が立替］（`set_advance`）で `status: 'advance_pending'`・`advanceFull: true`・立て替えた人 = 支払った人 = 押した人になり、折半せず支出の日付の期間の精算で全額を返してもらう（`isFullAdvance`）。以前は立替が折半と別の立替の精算の両方に入り、二重に払うおそれがあったため、立替の精算（`GET /household/settlement`・`POST /household/settlement/settle` と旧 `householdSettlement.ts` の精算額の計算。メンバーと表示名の関数は `householdMembers.ts` に残した）は削除し、期間の精算にまとめた。`立替一覧` / `立替` / `精算` コマンドは案内を返すだけ
 - 全額にする前の立替（`advanceFull` の無い `advance_pending`）は、これまでどおり支払った人の分として折半する（過去の期間の金額を変えないため）。残っていれば精算タブにお知らせ（`components/LeftoverAdvancesCard.tsx`）を出し、`GET /household/legacy-advances` で一覧（世帯に `lineGroupId` があればその基準、無ければ `groupId`）を取り、`POST /household/legacy-advances/settle` で精算済み（`advance_settled`。どの期間の精算にも入らない）にする
@@ -323,7 +323,7 @@ line-kakeibo/
 ├─ web/                      # Next.js 16 (Vercel)
 │  ├─ app/                   # / , /expenses , /settlement , /settings , /attach , /link , /dashboard , /terms , /privacy
 │  ├─ app/manifest.ts        # PWA の manifest（apple-icon.png / favicon.ico も app/ に置く）
-│  ├─ components/            # Charts, PeriodSplitCard, LeftoverAdvancesCard（全額にする前の立替のお知らせ）, RecurringExpensesPanel, GuestGuide,
+│  ├─ components/            # Charts, PeriodSplitCard（精算の取得・保存）・PeriodSplitView（精算の表示）, LeftoverAdvancesCard（全額にする前の立替のお知らせ）, RecurringExpensesPanel, GuestGuide,
 │  │                         # layout/(AppShell, Sidebar, BottomTabBar, TopBar, nav), theme/,
 │  │                         # settings/InstallAppCard（ホーム画面への追加の案内）・SettlementNotifyCard（LINEへの精算の通知）
 │  ├─ lib/                   # firebase.ts, lineAuth.ts, hooks.ts, householdApi.ts, householdContract.ts, recurringApi.ts,
@@ -331,7 +331,7 @@ line-kakeibo/
 │  │                         # expenseEdit.ts（支出の編集の純関数）, categoryTaxonomy.ts（中項目の一覧。bot と同じ内容）,
 │  │                         # drilldown.ts（内訳シートの集計。合計 → カテゴリ → 中項目 / 支払い者 → 明細）,
 │  │                         # installApp.ts（PWA の案内の出し分け・Service Worker の登録）ほか
-│  ├─ __tests__/             # renewal-logic / expenseUpdate / categoryTaxonomy（bot の中項目の一覧との一致）/ periodSplit / drilldown / swrCache / installApp（node --test）
+│  ├─ __tests__/             # renewal-logic / expenseUpdate / categoryTaxonomy（bot の中項目の一覧との一致）/ periodSplit / periodSplitView（精算の表示が Firebase 系を値として import しない）/ drilldown / swrCache / installApp（node --test）
 │  ├─ public/icons/          # Flex メッセージ用アイコン PNG（scripts/gen-line-icons.mjs で生成）
 │  ├─ public/pwa/            # PWA のアイコン（scripts/gen-app-icons.mjs で生成）
 │  ├─ public/sw.js / offline.html # Service Worker とオフライン画面（公開されるのでコメントを書かない）
