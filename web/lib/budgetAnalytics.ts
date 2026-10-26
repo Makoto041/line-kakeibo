@@ -1,7 +1,7 @@
 // 予算まわりの計算（ホームの判断インサイトと予算管理カード）。
 // node --test から直接読めるよう、他のモジュールからは型だけを import する（値の import は dayjs のみ）。
 import dayjs from 'dayjs';
-import type { ExpenseStats } from './hooks';
+import type { Expense, ExpenseStats } from './hooks';
 
 // ---- 期間の数値（サマリー・判断インサイト） ------------------------------------
 
@@ -68,7 +68,26 @@ export function computePeriodInsights(input: {
 
 // ---- カテゴリ別予算 -------------------------------------------------------------
 
-// 予算カテゴリ名（正準）→ 支出データのカテゴリ名（旧表記ゆれも吸収）
+/**
+ * カテゴリ別の合計（予算カードの実支出。useMonthlyStats の categoryTotals）。
+ * カテゴリは normalize（lib/categoryNormalization.ts の normalizeCategoryName を渡す）で正準名にまとめて数える（#243）。
+ * 旧名（娯楽費・交際費・投資など）で保存された支出も正準名の行に入り、ホームの内訳（useExpenses も同じ正規化）と揃う。
+ * normalize は引数で受ける（このファイルは値として dayjs しか import しない）。
+ */
+export function sumCategoryTotals(
+  expenses: ReadonlyArray<Pick<Expense, 'category' | 'amount'>>,
+  normalize: (category: string) => string
+): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const expense of expenses) {
+    const category = normalize(expense.category);
+    totals[category] = (totals[category] || 0) + expense.amount;
+  }
+  return totals;
+}
+
+// 予算カテゴリ名（正準）→ 支出データのカテゴリ名（旧表記ゆれも吸収）。
+// 実支出は sumCategoryTotals で正準名にまとめてあるので、旧名の行は主に旧名の予算キー（例: 娯楽費）を逆引きするために使う
 export const BUDGET_TO_EXPENSE_CATEGORY: Record<string, string[]> = {
   食費: ['食費'],
   交通費: ['交通費'],

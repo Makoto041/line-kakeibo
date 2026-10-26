@@ -241,6 +241,39 @@ const e = (amount, payerId, extra = {}) => ({
     assert.equal(summary.categories[0].percentage, 70.5);
     assert.deepEqual(summary.otherCategories, { count: 3, amount: 3500 });
   });
+  await test('カテゴリは正準名にまとめて数える（旧名は同じ行・知らない名前は別の行のまま・精算額は変わらない。#243）', () => {
+    const legacy = [
+      e(8000, B, { category: '娯楽' }),
+      e(3000, A, { category: '娯楽費' }),
+      e(1000, B, { category: '交際費' }),
+      e(5000, A, { category: '投資' }),
+      e(700, B, { category: '推し活' }),
+      e(400, A, { category: '' }),
+      e(300, B, { category: undefined }),
+      e(200, A, { category: 123 }),
+    ];
+    const s = buildSettlementSummary({ groupId: G, range: RANGE, members: MEMBERS, collectFrom: A, expenses: legacy });
+    assert.deepEqual(
+      s.categories.map((c) => [c.category, c.amount]),
+      [['娯楽', 12000], ['貯金', 5000], ['その他', 900], ['推し活', 700]]
+    );
+    assert.equal(s.categories[0].percentage, 64.5);
+    assert.deepEqual(s.otherCategories, { count: 0, amount: 0 }, '旧名で上位 5 つの枠を使わない');
+    // 精算額は、同じ支出を正準名で書いたときと同じ
+    const renamed = buildSettlementSummary({
+      groupId: G,
+      range: RANGE,
+      members: MEMBERS,
+      collectFrom: A,
+      expenses: legacy.map((x) => ({ ...x, category: '食費' })),
+    });
+    assert.deepEqual(s.split, renamed.split);
+    assert.equal(s.split.total, 18600);
+    assert.deepEqual(s.split.transfer, { fromLineId: A, toLineId: B, amount: 700 });
+    const flexJson = JSON.stringify(buildSettlementSummaryMessages(s)[1]);
+    for (const old of ['娯楽費', '交際費', '投資']) assert.ok(!flexJson.includes(old), `Flex に旧名「${old}」が出ている`);
+    assert.ok(flexJson.includes('推し活'), '知らない名前はそのまま出す');
+  });
   await test('要確認は手入力の未確認だけ（以前のカード取込の pending は数えない）', () => {
     assert.deepEqual(summary.pending, { count: 1, amount: 2180 });
     assert.equal(isPendingManual({ inputSource: 'gmail_auto', status: 'pending', confirmed: false }), false);

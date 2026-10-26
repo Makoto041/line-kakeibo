@@ -15,6 +15,7 @@ import * as S from '../lib/demo/demoSummary.ts';
 import { DEMO_DEFAULT_MONTH_INDEX, DEMO_EXPENSES, DEMO_HOUSEHOLD_ID, DEMO_MEMBER_A, DEMO_MEMBERS, DEMO_MONTHS, DEMO_TODAY } from '../lib/demo/demoData.ts';
 import { demoScenes } from '../lib/demo/demoScenes.ts';
 import { computePeriodSplit, periodPool } from '../lib/periodSplit.ts';
+import { CANONICAL_CATEGORIES } from '../lib/categoryNormalization.ts';
 
 // CI は web/ を作業ディレクトリにして実行するので、このファイルからの相対で読む
 const bot = (rel) => readFileSync(new URL(`../../bot/src/${rel}`, import.meta.url), 'utf8');
@@ -618,7 +619,12 @@ test('精算サマリーの数え方（折半の対象・要確認・割合・�
   includes(pending, "if (e.inputSource === 'gmail_auto' || e.inputSource === 'recurring') return false;", 'isPendingManual');
   includes(pending, "return (e.status == null || e.status === 'pending') && e.confirmed !== true;", 'isPendingManual');
   const build = bodyOf(SUMMARY, 'buildSettlementSummary');
-  includes(build, "const category = typeof e.category === 'string' && e.category ? e.category : 'その他';", 'buildSettlementSummary');
+  // bot は旧名（娯楽費など）を正準名にまとめて数える（#243）。デモの写しは保存された名前のまま数えるが、
+  // デモの支出は正準名だけなので結果は同じ（正準名は toCanonicalCategoryName でそのまま）
+  includes(build, "const category = typeof e.category === 'string' && e.category ? toCanonicalCategoryName(e.category) : 'その他';", 'buildSettlementSummary');
+  for (const e of DEMO_EXPENSES) {
+    assert.ok(CANONICAL_CATEGORIES.includes(e.category), `デモの支出 ${e.id} のカテゴリ「${e.category}」が正準名でない`);
+  }
   includes(build, 'percentage: split.total > 0 ? Math.round((amount / split.total) * 1000) / 10 : 0,', 'buildSettlementSummary');
   includes(build, '.sort((a, b) => b.amount - a.amount);', 'buildSettlementSummary');
   includes(build, 'const rest = sorted.slice(SUMMARY_TOP_CATEGORIES);', 'buildSettlementSummary');
