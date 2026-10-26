@@ -98,7 +98,12 @@ export const adminPostAuthLimiter = rateLimit({
   validate: IP_KEY_VALIDATE,
 });
 
-/** 管理 API（/callback 以外の全ルート）の前に付ける: 認証前の上限 → Admin 認証 → 認証後の上限 */
+/**
+ * 管理 API（/callback 以外の全ルート）の前に付ける並び: 認証前の上限 → Admin 認証 → 認証後の上限
+ *
+ * 各ルートには展開（...adminGuards）せず、この 3 つをそのまま並べて書く（静的解析〔CodeQL の Express のモデル〕が
+ * ハンドラと limiter を見分けられるように）。全ルートがこの並びで始まることはスモークテストがルーターのスタックで確かめる。
+ */
 export const adminGuards: readonly express.RequestHandler[] = [adminPreAuthLimiter, requireAdminAuth, adminPostAuthLimiter];
 
 /**
@@ -107,7 +112,7 @@ export const adminGuards: readonly express.RequestHandler[] = [adminPreAuthLimit
  * stateパラメータを生成してCSRF攻撃を防止
  * Admin認証が必要
  */
-gmailRouter.get("/auth", ...adminGuards, async (_req, res) => {
+gmailRouter.get("/auth", adminPreAuthLimiter, requireAdminAuth, adminPostAuthLimiter, async (_req, res) => {
   try {
     const authUrl = await getAuthUrl(); // async - stateを生成・保存
     res.json({
@@ -164,7 +169,7 @@ gmailRouter.get("/callback", gmailCallbackLimiter, async (req, res) => {
  * Gmail Watch登録エンドポイント
  * Admin認証が必要
  */
-gmailRouter.post("/register-watch", ...adminGuards, async (_req, res) => {
+gmailRouter.post("/register-watch", adminPreAuthLimiter, requireAdminAuth, adminPostAuthLimiter, async (_req, res) => {
   try {
     const isConfigured = await isGmailAuthConfigured();
     if (!isConfigured) {
@@ -189,7 +194,7 @@ gmailRouter.post("/register-watch", ...adminGuards, async (_req, res) => {
  * Gmail Watch状態確認エンドポイント
  * Admin認証が必要
  */
-gmailRouter.get("/status", ...adminGuards, async (_req, res) => {
+gmailRouter.get("/status", adminPreAuthLimiter, requireAdminAuth, adminPostAuthLimiter, async (_req, res) => {
   try {
     const status = await getWatchStatus();
     const isConfigured = await isGmailAuthConfigured();
@@ -212,7 +217,7 @@ gmailRouter.get("/status", ...adminGuards, async (_req, res) => {
 /**
  * トークンを強制リフレッシュ（デバッグ用）
  */
-gmailRouter.post("/refresh-token", ...adminGuards, async (_req, res) => {
+gmailRouter.post("/refresh-token", adminPreAuthLimiter, requireAdminAuth, adminPostAuthLimiter, async (_req, res) => {
   try {
     const tokenDoc = await gmailTokenRef().get();
     const tokenData = tokenDoc.data();
@@ -272,7 +277,7 @@ function googleRevokeFields(google: GoogleRevokeResult | null) {
  *
  * 時間の上限: stop 5 秒（取り直しを含む全体）＋ 失効 5 秒 × 2 = 15 秒と Firestore の get / delete × 3（関数 api の既定の 60 秒に収める）
  */
-gmailRouter.delete("/revoke", ...adminGuards, async (_req, res) => {
+gmailRouter.delete("/revoke", adminPreAuthLimiter, requireAdminAuth, adminPostAuthLimiter, async (_req, res) => {
   let watchStopped: boolean | null | undefined;
   let google: GoogleRevokeResult | null | undefined;
   try {
@@ -336,7 +341,7 @@ gmailRouter.delete("/revoke", ...adminGuards, async (_req, res) => {
  * テスト用: 最新のメールを手動で処理
  * Admin認証が必要
  */
-gmailRouter.post("/process-latest", ...adminGuards, async (_req, res) => {
+gmailRouter.post("/process-latest", adminPreAuthLimiter, requireAdminAuth, adminPostAuthLimiter, async (_req, res) => {
   try {
     const result = await processLatestEmail();
     res.json(result);
@@ -350,7 +355,7 @@ gmailRouter.post("/process-latest", ...adminGuards, async (_req, res) => {
  * テスト用: 過去のメールを強制的に再処理（重複チェックをスキップ）
  * Admin認証が必要
  */
-gmailRouter.post("/test-process", ...adminGuards, async (_req, res) => {
+gmailRouter.post("/test-process", adminPreAuthLimiter, requireAdminAuth, adminPostAuthLimiter, async (_req, res) => {
   try {
     const gmail = await getGmailClient();
 
@@ -439,7 +444,7 @@ gmailRouter.post("/test-process", ...adminGuards, async (_req, res) => {
  * テスト用: 指定したメッセージIDを強制処理（重複チェックをスキップしてLINE通知も送信）
  * Admin認証が必要
  */
-gmailRouter.post("/force-process/:messageId", ...adminGuards, async (req, res) => {
+gmailRouter.post("/force-process/:messageId", adminPreAuthLimiter, requireAdminAuth, adminPostAuthLimiter, async (req, res) => {
   try {
     const { messageId } = req.params;
     if (!messageId) {
