@@ -348,7 +348,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | `linkTokens/{token}` | `lineId`, `expiresAt`(15分), `used` | クライアントからは読み書き不可 |
 | `userCustomCategories` | `lineId`, `name`, `icon?`, `keywords?[]` | Bot 専用 |
 | `categoryFeedback` | `originalCategory`, `correctedCategory`, `description` | 分類改善用ログ。Bot 専用 |
-| `system/{gmailToken,gmailState,oauthState,gmailFailures}` | Gmail OAuth トークン・historyId / watch 期限 / 連携中のアカウントのアドレス（Pub/Sub の通知の照合用。GMAIL_AUTO_SPEC §3.2）・CSRF state・処理失敗の記録（試行回数と最初・最後の失敗の時刻） | Bot 専用 |
+| `system/{gmailToken,gmailState,oauthState,gmailFailures}` | Gmail OAuth トークン・historyId / watch 期限 / 連携中のアカウントのアドレス（Pub/Sub の通知の照合用。GMAIL_AUTO_SPEC §3.2）・CSRF state・処理失敗の記録（試行回数と最初・最後の失敗の時刻・最後の失敗の例外の種類。文言は保存しない） | Bot 専用 |
 | `system/gmailCardNotice_{messageId}` | `expenseId`, `lineGroupId`, `card`, `createdAt`, `expireAt` | カード利用通知の送信待ちの印（§3.1。支出の保存と同じトランザクションで作り、送れたら消す。23 時間を過ぎた印・支出が消された印・諦めたメール〔historyId を進めたときだけ〕や historyId が古すぎて飛ばしたメールの印は送らずに消す。`expireAt`〔作ってから 24 時間〕は運用で設定する TTL ポリシー用で、未設定でも動作は変わらない）。Bot 専用 |
 | `system/settlementSummary_{groupId}_{YYYY-MM-DD}` | `groupId`, `endDate`, `createdAt`, `sentAt`, `manualSentAt?` | 期間の精算サマリーを送った印（§3.4。同じ期間は 1 回。Web から締まった期間を手動で送ったときは `manualSentAt` を書き、印が無ければ作る。自動で送った `sentAt` は上書きしない）。Bot 専用 |
 

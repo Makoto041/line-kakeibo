@@ -4,7 +4,8 @@
  * 保存のあと LINE への push が失敗した・止まったときに、同じメールの再処理（Pub/Sub の再送・/gmail/force-process）で
  * カードを送り直すこと、二重に送らないこと（X-Line-Retry-Key）、印の無い既存の支出には送らないことを確かめる。
  * あわせて、失敗の記録（system/gmailFailures）の firstFailedAt と諦める条件（試行 3 回以上 かつ 最初の失敗から 6 時間以上。
- * 再送で回数だけすぐ増えても諦めない）、消されたメール（messages.get の 404）を失敗として数えず読み飛ばすことも確かめる。
+ * 再送で回数だけすぐ増えても諦めない）、失敗の記録にエラーの文言を保存しないこと（以前の記録の lastError を消す）、
+ * 消されたメール（messages.get の 404）を失敗として数えず読み飛ばすことも確かめる。
  *
  * Gmail・分類器・LINE は偽物に差し替える（dist の exports を書き換える。呼び出し側は呼ぶときに exports を参照する）。
  * 支出の保存・印・重複判定・historyId（system/gmailState）は本物のコードでエミュレータに書く。
@@ -443,6 +444,12 @@ async function pubsub(ids) {
     check(
       '記録の firstFailedAt に、代用した lastFailedAt を書く（試行 3）',
       record && record.attempts === 3 && record.firstFailedAt && record.firstFailedAt.toMillis() === lastFailedAt.toMillis(),
+      record
+    );
+    // 文言は保存しない（以前の記録の lastError は消す。入れ子の FieldValue.delete() が merge で効くことを、本物の Firestore で確かめる）
+    check(
+      '記録の以前の文言（lastError）を消し、最後の失敗の種類（errorName・errorStatus）だけを書く',
+      record && !('lastError' in record) && record.errorName === 'Error' && record.errorStatus === 500 && !('errorCode' in record),
       record
     );
     check('諦めたメールの印を消す', !(await noticeOf(id)).exists && discardWarned());

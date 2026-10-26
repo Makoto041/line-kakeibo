@@ -160,6 +160,9 @@ export const gmailPubSubHandler = onMessagePublished(
  *
  * 失敗したら Cloud Scheduler が 2 回までやり直す（`retryCount`。ジョブは増えないので、スケジュールの無料枠は変わらない）。
  * やり直しても失敗すると、次の実行は 6 日後で、その前に watch が切れる（docs/GMAIL_AUTO_SPEC.md §11.2）。
+ *
+ * 失敗は、例外の種類を errorFields でログに出してから、固定文の Error で投げる（firebase-functions は投げた例外の
+ * message をログに出すため。Gmail API・Firestore のエラーの文言を残さない。docs/SECURITY_OPERATIONS.md §9）。
  */
 export const renewGmailWatch = onSchedule(
   {
@@ -174,7 +177,12 @@ export const renewGmailWatch = onSchedule(
   },
   async () => {
     console.log("Renewing Gmail Watch...");
-    await renewWatch();
+    try {
+      await renewWatch();
+    } catch (error) {
+      console.error("Failed to renew Gmail Watch", errorFields(error));
+      throw Object.assign(new Error("Gmail Watch renewal failed"), { name: "GmailWatchRenewalError" });
+    }
     console.log("Gmail Watch renewed successfully");
   }
 );
@@ -188,6 +196,10 @@ export const renewGmailWatch = onSchedule(
  *   メンション付きで送る（settlementSummary.ts。同じ期間は 1 回だけ）。
  * Cloud Scheduler の無料枠（3 ジョブ）を使い切っているため、スケジュールは増やさずここにまとめる。
  * 関数名を変えると CI のデプロイが本番関数の削除確認で失敗するため、名前は postRecurringExpenses のまま。
+ *
+ * 失敗（一覧の読み取りなどの例外・失敗した件数がある）は、固定文の Error で投げる（Cloud Scheduler が 1 回やり直す）。
+ * 例外は種類を errorFields で、件数はオブジェクトでログに出す（firebase-functions は投げた例外の message をログに出すため。
+ * docs/SECURITY_OPERATIONS.md §9）。
  */
 export const postRecurringExpenses = onSchedule(
   {
@@ -203,27 +215,36 @@ export const postRecurringExpenses = onSchedule(
     secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET"],
   },
   async () => {
-    const db = getFirestore();
-    const summary = await postDueRecurringExpenses(db);
-    console.log("Recurring expenses", summary);
+    let summary: Awaited<ReturnType<typeof postDueRecurringExpenses>>;
+    let settlement: Awaited<ReturnType<typeof sendDueSettlementSummaries>>;
+    try {
+      const db = getFirestore();
+      summary = await postDueRecurringExpenses(db);
+      console.log("Recurring expenses", summary);
 
-    // 固定費の計上に失敗しても、精算サマリーは判定する（どちらも冪等なのでリトライで重複しない）
-    const settlement = await sendDueSettlementSummaries(db, {
-      build: buildSettlementSummaryMessages,
-      push: async (to, messages, retryKey) => {
-        try {
-          await getLineClient().pushMessage({ to, messages }, retryKey);
-        } catch (error) {
-          // 409: 同じ X-Line-Retry-Key で送信済み（前回の実行で届いている）
-          if ((error as { status?: unknown }).status === 409) return;
-          throw error;
-        }
-      },
-    });
-    console.log("Settlement summaries", settlement);
+      // 固定費の計上に失敗しても、精算サマリーは判定する（どちらも冪等なのでリトライで重複しない）
+      settlement = await sendDueSettlementSummaries(db, {
+        build: buildSettlementSummaryMessages,
+        push: async (to, messages, retryKey) => {
+          try {
+            await getLineClient().pushMessage({ to, messages }, retryKey);
+          } catch (error) {
+            // 409: 同じ X-Line-Retry-Key で送信済み（前回の実行で届いている）
+            if ((error as { status?: unknown }).status === 409) return;
+            throw error;
+          }
+        },
+      });
+      console.log("Settlement summaries", settlement);
+    } catch (error) {
+      // 一覧の読み取り（固定費・精算サマリーの対象）など、1 件ごとの失敗として数えられない例外
+      console.error("Daily batch failed", errorFields(error));
+      throw Object.assign(new Error("Daily batch failed"), { name: "DailyBatchError" });
+    }
 
     if (summary.failed > 0 || settlement.failed > 0) {
-      throw new Error(`daily batch: recurring ${summary.failed} / settlement summary ${settlement.failed} failed`);
+      console.error("Daily batch: some items failed", { recurring: summary.failed, settlementSummary: settlement.failed });
+      throw Object.assign(new Error("Daily batch: some items failed"), { name: "DailyBatchError" });
     }
   }
 );
