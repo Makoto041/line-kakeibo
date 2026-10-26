@@ -6,6 +6,7 @@
  * あわせて、失敗の記録（system/gmailFailures）の firstFailedAt と諦める条件（試行 3 回以上 かつ 最初の失敗から 6 時間以上。
  * 再送で回数だけすぐ増えても諦めない）、失敗の記録にエラーの文言を保存しないこと（以前の記録の lastError を消す）、
  * 消されたメール（messages.get の 404）を失敗として数えず読み飛ばすことも確かめる。
+ * 偽の通知の極端に大きい historyId で保存値がメールボックスの現在位置を超えず、そのあとの正当な通知で取込が続くことも確かめる。
  *
  * Gmail・分類器・LINE は偽物に差し替える（dist の exports を書き換える。呼び出し側は呼ぶときに exports を参照する）。
  * 支出の保存・印・重複判定・historyId（system/gmailState）は本物のコードでエミュレータに書く。
@@ -69,18 +70,38 @@ const cardMail = (dateTime, merchant, amount) =>
 let historyError = null;
 /** messages.get が 404 を返す（届いたあとに消された）メール */
 const missingMails = new Set();
+/**
+ * history.list・getProfile の応答の historyId（メールボックスの現在位置。取込は保存する historyId の上限にする）。
+ * 既定は、このテストの通知の historyId（1001 から）より大きい値
+ */
+const DEFAULT_MAILBOX_POSITION = '1000000';
+/**
+ * 開始位置を見るメールボックス（null なら historyMessageIds をそのまま返す）。
+ * `{ position, records: [{ historyId, messageId }] }`: history.list は startHistoryId より後の records だけを返し、
+ * 応答の historyId は position（Gmail の動きに合わせる。開始位置が現在位置より先なら何も返さない）
+ */
+let mailbox = null;
+const laterThan = (a, b) => BigInt(a) > BigInt(b);
 gmailAuth.getGmailClient = async () => ({
   users: {
     history: {
-      list: async () => {
+      list: async ({ startHistoryId }) => {
         if (historyError) {
           const error = historyError;
           historyError = null;
           throw error;
         }
-        return { data: { history: [{ messagesAdded: historyMessageIds.map((id) => ({ message: { id } })) }] } };
+        if (mailbox) {
+          const ids = mailbox.records.filter((r) => laterThan(r.historyId, startHistoryId)).map((r) => r.messageId);
+          return { data: { history: ids.map((id) => ({ messagesAdded: [{ message: { id } }] })), historyId: mailbox.position } };
+        }
+        return {
+          data: { history: [{ messagesAdded: historyMessageIds.map((id) => ({ message: { id } })) }], historyId: DEFAULT_MAILBOX_POSITION },
+        };
       },
     },
+    // history.list が 404 のときの現在位置
+    getProfile: async () => ({ data: { historyId: mailbox ? mailbox.position : DEFAULT_MAILBOX_POSITION } }),
     messages: {
       get: async ({ id }) => {
         // 消されたメールは Gmail API が 404 を返す（gaxios 7 は JSON のエラーの code を error.code に入れる）
@@ -171,7 +192,11 @@ let historySeq = 1000;
 /** Pub/Sub の通知 1 回分（例外は返す） */
 async function pubsub(ids) {
   historyMessageIds = ids;
-  const data = Buffer.from(JSON.stringify({ historyId: String(++historySeq) })).toString('base64');
+  return notify(String(++historySeq));
+}
+/** historyId を指定した Pub/Sub の通知 1 回分（例外は返す） */
+async function notify(historyId) {
+  const data = Buffer.from(JSON.stringify({ historyId })).toString('base64');
   try {
     await handleGmailPubSub(data);
     return 'ok';
@@ -538,6 +563,34 @@ async function pubsub(ids) {
     check('404: 失敗の記録にあるメールの印を消し、警告する', !(await noticeOf(id)).exists && discardWarned());
     check('404: 失敗の記録に無い印は残す', (await noticeOf(other)).exists);
     check('404: 支出は残る（1 件）', (await expensesOf(id)).length === 1);
+  }
+
+  console.log('\n[偽の通知の極端に大きい historyId のあとも、正当な通知で取込が続く（取りこぼさない）]');
+  {
+    // 取込は 5000 まで済んでいて、メールボックスの現在位置も 5000
+    await db.doc('system/gmailState').set({ historyId: '5000' }, { merge: true });
+    mailbox = { position: '5000', records: [] };
+    try {
+      const forged = await quiet(() => notify('18446744073709551615'));
+      check('偽の通知: 投げない', forged === 'ok', String(forged));
+      check('偽の通知: 保存する historyId はメールボックスの現在位置（5000）を超えない', (await historyIdNow()) === '5000', await historyIdNow());
+      check(
+        '偽の通知: 固定文の警告を出す',
+        lastLogs.some((l) => l.startsWith('warn Gmail notification historyId is ahead of the mailbox; saving the mailbox position instead')),
+        lastLogs
+      );
+
+      // そのあとにメールが届き、Gmail が正当な通知を送る
+      const id = 'msg-after-forged-0021';
+      mails[id] = cardMail('2026/10/26 12:10', '偽の通知のあとの店', 2100);
+      mailbox.records.push({ historyId: '5100', messageId: id });
+      mailbox.position = '5100';
+      const r = await quiet(() => notify(5100));
+      check('正当な通知: 取込が続き、支出を保存してカードを送る', r === 'ok' && (await expensesOf(id)).length === 1 && accepted.has(cardNoticeRetryKey(id)), String(r));
+      check('正当な通知: historyId は通知の値まで進む（数値のまま）', (await historyIdNow()) === 5100, await historyIdNow());
+    } finally {
+      mailbox = null;
+    }
   }
 
   console.log(`\ngmail card notice emulator: ${passed} passed, ${failed} failed`);

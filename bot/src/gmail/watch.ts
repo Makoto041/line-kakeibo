@@ -80,15 +80,23 @@ export function gmailStateRef() {
   return getFirestore().collection('system').doc('gmailState');
 }
 
+/** historyId の最大値（uint64） */
+const MAX_HISTORY_ID = BigInt('18446744073709551615');
+
 /**
  * 保存値が historyId として使えるか。historyId は uint64 の 10 進文字列。
- * 取込（updateHistoryId）は Pub/Sub 通知の JSON の値をそのまま保存するため、
- * 数値のまま入っている可能性も考え、0 以上の整数も使える値として扱う
+ * 取込（updateHistoryId）は通常 Pub/Sub 通知の JSON の値をそのまま保存し（メールボックスの現在位置の上限に
+ * 掛かったときだけ、現在位置の文字列を保存する。capHistoryId）、数値のまま入っている可能性もあるため、
+ * 0 以上の整数も使える値として扱う
  * （取込は Pub/Sub の通知の historyId もこれで確かめる。handler.ts の handleGmailPubSub）
+ *
+ * 文字列は 10 進の正規の形（先頭ゼロなし・20 桁以内）で uint64 以下のものだけ。先頭にゼロを並べた値は BigInt では
+ * 小さい数と同じになるので上限（capHistoryId）をすり抜け、長さに上限の無い文字列が保存・ログ・history.list に渡ってしまう。
+ * 数値も uint64 以下に限る（数値の保存値は以前どおり使える）。
  */
 export function isUsableHistoryId(value: unknown): value is string | number {
-  if (typeof value === 'string') return /^\d+$/.test(value);
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+  if (typeof value === 'string') return /^(0|[1-9]\d{0,19})$/.test(value) && BigInt(value) <= MAX_HISTORY_ID;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && BigInt(value) <= MAX_HISTORY_ID;
 }
 
 /**
@@ -112,7 +120,8 @@ export type WatchHistoryIdSource = 'kept' | 'initialized' | 'replaced';
  * - 保存値が数値として読めれば、応答の値より大きくても小さくても保存値を残す（`kept`）。
  *   小さい（未処理がある）ときに進めると取りこぼし、大きいときに戻すと巻き戻りになる
  * - 保存値が無い（`getWatchState` と同じく空も無し扱い）ときは応答の値を入れる（`initialized`）
- * - 保存値が数値として読めないときは `history.list` に使えないため応答の値に置き換える（`replaced`）
+ * - 保存値が数値として読めないときは `history.list` に使えないため応答の値に置き換える（`replaced`）。
+ *   先頭ゼロ・21 桁以上・uint64 を超える値も読めない値として扱う（isUsableHistoryId）
  */
 export function resolveWatchHistoryId(
   stored: unknown,
@@ -228,7 +237,7 @@ export async function updateLinkedEmailAddress(emailAddress: string): Promise<vo
 }
 
 /** historyId は uint64 の文字列。桁があふれるので BigInt で比較する */
-function isNewerHistoryId(candidate: string, current: string): boolean {
+function isNewerHistoryId(candidate: string | number, current: string): boolean {
   try {
     return BigInt(candidate) > BigInt(current);
   } catch {
@@ -237,14 +246,46 @@ function isNewerHistoryId(candidate: string, current: string): boolean {
   }
 }
 
+/** 取込で保存する historyId（`capHistoryId`）。`capped`: 通知の値がメールボックスの現在位置より先だったので、現在位置にした */
+export type CappedHistoryId = { historyId: string | number; capped: boolean };
+
+/**
+ * 取込（handler.ts の processNewEmails）で保存する historyId を決める。通知の値に、メールボックスの現在位置で上限を掛ける
+ *
+ * Pub/Sub の通知は topic に publish できる者なら作れる（通知の emailAddress の照合では偽装を防げない）。通知の historyId を
+ * そのまま保存すると、極端に大きい値で保存値が先へ飛び（updateHistoryId は前進のみなので戻らない）、以降の `history.list` が
+ * 何も返さず（または 404）、手で直すまで取りこぼす。現在位置は Gmail の応答（`history.list` の最後のページ・`users.getProfile`
+ * の historyId）から取り、通知の値は 10 進の正規の形（isUsableHistoryId。先頭ゼロなし・uint64 以下）だけを受け付けるので、
+ * 偽の通知で保存値を現在位置より先へ進めることはできない（現在位置以下の値は置けるが、その範囲は同じ実行で処理済み）。
+ *
+ * - 通知の値 ≤ 現在位置: 通知の値（数値の通知は数値のまま保存する。文字列は正規の形にして返す。isUsableHistoryId が
+ *   先頭ゼロを弾くので通常は同じ値で、多重防御）。Gmail の通知の historyId はその時点の位置なので、正当な通知は通常こちら
+ *   （現在位置は同じか大きい）
+ * - 通知の値 > 現在位置: 現在位置（正規の形の文字列にする。resolveWatchHistoryId と同じく文字列）。`capped: true`
+ * - 現在位置が無い・数値として読めない: null（呼び出し側は保存値を進めない。範囲は次の通知でもう一度処理され、重複は gmailMessageId で弾く）
+ * - 通知の値が数値として読めない（handleGmailPubSub が弾くので通常は起きない）: 現在位置。`capped: true`
+ *
+ * 比較は BigInt（uint64。isNewerHistoryId と同じ）。
+ */
+export function capHistoryId(notified: string | number, mailboxHistoryId: unknown): CappedHistoryId | null {
+  if (!isUsableHistoryId(mailboxHistoryId)) return null;
+  const mailbox = BigInt(mailboxHistoryId);
+  if (isUsableHistoryId(notified) && BigInt(notified) <= mailbox) {
+    return { historyId: typeof notified === 'string' ? BigInt(notified).toString() : notified, capped: false };
+  }
+  return { historyId: mailbox.toString(), capped: true };
+}
+
 /**
  * historyIdを更新（前進のみ）
  *
  * Pub/Sub は at-least-once で順序保証が無いため、古い通知が後着すると historyId が
  * 巻き戻る。巻き戻ると次回の `history.list` が既知の範囲を取り直すことになり、
  * 404（履歴が古すぎる）と重なったときに取りこぼす。必ず新しい方を残す。
+ * 取込は、通知の値にメールボックスの現在位置で上限を掛けてから渡す（`capHistoryId`）。
+ * 数値の historyId（Pub/Sub の通知の形）は型を変えずに保存する。
  */
-export async function updateHistoryId(historyId: string): Promise<void> {
+export async function updateHistoryId(historyId: string | number): Promise<void> {
   const db = getFirestore();
   const ref = gmailStateRef();
 

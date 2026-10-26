@@ -113,9 +113,12 @@ gmailAuth.getGmailClient = async () => {
       history: {
         list: async () => {
           if (historyError) throw historyError;
-          return { data: { history: [{ messagesAdded: [{ message: { id: 'msg-0001' } }] }] } };
+          // historyId はメールボックスの現在位置（取込が保存する historyId の上限）。このテストの通知より大きい値にする
+          return { data: { history: [{ messagesAdded: [{ message: { id: 'msg-0001' } }] }], historyId: '1000000' } };
         },
       },
+      // history.list が 404 のときの現在位置
+      getProfile: async () => ({ data: { historyId: '1000000' } }),
     },
   };
 };

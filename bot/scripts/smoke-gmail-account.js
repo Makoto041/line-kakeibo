@@ -136,7 +136,8 @@ async function flowChecks() {
         history: {
           list: async () => {
             historyListCalls++;
-            return { data: { history: [] } };
+            // historyId はメールボックスの現在位置（取込が保存する historyId の上限）。このテストの通知より大きい値にする
+            return { data: { history: [], historyId: '1000000' } };
           },
         },
         messages: {
