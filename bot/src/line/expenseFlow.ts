@@ -45,7 +45,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
     return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), ms);
+        // 名前を TimeoutError にする（ログは文言を出さず errorName で見分けるため。logSafe.ts の errorFields）
+        timer = setTimeout(() => reject(Object.assign(new Error(message), { name: "TimeoutError" })), ms);
       }),
     ]);
   } finally {

@@ -111,7 +111,8 @@ export async function handleKakeiboCommand(event: any, text: string): Promise<bo
   // 所属の確認と集計の取得を、あわせて 8 秒で打ち切る
   const timeoutPromise = new Promise<never>(
     (_, reject) =>
-      setTimeout(() => reject(new Error("Summary fetch timeout")), 8000)
+      // 名前を TimeoutError にする（ログは文言を出さず errorName で見分けるため）
+      setTimeout(() => reject(Object.assign(new Error("Summary fetch timeout"), { name: "TimeoutError" })), 8000)
   );
 
   // 集計を読む前に、返してよいかを確かめる（だめなら支出も予算も読まない）。
