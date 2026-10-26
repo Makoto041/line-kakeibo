@@ -126,6 +126,9 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'budgetSettings/B'), { monthlyBudget: 2000 });
   await setDoc(doc(db, 'linkTokens/t1'), { lineId: 'A' });
   await setDoc(doc(db, 'userLinks/appuid-A'), { lineId: 'A' });
+  // Gmail 連携の状態（Bot 専用。取込の位置・連携中のアカウントのアドレス・OAuth トークン）。値はテスト用のダミー
+  await setDoc(doc(db, 'system/gmailState'), { historyId: '100', watchExpiration: 1793577600000, emailAddress: 'linked@example.com' });
+  await setDoc(doc(db, 'system/gmailToken'), { access_token: 'dummy-access', refresh_token: 'dummy-refresh', expiry_date: 0 });
   // lineId を持たない / null の支出（LINE が userId を省いたイベント等で生まれうる形）。
   // 匿名セッションでは myLineId() が null になるため、null == null で所有者扱い
   // されないことを確認する。
@@ -618,6 +621,20 @@ await test('userLinks: 他人の appUid のドキュメントは読めない', a
 await test('★ userLinks: クライアントからは書けない（appUid 解決の汚染防止）', async () => {
   await assertFails(setDoc(doc(userA, 'userLinks/appuid-A'), { lineIds: ['A', 'B'] }));
 });
+// system/gmailState（取込の位置・連携中のアカウントのアドレス）と system/gmailToken（OAuth トークン）は Bot 専用。
+// 書き換えられると、取込の位置を飛ばしたり、照合するアドレスを差し替えたりできてしまう（GMAIL_AUTO_SPEC §5.4）
+for (const path of ['system/gmailState', 'system/gmailToken']) {
+  await test(`★ ${path}: メンバー・非メンバー・匿名・未認証は読めない`, async () => {
+    for (const db of [userA, userC, anon, unauth]) await assertFails(getDoc(doc(db, path)));
+  });
+  await test(`★ ${path}: クライアントからは書けない（作成・更新・削除）`, async () => {
+    for (const db of [userA, userC, anon, unauth]) {
+      await assertFails(setDoc(doc(db, path), { historyId: '999999', emailAddress: 'attacker@example.com' }, { merge: true }));
+      await assertFails(updateDoc(doc(db, path), { emailAddress: 'attacker@example.com' }));
+      await assertFails(deleteDoc(doc(db, path)));
+    }
+  });
+}
 // --- lineId を持たない支出（匿名の null == null 対策） -----------------------
 for (const id of ['noLine', 'nullLine']) {
   await test(`★ 匿名は lineId なしの支出（${id}）を読めない・更新できない・削除できない`, async () => {

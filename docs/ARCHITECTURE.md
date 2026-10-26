@@ -91,7 +91,7 @@ flowchart LR
 |---|---|---|---|
 | `webhook` | HTTPS（Express） | asia-northeast1 | LINE webhook 本体（署名検証は fail-closed、本文上限 1MB）。`/health` も同居（認証なしのデバッグ用 `/classification-stats` `/test-classification` は削除済み）。本番 URL は Cloud Run 形式 `https://webhook-4tgziqsylq-an.a.run.app/webhook` |
 | `gmailPubSubHandler` | Pub/Sub `gmail-notifications` | asia-northeast1 | SMBC カード利用メールの取込。失敗したら Pub/Sub が再送する（`retry: true`。10〜600 秒の指数バックオフで最大 24 時間。12 時間より古い通知は処理せずに捨てる）。タイムアウト 300 秒（GMAIL_AUTO_SPEC §3.2） |
-| `renewGmailWatch` | cron `0 3 */6 * *` JST | asia-northeast1 | Gmail watch（7日失効）の更新。stop せず watch を呼び直し、保存してある historyId（取込の位置）は変えない（GMAIL_AUTO_SPEC §11.2）。失敗したら 2 回までやり直す（`retryCount: 2`） |
+| `renewGmailWatch` | cron `0 3 */6 * *` JST | asia-northeast1 | Gmail watch（7日失効）の更新。stop せず watch を呼び直し、保存してある historyId（取込の位置）は変えない（GMAIL_AUTO_SPEC §11.2）。連携中のアカウントのアドレスを保存し直す（取込が通知と照合する）。失敗したら 2 回までやり直す（`retryCount: 2`） |
 | `importMoneyForward` | cron `0 5 * * *` JST | asia-northeast1 | **廃止（何もしない）**。旧 MoneyForward CSV 取込。送信先 `/api/mf/import` が存在せず機能していなかったため処理を削除。`syncUserLinks` と同じ理由で関数名だけ残置。削除は手動 `firebase functions:delete importMoneyForward --region asia-northeast1` |
 | `postRecurringExpenses` | cron `10 9 * * *` JST | asia-northeast1 | 毎日のバッチ。固定費（`recurringExpenses`）のうち引き落とし日を迎えた項目を `expenses` に計上（`recurringExpenses.ts`。同じ月に 2 回は入らない。LINE 通知なし）。期間の起算日には、締まった期間の精算サマリーを LINE グループへメンション付きで送る（`settlementSummary.ts`。同じ期間は 1 回。Web の設定から手動で送った期間は送らない）。Secret: `LINE_CHANNEL_TOKEN` / `LINE_CHANNEL_SECRET` |
 | `syncUserLinks` | Firestore `expenses/{id}` onCreate | asia-northeast1 | **無効化済み（何もしない）**。export から外すと CI の非対話デプロイが関数削除の確認で失敗するため残置。削除は手動 `firebase functions:delete syncUserLinks` |
@@ -142,6 +142,10 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
     消されたメール（messages.get の 404）は失敗として数えず読み飛ばす。やり直しても直らない失敗（historyId の読めない通知・
     Gmail のトークンが無い・watch の状態が無い）は投げずに終える。12 時間より古い通知は処理せずに捨てる
     （取込は保存してある historyId からの全範囲を処理するので、捨てた範囲は次の新しい通知で処理される）
+  ※ 通知の emailAddress を、watch の登録・更新で system/gmailState に保存した連携中のアカウントのアドレス（getProfile）と照合する
+    （大文字小文字は区別しない）。違う・無いときは history.list を呼ばず historyId も更新せずに終える（切り替える前のアカウントの
+    watch は最大 7 日通知しうるため。GMAIL_AUTO_SPEC §3.2・§11.2）。ただし getProfile（1 回だけ呼ぶ）が通知と同じなら、
+    保存値が古いだけ（アドレスの変更）なので書き直して処理を続ける。アドレスが保存されていない状態では照合せず以前どおり処理する
 ```
 
 ### 4.3 Web 閲覧・編集
@@ -186,7 +190,7 @@ viewport-fit=cover: ノッチ・ホームバーは env(safe-area-inset-*) で避
 
 ### 4.4 精算（期間の折半）
 
-- 精算タブ（`/settlement`）は**期間の精算（折半）**（`components/PeriodSplitCard.tsx` + `lib/periodSplit.ts`）。表示期間内の世帯の支出（合計に含むもの。立替精算済みと立替（全額）は除く）を 2 人で折半し、`groups.splitSettings.collectFromLineId`（`POST /household/split-settings` で保存）に指定したメンバーの支払い分を引き、立替（全額）を足し引きして集金額を出す（集金額 = 合計 ÷ 2 − 集金するメンバーの支払い ＋ 相手の立替 − 集金するメンバーの立替）。クライアント側の純関数で計算し、記録は残さない。bot の `periodSplit.ts` も同じ式
+- 精算タブ（`/settlement`）は**期間の精算（折半）**（`components/PeriodSplitCard.tsx` + `components/PeriodSplitView.tsx` + `lib/periodSplit.ts`）。`PeriodSplitCard` は期間の設定・明細の取得と集金するメンバーの保存を受け持ち、表示は `PeriodSplitView` に渡す（明細・期間・見出し・内訳シートのリンクを props で受け取り、hooks / householdApi / firebase / lineAuth / dateSettings / recurringApi を値として import しない。`__tests__/periodSplitView.test.mjs` で確かめる）。表示期間内の世帯の支出（合計に含むもの。立替精算済みと立替（全額）は除く）を 2 人で折半し、`groups.splitSettings.collectFromLineId`（`POST /household/split-settings` で保存）に指定したメンバーの支払い分を引き、立替（全額）を足し引きして集金額を出す（集金額 = 合計 ÷ 2 − 集金するメンバーの支払い ＋ 相手の立替 − 集金するメンバーの立替）。クライアント側の純関数で計算し、記録は残さない。bot の `periodSplit.ts` も同じ式
 - 誰が払ったかは支出の支払った人（`payerId`、無ければ `lineId`）で数える。LINE のカードの［自分が払った］（`set_payer`）で押した人に変えられる（世帯の有効メンバーだけ）
 - **立替**は「押した人が払って、相手の分を立て替えた」支出。LINE のカードの［自分が立替］（`set_advance`）で `status: 'advance_pending'`・`advanceFull: true`・立て替えた人 = 支払った人 = 押した人になり、折半せず支出の日付の期間の精算で全額を返してもらう（`isFullAdvance`）。以前は立替が折半と別の立替の精算の両方に入り、二重に払うおそれがあったため、立替の精算（`GET /household/settlement`・`POST /household/settlement/settle` と旧 `householdSettlement.ts` の精算額の計算。メンバーと表示名の関数は `householdMembers.ts` に残した）は削除し、期間の精算にまとめた。`立替一覧` / `立替` / `精算` コマンドは案内を返すだけ
 - 全額にする前の立替（`advanceFull` の無い `advance_pending`）は、これまでどおり支払った人の分として折半する（過去の期間の金額を変えないため）。残っていれば精算タブにお知らせ（`components/LeftoverAdvancesCard.tsx`）を出し、`GET /household/legacy-advances` で一覧（世帯に `lineGroupId` があればその基準、無ければ `groupId`）を取り、`POST /household/legacy-advances/settle` で精算済み（`advance_settled`。どの期間の精算にも入らない）にする
@@ -326,7 +330,7 @@ line-kakeibo/
 │  ├─ app/(app)/             # ルートグループ（URL に出ない）: / , /expenses , /settlement , /settings , /attach , /link , /dashboard , /terms , /privacy
 │  │                         # layout.tsx が AppShell（ナビと、LINE ログイン・PWA の起動）で包む。グループの外のページは AppShell・lineAuth を読み込まない
 │  ├─ app/manifest.ts        # PWA の manifest（apple-icon.png / favicon.ico も app/ に置く）
-│  ├─ components/            # Charts, PeriodSplitCard, LeftoverAdvancesCard（全額にする前の立替のお知らせ）, RecurringExpensesPanel, GuestGuide,
+│  ├─ components/            # Charts, PeriodSplitCard（精算の取得・保存）・PeriodSplitView（精算の表示）, LeftoverAdvancesCard（全額にする前の立替のお知らせ）, RecurringExpensesPanel, GuestGuide,
 │  │                         # layout/(AppShell, Sidebar, BottomTabBar, TopBar, nav), theme/,
 │  │                         # settings/InstallAppCard（ホーム画面への追加の案内）・SettlementNotifyCard（LINEへの精算の通知）
 │  ├─ lib/                   # firebase.ts, lineAuth.ts, hooks.ts, householdApi.ts, householdContract.ts, recurringApi.ts,
@@ -334,7 +338,7 @@ line-kakeibo/
 │  │                         # expenseEdit.ts（支出の編集の純関数）, categoryTaxonomy.ts（中項目の一覧。bot と同じ内容）,
 │  │                         # drilldown.ts（内訳シートの集計。合計 → カテゴリ → 中項目 / 支払い者 → 明細）,
 │  │                         # installApp.ts（PWA の案内の出し分け・Service Worker の登録）ほか
-│  ├─ __tests__/             # renewal-logic / expenseUpdate / categoryTaxonomy（bot の中項目の一覧との一致）/ periodSplit / drilldown / swrCache / installApp（node --test）
+│  ├─ __tests__/             # renewal-logic / expenseUpdate / categoryTaxonomy（bot の中項目の一覧との一致）/ periodSplit / periodSplitView（精算の表示が Firebase 系を値として import しない）/ drilldown / swrCache / installApp（node --test）
 │  ├─ public/icons/          # Flex メッセージ用アイコン PNG（scripts/gen-line-icons.mjs で生成）
 │  ├─ public/pwa/            # PWA のアイコン（scripts/gen-app-icons.mjs で生成）
 │  ├─ public/sw.js / offline.html # Service Worker とオフライン画面（公開されるのでコメントを書かない）

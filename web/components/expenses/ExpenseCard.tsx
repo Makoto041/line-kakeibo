@@ -45,6 +45,8 @@ interface Props {
   /** https / blob に正規化したレシート画像の URL */
   onPreviewReceipt: (url: string) => void;
   onDelete: () => void;
+  /** レシートが無い明細に「レシート添付」（/attach へのリンク）を出す。既定は出す */
+  showAttachLink?: boolean;
 }
 
 /** 明細の 1 件（表示のみ。編集は EditDrawer で行う） */
@@ -62,6 +64,7 @@ export default function ExpenseCard({
   onEdit,
   onPreviewReceipt,
   onDelete,
+  showAttachLink = true,
 }: Props) {
   return (
     <div
@@ -276,7 +279,7 @@ export default function ExpenseCard({
                 <Paperclip className="h-4 w-4" />
                 レシート
               </button>
-            ) : (
+            ) : showAttachLink ? (
               <a
                 href={`/attach?expenseId=${encodeURIComponent(expense.id)}`}
                 className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-card px-3 py-2 text-sm font-medium text-fg transition-colors hover:bg-fg/5"
@@ -285,7 +288,7 @@ export default function ExpenseCard({
                 <Paperclip className="h-4 w-4" />
                 レシート添付
               </a>
-            )}
+            ) : null}
 
             {canClientDelete(expense, lineId, activeGroupIds) && (
             <button

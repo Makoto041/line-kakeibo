@@ -21,7 +21,12 @@ const PUBSUB_TOPIC = 'projects/line-kakeibo-0410/topics/gmail-notifications';
  * 未処理の範囲が二度と `history.list` に載らず取りこぼす。応答の値を使うのは、保存値が無いとき
  * （初回・/gmail/revoke の後）と、保存値が数値として読めないときだけ。
  *
- * @returns 保存後に有効な状態（historyId は残した値か入れた値）
+ * あわせて、連携中のアカウントのアドレスを getProfile で取って保存する（`emailAddress`。取込が Pub/Sub の通知と照合する。
+ * handler.ts の notificationAccountOf）。getProfile は watch の後に呼ぶ（先に呼んで失敗すると watch の更新まで止まるため）。
+ * getProfile が失敗したら投げる（Gmail 側の watch は更新済み。renewGmailWatch は 2 回までやり直し、/gmail/register-watch は 500 を返す）。
+ * 応答にアドレスが無ければ、保存してあるアドレスを変えずに警告を出す（watch の更新は止めない）。
+ *
+ * @returns 保存後に有効な状態（historyId は残した値か入れた値。アドレスは含めない）
  */
 export async function registerWatch(): Promise<GmailWatchState> {
   const gmail = await getGmailClient();
@@ -41,7 +46,14 @@ export async function registerWatch(): Promise<GmailWatchState> {
     throw new Error('Failed to register Gmail Watch');
   }
 
-  const { state, source } = await saveWatchState(historyId.toString(), parseInt(expiration, 10));
+  // 連携中のアカウントのアドレス（ログには出さない）
+  const profile = await gmail.users.getProfile({ userId: 'me' });
+  const emailAddress = normalizeEmailAddress(profile.data.emailAddress) ?? undefined;
+  if (!emailAddress) {
+    console.warn('Gmail profile has no email address; keeping the saved one for the notification account check');
+  }
+
+  const { state, source } = await saveWatchState(historyId.toString(), parseInt(expiration, 10), emailAddress);
 
   console.log('Gmail Watch registered', {
     expiresAt: new Date(state.watchExpiration).toISOString(),
@@ -79,6 +91,18 @@ export function isUsableHistoryId(value: unknown): value is string | number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
+/**
+ * メールアドレスを比べられる形にする（前後の空白を落として小文字にする）。文字列でない・空なら null
+ *
+ * Gmail のアドレスは大文字小文字を区別しないので、Pub/Sub の通知（handler.ts）と getProfile（registerWatch）の
+ * 表記が違っても同じアカウントとみなす。
+ */
+export function normalizeEmailAddress(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '' ? null : normalized;
+}
+
 /** 保存する historyId をどこから取ったか（`resolveWatchHistoryId`） */
 export type WatchHistoryIdSource = 'kept' | 'initialized' | 'replaced';
 
@@ -108,15 +132,21 @@ export function resolveWatchHistoryId(
  *
  * historyId を書くのは、保存値が無い・使えないとき（`initialized` / `replaced`）だけ。
  * 保存値を残すとき（`kept`）は historyId の項目自体を含めず、watchExpiration と updatedAt だけを書く。
+ * 連携中のアカウントのアドレス（`emailAddress`）は、渡されたときだけ書く（historyId をどう決めたかに関係なく。
+ * 渡されないとき〔getProfile の応答にアドレスが無い〕は項目を含めず、保存してある値を変えない）。
  */
 export function watchStateFields(
   resolved: { historyId: string; source: WatchHistoryIdSource },
   watchExpiration: number,
-  updatedAt: unknown
+  updatedAt: unknown,
+  emailAddress?: string
 ): Record<string, unknown> {
   const fields: Record<string, unknown> = { watchExpiration, updatedAt };
   if (resolved.source !== 'kept') {
     fields.historyId = resolved.historyId;
+  }
+  if (emailAddress) {
+    fields.emailAddress = emailAddress;
   }
   return fields;
 }
@@ -125,33 +155,48 @@ export function watchStateFields(
  * Watch状態をFirestoreに保存
  *
  * historyId の読み書きはトランザクションで行い、同時に走る `updateHistoryId`（取込の完了）を
- * 上書きしない。watchExpiration・updatedAt は merge で更新する。
+ * 上書きしない。watchExpiration・updatedAt（と、渡されたときは emailAddress）は merge で更新する。
+ *
+ * 保存してあるアドレスと違うアカウントで登録したとき（/gmail/revoke をせずに別のアカウントで認可し直した）は、
+ * アドレスは新しい方にするが historyId は残す（resolveWatchHistoryId のまま）ので、固定文の警告を出す。
  */
 async function saveWatchState(
   historyIdFromWatch: string,
-  watchExpiration: number
+  watchExpiration: number,
+  emailAddress: string | undefined
 ): Promise<{ state: GmailWatchState; source: WatchHistoryIdSource }> {
   const db = getFirestore();
   const ref = gmailStateRef();
 
   const result = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
-    const stored = snapshot.exists ? snapshot.data()?.historyId : undefined;
+    const storedData = snapshot.exists ? snapshot.data() : undefined;
+    const stored = storedData?.historyId;
     const resolved = resolveWatchHistoryId(stored, historyIdFromWatch);
+    const storedAddress = normalizeEmailAddress(storedData?.emailAddress);
 
-    transaction.set(ref, watchStateFields(resolved, watchExpiration, Timestamp.now()), { merge: true });
+    transaction.set(ref, watchStateFields(resolved, watchExpiration, Timestamp.now(), emailAddress), { merge: true });
 
-    return { state: { historyId: resolved.historyId, watchExpiration }, source: resolved.source };
+    return {
+      state: { historyId: resolved.historyId, watchExpiration },
+      source: resolved.source,
+      accountChanged: !!emailAddress && storedAddress !== null && storedAddress !== emailAddress,
+    };
   });
 
   if (result.source === 'replaced') {
     console.warn('Stored Gmail historyId was not numeric; replaced it with the watch response');
   }
-  return result;
+  if (result.accountChanged) {
+    console.warn('Gmail account differs from the saved one; saved the new account but kept the stored historyId (run DELETE /gmail/revoke before switching accounts)');
+  }
+  return { state: result.state, source: result.source };
 }
 
 /**
  * Watch状態をFirestoreから読み込み
+ *
+ * 連携中のアカウントのアドレス（emailAddress）は、文字列で保存されているときだけ含める（取込の照合に使う。handler.ts）。
  */
 export async function getWatchState(): Promise<GmailWatchState | null> {
   const doc = await gmailStateRef().get();
@@ -168,7 +213,18 @@ export async function getWatchState(): Promise<GmailWatchState | null> {
   return {
     historyId: data.historyId,
     watchExpiration: data.watchExpiration,
+    ...(typeof data.emailAddress === 'string' ? { emailAddress: data.emailAddress } : {}),
   };
+}
+
+/**
+ * 連携中のアカウントのアドレス（emailAddress）だけを書き直す
+ *
+ * 取込（handler.ts）が、保存してあるアドレスが古い（プライマリアドレスの変更など）と分かったときに使う。
+ * historyId・watchExpiration は変えない。文書が無い（/gmail/revoke の後）ときは作らずに投げる（update は NOT_FOUND）。
+ */
+export async function updateLinkedEmailAddress(emailAddress: string): Promise<void> {
+  await gmailStateRef().update({ emailAddress, updatedAt: Timestamp.now() });
 }
 
 /** historyId は uint64 の文字列。桁があふれるので BigInt で比較する */

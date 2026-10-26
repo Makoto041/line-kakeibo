@@ -8,7 +8,7 @@
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { formatJST, toJSTDateString } from '../time';
 import { getGmailClient, GmailTokenMissingError } from './auth';
-import { getWatchState, isUsableHistoryId, updateHistoryId } from './watch';
+import { getWatchState, isUsableHistoryId, normalizeEmailAddress, updateHistoryId, updateLinkedEmailAddress } from './watch';
 import {
   isSMBCGoldVISANL,
   parseSMBCCardEmail,
@@ -122,12 +122,74 @@ export function historyIdOfPubSubData(data: unknown): string | number | null {
 }
 
 /**
+ * Pub/Sub の通知の本文から emailAddress（通知を出したアカウント）を取り出す（小文字にする。watch.ts の normalizeEmailAddress）
+ *
+ * JSON として読めない・オブジェクトでない・emailAddress が文字列でない・空のときは null。照合は notificationAccountOf。
+ */
+export function emailAddressOfPubSubData(data: unknown): string | null {
+  if (typeof data !== 'string') return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(Buffer.from(data, 'base64').toString('utf-8'));
+  } catch {
+    return null;
+  }
+  if (typeof payload !== 'object' || payload === null) return null;
+  return normalizeEmailAddress((payload as Partial<GmailPubSubPayload>).emailAddress);
+}
+
+/** 通知のアカウントと連携中のアカウントの照合の結果（`notificationAccountOf`） */
+export type NotificationAccountCheck = 'match' | 'mismatch' | 'unchecked';
+
+/**
+ * Pub/Sub の通知が、連携中のアカウント（registerWatch が system/gmailState に保存したアドレス）のものか
+ *
+ * - `match`: 同じアドレス（大文字小文字と前後の空白は無視する）
+ * - `mismatch`: 違うアドレス、または通知にアドレスが無い（確かめられない）。取込は、保存してあるアドレスが古いだけでなければ
+ *   （followLinkedAddressChange）読み飛ばし、historyId を更新しない。
+ *   アカウントを切り替えたあとも、古いアカウントの watch は最大 7 日通知しうる（/gmail/revoke は watch を止めない）。
+ *   その通知の historyId は別のメールボックスの番号なので、updateHistoryId（前進のみ）に渡すと、値が大きければ保存されて
+ *   新しいアカウントの位置が先へ飛び、取りこぼす。読み飛ばしても取りこぼさない（取込は保存してある historyId からの
+ *   全範囲を処理するので、その範囲は連携中のアカウントの次の通知で処理される）
+ * - `unchecked`: 連携中のアドレスが保存されていない（この照合を入れる前に登録した watch の状態。次の watch の更新で保存される）。
+ *   照合せずに以前どおり処理する（取込を止めない）
+ */
+export function notificationAccountOf(notified: unknown, linked: unknown): NotificationAccountCheck {
+  const linkedAddress = normalizeEmailAddress(linked);
+  if (linkedAddress === null) return 'unchecked';
+  return normalizeEmailAddress(notified) === linkedAddress ? 'match' : 'mismatch';
+}
+
+/**
+ * 照合が合わなかった（`mismatch`）通知について、保存してあるアドレスが古いだけかを確かめる
+ *
+ * 連携中のアカウント（トークンのアカウント）のアドレスを users.getProfile で取り、通知のアドレスと同じなら、
+ * 保存してあるアドレスが古い（プライマリアドレスの変更など）だけなので、保存値を書き直して true を返す（取込を続ける）。
+ * 照合の誤判定で取込が止まらないようにするため。違うアカウントの通知・偽の通知は getProfile のアドレスと一致しないので false。
+ * 呼ぶのは mismatch の通知 1 件につき最大 1 回（通知にアドレスが無ければ呼ばずに false）。
+ * getProfile・保存値の書き直しの失敗は一時的な失敗として投げる（Pub/Sub に再送させる）。アドレスはログに出さない。
+ */
+async function followLinkedAddressChange(
+  gmail: Awaited<ReturnType<typeof getGmailClient>>,
+  notified: string | null
+): Promise<boolean> {
+  const notifiedAddress = normalizeEmailAddress(notified);
+  if (notifiedAddress === null) return false;
+  const profile = await gmail.users.getProfile({ userId: 'me' });
+  if (normalizeEmailAddress(profile.data.emailAddress) !== notifiedAddress) return false;
+  await updateLinkedEmailAddress(notifiedAddress);
+  console.warn('Linked Gmail address changed; updated the saved address to the current profile and processing the notification');
+  return true;
+}
+
+/**
  * Pub/Subメッセージを処理
  * Cloud Functions: onMessagePublished で呼び出される
  *
  * 投げると関数が失敗し、Pub/Sub が同じ通知を再送する（index.ts の gmailPubSubHandler は `retry: true`）。
- * やり直しても直らないとき（本文から historyId が読めない・Gmail のトークンが無い・watch の状態が無い）は、
- * 投げずに固定文の警告を出して終える（再送させない）。一時的な失敗（Gmail・Firestore・LINE の 5xx など）は投げる。
+ * やり直しても直らないとき（本文から historyId が読めない・Gmail のトークンが無い・watch の状態が無い・
+ * 通知が連携中のアカウントのものでない）は、投げずに固定文の警告を出して終える（再送させない）。
+ * 一時的な失敗（Gmail・Firestore・LINE の 5xx など）は投げる。
  */
 export async function handleGmailPubSub(data: string): Promise<void> {
   const historyId = historyIdOfPubSubData(data);
@@ -141,8 +203,8 @@ export async function handleGmailPubSub(data: string): Promise<void> {
   console.log('Gmail Pub/Sub received', { historyId: String(historyId) });
 
   try {
-    // 新着メールを取得して処理（数値の historyId も以前どおりそのまま渡す）
-    await processNewEmails(historyId as string);
+    // 新着メールを取得して処理（数値の historyId も以前どおりそのまま渡す。アドレスは連携中のアカウントとの照合に使う）
+    await processNewEmails(historyId as string, emailAddressOfPubSubData(data));
   } catch (error) {
     console.error('Failed to handle Gmail Pub/Sub', errorFields(error));
     throw error;
@@ -298,8 +360,12 @@ async function clearMessageFailure(messageId: string): Promise<void> {
  * ただし同じメッセージが試行 MAX_MESSAGE_ATTEMPTS 回以上、かつ最初の失敗から MESSAGE_ABANDON_AFTER_MS 以上
  * 失敗し続けたら、その1通は諦めて先へ進む（恒久的に処理できない1通で以降の取り込みが止まらないようにする。`shouldAbandon`）。
  * メールが消されていた（messages.get が 404）ときは失敗として数えず、読み飛ばす（processMessage）。
+ * 通知が連携中のアカウントのものでなければ（notificationAccountOf。保存してあるアドレスが古いだけのときは
+ * followLinkedAddressChange で書き直して続ける）、history.list を呼ばず、historyId も更新せずに終える。
+ *
+ * @param notifiedEmailAddress 通知の emailAddress（emailAddressOfPubSubData。無ければ null）
  */
-async function processNewEmails(newHistoryId: string): Promise<void> {
+async function processNewEmails(newHistoryId: string, notifiedEmailAddress: string | null): Promise<void> {
   let gmail: Awaited<ReturnType<typeof getGmailClient>>;
   try {
     gmail = await getGmailClient();
@@ -318,6 +384,17 @@ async function processNewEmails(newHistoryId: string): Promise<void> {
   if (!watchState) {
     console.warn('Watch state not found, skipping processing');
     return;
+  }
+
+  // 通知が連携中のアカウントのものか確かめる（notificationAccountOf。アドレスはログに出さない）。
+  // 違うアカウント（切り替える前のアカウントの watch など）の通知は、やり直しても変わらないので投げずに終える
+  const account = notificationAccountOf(notifiedEmailAddress, watchState.emailAddress);
+  if (account === 'mismatch' && !(await followLinkedAddressChange(gmail, notifiedEmailAddress))) {
+    console.warn('Gmail Pub/Sub notification is not for the linked account; dropping it without updating historyId');
+    return;
+  }
+  if (account === 'unchecked') {
+    console.log('Linked Gmail address is not saved yet; skipping the account check (saved on the next watch registration)');
   }
 
   const startHistoryId = watchState.historyId;
