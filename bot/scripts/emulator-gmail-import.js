@@ -7,6 +7,7 @@
  * あわせて、watch の登録・更新が連携中のアカウントのアドレス（getProfile）を保存し、取込（handleGmailPubSub）が
  * 通知の emailAddress と照合して、違うアカウントの通知では historyId を更新しないこと、保存してあるアドレスが古いだけ
  * （getProfile が通知と同じ）なら保存値を書き直して処理を続けることを確かめる（#280）。
+ * 取込が保存する historyId が、メールボックスの現在位置（history.list の応答の historyId）を超えないことも確かめる。
  * Gmail API は呼ばない（dist/gmail/auth の getGmailClient を偽物に差し替える）。
  *
  * emulator-household-api.js と同じ形で実行する（npm -w bot run test:emulator から続けて動く）。
@@ -42,6 +43,9 @@ const fakeGmail = {
   profileCalls: 0,
   // 取込（handler.ts）の history.list。メッセージは返さない（historyId の更新だけを見る）
   historyListCalls: 0,
+  // history.list の応答の historyId（メールボックスの現在位置。取込は保存する historyId の上限にする）。
+  // 既定は、このテストの通知の historyId より大きい値（watchHistoryId とは別にする）
+  mailboxHistoryId: '1000000',
   users: {
     watch: async (params) => {
       fakeGmail.watchCalls.push(params);
@@ -61,7 +65,7 @@ const fakeGmail = {
     history: {
       list: async () => {
         fakeGmail.historyListCalls++;
-        return { data: { history: [] } };
+        return { data: { history: [], historyId: fakeGmail.mailboxHistoryId } };
       },
     },
   },
@@ -102,7 +106,14 @@ async function readState() {
   return snap.exists ? snap.data() : null;
 }
 
-function resetFake({ historyId = '500', error = null, profileAddress = 'linked@example.com', profileError = null } = {}) {
+function resetFake({
+  historyId = '500',
+  error = null,
+  profileAddress = 'linked@example.com',
+  profileError = null,
+  mailboxHistoryId = '1000000',
+} = {}) {
+  fakeGmail.mailboxHistoryId = mailboxHistoryId;
   fakeGmail.watchHistoryId = historyId;
   fakeGmail.watchError = error;
   fakeGmail.watchCalls = [];
@@ -378,6 +389,29 @@ async function main() {
       r instanceof Error && fakeGmail.historyListCalls === 0 && doc.historyId === '400' && doc.emailAddress === 'new-primary@example.com',
       { r: String(r), doc }
     );
+  }
+
+  console.log('取込: 保存する historyId はメールボックスの現在位置（history.list の応答の historyId）を超えない');
+  {
+    // 連携中のアカウントのアドレスで偽った通知（照合は通る）。historyId は極端に大きい
+    await clearFirestore();
+    await seedState({ historyId: '100', emailAddress: 'linked@example.com' });
+    resetFake({ mailboxHistoryId: '700' });
+    let r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '18446744073709551615')));
+    let doc = await readState();
+    check('偽の通知: 投げずに、現在位置（700）で保存する', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '700', { r: String(r), doc });
+
+    // 正当な通知は通知の値まで進む（現在位置は同じか先）
+    resetFake({ mailboxHistoryId: '800' });
+    r = await quietly(() => handleGmailPubSub(notification('linked@example.com', 800)));
+    doc = await readState();
+    check('そのあとの正当な通知: 通知の値（800）まで進む', r === 'ok' && doc.historyId === 800, { r: String(r), doc });
+
+    // 応答に historyId が無い（null）: 進めない
+    resetFake({ mailboxHistoryId: null });
+    r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '900')));
+    doc = await readState();
+    check('応答に historyId が無い: 投げず、historyId を進めない', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === 800, { r: String(r), doc });
   }
 
   console.log(`\ngmail import emulator: ${passed} passed, ${failed} failed`);

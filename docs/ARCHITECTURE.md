@@ -146,6 +146,10 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
     （大文字小文字は区別しない）。違う・無いときは history.list を呼ばず historyId も更新せずに終える（切り替える前のアカウントの
     watch は最大 7 日通知しうるため。GMAIL_AUTO_SPEC §3.2・§11.2）。ただし getProfile（1 回だけ呼ぶ）が通知と同じなら、
     保存値が古いだけ（アドレスの変更）なので書き直して処理を続ける。アドレスが保存されていない状態では照合せず以前どおり処理する
+  ※ 保存する historyId は、通知の値とメールボックスの現在位置（history.list の最後のページの historyId。404 のときは getProfile の
+    historyId）の小さい方（watch.ts の capHistoryId）。topic に publish できる者が偽った大きい historyId で保存値が先へ飛び、
+    以降の通知で何も取り込まれなくなるのを防ぐ。上限を掛けたら固定文の警告を出して処理は続け、現在位置が取れなければ進めない
+    （範囲は次の通知でもう一度処理される。GMAIL_AUTO_SPEC §3.2）
 ```
 
 ### 4.3 Web 閲覧・編集
