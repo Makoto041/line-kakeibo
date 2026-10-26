@@ -262,6 +262,15 @@ console.log('\ndecideSetCategory の中項目（#235。大項目が変わると�
     check('保存済みの大項目の前後に空白があっても（「 食費 」→ 食費）同じ大項目として触らない', !hasSubKey(padded) && padded.update.category === '食費', JSON.stringify(padded));
     const storedMedical = decide('医療・健康', { category: '医療費', description: '病院', subCategory: 'x', status: 'shared' });
     check('保存済みが旧名（医療費）で正準名（医療・健康）を選んでも触らない', !hasSubKey(storedMedical) && storedMedical.update.category === '医療・健康', JSON.stringify(storedMedical));
+    // LINE の入力の旧名「趣味」（#243 で娯楽の別名にした）も、保存済みなら娯楽と同じ大項目として扱う
+    const storedHobby = decide('娯楽費', { category: '趣味', subCategory: '映画', description: '映画館', status: 'shared' });
+    check('保存済みが旧名（趣味）で娯楽費を選ぶと、娯楽にして中項目は決め直さない（#243）', !hasSubKey(storedHobby) && storedHobby.update.category === '娯楽', JSON.stringify(storedHobby));
+    const { subCategoriesOf } = require('../dist/categoryTaxonomy');
+    check(
+      '中項目の一覧は「趣味」でも娯楽のものを返す（#243）',
+      subCategoriesOf('娯楽').length > 0 && JSON.stringify(subCategoriesOf('趣味')) === JSON.stringify(subCategoriesOf('娯楽')),
+      JSON.stringify(subCategoriesOf('趣味'))
+    );
   }
 
   // 大項目が変わり、辞書で決まる
