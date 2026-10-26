@@ -329,6 +329,7 @@ line-kakeibo/
 │  ├─ app/                   # layout.tsx（html・フォント・テーマ・metadata。AppShell は含まない）/ not-found.tsx（404。AppShell の外でナビなし）
 │  ├─ app/(app)/             # ルートグループ（URL に出ない）: / , /expenses , /settlement , /settings , /attach , /link , /dashboard , /terms , /privacy
 │  │                         # layout.tsx が AppShell（ナビと、LINE ログイン・PWA の起動）で包む。グループの外のページは AppShell・lineAuth を読み込まない
+│  ├─ app/demo/              # /demo（発表用のデモ。ログイン不要・架空データだけ）。(app) の外で AppShell・lineAuth・firebase を読み込まない。部品は components/demo/、データは lib/demo/。発表後に消す
 │  ├─ app/manifest.ts        # PWA の manifest（apple-icon.png / favicon.ico も app/ に置く）
 │  ├─ components/            # Charts, PeriodSplitCard（精算の取得・保存）・PeriodSplitView（精算の表示）, LeftoverAdvancesCard（全額にする前の立替のお知らせ）, RecurringExpensesPanel, GuestGuide,
 │  │                         # layout/(AppShell, Sidebar, BottomTabBar, TopBar, nav), theme/,
