@@ -18,6 +18,8 @@
  *   呼ばず、getProfile の現在位置に置き換えて終える（#300）。置き換えるのはトランザクションの中で保存値がまだ使えない形のときだけ
  *   （先に直っていた・消えていたら書かない）。getProfile の失敗・historyId が無いときは投げずに警告で終える。ログに値を出さない
  * - history.list が 404 のときは getProfile の現在位置を保存する。先へ飛ばしたログは固定文と桁数だけ
+ * - 置き換え・404 で印を消す対象（失敗の記録）は、historyId の書き込みを確定させる前に読む（確定の後に、新しい位置から始めた
+ *   ほかの実行が記録した失敗の印は消さない）
  *
  *   node bot/scripts/smoke-gmail-history-position.js
  */
@@ -65,13 +67,22 @@ function docRef(collection, id) {
     },
   };
 }
+/** 次のトランザクションを確定させた直後に 1 回だけ呼ぶ（確定の後に、ほかの実行が書き込むのを再現する） */
+let afterNextTransaction = null;
 adminFirestore.getFirestore = () => ({
   collection: (name) => ({ doc: (id) => docRef(name, id) }),
-  runTransaction: async (fn) =>
-    fn({
+  runTransaction: async (fn) => {
+    const result = await fn({
       get: (ref) => ref.get(),
       set: (ref, data, options) => write(ref.path, data, options),
-    }),
+    });
+    if (afterNextTransaction) {
+      const hook = afterNextTransaction;
+      afterNextTransaction = null;
+      await hook();
+    }
+    return result;
+  },
 });
 
 const gmailAuth = require('../dist/gmail/auth');
@@ -141,10 +152,12 @@ cardNotice.deliverPendingCardNotice = async () => {
   processedMessages++;
   return 'sent';
 };
-/** discardCardNotices を呼んだ理由（先へ飛ばした・置き換えたときだけ呼ぶ） */
+/** discardCardNotices を呼んだ理由（先へ飛ばした・置き換えたときだけ呼ぶ）と、渡した messageId（呼んだ順） */
 const discardCalls = [];
-cardNotice.discardCardNotices = async (_ids, reason) => {
+const discardIds = [];
+cardNotice.discardCardNotices = async (ids, reason) => {
   discardCalls.push(reason);
+  discardIds.push([...ids]);
 };
 
 // --- 呼び出しとログ ---
@@ -193,6 +206,8 @@ function reset(historyId, { mailboxPosition = '600' } = {}) {
   messageGetCalls = 0;
   processedMessages = 0;
   discardCalls.length = 0;
+  discardIds.length = 0;
+  afterNextTransaction = null;
 }
 
 const FORGED = '18446744073709551615';
@@ -201,7 +216,8 @@ const UINT64_MAX_MINUS_1 = '18446744073709551614';
 const UINT64_MAX_MINUS_2 = '18446744073709551613';
 const ROLLBACK_LOG = 'Skipping historyId rollback';
 const PROCESSED_LOG = 'Processed Gmail messages; updated historyId';
-const AHEAD_LOG = 'Stored Gmail historyId is ahead of the mailbox; nothing is imported until it is reset (see GMAIL_AUTO_SPEC 11.2)';
+const AHEAD_LOG =
+  'Stored Gmail historyId is ahead of the mailbox; nothing is imported until it is reset (reset it only if this repeats on later notifications; see GMAIL_AUTO_SPEC 11.2)';
 const MISSING_LOG = 'Gmail did not return the mailbox historyId; keeping the saved historyId (the range is processed again on the next notification)';
 const REPLACED_LOG = 'Stored Gmail historyId was not usable; replaced it with the mailbox position, and mail before it is NOT imported';
 const PROFILE_FAILED_LOG = 'Stored Gmail historyId is not usable and getProfile failed; keeping it (retried on the next notification)';
@@ -514,6 +530,30 @@ async function main() {
     '404・getProfile の現在位置 = 保存値: 先の保存値の警告は出さない（同じ位置は正常）',
     r === 'ok' && storedHistoryId() === '5000' && !findLine(AHEAD_LOG),
     { r: String(r), stored: storedHistoryId(), log: logText() }
+  );
+
+  console.log('\n[印を消す対象（失敗の記録）は、historyId の書き込みを確定させる前に読む]');
+  // 確定の直後に、新しい位置から始めたほかの実行がメールの失敗を記録した（そのメールは新しい位置より後で、再処理される）
+  const recordFailureAfterCommit = () => write('system/gmailFailures', { 'msg-new-0002': { attempts: 1 } }, { merge: true });
+  reset('0001000');
+  docs.set('system/gmailFailures', { 'msg-old-0001': { attempts: 1 } });
+  afterNextTransaction = recordFailureAfterCommit;
+  r = await handle('600');
+  check(
+    '保存値が使えない形で置き換えた: 確定の前の失敗の記録（msg-old-0001）の印だけを消し、確定の後に記録された失敗（msg-new-0002）の印は消さない',
+    r === 'ok' && storedHistoryId() === '5000' && JSON.stringify(discardIds) === JSON.stringify([['msg-old-0001']]),
+    { r: String(r), stored: storedHistoryId(), discardIds }
+  );
+  reset('100');
+  docs.set('system/gmailFailures', { 'msg-old-0001': { attempts: 1 } });
+  historyError = Object.assign(new Error('Requested entity was not found.'), { code: 404 });
+  profileHistoryId = '5000';
+  afterNextTransaction = recordFailureAfterCommit;
+  r = await handle('300');
+  check(
+    '404 で先へ飛ばした: 確定の前の失敗の記録（msg-old-0001）の印だけを消し、確定の後に記録された失敗（msg-new-0002）の印は消さない',
+    r === 'ok' && storedHistoryId() === '5000' && JSON.stringify(discardIds) === JSON.stringify([['msg-old-0001']]),
+    { r: String(r), stored: storedHistoryId(), discardIds }
   );
 
   console.log(failed === 0 ? '\nすべて通過' : `\n${failed} 件失敗`);

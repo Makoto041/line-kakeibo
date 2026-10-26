@@ -20,6 +20,9 @@ const PUBSUB_TOPIC = 'projects/line-kakeibo-0410/topics/gmail-notifications';
  * 「今のメールボックスの位置」なので、取込が失敗して historyId が止まっている間にこれで上書きすると、
  * 未処理の範囲が二度と `history.list` に載らず取りこぼす。応答の値を使うのは、保存値が無いとき
  * （初回・/gmail/revoke の後）と、保存値が数値として読めないときだけ。
+ * 応答の値は、取込と同じく mailboxHistoryIdToSave で形を確かめてから使う（正規の形の文字列にする）。応答に historyId が無い・
+ * 使えない形のときは書かない。保存値が使える形なら残して続け（固定文の警告）、保存値が無い・使えない形なら gmailState に何も
+ * 書かずに投げる（固定文の警告。renewGmailWatch は 2 回までやり直し、/gmail/register-watch は 500 を返す）。
  *
  * あわせて、連携中のアカウントのアドレスを getProfile で取って保存する（`emailAddress`。取込が Pub/Sub の通知と照合する。
  * handler.ts の notificationAccountOf）。getProfile は watch の後に呼ぶ（先に呼んで失敗すると watch の更新まで止まるため）。
@@ -42,9 +45,11 @@ export async function registerWatch(): Promise<GmailWatchState> {
 
   const { historyId, expiration } = response.data;
 
-  if (!historyId || !expiration) {
+  if (!expiration) {
     throw new Error('Failed to register Gmail Watch');
   }
+  // 無い・使えない形なら null（保存値が使える形なら残す。saveWatchState）。値はログに出さない
+  const historyIdFromWatch = mailboxHistoryIdToSave(historyId);
 
   // 連携中のアカウントのアドレス（ログには出さない）
   const profile = await gmail.users.getProfile({ userId: 'me' });
@@ -53,7 +58,7 @@ export async function registerWatch(): Promise<GmailWatchState> {
     console.warn('Gmail profile has no email address; keeping the saved one for the notification account check');
   }
 
-  const { state, source } = await saveWatchState(historyId.toString(), parseInt(expiration, 10), emailAddress);
+  const { state, source } = await saveWatchState(historyIdFromWatch, parseInt(expiration, 10), emailAddress);
 
   console.log('Gmail Watch registered', {
     expiresAt: new Date(state.watchExpiration).toISOString(),
@@ -86,6 +91,7 @@ const MAX_HISTORY_ID = BigInt('18446744073709551615');
 /**
  * 保存値が historyId として使えるか。historyId は uint64 の 10 進文字列。
  * 取込（updateHistoryId）は、メールボックスの現在位置を正規の形の文字列で保存する（mailboxHistoryIdToSave）。
+ * watch の登録・更新（registerWatch）も、watch の応答の historyId を同じ関数で確かめてから書く。
  * 以前（#298 より前）は Pub/Sub 通知の JSON の値をそのまま保存していて、数値のまま入っている可能性もあるため、
  * 0 以上の整数も使える値として扱う
  * （取込は Pub/Sub の通知の historyId と、保存してある historyId もこれで確かめる。handler.ts の handleGmailPubSub・processNewEmails）
@@ -122,18 +128,20 @@ export type WatchHistoryIdSource = 'kept' | 'initialized' | 'replaced';
  * - 保存値が無い（`getWatchState` と同じく空も無し扱い）ときは応答の値を入れる（`initialized`）
  * - 保存値が数値として読めないときは `history.list` に使えないため応答の値に置き換える（`replaced`）。
  *   先頭ゼロ・21 桁以上・uint64 を超える値も読めない値として扱う（isUsableHistoryId）
+ * - 応答の値（`fromWatch`。mailboxHistoryIdToSave で確かめた値）が null（応答に無い・使えない形）のとき、保存値が使える形なら
+ *   残し（`kept`）、保存値が無い・使えない形なら null（書ける値が無い。呼び出し側は何も書かない）
  */
 export function resolveWatchHistoryId(
   stored: unknown,
-  fromWatch: string
-): { historyId: string; source: WatchHistoryIdSource } {
+  fromWatch: string | null
+): { historyId: string; source: WatchHistoryIdSource } | null {
   if (!stored) {
-    return { historyId: fromWatch, source: 'initialized' };
+    return fromWatch === null ? null : { historyId: fromWatch, source: 'initialized' };
   }
   if (isUsableHistoryId(stored)) {
     return { historyId: String(stored), source: 'kept' };
   }
-  return { historyId: fromWatch, source: 'replaced' };
+  return fromWatch === null ? null : { historyId: fromWatch, source: 'replaced' };
 }
 
 /**
@@ -168,9 +176,13 @@ export function watchStateFields(
  *
  * 保存してあるアドレスと違うアカウントで登録したとき（/gmail/revoke をせずに別のアカウントで認可し直した）は、
  * アドレスは新しい方にするが historyId は残す（resolveWatchHistoryId のまま）ので、固定文の警告を出す。
+ *
+ * watch の応答の historyId が無い・使えない形（historyIdFromWatch が null）のときは、保存値が使える形なら残して続け、
+ * 固定文の警告を出す。保存値も無い・使えない形なら（resolveWatchHistoryId が null）、トランザクションの中で何も書かずに終え、
+ * 固定文の警告を出して投げる（値は出さない）。
  */
 async function saveWatchState(
-  historyIdFromWatch: string,
+  historyIdFromWatch: string | null,
   watchExpiration: number,
   emailAddress: string | undefined
 ): Promise<{ state: GmailWatchState; source: WatchHistoryIdSource }> {
@@ -182,6 +194,8 @@ async function saveWatchState(
     const storedData = snapshot.exists ? snapshot.data() : undefined;
     const stored = storedData?.historyId;
     const resolved = resolveWatchHistoryId(stored, historyIdFromWatch);
+    // 書ける historyId が無い。set の前に抜ける（何も書かない）
+    if (resolved === null) return null;
     const storedAddress = normalizeEmailAddress(storedData?.emailAddress);
 
     transaction.set(ref, watchStateFields(resolved, watchExpiration, Timestamp.now(), emailAddress), { merge: true });
@@ -193,6 +207,13 @@ async function saveWatchState(
     };
   });
 
+  if (result === null) {
+    console.warn('Gmail watch response has no usable historyId and no usable historyId is stored; saved nothing (register the watch again)');
+    throw Object.assign(new Error('Gmail watch response has no usable historyId'), { name: 'GmailWatchHistoryIdError' });
+  }
+  if (historyIdFromWatch === null) {
+    console.warn('Gmail watch response has no usable historyId; kept the stored historyId');
+  }
   if (result.source === 'replaced') {
     console.warn('Stored Gmail historyId was not numeric; replaced it with the watch response');
   }
@@ -250,6 +271,7 @@ function isNewerHistoryId(candidate: string | number, current: string): boolean 
  * 取込（handler.ts の processNewEmails）で保存する historyId。メールボックスの現在位置（Gmail の応答の historyId）を
  * 10 進の正規の形の文字列にして返す。使えない値（無い・数値として読めない・先頭ゼロ・uint64 超。isUsableHistoryId）なら null
  * （呼び出し側は保存値を進めない。範囲は次の通知でもう一度処理され、重複は gmailMessageId で弾く）
+ * watch の登録・更新（registerWatch）も、watch の応答の historyId をこれで確かめる（null なら書かない。saveWatchState）。
  *
  * 現在位置は `history.list` の最初のページの historyId（最初の要求の時点の位置。404 の経路では `users.getProfile` の historyId、
  * 保存値が使えない形のときの置き換えも `users.getProfile` の historyId）。googleapis の gmail v1 の型定義（users.history.list の
@@ -273,6 +295,8 @@ export function mailboxHistoryIdToSave(mailboxHistoryId: unknown): string | null
  * getProfile・watch の応答）なので、あとで取った現在位置以下になる。現在位置が開始位置より前なら、保存値はこのメールボックスの
  * 位置ではない（#295 より前に偽の通知で入った値・revoke をせずに別のアカウントへ切り替えた後の値）。同時に走った実行が
  * 保存値を先へ進めても、開始位置は実行の開始時に読んだ値なので、この条件にはならない。等しい（新着が無い）のは正常。
+ * ただし、Gmail が一時的に食い違った位置を返すことが無いかは確かめていない（直すのは同じ警告が複数の通知で続くときだけ。
+ * handler.ts の warnIfMailboxBehindStart）。
  * uint64 は Number では桁が落ちるので BigInt で比べる。
  */
 export function isMailboxBehindStart(mailboxHistoryId: string, startHistoryId: string): boolean {

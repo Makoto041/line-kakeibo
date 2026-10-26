@@ -1,7 +1,8 @@
 /**
  * Gmail watch の状態（system/gmailState）まわりのスモークテスト（Firestore は使わない）
  *
- * - resolveWatchHistoryId: watch の登録・更新で保存する historyId の決め方
+ * - resolveWatchHistoryId: watch の登録・更新で保存する historyId の決め方（応答の値が無い・使えない形〔null〕のときは、
+ *   保存値が使える形なら残し、そうでなければ null）
  * - watchStateFields: そのとき merge で書く項目（保存値を残すときは historyId を書かない）
  * - DELETE /gmail/revoke: gmailState を消せなかったら握り潰さず 500 で返す（Firestore の参照は偽物）
  * - DELETE /gmail/revoke: Google 側の失効（#284。Google の失効先は fetch の偽物）。refresh_token を先に本文（form）で送り、
@@ -72,6 +73,20 @@ r = resolveWatchHistoryId(1.5, '500');
 check('整数でない数値: 応答の値に置き換える', same(r, '500', 'replaced'), r);
 r = resolveWatchHistoryId({ value: '100' }, '500');
 check('オブジェクト: 応答の値に置き換える', same(r, '500', 'replaced'), r);
+
+// 応答の値が無い・使えない形（registerWatch が mailboxHistoryIdToSave で null にしたもの）
+r = resolveWatchHistoryId('100', null);
+check('応答の値が使えない・保存値が使える: 保存値を残す', same(r, '100', 'kept'), r);
+r = resolveWatchHistoryId(100, null);
+check('応答の値が使えない・保存値が数値: 保存値を残す', same(r, '100', 'kept'), r);
+r = resolveWatchHistoryId(undefined, null);
+check('応答の値が使えない・保存値なし: null（書ける値が無い）', r === null, r);
+r = resolveWatchHistoryId('', null);
+check('応答の値が使えない・保存値が空文字: null', r === null, r);
+r = resolveWatchHistoryId('0001000', null);
+check('応答の値が使えない・保存値も使えない形（先頭ゼロ）: null（使えない保存値を残したことにしない）', r === null, r);
+r = resolveWatchHistoryId('abc', null);
+check('応答の値が使えない・保存値が数字以外: null', r === null, r);
 
 console.log('\nwatchStateFields');
 
