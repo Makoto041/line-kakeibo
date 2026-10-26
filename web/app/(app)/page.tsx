@@ -14,28 +14,28 @@ import {
   AlertTriangle,
   Clock,
 } from 'lucide-react';
-import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses } from '../lib/hooks';
-import { countPending, isPending, resolvePayerName } from '../lib/expenseState';
-import { collectHistoricalUsers } from '../lib/expenseEdit';
-import { toDrillItems } from '../lib/drilldown';
-import { subCategoriesOf } from '../lib/categoryTaxonomy';
-import { normalizeCategoryName } from '../lib/categoryNormalization';
-import DrillSheet, { type DrillView } from '../components/drilldown/DrillSheet';
-import { CategoryBreakdownCard } from '../components/home/CategoryBreakdownCard';
+import { useLineAuth, useMonthlyStats, useBudgetConfig, useExpenses } from '@/lib/hooks';
+import { countPending, isPending, resolvePayerName } from '@/lib/expenseState';
+import { collectHistoricalUsers } from '@/lib/expenseEdit';
+import { toDrillItems } from '@/lib/drilldown';
+import { subCategoriesOf } from '@/lib/categoryTaxonomy';
+import { normalizeCategoryName } from '@/lib/categoryNormalization';
+import DrillSheet, { type DrillView } from '@/components/drilldown/DrillSheet';
+import { CategoryBreakdownCard } from '@/components/home/CategoryBreakdownCard';
 import Link from 'next/link';
-import { DailyLineChart } from '../components/Charts';
-import { fetchDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '../lib/dateSettings';
-import PreviewModeBanner from '../components/PreviewModeBanner';
-import GuestGuide from '../components/GuestGuide';
-import { getSampleExpenses, getSampleStats } from '../lib/sampleData';
-import { yen } from '../lib/money';
-import { computePeriodInsights } from '../lib/budgetAnalytics';
-import { GlassCard } from '../components/home/GlassCard';
-import { SummaryCard } from '../components/home/SummaryCard';
-import { BudgetProgress } from '../components/home/BudgetProgress';
-import { getCached, setCached, hasCached } from '../lib/swrCache';
+import { DailyLineChart } from '@/components/Charts';
+import { fetchDateRangeSettings, getEffectiveDateRange, getDisplayTitle, type DateRangeSettings } from '@/lib/dateSettings';
+import PreviewModeBanner from '@/components/PreviewModeBanner';
+import GuestGuide from '@/components/GuestGuide';
+import { getSampleExpenses, getSampleStats } from '@/lib/sampleData';
+import { yen } from '@/lib/money';
+import { computePeriodInsights } from '@/lib/budgetAnalytics';
+import { GlassCard } from '@/components/home/GlassCard';
+import { SummaryCard } from '@/components/home/SummaryCard';
+import { BudgetProgress } from '@/components/home/BudgetProgress';
+import { getCached, setCached, hasCached } from '@/lib/swrCache';
 import dayjs from 'dayjs';
-import { db } from '../lib/firebase';
+import { db } from '@/lib/firebase';
 
 /* ------------------------------- Page ----------------------------------- */
 export default function Dashboard() {

@@ -76,7 +76,7 @@ footer { padding-top: 24px; color: var(--muted); font-size: 12.5px; }
 
 <main>
   <header class="top">
-    <div class="eyebrow">line-kakeibo · v1.15.6 時点</div>
+    <div class="eyebrow">line-kakeibo · v1.15.7 時点</div>
     <h1>ぶちこむ家計簿の仕組み</h1>
     <p class="lede">LINE に「500 ランチ」と送るだけで記録できる、ふたり暮らし向け家計簿の全体構成。どこで何が動き、データがどう流れ、どう守られ、どうデプロイされるかを 1 枚にまとめた。詳細はリポジトリの <code>docs/</code> にある。</p>
     <div class="facts">
@@ -277,7 +277,7 @@ flowchart LR
             <tr><td class="name">bot/src/categoryTaxonomy.ts · subCategoryRules.ts</td><td>中項目（食費・娯楽）の一覧と、辞書と時刻で中項目を決める <code>resolveSubCategory</code>（モデルは呼ばない。登録時の保存〔LINE の入力・カード利用メール〕と、LINE のカードでカテゴリを変えたときに呼ぶ）</td></tr>
             <tr><td class="name">bot/src/settlementSummary.ts · line/settlementSummaryMessage.ts</td><td>期間の精算サマリー（送る日の判定・集計・冪等な送信・Web からの手動の送信と、メンション付きテキスト・Flex）</td></tr>
             <tr><td class="name">web/lib/expenseEdit.ts · categoryTaxonomy.ts</td><td>支出の編集（送る差分・入力チェック・中項目の選択肢と、大項目を変えたときのリセット）と、中項目の一覧（bot の <code>categoryTaxonomy.ts</code> と同じ内容）</td></tr>
-            <tr><td class="name">web/app/ · components/ · lib/</td><td>画面・部品・ロジック（lib は純関数でテストあり）</td></tr>
+            <tr><td class="name">web/app/(app)/ · components/ · lib/</td><td>画面・部品・ロジック（lib は純関数でテストあり）。画面はルートグループ <code>(app)</code>（URL に出ない）に置き、その <code>layout.tsx</code> が AppShell（ナビと、LINE ログイン・PWA の起動）で包む。ルートの <code>app/layout.tsx</code> と 404（<code>app/not-found.tsx</code>）は AppShell の外</td></tr>
             <tr><td class="name">web/lib/drilldown.ts · components/drilldown/</td><td>内訳シート（合計 → カテゴリ → 中項目 / 支払い者 → 明細）。中項目の一覧は編集画面と同じ <code>lib/categoryTaxonomy.ts</code> を使う</td></tr>
             <tr><td class="name">web/app/manifest.ts · public/sw.js · lib/installApp.ts</td><td>PWA の manifest、Service Worker（オフライン画面と <code>/_next/static</code> のキャッシュ）、追加の案内の出し分け。アイコンは <code>scripts/gen-app-icons.mjs</code> で生成</td></tr>
             <tr><td class="name">firestore.rules · storage.rules</td><td>アクセス制御（CI がデプロイ、エミュレータでテスト）</td></tr>

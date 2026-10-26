@@ -5,11 +5,11 @@
 // （LeftoverAdvancesCard）を下に出す。
 import React, { useMemo, useState } from 'react';
 import { HandCoins, RefreshCw, Users } from 'lucide-react';
-import PreviewModeBanner from '../../components/PreviewModeBanner';
-import PeriodSplitCard from '../../components/PeriodSplitCard';
-import LeftoverAdvancesCard from '../../components/LeftoverAdvancesCard';
-import { useLegacyAdvances, useHousehold, useLineAuth, patchCachedExpenses, invalidateStatsCache } from '../../lib/hooks';
-import { isHouseholdApiConfigured } from '../../lib/householdApi';
+import PreviewModeBanner from '@/components/PreviewModeBanner';
+import PeriodSplitCard from '@/components/PeriodSplitCard';
+import LeftoverAdvancesCard from '@/components/LeftoverAdvancesCard';
+import { useLegacyAdvances, useHousehold, useLineAuth, patchCachedExpenses, invalidateStatsCache } from '@/lib/hooks';
+import { isHouseholdApiConfigured } from '@/lib/householdApi';
 
 export default function SettlementPage() {
   const { lineId, loading: authLoading } = useLineAuth();

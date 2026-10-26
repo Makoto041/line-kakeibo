@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
-import { AppShell } from "@/components/layout/AppShell";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -56,9 +55,8 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Providers>
-          <AppShell>{children}</AppShell>
-        </Providers>
+        {/* アプリのナビと LINE ログインの起動（AppShell）は app/(app)/layout.tsx で包む */}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
