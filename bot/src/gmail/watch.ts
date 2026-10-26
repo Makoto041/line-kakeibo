@@ -251,9 +251,11 @@ function isNewerHistoryId(candidate: string | number, current: string): boolean 
  * 10 進の正規の形の文字列にして返す。使えない値（無い・数値として読めない・先頭ゼロ・uint64 超。isUsableHistoryId）なら null
  * （呼び出し側は保存値を進めない。範囲は次の通知でもう一度処理され、重複は gmailMessageId で弾く）
  *
- * 現在位置は `history.list` の最後のページ（nextPageToken の無い応答）の historyId。googleapis の gmail v1 の型定義
- * （users.history.list の startHistoryId の説明）が「nextPageToken が無ければ、返った historyId を次の要求のために保存してよい」
- * とする値（404 の経路では `users.getProfile` の historyId）。
+ * 現在位置は `history.list` の最初のページの historyId（最初の要求の時点の位置。404 の経路では `users.getProfile` の historyId、
+ * 保存値が使えない形のときの置き換えも `users.getProfile` の historyId）。googleapis の gmail v1 の型定義（users.history.list の
+ * startHistoryId の説明）が保存してよいとするのは最後のページ（nextPageToken の無い応答）の値だが、ページ送りの途中に増えた
+ * 記録が後のページに載るかは確かめていないので、最初のページの値にする（載らないなら最後のページの値では取りこぼし、
+ * 載るなら最初のページの値でも再処理で済む。processNewEmails）。
  *
  * Pub/Sub の通知の historyId は使わない（取込を起こす合図としてだけ使う）。通知は topic に publish できる者なら作れる
  * （通知の emailAddress の照合では偽装を防げない）。#295 では「通知の値と現在位置の小さい方」を保存していたため、偽の通知で
@@ -265,12 +267,54 @@ export function mailboxHistoryIdToSave(mailboxHistoryId: unknown): string | null
 }
 
 /**
+ * メールボックスの現在位置が、取込の開始位置（実行の開始時に読んだ保存値）より前か。どちらも 10 進の文字列（uint64 以下）
+ *
+ * Gmail の history ID は時間とともに増え、減らない。正当な保存値は、どれも Gmail がそれより前に返した位置（history.list・
+ * getProfile・watch の応答）なので、あとで取った現在位置以下になる。現在位置が開始位置より前なら、保存値はこのメールボックスの
+ * 位置ではない（#295 より前に偽の通知で入った値・revoke をせずに別のアカウントへ切り替えた後の値）。同時に走った実行が
+ * 保存値を先へ進めても、開始位置は実行の開始時に読んだ値なので、この条件にはならない。等しい（新着が無い）のは正常。
+ * uint64 は Number では桁が落ちるので BigInt で比べる。
+ */
+export function isMailboxBehindStart(mailboxHistoryId: string, startHistoryId: string): boolean {
+  return BigInt(mailboxHistoryId) < BigInt(startHistoryId);
+}
+
+/**
+ * 保存してある historyId が使えない形（isUsableHistoryId）のときだけ、メールボックスの現在位置（getProfile の historyId。
+ * mailboxHistoryIdToSave で正規の形にした文字列）に置き換える（取込の自動復旧。handler.ts の processNewEmails）
+ *
+ * Firestore トランザクションの中で読み直し、文書があり、historyId があり、まだ使えない形のときだけ historyId と updatedAt を
+ * merge で書く。ほかの項目（watchExpiration・emailAddress）は変えない。
+ * - 文書が無い（/gmail/revoke が消した）: 作り直さない
+ * - historyId が無い（§11.2 の手順で消した直後）: 書かない（次の watch の登録が入れる）
+ * - すでに使える形（watch の更新・ほかの実行が先に置き換えた）: 書かない（前進のみ・巻き戻しの判断は updateHistoryId に任せる）
+ *
+ * @returns 置き換えたら true
+ */
+export async function replaceUnusableHistoryId(historyId: string): Promise<boolean> {
+  const db = getFirestore();
+  const ref = gmailStateRef();
+
+  return db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return false;
+    const current: unknown = snapshot.data()?.historyId;
+    if (!current || isUsableHistoryId(current)) return false;
+
+    transaction.set(ref, { historyId, updatedAt: Timestamp.now() }, { merge: true });
+    return true;
+  });
+}
+
+/**
  * historyIdを更新（前進のみ）
  *
  * Pub/Sub は at-least-once で順序保証が無く、取込は同時に走りうるため、先に終えた実行より古い位置を
  * 後から書くと historyId が巻き戻る。巻き戻ると次回の `history.list` が既知の範囲を取り直すことになり、
  * 404（履歴が古すぎる）と重なったときに取りこぼす。必ず新しい方を残す。
- * 取込は、メールボックスの現在位置（`mailboxHistoryIdToSave`。正規の形の文字列）を渡す。
+ * 取込は、メールボックスの現在位置（`mailboxHistoryIdToSave`。正規の形の文字列）を渡す。現在位置が実行の開始位置より前の
+ * とき（`isMailboxBehindStart`。保存値がこのメールボックスの位置でない）は、取込はここを呼ばずに別の警告を出すので、
+ * ここで巻き戻しを飛ばすのは、同時に走った実行が先に進めていたときと、現在位置が開始位置と同じ（新着なし）ときだけ。
  * 巻き戻しを飛ばしたときのログには、値ではなく桁数だけを出す（保存値は #295 より前に入った長い文字列でありうる）。
  */
 export async function updateHistoryId(historyId: string): Promise<void> {

@@ -7,7 +7,7 @@
  *   一致 → 処理 / 不一致（getProfile も通知と違う）・通知にアドレスが無い → history.list を呼ばず historyId を更新しない（投げない）/
  *   保存してあるアドレスが古い（getProfile が通知と同じ。プライマリアドレスの変更）→ 保存値を書き直して処理 /
  *   getProfile・書き直しの失敗 → 投げる / アドレスが保存されていない → 照合せず以前どおり処理 / 大文字小文字の違い → 一致 /
- *   watch の状態の読み取りの失敗 → 投げる / 保存してある historyId が使えない形 → 照合（getProfile）の前に終える（#298）。
+ *   watch の状態の読み取りの失敗 → 投げる / 保存してある historyId が使えない形 → 照合の前に getProfile の現在位置で置き換えて終える（#300）。
  *   処理したときに保存するのは、通知の値ではなく history.list の応答の現在位置（#298）
  * - registerWatch（Gmail と Firestore は偽物）: getProfile のアドレスを保存する・watch の後に呼ぶ・失敗したら投げる・
  *   応答にアドレスが無ければ保存してある値を変えない・別のアカウントなら固定文で警告する
@@ -113,6 +113,9 @@ async function flowChecks() {
   let profileCalls = 0;
   let profileAddress = 'linked@example.com';
   let profileError = null;
+  // getProfile の historyId（保存してある historyId が使えない形のときの置き換え先。#300）と、置き換えに渡した値
+  let profileHistoryId;
+  const unusableReplacements = [];
   const addressUpdates = [];
   let addressUpdateError = null;
   gmailWatch.getWatchState = async () => {
@@ -121,6 +124,12 @@ async function flowChecks() {
   };
   gmailWatch.updateHistoryId = async (historyId) => {
     historyUpdates.push(historyId);
+  };
+  // 置き換えは Firestore のトランザクション（emulator-gmail-import.js で確かめる）。ここでは渡した値だけを記録し、
+  // 「すでに置き換わっていた」扱い（false）にする（失敗の記録・送信待ちの印の Firestore を使わないため）
+  gmailWatch.replaceUnusableHistoryId = async (historyId) => {
+    unusableReplacements.push(historyId);
+    return false;
   };
   gmailWatch.updateLinkedEmailAddress = async (emailAddress) => {
     if (addressUpdateError) throw addressUpdateError;
@@ -134,7 +143,7 @@ async function flowChecks() {
           profileCalls++;
           if (!params || params.userId !== 'me') throw new Error('unexpected getProfile params');
           if (profileError) throw profileError;
-          return { data: { emailAddress: profileAddress } };
+          return { data: { emailAddress: profileAddress, ...(profileHistoryId === undefined ? {} : { historyId: profileHistoryId }) } };
         },
         history: {
           list: async () => {
@@ -163,6 +172,8 @@ async function flowChecks() {
     // 既定では、連携中のアカウント（トークン）のアドレスは保存値と同じ
     profileAddress = profile;
     profileError = null;
+    profileHistoryId = undefined;
+    unusableReplacements.length = 0;
     addressUpdates.length = 0;
     addressUpdateError = null;
   };
@@ -299,22 +310,28 @@ async function flowChecks() {
     { result: String(result), historyListCalls, historyUpdates, profileCalls, addressUpdates }
   );
 
-  // 保存してある historyId が使えない形（#295 より前に偽の通知で入った先頭ゼロなど）: 照合より前に終える。
-  // 照合が合わない通知でも getProfile を呼ばない（Gmail API を呼ばない。#298）
+  // 保存してある historyId が使えない形（#295 より前に偽の通知で入った先頭ゼロなど）: 照合より前に、getProfile の現在位置に
+  // 置き換えて終える（#300）。置き換える値は連携中のアカウントの getProfile で決まり、通知（照合が合わない通知でも）に関係しない。
+  // 照合はしない（アドレスを書き換えない）。getProfile は置き換えのための 1 回だけ
   reset({ ...stored('new@example.com'), historyId: '0000000000000000000000077777' });
+  profileHistoryId = '2000000';
   ({ result, lines } = await captureConsole(() => handleGmailPubSub(pubsubData({ emailAddress: 'old@example.com', historyId: '700' }))));
   check(
-    '保存してある historyId が使えない・通知が不一致: 投げず、getProfile・history.list を呼ばず、historyId もアドレスも変えない',
-    result === undefined && profileCalls === 0 && historyListCalls === 0 && historyUpdates.length === 0 && addressUpdates.length === 0,
-    { result: String(result), profileCalls, historyListCalls, historyUpdates, addressUpdates }
+    '保存してある historyId が使えない・通知が不一致: 投げず、getProfile を 1 回だけ呼び、その現在位置（2000000）で置き換えを試み、history.list を呼ばず、historyId の更新もアドレスの書き直しもしない',
+    result === undefined &&
+      profileCalls === 1 &&
+      JSON.stringify(unusableReplacements) === JSON.stringify(['2000000']) &&
+      historyListCalls === 0 &&
+      messageGetCalls === 0 &&
+      historyUpdates.length === 0 &&
+      addressUpdates.length === 0,
+    { result: String(result), profileCalls, unusableReplacements, historyListCalls, historyUpdates, addressUpdates }
   );
-  const unusableWarns = lines.filter((l) => l.level === 'warn');
   check(
-    '保存してある historyId が使えない: 固定文の警告を 1 回だけ出し（照合の警告は出さない）、保存値もアドレスも出さない',
-    unusableWarns.length === 1 &&
-      unusableWarns[0].args.length === 1 &&
-      unusableWarns[0].args[0] === 'Stored Gmail historyId is not usable; skipping without calling Gmail' &&
+    '保存してある historyId が使えない: 照合の警告は出さず、保存値・現在位置・アドレスをログに出さない',
+    !lines.some((l) => l.args[0] === 'Gmail Pub/Sub notification is not for the linked account; dropping it without updating historyId') &&
       !JSON.stringify(lines).includes('77777') &&
+      !JSON.stringify(lines).includes('2000000') &&
       noAddressInLogs(lines),
     lines
   );
