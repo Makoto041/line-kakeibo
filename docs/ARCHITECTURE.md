@@ -90,8 +90,8 @@ flowchart LR
 | Function | トリガー | リージョン | 役割 |
 |---|---|---|---|
 | `webhook` | HTTPS（Express） | asia-northeast1 | LINE webhook 本体（署名検証は fail-closed、本文上限 1MB）。`/health` も同居（認証なしのデバッグ用 `/classification-stats` `/test-classification` は削除済み）。本番 URL は Cloud Run 形式 `https://webhook-4tgziqsylq-an.a.run.app/webhook` |
-| `gmailPubSubHandler` | Pub/Sub `gmail-notifications` | asia-northeast1 | SMBC カード利用メールの取込 |
-| `renewGmailWatch` | cron `0 3 */6 * *` JST | asia-northeast1 | Gmail watch（7日失効）の更新。stop せず watch を呼び直し、保存してある historyId（取込の位置）は変えない（GMAIL_AUTO_SPEC §11.2） |
+| `gmailPubSubHandler` | Pub/Sub `gmail-notifications` | asia-northeast1 | SMBC カード利用メールの取込。失敗したら Pub/Sub が再送する（`retry: true`。10〜600 秒の指数バックオフで最大 24 時間。12 時間より古い通知は処理せずに捨てる）。タイムアウト 300 秒（GMAIL_AUTO_SPEC §3.2） |
+| `renewGmailWatch` | cron `0 3 */6 * *` JST | asia-northeast1 | Gmail watch（7日失効）の更新。stop せず watch を呼び直し、保存してある historyId（取込の位置）は変えない（GMAIL_AUTO_SPEC §11.2）。失敗したら 2 回までやり直す（`retryCount: 2`） |
 | `importMoneyForward` | cron `0 5 * * *` JST | asia-northeast1 | **廃止（何もしない）**。旧 MoneyForward CSV 取込。送信先 `/api/mf/import` が存在せず機能していなかったため処理を削除。`syncUserLinks` と同じ理由で関数名だけ残置。削除は手動 `firebase functions:delete importMoneyForward --region asia-northeast1` |
 | `postRecurringExpenses` | cron `10 9 * * *` JST | asia-northeast1 | 毎日のバッチ。固定費（`recurringExpenses`）のうち引き落とし日を迎えた項目を `expenses` に計上（`recurringExpenses.ts`。同じ月に 2 回は入らない。LINE 通知なし）。期間の起算日には、締まった期間の精算サマリーを LINE グループへメンション付きで送る（`settlementSummary.ts`。同じ期間は 1 回。Web の設定から手動で送った期間は送らない）。Secret: `LINE_CHANNEL_TOKEN` / `LINE_CHANNEL_SECRET` |
 | `syncUserLinks` | Firestore `expenses/{id}` onCreate | asia-northeast1 | **無効化済み（何もしない）**。export から外すと CI の非対話デプロイが関数削除の確認で失敗するため残置。削除は手動 `firebase functions:delete syncUserLinks` |
@@ -135,8 +135,13 @@ SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
      X-Line-Retry-Key（メッセージから決まる UUID）を付けて push し、送れたら（409 も）印を消す
   ※ push の失敗・中断で印が残ったら、同じメールの再処理（Pub/Sub の再送・/gmail/force-process）が重複チェックより先に印を見て、
     保存時点のカードを同じ key で送り直す。23 時間を過ぎた印（key は 24 時間だけ有効）・支出が消された印は送らずに消す。
-    印の無い既存の支出には送らない。3 回失敗して諦めた（historyId を進めたときだけ）・historyId が古すぎて飛ばしたメールの印も消す
+    印の無い既存の支出には送らない。諦めた（historyId を進めたときだけ）・historyId が古すぎて飛ばしたメールの印も消す
     （消し損ねた印は expireAt〔24 時間〕の TTL で消える。TTL ポリシーは運用で設定）
+  ※ 1 通でも失敗したら historyId を進めずに投げ、Pub/Sub の再送（retry: true。10〜600 秒の間隔で最大 24 時間）で同じ範囲をやり直す。
+    試行 3 回以上 かつ 最初の失敗から 6 時間以上で、その 1 通は諦める（system/gmailFailures の attempts・firstFailedAt）。
+    消されたメール（messages.get の 404）は失敗として数えず読み飛ばす。やり直しても直らない失敗（historyId の読めない通知・
+    Gmail のトークンが無い・watch の状態が無い）は投げずに終える。12 時間より古い通知は処理せずに捨てる
+    （取込は保存してある historyId からの全範囲を処理するので、捨てた範囲は次の新しい通知で処理される）
 ```
 
 ### 4.3 Web 閲覧・編集

@@ -26,6 +26,7 @@ export {
 // Pub/Subハンドラー
 export {
   handleGmailPubSub,
+  isStaleGmailEvent,
   processLatestEmail,
   forceProcessMessage,
 } from './handler';

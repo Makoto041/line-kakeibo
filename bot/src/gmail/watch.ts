@@ -72,8 +72,9 @@ export function gmailStateRef() {
  * 保存値が historyId として使えるか。historyId は uint64 の 10 進文字列。
  * 取込（updateHistoryId）は Pub/Sub 通知の JSON の値をそのまま保存するため、
  * 数値のまま入っている可能性も考え、0 以上の整数も使える値として扱う
+ * （取込は Pub/Sub の通知の historyId もこれで確かめる。handler.ts の handleGmailPubSub）
  */
-function isUsableHistoryId(value: unknown): value is string | number {
+export function isUsableHistoryId(value: unknown): value is string | number {
   if (typeof value === 'string') return /^\d+$/.test(value);
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }

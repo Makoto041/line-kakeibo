@@ -98,13 +98,19 @@ Flex Message 通知（line/flexMessage.ts。X-Line-Retry-Key 付き）→ 送れ
 - **他カードの通知メールは無視**
 - **店名の抽出**（`parseSMBCCardEmail`）: 「ご利用店名：」「◇利用先：」の後ろを行末まで取る。text/html しか無いメールは改行が空白になるため、次の項目のラベル（`◇利用金額：` `ご利用金額：` など、ラベルの直後にコロン）の手前で切り、100 文字（モデルに送る上限と同じ）で打ち切る。空なら「不明な店舗」
 - **重複チェック**: `gmailMessageId` に加え、`date + amount` が同じ `gmail_auto` 支出のうち店舗名が類似（一致または包含）し `usedAt` が ±1 分のものも弾く（`saveGmailExpenseAtomic`。Firestore トランザクション内で判定）
-- **失敗時の扱い**: 1 通でも処理に失敗したら `historyId` を進めず Pub/Sub の再送に委ねる。同じメッセージが 3 回失敗したら諦めて先へ進む（`system/gmailFailures` に試行回数を記録）
+- **失敗時の扱い**: 1 通でも処理に失敗したら `historyId` を進めずに投げる。`gmailPubSubHandler` は `retry: true` なので、関数の失敗で Pub/Sub が同じ通知を再送する（2nd gen は 10〜600 秒の指数バックオフで、最大 24 時間）。再送と、その間に届いた新しい通知が同じ範囲をやり直す（重複は `gmailMessageId` で弾く）。以前は `retry` を指定しておらず（firebase-functions の既定は再送なし）、失敗すると次に INBOX へ何か届くまでやり直されなかった
+  - **諦める条件**（`shouldAbandon`）: 同じメッセージが試行 3 回以上 **かつ** 最初の失敗から 6 時間以上失敗し続けたら、その 1 通は諦めて先へ進む（恒久的に処理できない 1 通で以降の取り込みが止まらないように）。回数だけで決めないのは、再送と新しい通知で 3 回を数分で使い切り、LINE・Firestore・Gmail API の一時的な障害でも諦めてしまうため。`system/gmailFailures` に試行回数と最初・最後の失敗の時刻を記録する（§5.4。`firstFailedAt` の無い記録は `lastFailedAt` で代用）。諦めたメールは `/gmail/force-process/:messageId` で個別に処理し直せる
+  - **消されたメール**（`messages.get` が 404）は、何度やり直しても取れないので失敗として数えず読み飛ばす（失敗の記録も消す）。送信待ちの印があるメールは `messages.get` の前に印の処理で終えるので、読み飛ばすのは印の無いメールだけ
+  - **古い通知は捨てる**（`isStaleGmailEvent`）: publish から 12 時間より古い通知は処理せずに成功で返す（再送も止まる）。古さはメッセージの `publishTime`（Pub/Sub が publish 時に付け、再送でも変わらない）で測る（CloudEvent の `time` は使わない。コードには無いときの防御として `time` を使う分岐があるが、firebase-functions の Message は `publishTime` を必ず埋めるので本番では通らない）。Gmail の認可切れなど、メール単位の諦めに届かない失敗で同じ通知を 1 日中やり直し続けないため。取込は通知の `historyId` ではなく保存してある `historyId` からの全範囲を処理するので、捨てても取りこぼさない（その範囲は次の新しい通知で処理される。Gmail が履歴を残す約 1 週間以内に限る。§11.2）
+  - **やり直しても直らない失敗は再送させない**: 通知の本文から `historyId` が読めない（JSON でない・`historyId` が無い・数値として読めない）、Gmail のトークンが無い（`GmailTokenMissingError`。OAuth の設定前・`/gmail/revoke` の後）、watch の状態（`system/gmailState`）が無いときは、投げずに固定文の警告を出して終える。Gmail・Firestore・LINE の一時的な失敗（5xx・通信の失敗・トークンの更新の失敗など）は投げて再送させる
+  - 名前・値の無いヘッダーや payload の無いメールでも投げない（送信元・本文が空のメールとして、カード利用通知ではないと判定する）。投げるとその 1 通が失敗し続け、取込が最大 6 時間止まる
+  - 関数のタイムアウトは 300 秒（止まっていた範囲をまとめてやり直しても打ち切られないように。打ち切りも失敗として再送される）
 - **保存後に LINE 通知が失敗・中断したとき**（`gmail/cardNotice.ts`）: 支出の保存と同じトランザクションで送信待ちの印（`system/gmailCardNotice_{messageId}`。§5.4）を作り、カードを送れたら消す。push が失敗する（LINE の 5xx・月の上限の 429・ネットワーク）か、保存と push の間で関数が止まると印が残る。同じメールの再処理（上の Pub/Sub の再送・`/gmail/force-process/:messageId`）は、重複チェックより先に印を見て、あれば**保存時点のカード**（判定元の括弧も含む）を送り直して終える。
   - 二重に届かないよう、メッセージから決まる `X-Line-Retry-Key`（`gmail-card:{messageId}` から作る UUID。`settlementSummary.ts` の `summaryRetryKey` と同じ導き方）を付ける。LINE が受け付け済みなら 409 が返り、送れた扱いにする
   - key が効くのは 24 時間なので、作ってから 23 時間を過ぎた印は送らずに消す（警告ログ）。支出が消されていたら送らずに消す（取り込み直さない）
   - 印は LINE グループ（`LINE_GROUP_ID`）があるときだけ作る。印の無い既存の支出には送らない（この仕組みより前の支出のカードは送り直さない）。`/gmail/process-latest` は以前どおりカードを送らず、印も作らない
   - 同じメールを同時に処理しても、保存のトランザクション（重複の判定と印の文書を読んでから書く）で支出は 1 件になる。「登録済み」になった側も印が残っていれば同じ key で送る（届くのは 1 回）
-  - 再処理されなくなったメールの印は消す（店名・金額・日付を残さない。届かなかったことを警告ログに出す）: 3 回失敗して諦めたメール（`historyId` を進めたときだけ。同じ実行に再試行する失敗があって `historyId` を進めないときは、諦めたメールも次の再送で同じ範囲として再処理されるので残し、そこで送れればカードが届く）と、`historyId` が古すぎて先へ飛ばしたとき（飛ばした範囲のメッセージは取れないので、`system/gmailFailures` の記録とその実行で失敗したメールだけ）。消せなくても取込は止めない。諦めたあとに `/gmail/force-process` を呼んでも、印が無いのでカードは送り直さない
+  - 再処理されなくなったメールの印は消す（店名・金額・日付を残さない。届かなかったことを警告ログに出す）: 上の条件で諦めたメール（`historyId` を進めたときだけ。同じ実行に再試行する失敗があって `historyId` を進めないときは、諦めたメールも次の再送で同じ範囲として再処理されるので残し、そこで送れればカードが届く）と、`historyId` が古すぎて先へ飛ばしたとき（飛ばした範囲のメッセージは取れないので、`system/gmailFailures` の記録とその実行で失敗したメールだけ）。消せなくても取込は止めない。諦めたあとに `/gmail/force-process` を呼んでも、印が無いのでカードは送り直さない
 - **Gmail Watch の有効期限**: 7 日 → `renewGmailWatch`（6 日ごと 3:00 JST）で自動更新。更新は watch を呼び直すだけで、保存してある `historyId` は変えない（§11.2）
 
 ### 3.3 既存のテキスト入力フォーマット（維持）
@@ -240,11 +246,18 @@ OAuth 認可の CSRF 用 state。`/gmail/auth` で発行し、`/gmail/callback` 
 
 #### system/gmailFailures
 
-処理に失敗したメッセージの記録（`{ [messageId]: { attempts, lastError, lastFailedAt } }`）。3 回失敗したメッセージは諦めて `historyId` を進める。成功したら記録を消す。
+処理に失敗したメッセージの記録（`{ [messageId]: { attempts, lastError, firstFailedAt, lastFailedAt } }`）。試行 3 回以上かつ `firstFailedAt` から 6 時間以上たったメッセージは諦めて `historyId` を進める（§3.2）。成功したら（消されたメールを読み飛ばしたときも）記録を消す。
+
+| フィールド | 型 | 説明 |
+|-----------|---|------|
+| attempts | number | 失敗した回数（再送と新しい通知の両方で増える） |
+| lastError | string | 最後の失敗のエラーの文言（500 文字まで） |
+| firstFailedAt | timestamp | 最初の失敗の時刻。2 回目以降の失敗でも引き継ぐ。この項目を足す前の記録には無く、次の失敗で `lastFailedAt` の値を入れる |
+| lastFailedAt | timestamp | 最後の失敗の時刻 |
 
 #### system/gmailCardNotice_{messageId}
 
-カード利用通知の送信待ちの印（§3.2。`gmail/cardNotice.ts`）。支出を新規に保存するのと同じトランザクションで作り、カードを送れたら（409 も含む）消す。23 時間を過ぎた印・支出が消された印は送らずに消す。3 回失敗して諦めたメール（`historyId` を進めたときだけ）・`historyId` が古すぎて飛ばしたメールの印も消す。
+カード利用通知の送信待ちの印（§3.2。`gmail/cardNotice.ts`）。支出を新規に保存するのと同じトランザクションで作り、カードを送れたら（409 も含む）消す。23 時間を過ぎた印・支出が消された印は送らずに消す。諦めたメール（§3.2 の条件。`historyId` を進めたときだけ）・`historyId` が古すぎて飛ばしたメールの印も消す。
 
 | フィールド | 型 | 説明 |
 |-----------|---|------|
@@ -444,7 +457,7 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 
 - Gmail Watch は 7 日間の有効期限あり
 - 6 日ごとに Cloud Scheduler（`renewGmailWatch`）で自動更新
-- 更新は stop を呼ばずに watch を呼び直す（`users.watch` は「Set up or update a push notification watch」。push ガイドの「Renew mailbox watch」も 7 日以内に watch を呼び直すことだけを求めている）。更新に失敗すると、watch は約 1 日後に切れる。cron が 6 日ごとなので、通知は最大数日止まりうる。保存してある `historyId` は残るので、約 1 週間以内なら再登録後の最初の通知でまとめて処理される
+- 更新は stop を呼ばずに watch を呼び直す（`users.watch` は「Set up or update a push notification watch」。push ガイドの「Renew mailbox watch」も 7 日以内に watch を呼び直すことだけを求めている）。更新に失敗したら Cloud Scheduler が 2 回までやり直す（`retryCount: 2`）。それでも失敗すると、watch は約 1 日後に切れる。cron が 6 日ごとなので、通知は最大数日止まりうる。保存してある `historyId` は残るので、約 1 週間以内なら再登録後の最初の通知でまとめて処理される
 - watch の登録・更新（`renewGmailWatch`・`/gmail/register-watch`）は、保存してある `historyId` を変えない（`registerWatch`。Firestore トランザクションで読み、`watchExpiration`・`updatedAt` だけを merge で書く）。watch の応答の `historyId` はその時点のメールボックスの位置なので、以前のように上書きすると、取込が失敗して `historyId` が止まっている間の範囲が二度と処理されなかった。応答の値を入れるのは、保存値が無いとき（初回・`/gmail/revoke` の後）と、数値として読めない値が入っていたときだけ
 - そのため、止まっていた `historyId` が残っていると、次の通知でその範囲のメールがまとめて処理される（二重登録は `gmailMessageId` で防ぐ）
 - `/gmail/register-watch` で「今の位置まで飛ばす」ことはできない。飛ばしたいときは `system/gmailState` の `historyId` を消してから `/gmail/register-watch` を呼ぶ。別の Gmail アカウントに切り替えるときは、先に `/gmail/revoke`（`system/gmailState` も消える）してから認可と watch 登録をやり直す。古いアカウントの watch は stop されないため、最大 7 日は同じ topic に通知しうる。revoke の後は、応答が `watchStateCleared: true` で `system/gmailState` が消えたことを確認する（消せなかったときは 500 と `watchStateCleared: false` が返るので、revoke をやり直す）

@@ -268,8 +268,12 @@ export function parseSMBCCardEmail(
 
 /**
  * メールの生データからBase64デコードして本文を取得
+ *
+ * payload の無いメールは空文字にする（投げると、Pub/Sub の取込でその 1 通が失敗し続ける）
  */
 export function decodeEmailBody(payload: any): string {
+  if (!payload || typeof payload !== 'object') return '';
+
   // シンプルなテキストメールの場合
   if (payload.body?.data) {
     return Buffer.from(payload.body.data, 'base64').toString('utf-8');
