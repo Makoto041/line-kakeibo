@@ -255,14 +255,21 @@ OAuth 認可の CSRF 用 state。`/gmail/auth` で発行し、`/gmail/callback` 
 
 #### system/gmailFailures
 
-処理に失敗したメッセージの記録（`{ [messageId]: { attempts, lastError, firstFailedAt, lastFailedAt } }`）。試行 3 回以上かつ `firstFailedAt` から 6 時間以上たったメッセージは諦めて `historyId` を進める（§3.2）。成功したら（消されたメールを読み飛ばしたときも）記録を消す。
+処理に失敗したメッセージの記録（`{ [messageId]: { attempts, errorName, errorCode, errorCause, errorStatus, firstFailedAt, lastFailedAt } }`）。試行 3 回以上かつ `firstFailedAt` から 6 時間以上たったメッセージは諦めて `historyId` を進める（§3.2）。成功したら（消されたメールを読み飛ばしたときも）記録を消す。諦めたメッセージの記録は消さない。
+
+エラーの文言は保存しない（Firestore・Gmail API・LINE のエラーの文言には、文書のパス〔LINE の ID を含みうる〕や応答の本文が入るため。ログと同じく `errorFields` の項目だけ。`docs/SECURITY_OPERATIONS.md` §9）。以前は `lastError`（文言。500 文字まで）を保存していた。読むコードは無く、管理 API（`/gmail/status` など）の応答にも出していない。同じメッセージが次に失敗したときに消える。諦めたメッセージの記録には残り続けるので、消すならオーナーが Firestore のコンソールで各項目の `lastError` だけを消す（文書ごと消すと、失敗中のメッセージの試行回数と最初の失敗の時刻も消え、諦めるまでの時間が延びる）。
 
 | フィールド | 型 | 説明 |
 |-----------|---|------|
 | attempts | number | 失敗した回数（再送と新しい通知の両方で増える） |
-| lastError | string | 最後の失敗のエラーの文言（500 文字まで） |
+| errorName | string | 最後の失敗の例外の名前（`Error`・`HTTPFetchError`・`GaxiosError` など） |
+| errorCode | number / string | 最後の失敗のコード（Firestore の gRPC のコード・Gmail API の HTTP のコードなど。`errorFields` の形の検査に通ったときだけ） |
+| errorCause | string | 最後の失敗の原因のコード（`fetch failed` の `ECONNRESET` など） |
+| errorStatus | number | 最後の失敗の HTTP の状態（LINE の API・Gmail API） |
 | firstFailedAt | timestamp | 最初の失敗の時刻。2 回目以降の失敗でも引き継ぐ。この項目を足す前の記録には無く、次の失敗で `lastFailedAt` の値を入れる |
 | lastFailedAt | timestamp | 最後の失敗の時刻 |
+
+`errorCode`・`errorCause`・`errorStatus` は、最後の失敗の例外に無ければ項目ごと消す（merge で書くので、前の失敗の値を残さない）。
 
 #### system/gmailCardNotice_{messageId}
 

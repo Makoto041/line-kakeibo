@@ -431,10 +431,63 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
     規則の重さが error であることを確かめる。手元では `npm -w bot run lint`（違反があると終了コードが 1）でも気づける。
 - 自前の固定文の例外は名前を付けて投げる（`TimeoutError`・`LineCredentialsMissingError`・`GmailTokenMissingError` など）。
   文言を出さないログでも、`errorName` で原因を見分けられるようにするため。
-- **既知の限界**: 関数の外へ投げた例外は、`console.*` を通らずに実行環境（functions-framework）が `err.stack`
-  （名前・文言・スタック）を Cloud Logging に出す。Gmail の Pub/Sub の再送のために `bot/src/gmail/handler.ts` の
-  `handleGmailPubSub` が投げ直す例外（Firestore・Gmail API・LINE の失敗）と、スケジュール関数（`renewGmailWatch`・
-  `postRecurringExpenses`）の失敗がこれに当たる。投げ直さないと再送・再試行が働かないため、そのままにしている。
+- **関数の外へ投げる例外は固定文にする**: 関数の外へ投げた例外は、`console.*` を通らずに実行環境が Cloud Logging に出す。
+  functions-framework（Pub/Sub の関数）は `console.error(err.stack || err)` で名前・文言・スタックを、
+  firebase-functions のスケジュール関数（`onSchedule`）は `logger.error(err.message)` で文言を出す。そのため、関数の外へ
+  投げるところでは、元の例外を `errorFields` でログに出してから、名前を付けた固定文の Error を投げる。
+  - `bot/src/gmail/handler.ts` の `handleGmailPubSub`（`GmailImportError`。Pub/Sub の再送のために投げる）、
+    `bot/src/index.ts` の `renewGmailWatch`（`GmailWatchRenewalError`）・`postRecurringExpenses`（`DailyBatchError`。
+    失敗した件数はオブジェクトでログに出す）。投げるかどうか（再送・再試行が働くか）は元の例外のときと同じ。
+  - 元の例外は `cause` に付けない。`err.stack` には `cause` が入らないので実行環境のログでは診断に使えず、
+    `console.error(err)`（`util.inspect`）で出すと `cause` の文言・項目まで出るため。
+  - `importMoneyForward`・`syncUserLinks` は何もしない関数で、投げない。HTTP の関数（`webhook`・`api`）のルートは、
+    例外を受けて固定文で応答する。
+- **既知の例外（アプリ側では安全に防げない）: 解析できない本文が、そのままログに出る**: HTTP の関数（`webhook`・`api`。
+  どちらも認証なしで呼べる）では、functions-framework がアプリより先に本文を解析する（body-parser）。
+  解析に失敗すると（`Content-Type: application/json` の壊れた JSON など）、そのエラー（`type: 'entity.parse.failed'`。`body` に生の本文、
+  文言に本文の断片）が functions-framework の Express の既定のエラー処理に渡り、`console.error(err)` で本文ごと出る
+  （LINE の署名の検証より前。応答は 400）。アプリの Express app（`webhookApp` のエラーハンドラ・`api` の `express.json()`）
+  には届かない。
+  - functions-framework には、本文の解析を止める設定も、解析の前に処理を差し込む口も無い（設定は port・target・
+    signature-type・timeout・ignored-routes・log-execution-id だけ）。
+  - 防ぐ方法は 2 つあるが、どちらも採らない。`console.error` をプロセス全体で包んで書き換える方法は、ほかのログ
+    （実行環境・ライブラリのもの）まで変えうる。環境変数 `NODE_ENV=test` にする方法（Express が既定のエラー処理でログを
+    出さなくなる）は、functions-framework が関数の失敗の文言（`err.message`）を HTTP の応答で返すようになる
+    （functions-framework の `logger.js` は `NODE_ENV !== 'production'` のときに文言を返す。本番は `NODE_ENV=production`
+    の前提で、そのときは状態だけを返す）。
+  - 取り込みたくなければ、Cloud Logging の除外フィルタで取り込まないようにする（次の手順。オーナーが行い、エージェントは
+    実行しない）。除外は記録を伏せるのではなく取り込まない（ログベースの指標・アラートにも使われない）。取り込み済みの
+    ログは保持期間（`_Default` は 30 日）まで残る。
+    1. 本番に出ているかを、ログ エクスプローラ（`line-kakeibo-0410`）で次のクエリで確かめる（Cloud Functions 第 2 世代の
+       ログは `cloud_run_revision` の項目で、サービス名は関数名の小文字）。1 件の項目の `textPayload` に、
+       `entity.parse.failed` と `body: '…'` の行がそろっているか（複数行の出力が行ごとの項目に分かれていないか）を見る。
+
+       ```
+       resource.type="cloud_run_revision"
+       resource.labels.service_name=("webhook" OR "api")
+       textPayload:"entity.parse.failed"
+       ```
+
+    2. そろっていれば、同じ条件の除外を `_Default` シンクに足す（コンソールの「ログ ルーター」→ `_Default` の
+       「シンクを編集」→「除外フィルタを追加」。または次のコマンド）。このコマンド・条件は本番では実行・確認していない。
+
+       ```bash
+       gcloud logging sinks update _Default --project=line-kakeibo-0410 \
+         --add-exclusion='name=body-parse-failed,filter=resource.type="cloud_run_revision" AND resource.labels.service_name=("webhook" OR "api") AND textPayload:"entity.parse.failed"'
+       ```
+
+    3. 行ごとの項目に分かれていれば、上の条件では本文の行（`body: '…'`）と文言の行（`SyntaxError: … JSON …`）が
+       外れない。次の条件を手順 1 のクエリとして実行し、外したい項目だけに当たることを確かめてから除外にする
+       （確かめていない案）。
+
+       ```
+       resource.type="cloud_run_revision"
+       resource.labels.service_name=("webhook" OR "api")
+       (textPayload:"entity.parse.failed" OR textPayload=~"^\s*body: '" OR textPayload=~"^SyntaxError: .*JSON")
+       ```
+
 - テストは `bot/scripts/smoke-log-safety.js`（例外の文言・文書のパス・ヘッダーに入れた目印がログに出ないこと。
-  postback の認可の拒否のログ〔押した人・支出の ID は伏せ、action は既知の名前だけ〕を含む）。
+  postback の認可の拒否のログ〔押した人・支出の ID は伏せ、action は既知の名前だけ〕を含む）と
+  `bot/scripts/smoke-function-errors.js`（関数の外へ投げる例外・functions-framework と firebase-functions が出すログ・
+  Gmail の失敗の記録に目印が無いこと、再送の判定が変わらないこと）。
   HTTP の応答や管理 API の戻り値（`/gmail/*` の `error`・`message`）は対象外（ログではない）。

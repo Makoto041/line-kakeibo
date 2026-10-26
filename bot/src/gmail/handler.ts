@@ -191,6 +191,11 @@ async function followLinkedAddressChange(
  * やり直しても直らないとき（本文から historyId が読めない・Gmail のトークンが無い・watch の状態が無い・
  * 通知が連携中のアカウントのものでない）は、投げずに固定文の警告を出して終える（再送させない）。
  * 一時的な失敗（Gmail・Firestore・LINE の 5xx など）は投げる。
+ *
+ * 投げるのは、元の例外ではなく固定文の Error（名前は GmailImportError）。関数の外へ投げた例外は、実行環境
+ * （functions-framework）が `console.error(err.stack || err)` で名前・文言ごとログに出すため、元の例外の種類は
+ * 投げる前に errorFields でログに出す（docs/SECURITY_OPERATIONS.md §9）。元の例外は cause に付けない
+ * （err.stack には cause が入らないので付けても診断には使えず、`console.error(err)` で出すと cause の文言まで出る）。
  */
 export async function handleGmailPubSub(data: string): Promise<void> {
   const historyId = historyIdOfPubSubData(data);
@@ -208,7 +213,8 @@ export async function handleGmailPubSub(data: string): Promise<void> {
     await processNewEmails(historyId as string, emailAddressOfPubSubData(data));
   } catch (error) {
     console.error('Failed to handle Gmail Pub/Sub', errorFields(error));
-    throw error;
+    // 投げることで Pub/Sub が再送する（投げるかどうかは元の例外と同じ）。文言は固定にする
+    throw Object.assign(new Error('Gmail import failed; Pub/Sub retries the notification'), { name: 'GmailImportError' });
   }
 }
 
@@ -310,7 +316,26 @@ function historyIdToSave(
 }
 
 /**
- * 失敗したメッセージの記録。`system/gmailFailures` に messageId ごとの試行回数と、最初・最後の失敗の時刻を持つ
+ * 失敗の記録に入れる、最後の失敗の種類（errorFields の項目。文言は入れない）
+ *
+ * Gmail・Firestore・LINE のエラーの文言には、文書のパス（LINE の ID を含みうる）・応答の本文が入るので保存しない。
+ * merge で書くため、今回の例外に無い項目は消す（前の失敗の値が残って、違う失敗の項目が混ざらないように）。
+ * 以前の記録にある文言（lastError）もここで消す。
+ */
+function failureErrorFieldsOf(error: unknown): Record<string, unknown> {
+  const fields = errorFields(error);
+  return {
+    errorName: fields.errorName,
+    errorCode: fields.errorCode ?? FieldValue.delete(),
+    errorCause: fields.errorCause ?? FieldValue.delete(),
+    errorStatus: fields.errorStatus ?? FieldValue.delete(),
+    lastError: FieldValue.delete(),
+  };
+}
+
+/**
+ * 失敗したメッセージの記録。`system/gmailFailures` に messageId ごとの試行回数と、最初・最後の失敗の時刻、
+ * 最後の失敗の種類（failureErrorFieldsOf。文言は保存しない）を持つ
  *
  * @returns 今回を含めた試行回数と、最初の失敗の時刻（諦めるかは呼び出し側が `shouldAbandon` で決める）
  */
@@ -335,7 +360,7 @@ async function recordMessageFailure(
       {
         [messageId]: {
           attempts,
-          lastError: String((error as Error)?.message ?? error).slice(0, 500),
+          ...failureErrorFieldsOf(error),
           firstFailedAt: Timestamp.fromDate(firstFailedAt),
           lastFailedAt: Timestamp.fromDate(now),
         },
