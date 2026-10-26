@@ -241,7 +241,7 @@ Flex Message 通知（line/flexMessage.ts。X-Line-Retry-Key 付き）→ 送れ
 |-----------|---|------|
 | historyId | string | 最後に処理した Gmail historyId（前進のみ。古い通知の後着で巻き戻さない）。進めるのは取込（`gmailPubSubHandler`）だけ。watch の登録・更新（`renewGmailWatch`・`/gmail/register-watch`）では変えず、値が無いとき（初回・`/gmail/revoke` の後）だけ watch の応答の値を入れる |
 | watchExpiration | number | Watch 有効期限（Unix timestamp ms）。watch の登録・更新のたびに merge で書く |
-| emailAddress | string | 連携中のアカウントのアドレス（小文字）。watch の登録・更新のたびに `users.getProfile` で取って merge で書く（`historyId` を残すときも書く。応答にアドレスが無ければ書かない）。取込が通知の `emailAddress` と照合する（§3.2）。照合が合わない通知で `getProfile` が通知と同じだったとき（アドレスの変更）は、取込もこの項目だけを書き直す。`/gmail/revoke` で文書ごと消える。ログ・管理 API の応答には出さない。この項目を足す前に登録した状態には無く、そのあいだは照合しない |
+| emailAddress | string | 連携中のアカウントのアドレス（小文字）。watch の登録・更新のたびに `users.getProfile` で取って merge で書く（`historyId` を残すときも書く。応答にアドレスが無ければ書かない）。取込が通知の `emailAddress` と照合する（§3.2）。照合が合わない通知で `getProfile` が通知と同じだったとき（アドレスの変更）は、取込も `emailAddress`（と `updatedAt`）だけを書き直す。`/gmail/revoke` で文書ごと消える。ログ・管理 API の応答には出さない。この項目を足す前に登録した状態には無く、そのあいだは照合しない |
 | updatedAt | timestamp | 最後に書いた時刻 |
 
 #### system/oauthState
@@ -469,8 +469,8 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
   1. `/gmail/revoke` を呼ぶ（トークンと `system/gmailState` を消す）。応答が `watchStateCleared: true` で `system/gmailState` が消えたことを確認する（消せなかったときは 500 と `watchStateCleared: false` が返るので、revoke をやり直す）
   2. 新しいアカウントで `/gmail/auth` から認可する
   3. `/gmail/register-watch` を呼ぶ。新しいアカウントの位置から取り込みを始め、そのアドレスを `system/gmailState` の `emailAddress` に保存する
-  - revoke は現状 `users.stop` を呼ばない。呼ぶ場合も、トークンが有効なときだけ効く（取り消し済みのトークンでは stop できない）。このため古いアカウントの watch は最大 7 日、同じ topic に通知を送り続ける。その通知は 3. の後は通知の `emailAddress` の照合で読み飛ばされ、`historyId` も変わらない（§3.2。連携中のアカウントの `getProfile` とも一致しないので、追従もしない）。1.〜3. の間は watch の状態が無いので、どの通知も処理されない（2. のあとは新しいアカウントのトークンはある）。7 日たてば古い watch は切れる
-  - revoke をせずに別のアカウントで認可し直すと、`system/gmailState` の `historyId`（古いアカウントの位置）が残ったまま新しいアカウントで取り込もうとする。次の watch の登録・更新で、保存してあるアドレスと違うアカウントなら固定文の警告（`Gmail account differs from the saved one`）を出す（アドレスは新しいアカウントにするが、`historyId` は残す）。この警告が出たら、上の手順でやり直す
+  - revoke は現状 `users.stop` を呼ばない。呼ぶ場合も、トークンが有効なときだけ効く（取り消し済みのトークンでは stop できない）。このため古いアカウントの watch は最大 7 日、同じ topic に通知を送りうる（revoke は Google 側のトークンも取り消すが、それで通知が止まるかは確かめていない）。その通知は 3. の後は通知の `emailAddress` の照合で読み飛ばされ、`historyId` も変わらない（§3.2。連携中のアカウントの `getProfile` とも一致しないので、追従もしない）。1.〜3. の間は watch の状態が無いので、どの通知も処理されない（2. のあとは新しいアカウントのトークンはある）。7 日たてば古い watch は切れる
+  - revoke をせずに別のアカウントで認可し直すと、`system/gmailState` の `historyId`（古いアカウントの位置）が残ったまま新しいアカウントで取り込もうとする。次の watch の登録・更新で、保存してあるアドレスと違うアカウントなら固定文の警告（`Gmail account differs from the saved one`）を出す（アドレスは新しいアカウントにするが、`historyId` は残す）。この警告が出たら、上の手順でやり直す。revoke をせずに認可し直した場合は、代わりに取込の `Linked Gmail address changed` が出ることもある（新しいアカウントの通知で `getProfile` と通知が一致して保存値が書き直されるので、`Gmail account differs from the saved one` の検知が出ない）。アドレスを変えた覚えが無いのにこの警告が出たら、切替の手順（先に revoke）でやり直す
 - 連携中のアカウントのアドレスが変わった（プライマリアドレスの変更など）ときは、取込が自動で追従する（照合が合わない通知で `getProfile` が通知と同じなら、保存値を書き直して処理する。§3.2）。それでも直らない（通知が読み飛ばされ続ける）ときは、`/gmail/register-watch` を呼べば `getProfile` のアドレスで保存し直す（`historyId` は変えない）
 - `emailAddress` の照合が効くのは、このコードをデプロイしたあとの最初の watch の登録・更新（`renewGmailWatch` は 6 日ごと。すぐに効かせたいときは `/gmail/register-watch`。`historyId` は変えないので、いつ呼んでもよい）から。それまでは照合せず、以前どおり処理する
 - トークンリフレッシュは自動化（`getValidAccessToken`）
