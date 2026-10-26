@@ -1,4 +1,4 @@
-# セキュリティ運用メモ（世帯メンバー・ルール・Storage・外部送信・ログ）
+# セキュリティ運用メモ（世帯メンバー・ルール・Storage・外部送信・ログ・管理 API）
 
 家計簿の Web アクセス権は Firestore の `groupMembers/{groupId}_{lineId}` の `isActive == true` で決まる
 （`firestore.rules` / `storage.rules` の両方がこれを見る）。この文書は、その運用と一度だけ必要な設定をまとめる。
@@ -438,3 +438,25 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
 - テストは `bot/scripts/smoke-log-safety.js`（例外の文言・文書のパス・ヘッダーに入れた目印がログに出ないこと。
   postback の認可の拒否のログ〔押した人・支出の ID は伏せ、action は既知の名前だけ〕を含む）。
   HTTP の応答や管理 API の戻り値（`/gmail/*` の `error`・`message`）は対象外（ログではない）。
+
+## 10. 管理 API（`/gmail/*`）のレート制限
+
+`bot/src/gmail/adminRouter.ts`。`ADMIN_SECRET`（`Authorization: Bearer`）で守る管理 API に、総当たりと連打を抑える上限を付ける。
+
+- **キーは接続元の IP**: `X-Forwarded-For` の末尾（Google のフロントエンドが足す接続元の IP）で数える。`/household` の
+  認証前の上限と同じ関数（`householdApi.ts` の `clientIpKey`）を使う。`trust proxy` は設定していないので、`req.ip` は
+  Cloud Run の前段のアドレスにまとまる。以前は既定のキー（`req.ip`）だったため、認証の無い要求を 1 分に 30 回送り続ければ、
+  正規の管理者（トークンが漏れたときに revoke を急いで呼ぶ場合を含む）も 429 で止められえた。クライアントが送った
+  `X-Forwarded-For` はその前に並ぶだけなので、末尾は詐称できない。
+- **枠を認証の前後で分ける**（`/callback` 以外の全ルート。`adminGuards`）:
+  - 認証の前（`adminPreAuthLimiter`）: 認証に失敗する要求だけを数える（接続元ごとに 30 回/分）。認証に成功する要求は
+    `skip` で数えも止めもしない。キーが共通のアドレスにまとまった場合（前段がさらに増えた場合）でも、認証の無い連打で
+    管理者の要求は 429 にならない。
+  - 認証の後（`adminPostAuthLimiter`）: 認証に成功した要求の上限（接続元ごとに 30 回/分）。取込・分類・LINE の通知を
+    呼ぶ操作の連打を抑える。
+  - `skipFailedRequests` / `skipSuccessfulRequests` は使わない。要求が届いた時点で数え、応答の後に戻すだけなので、
+    枠が尽きている間は管理者の要求も 429 になるため。
+- `/callback`（Google からのリダイレクト先。Admin 認証なし）は、接続元ごとに 5 分で 20 回。
+- **残る制約**: 数はインスタンスのメモリで数える（`api` は maxInstances: 5 なので、最大その倍数まで通る）。
+- テストは `bot/scripts/smoke-gmail-watch.js`（ルーターのスタックを走査して全ルートに同じ並びが付くこと、
+  `X-Forwarded-For` の末尾で枠が分かれること、認証の無い連打で管理者の要求が 429 にならないこと）。

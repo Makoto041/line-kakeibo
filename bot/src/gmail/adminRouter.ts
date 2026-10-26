@@ -7,6 +7,7 @@
 import express, { Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { isAdminAuthorized } from "../adminAuth";
+import { clientIpKey } from "../householdApi";
 import { errorFields } from "../logSafe";
 import {
   getAuthUrl,
@@ -22,6 +23,7 @@ import {
   revokeGmailTokenOnGoogle,
 } from "./index";
 import type { GoogleRevokeResult } from "./index";
+import { stopGmailWatchOnGoogle } from "./auth";
 
 /**
  * Admin認証ミドルウェア
@@ -58,13 +60,46 @@ const requireAdminAuth = (req: Request, res: Response, next: express.NextFunctio
 // Gmail API 専用の Express Router（セキュリティのため分離）
 export const gmailRouter = express.Router();
 
-// Admin API用のrate limiter
-const adminApiLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 30, // limit each IP to 30 requests per minute
+/**
+ * 管理 API のレート制限
+ *
+ * キーは接続元の IP（householdApi.ts の clientIpKey。X-Forwarded-For の末尾 = Google のフロントエンドが足した接続元の IP）。
+ * `trust proxy` は設定していないので、既定のキー（req.ip）では Cloud Run の前段のアドレスにまとまり、認証の無い要求の連打で
+ * 正規の管理者（トークンの漏洩で revoke を急いで呼ぶときを含む）も 429 になりえた。
+ *
+ * 枠は認証の前後で分ける。
+ * - adminPreAuthLimiter（認証の前）: 認証に失敗する要求（Bearer が無い・違う・ADMIN_SECRET が未設定）だけを数える。認証に
+ *   成功する要求は skip で数えも止めもしない（キーが共通のアドレスにまとまっても、認証の無い連打で管理者は 429 にならない）
+ * - adminPostAuthLimiter（認証の後）: 認証に成功した要求の上限（Gmail・分類・LINE を呼ぶ操作の連打を抑える）
+ *
+ * skipFailedRequests / skipSuccessfulRequests は使わない（要求が届いた時点で数え、応答の後に戻すだけなので、枠が尽きて
+ * いる間は管理者の要求も 429 になる）。数はインスタンスのメモリで数える。
+ */
+const ADMIN_RATE_LIMIT_PER_MINUTE = 30;
+/** IP をキーにする limiter の検証のうち、clientIpKey と合わないもの（`trust proxy` 無しの X-Forwarded-For など）を切る */
+const IP_KEY_VALIDATE = { ip: false, trustProxy: false, xForwardedForHeader: false, forwardedHeader: false };
+
+export const adminPreAuthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: ADMIN_RATE_LIMIT_PER_MINUTE,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => isAdminAuthorized(req.headers.authorization, process.env.ADMIN_SECRET),
+  keyGenerator: (req) => clientIpKey(req),
+  validate: IP_KEY_VALIDATE,
 });
+
+export const adminPostAuthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: ADMIN_RATE_LIMIT_PER_MINUTE,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => clientIpKey(req),
+  validate: IP_KEY_VALIDATE,
+});
+
+/** 管理 API（/callback 以外の全ルート）の前に付ける: 認証前の上限 → Admin 認証 → 認証後の上限 */
+export const adminGuards: readonly express.RequestHandler[] = [adminPreAuthLimiter, requireAdminAuth, adminPostAuthLimiter];
 
 /**
  * Gmail OAuth2認証URL取得エンドポイント
@@ -72,7 +107,7 @@ const adminApiLimiter = rateLimit({
  * stateパラメータを生成してCSRF攻撃を防止
  * Admin認証が必要
  */
-gmailRouter.get("/auth", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
+gmailRouter.get("/auth", ...adminGuards, async (_req, res) => {
   try {
     const authUrl = await getAuthUrl(); // async - stateを生成・保存
     res.json({
@@ -93,16 +128,18 @@ gmailRouter.get("/auth", adminApiLimiter as any, requireAdminAuth, async (_req, 
  * - stateパラメータを検証（CSRF攻撃防止）
  * - state は Admin 認証済みの /gmail/auth でだけ発行される（adminVerified フラグ）
  */
-const gmailCallbackLimiter = rateLimit({
+export const gmailCallbackLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 20, // limit each IP to 20 requests per windowMs
+  limit: 20, // 接続元の IP（clientIpKey）ごとに 5 分で 20 回
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => clientIpKey(req),
+  validate: IP_KEY_VALIDATE,
 });
 
 // コールバックはGoogleからリダイレクトされるためAdmin認証不要
 // stateパラメータによるCSRF保護で代替（handleOAuthCallback内で検証）
-gmailRouter.get("/callback", gmailCallbackLimiter as any, async (req, res) => {
+gmailRouter.get("/callback", gmailCallbackLimiter, async (req, res) => {
   try {
     const code = req.query.code as string;
     const state = req.query.state as string;
@@ -127,7 +164,7 @@ gmailRouter.get("/callback", gmailCallbackLimiter as any, async (req, res) => {
  * Gmail Watch登録エンドポイント
  * Admin認証が必要
  */
-gmailRouter.post("/register-watch", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
+gmailRouter.post("/register-watch", ...adminGuards, async (_req, res) => {
   try {
     const isConfigured = await isGmailAuthConfigured();
     if (!isConfigured) {
@@ -152,7 +189,7 @@ gmailRouter.post("/register-watch", adminApiLimiter as any, requireAdminAuth, as
  * Gmail Watch状態確認エンドポイント
  * Admin認証が必要
  */
-gmailRouter.get("/status", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
+gmailRouter.get("/status", ...adminGuards, async (_req, res) => {
   try {
     const status = await getWatchStatus();
     const isConfigured = await isGmailAuthConfigured();
@@ -175,7 +212,7 @@ gmailRouter.get("/status", adminApiLimiter as any, requireAdminAuth, async (_req
 /**
  * トークンを強制リフレッシュ（デバッグ用）
  */
-gmailRouter.post("/refresh-token", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
+gmailRouter.post("/refresh-token", ...adminGuards, async (_req, res) => {
   try {
     const tokenDoc = await gmailTokenRef().get();
     const tokenData = tokenDoc.data();
@@ -218,24 +255,30 @@ function googleRevokeFields(google: GoogleRevokeResult | null) {
  * 古いスコープでのトークンをクリアする場合・アカウントを切り替える場合・トークンが漏れた場合に使用
  * Admin認証が必要
  *
- * 1. Google 側で失効させる（refresh_token → access_token。auth.ts の revokeGmailTokenOnGoogle）
- * 2. Firestore のトークン（system/gmailToken）を消す（Google 側の失効に失敗しても消す。取込にもう使わせない）
- * 3. watch の状態（system/gmailState）を消す
+ * 1. 保存してあるトークンで Gmail の watch を止める（users.stop。auth.ts の stopGmailWatchOnGoogle）。失効の後は stop
+ *    できないので先に呼ぶ。止められなくても続ける（結果は watchStopped: true / false。トークンが無ければ null）
+ * 2. Google 側で失効させる（refresh_token → access_token。auth.ts の revokeGmailTokenOnGoogle）
+ * 3. Firestore のトークン（system/gmailToken）を消す（Google 側の失効に失敗しても消す。取込にもう使わせない）
+ * 4. watch の状態（system/gmailState）を消す
  *
- * 応答（HTTP の状態）:
- * - 200 success: true … 1〜3 がすべて済んだ。トークンが保存されていなかったときも（googleRevoked: null。Google へは送らない）
- * - 200 success: false・googleRevoked: false … 2・3 は済んだが、Google が失効を受け付けなかった（2xx 以外・タイムアウト・通信の失敗）。
+ * 応答（HTTP の状態）。watchStopped はどの応答にも付け（トークンの get に失敗したときを除く）、success は変えない:
+ * - 200 success: true … 2〜4 がすべて済んだ。トークンが保存されていなかったときも（googleRevoked: null。Google へは送らない）
+ * - 200 success: false・googleRevoked: false … 3・4 は済んだが、Google が失効を受け付けなかった（2xx 以外・タイムアウト・通信の失敗）。
  *   やり直しても Google へは送られない（トークンはもう無い）ので、Google アカウントから手動で外す（message で案内する）
- * - 500 watchStateCleared: false … 3 に失敗した。やり直す（googleRevoked も返す。false なら手動で外す案内も error に入れる）
- * - 500（error だけ）… トークンの get / delete に失敗した。やり直す（Google へ送った後なら googleRevoked も返す。
+ * - 500 watchStateCleared: false … 4 に失敗した。やり直す（googleRevoked も返す。false なら手動で外す案内も error に入れる）
+ * - 500（error だけ）… トークンの get / delete に失敗した。やり直す（delete の失敗なら watchStopped と、Google へ送った後なので googleRevoked も返す。
  *   Google の失効が通った後に delete だけ失敗したときは、やり直すと残っているトークンを Google に送り直し、400 で
  *   success: false と手動の案内になる〔安全側〕）
+ *
+ * 時間の上限: stop 5 秒（取り直しを含む全体）＋ 失効 5 秒 × 2 = 15 秒と Firestore の get / delete × 3（関数 api の既定の 60 秒に収める）
  */
-gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
+gmailRouter.delete("/revoke", ...adminGuards, async (_req, res) => {
+  let watchStopped: boolean | null | undefined;
   let google: GoogleRevokeResult | null | undefined;
   try {
-    const tokenDoc = await gmailTokenRef().get();
-    google = await revokeGmailTokenOnGoogle(tokenDoc.data());
+    const tokenData = (await gmailTokenRef().get()).data();
+    watchStopped = await stopGmailWatchOnGoogle(tokenData);
+    google = await revokeGmailTokenOnGoogle(tokenData);
 
     // Firestoreからトークンを削除
     await gmailTokenRef().delete();
@@ -252,6 +295,7 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
       return res.status(500).json({
         success: false,
         watchStateCleared: false,
+        watchStopped,
         ...googleRevokeFields(google),
         error:
           "Token deleted, but failed to delete system/gmailState. Retry DELETE /api/gmail/revoke." +
@@ -263,6 +307,7 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
       return res.json({
         success: false,
         watchStateCleared: true,
+        watchStopped,
         ...googleRevokeFields(google),
         message: `Token deleted from Firestore. ${MANUAL_GOOGLE_REVOKE_GUIDE} Then re-authenticate via /api/gmail/auth`,
       });
@@ -271,6 +316,7 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
     res.json({
       success: true,
       watchStateCleared: true,
+      watchStopped,
       ...googleRevokeFields(google),
       message: google
         ? "Token revoked on Google and deleted. Please re-authenticate via /api/gmail/auth"
@@ -280,6 +326,7 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
     console.error("Failed to revoke token", errorFields(error));
     res.status(500).json({
       error: (error as Error).message,
+      ...(watchStopped !== undefined ? { watchStopped } : {}),
       ...(google !== undefined ? googleRevokeFields(google) : {}),
     });
   }
@@ -289,7 +336,7 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
  * テスト用: 最新のメールを手動で処理
  * Admin認証が必要
  */
-gmailRouter.post("/process-latest", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
+gmailRouter.post("/process-latest", ...adminGuards, async (_req, res) => {
   try {
     const result = await processLatestEmail();
     res.json(result);
@@ -303,7 +350,7 @@ gmailRouter.post("/process-latest", adminApiLimiter as any, requireAdminAuth, as
  * テスト用: 過去のメールを強制的に再処理（重複チェックをスキップ）
  * Admin認証が必要
  */
-gmailRouter.post("/test-process", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
+gmailRouter.post("/test-process", ...adminGuards, async (_req, res) => {
   try {
     const gmail = await getGmailClient();
 
@@ -392,7 +439,7 @@ gmailRouter.post("/test-process", adminApiLimiter as any, requireAdminAuth, asyn
  * テスト用: 指定したメッセージIDを強制処理（重複チェックをスキップしてLINE通知も送信）
  * Admin認証が必要
  */
-gmailRouter.post("/force-process/:messageId", adminApiLimiter as any, requireAdminAuth, async (req, res) => {
+gmailRouter.post("/force-process/:messageId", ...adminGuards, async (req, res) => {
   try {
     const { messageId } = req.params;
     if (!messageId) {

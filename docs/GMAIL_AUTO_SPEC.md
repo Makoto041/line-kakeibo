@@ -417,7 +417,7 @@ bot/src/
 | POST | `/api/gmail/test-process` | SMBC カードメール内容をプレビュー | Admin |
 | POST | `/api/gmail/force-process/:messageId` | 指定メッセージ ID を強制処理（冪等）。既に支出があり、送信待ちのカード（§3.2）が残っていれば送り直す（応答の `cardNotice` が `sent`） | Admin |
 | POST | `/api/gmail/refresh-token` | トークン強制リフレッシュ | Admin |
-| DELETE | `/api/gmail/revoke` | トークンを Google 側で失効させてから削除する。再認証・アカウントの切替・トークンが漏れたときに使う（`system/gmailState` も消す。消せなければ 500 と `watchStateCleared: false` を返すので、やり直す）。Google 側の結果は `googleRevoked` で返す（下の「revoke の応答」） | Admin |
+| DELETE | `/api/gmail/revoke` | 古い watch を止め（`users.stop`）、トークンを Google 側で失効させてから削除する。再認証・アカウントの切替・トークンが漏れたときに使う（`system/gmailState` も消す。消せなければ 500 と `watchStateCleared: false` を返すので、やり直す）。Google 側の結果は `watchStopped`・`googleRevoked` で返す（下の「revoke の応答」） | Admin |
 
 > **注意**: `/api/gmail/callback` は Google からの OAuth2 リダイレクト先のため、Admin 認証は不要です。
 
@@ -429,7 +429,17 @@ Admin 認証が必要なエンドポイントは `Authorization: Bearer` ヘッ�
 curl -H "Authorization: Bearer $ADMIN_SECRET" https://...
 ```
 
-> クエリパラメータ（`?adminSecret=`）での認証は廃止した。URL はアクセスログやブラウザ履歴に残り、秘密値の漏洩経路になるため。比較は定数時間（SHA-256 ダイジェスト同士の `timingSafeEqual`。`adminAuth.ts`）で行う。管理エンドポイントにはレートリミットも掛かる。
+> クエリパラメータ（`?adminSecret=`）での認証は廃止した。URL はアクセスログやブラウザ履歴に残り、秘密値の漏洩経路になるため。比較は定数時間（SHA-256 ダイジェスト同士の `timingSafeEqual`。`adminAuth.ts`）で行う。
+
+**レート制限**（`adminRouter.ts`）: 接続元の IP ごとに数える。キーは `X-Forwarded-For` の末尾（Google のフロントエンドが足す接続元の IP。`householdApi.ts` の `clientIpKey` を共有）。`trust proxy` を設定していないので、既定のキー（`req.ip`）では Cloud Run の前段のアドレスにまとまってしまうため。`/callback` 以外の全ルートで、枠を認証の前後で分ける（[SECURITY_OPERATIONS.md](./SECURITY_OPERATIONS.md) §10）。
+
+| 枠 | 数えるもの | 上限 |
+|----|-----------|------|
+| 認証の前 | 認証に失敗する要求だけ（Bearer が無い・違う・`ADMIN_SECRET` が未設定）。認証に成功する要求は数えも止めもしない | 接続元ごとに 30 回/分 |
+| 認証の後 | 認証に成功した要求 | 接続元ごとに 30 回/分 |
+| `/callback` | すべての要求（Admin 認証なし） | 接続元ごとに 5 分で 20 回 |
+
+認証の無い要求を連打されても、正規の管理者の要求（トークンが漏れたときの revoke など）は 429 にならない。超えたら 429。
 
 ### 使用例
 
@@ -451,30 +461,42 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 
 `DELETE /api/gmail/revoke`（`adminRouter.ts`）は次の順に進む。
 
-1. 保存してあるトークンを Google 側で失効させる（`auth.ts` の `revokeGmailTokenOnGoogle`）。`POST https://oauth2.googleapis.com/revoke` に、トークンを `application/x-www-form-urlencoded` の本文（`token=...`）で送る（URL のクエリには載せない）。refresh_token を先に、access_token を後に送る。1 回の待ち時間は 5 秒（最大 2 回）
+1. 保存してあるトークンで Gmail の watch を止める（`users.stop`。`auth.ts` の `stopGmailWatchOnGoogle`）。失効させた後は stop できないので、失効より先に呼ぶ。結果は `watchStopped`（止められたら `true`、止められなかったら `false`、トークンが保存されていなければ呼ばずに `null`）
+   - 止められなくても（トークンが無効・取り消し済み・期限切れで取り直せない、待ち時間切れ、通信の失敗）revoke は続ける。`success` は `watchStopped` で変えない。止められなかった古い watch は期限（最大 7 日）まで通知を送りうるが、取り込まれない（下の表の後の注記）
+   - 共有のクライアントは使わず、手順 2. で失効させるのと同じトークンでクライアントを作る。アクセストークンが期限切れなら refresh_token で取り直すが、Firestore には保存しない（保存すると、失効させない新しいアクセストークンが削除までの間 Firestore に残る）
+   - 待ち時間は、アクセストークンの取り直しを含めた全体で 5 秒。再試行はしない
+   - `users.stop` は `gmail.readonly` のスコープで呼べる（googleapis の gmail v1 の型定義〔`users.stop` の説明〕が、使えるスコープに `gmail.readonly` を挙げている）
+   - 時間の上限: stop 5 秒＋失効 5 秒 × 2 = Google への送信は最大 15 秒。あとは Firestore の get / delete × 3（待ち時間は付けていない）。関数 `api` の既定のタイムアウト（60 秒）に収める
+2. 保存してあるトークンを Google 側で失効させる（`auth.ts` の `revokeGmailTokenOnGoogle`）。`POST https://oauth2.googleapis.com/revoke` に、トークンを `application/x-www-form-urlencoded` の本文（`token=...`）で送る（URL のクエリには載せない）。refresh_token を先に、access_token を後に送る。1 回の待ち時間は 5 秒（最大 2 回）
    - Google の文書（[Token revocation](https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke)）は「access_token を失効させると、対応する refresh_token も失効する」と明記している。逆向き（refresh_token → access_token）の明記は無く、「失効はプロジェクトに与えた権限をすべて外し、発行済みのアクセス・リフレッシュトークンを無効にする」という一般的な記述だけなので、両方送る
    - どちらかで Google が 2xx を返せば、失効できたとする（`googleRevoked: true`）。refresh_token の失効が通った後の access_token は既に無効なので 400 になりうるが、結果は変えない
-2. Firestore のトークン（`system/gmailToken`）を消す。Google 側の失効に失敗しても消す（取込にもう使わせない）。取込などがトークンを更新している途中に消しても、更新の保存は文書を作り直さない（§11.2 のトークンの更新）
-3. `system/gmailState` を消す
+3. Firestore のトークン（`system/gmailToken`）を消す。Google 側の失効に失敗しても消す（取込にもう使わせない）。取込などがトークンを更新している途中に消しても、更新の保存は文書を作り直さない（§11.2 のトークンの更新）
+4. `system/gmailState` を消す
+
+`watchStopped` はどの応答にも付く（トークンの読み取りに失敗したときを除く）。
 
 | HTTP | `success` | 状況 | 管理者がすること |
 |------|-----------|------|------------------|
-| 200 | `true` | 1〜3 がすべて済んだ（`googleRevoked: true`） | 再認証する |
-| 200 | `true` | トークンが保存されていなかった。Google へは何も送っていない（`googleRevoked: null`） | 前の revoke が `googleRevoked: false` だったなら、下の手動の手順で外す |
-| 200 | `false` | 2・3 は済んだが、Google が失効を受け付けなかった（2xx 以外・タイムアウト・通信の失敗。`googleRevoked: false`） | Google アカウントの「サードパーティのアクセス」（[サードパーティ製のアプリとサービスとの接続](https://myaccount.google.com/connections)）から、このアプリを手動で外す。トークンはもう消えているので、revoke をやり直しても Google へは送られない（`message` で案内する） |
-| 500 | `false` | 3 に失敗した（`watchStateCleared: false`） | revoke をやり直す。`googleRevoked: false` なら手動でも外す（`error` で案内する） |
-| 500 | — | トークンの読み取り・削除（`system/gmailToken` の get / delete）に失敗した（`error`。Google へ送った後なら `googleRevoked` も付く） | revoke をやり直す |
+| 200 | `true` | 2〜4 がすべて済んだ（`googleRevoked: true`） | 再認証する |
+| 200 | `true` | トークンが保存されていなかった。Google へは何も送っていない（`watchStopped: null`・`googleRevoked: null`） | 前の revoke が `googleRevoked: false` だったなら、下の手動の手順で外す |
+| 200 | `false` | 3・4 は済んだが、Google が失効を受け付けなかった（2xx 以外・タイムアウト・通信の失敗。`googleRevoked: false`） | Google アカウントの「サードパーティのアクセス」（[サードパーティ製のアプリとサービスとの接続](https://myaccount.google.com/connections)）から、このアプリを手動で外す。トークンはもう消えているので、revoke をやり直しても Google へは送られない（`message` で案内する） |
+| 500 | `false` | 4 に失敗した（`watchStateCleared: false`） | revoke をやり直す。`googleRevoked: false` なら手動でも外す（`error` で案内する） |
+| 500 | — | トークンの読み取り・削除（`system/gmailToken` の get / delete）に失敗した（`error`。削除の失敗なら `watchStopped`・`googleRevoked` も付く） | revoke をやり直す |
+
+- `watchStopped: false` のときは、古い watch が期限（最大 7 日）まで同じ topic に通知を送りうる。revoke の後はトークンと `system/gmailState` が無いので取り込まれず、別のアカウントで認可し直して watch を登録した後は、通知の `emailAddress` の照合で読み飛ばされる（§11.2）。管理者がすることは無い（やり直してもトークンが無いので stop は送られない）
 
 - Google 側の失効は通ったが、Firestore のトークンの削除に失敗した（上の表の最後の行）ときは、トークンが残っているので、やり直すと保存済みのトークンをもう一度 Google に送る。既に失効しているので 400 になり、`success: false` と手動で外す案内が返る（安全側。案内に従って確認すればよい）
 - Google アカウントから既に手動で外してある（[接続の一覧](https://myaccount.google.com/connections)に出ない）ときも、トークンは無効なので Google は 400 を返し、`googleRevoked: false` になる
 
 - Google 側に失敗しても 502 にしないのは、Firestore 側の処理は済んでいて、同じ要求をやり直しても直らない（トークンが無いので Google へ送られない）ため。500 は「やり直す」とき（`system/gmailState` を消せなかった）だけに使う。両方に失敗したら 500 を返す
 - 応答の `googleRevoke` は、トークンごとの結果（`refreshToken` / `accessToken`）。`result` は `revoked`（2xx）/ `rejected`（2xx 以外。`status` に Google の HTTP の状態）/ `timeout` / `network_error` / `skipped`（そのトークンが保存されていない）。トークン・Google の応答の本文・例外の文言は、応答にもログにも出さない（ログは固定文と結果だけ。通信の失敗は `errorFields`）
+- stop のログは固定文だけ（止められたら `Gmail watch stopped before revoking the token`、止められなかったら `Failed to stop Gmail watch before revoking the token` と `errorFields`〔名前・コード・HTTP の状態。待ち時間切れは `TimeoutError`〕）。トークン・Gmail の応答の本文・例外の文言は出さない
 
 ```json
 {
   "success": false,
   "watchStateCleared": true,
+  "watchStopped": true,
   "googleRevoked": false,
   "googleRevoke": {
     "refreshToken": { "result": "rejected", "status": 400 },
@@ -503,10 +525,10 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 - そのため、止まっていた `historyId` が残っていると、次の通知でその範囲のメールがまとめて処理される（二重登録は `gmailMessageId` で防ぐ）
 - `/gmail/register-watch` で「今の位置まで飛ばす」ことはできない。飛ばしたいときは `system/gmailState` の `historyId` を消してから `/gmail/register-watch` を呼ぶ
 - **別の Gmail アカウントに切り替える手順**:
-  1. `/gmail/revoke` を呼ぶ（トークンを Google 側で失効させ、トークンと `system/gmailState` を消す）。応答が `watchStateCleared: true` で `system/gmailState` が消えたことを確認する（消せなかったときは 500 と `watchStateCleared: false` が返るので、revoke をやり直す）。`googleRevoked: false` なら、古いアカウントの Google アカウントの「サードパーティのアクセス」から、このアプリを手動で外す（§10「revoke の応答」）
+  1. `/gmail/revoke` を呼ぶ（古いアカウントの watch を止め、トークンを Google 側で失効させ、トークンと `system/gmailState` を消す）。応答が `watchStateCleared: true` で `system/gmailState` が消えたことを確認する（消せなかったときは 500 と `watchStateCleared: false` が返るので、revoke をやり直す）。`googleRevoked: false` なら、古いアカウントの Google アカウントの「サードパーティのアクセス」から、このアプリを手動で外す（§10「revoke の応答」）
   2. 新しいアカウントで `/gmail/auth` から認可する
   3. `/gmail/register-watch` を呼ぶ。新しいアカウントの位置から取り込みを始め、そのアドレスを `system/gmailState` の `emailAddress` に保存する
-  - revoke は現状 `users.stop` を呼ばない。呼ぶ場合も、トークンが有効なときだけ効く（取り消し済みのトークンでは stop できない）。このため古いアカウントの watch は最大 7 日、同じ topic に通知を送りうる（revoke は Google 側のトークンも失効させる〔refresh_token と access_token。結果は応答の `googleRevoked`〕が、それで通知が止まるかは確かめていない）。その通知は 3. の後は通知の `emailAddress` の照合で読み飛ばされ、`historyId` も変わらない（§3.2。連携中のアカウントの `getProfile` とも一致しないので、追従もしない）。1.〜3. の間は watch の状態が無いので、どの通知も処理されない（2. のあとは新しいアカウントのトークンはある）。7 日たてば古い watch は切れる
+  - revoke は、失効の前に保存してあるトークンで `users.stop` を呼び、古いアカウントの watch を止める（結果は応答の `watchStopped`。§10「revoke の応答」）。stop はトークンが有効なときだけ効く（取り消し済み・期限切れで取り直せないトークンでは失敗する）。止められなかったとき（`watchStopped: false`）や、revoke をせずに認可し直したときは、古いアカウントの watch が最大 7 日、同じ topic に通知を送りうる（revoke は Google 側のトークンも失効させる〔refresh_token と access_token。結果は応答の `googleRevoked`〕が、それで通知が止まるかは確かめていない）。その通知は 3. の後は通知の `emailAddress` の照合で読み飛ばされ、`historyId` も変わらない（§3.2。連携中のアカウントの `getProfile` とも一致しないので、追従もしない）。1.〜3. の間は watch の状態が無いので、どの通知も処理されない（2. のあとは新しいアカウントのトークンはある）。7 日たてば古い watch は切れる
   - revoke をせずに別のアカウントで認可し直すと、`system/gmailState` の `historyId`（古いアカウントの位置）が残ったまま新しいアカウントで取り込もうとする。次の watch の登録・更新で、保存してあるアドレスと違うアカウントなら固定文の警告（`Gmail account differs from the saved one`）を出す（アドレスは新しいアカウントにするが、`historyId` は残す）。この警告が出たら、上の手順でやり直す。revoke をせずに認可し直した場合は、代わりに取込の `Linked Gmail address changed` が出ることもある（新しいアカウントの通知で `getProfile` と通知が一致して保存値が書き直されるので、`Gmail account differs from the saved one` の検知が出ない）。アドレスを変えた覚えが無いのにこの警告が出たら、切替の手順（先に revoke）でやり直す
 - 連携中のアカウントのアドレスが変わった（プライマリアドレスの変更など）ときは、取込が自動で追従する（照合が合わない通知で `getProfile` が通知と同じなら、保存値を書き直して処理する。§3.2）。それでも直らない（通知が読み飛ばされ続ける）ときは、`/gmail/register-watch` を呼べば `getProfile` のアドレスで保存し直す（`historyId` は変えない）
 - `emailAddress` の照合が効くのは、このコードをデプロイしたあとの最初の watch の登録・更新（`renewGmailWatch` は 6 日ごと。すぐに効かせたいときは `/gmail/register-watch`。`historyId` は変えないので、いつ呼んでもよい）から。それまでは照合せず、以前どおり処理する
@@ -516,7 +538,8 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 ### 11.3 セキュリティ
 
 - OAuth2 のクライアント ID / シークレットは Secret Manager、発行されたトークンは Firestore `system/gmailToken`（クライアントからは読めない）
-- 連携をやめるときは `/api/gmail/revoke` を呼ぶ。応答が `googleRevoked: false`（Google が失効を受け付けなかった）なら、Google アカウントの「サードパーティのアクセス」から手動で外す（§10「revoke の応答」）
+- 連携をやめるときは `/api/gmail/revoke` を呼ぶ。古い watch も止める（`watchStopped`。止められなくても、トークンが無いので通知は取り込まれない。§10「revoke の応答」）。応答が `googleRevoked: false`（Google が失効を受け付けなかった）なら、Google アカウントの「サードパーティのアクセス」から手動で外す（§10「revoke の応答」）
+- 管理 API はレート制限を認証の前後で分けている（§10「認証方法」）。認証の無い要求の連打で、トークンが漏れたときの revoke が 429 で止められることはない
 - **トークンが漏れた疑いがあるとき**は、`/api/gmail/revoke` の結果にかかわらず、次も行う
   1. 連携していた Google アカウントで [サードパーティ製のアプリとサービスとの接続](https://myaccount.google.com/connections) を開き、このアプリが一覧から外れていることを確かめる。残っていれば手動で外す（手動で外すと、そのクライアントに与えた許可がまとめて外れ、発行済みのトークンがすべて無効になる）
   2. `googleRevoked: true` でも、それで完了とは見なさない。revoke が Google に送るのは Firestore に保存してある最新のトークンだけである。`/gmail/auth` は `prompt: 'consent'` で認可するため、認可し直すたびに新しい refresh_token が発行され、古い refresh_token が残りうる（Google の文書は「失効でそのプロジェクトへの許可がまとめて外れる」とするが、確かめていない）。1. の手動の確認で、許可が外れていることを確かめる
