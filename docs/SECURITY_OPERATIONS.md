@@ -403,11 +403,26 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
   - 生の例外には、送ったリクエストの設定（gaxios・axios の `config`。Authorization ヘッダーのアクセストークン・GitHub のトークン）や、
     応答のヘッダー・本文（LINE の `HTTPFetchError`）が入る。
 - 例外として、Gemini の API のエラーは HTTP ステータスと API のエラー文の先頭 300 文字を出す（§7）。
+  次の ESLint の規則の唯一の例外で、`bot/src/geminiClient.ts` のその行に `eslint-disable-next-line` と理由を付けている。
+- **ESLint で検査する**: `bot/eslint.config.mjs` の `no-restricted-syntax`（`bot/src/**/*.ts` の `console.log` / `warn` / `error` /
+  `info` / `debug`。error）で、次の書き方を報告する。
+  - 1 つ目の引数のテンプレートリテラル。
+  - `e` / `err` / `error` / 〜`Error` という名前の変数をそのまま渡すこと。引数・オブジェクトの値（`{ error }`・入れ子を含む）・
+    展開（`{ ...error }`）・配列・`` `${error}` ``・`'…' + error`・`String(error)`・`JSON.stringify(error)`・`error ?? null`・
+    `as` / `!` を付けたものが対象。`errorFields(error)` のように関数に渡す・`error.response?.status` のようにプロパティを読む・
+    `typeof error` / `instanceof` は対象外。
+  - `.message` / `.stack` を読むこと（`(error as Error).message`・`err?.message`・関数の引数の中を含む）。
+  - 例外を足すときは、この節に理由を書いてから、その行に `eslint-disable-next-line no-restricted-syntax -- 理由` を付ける。
+  - 名前と書き方で判定するので、別の名前の変数（`ex`・`reason`）、分割代入した `message`、一度変数に入れた文言は検出できない（レビューで見る）。
+  - CI の lint（`ci-cd.yml` の `npm run lint`）は失敗しても落ちない（`|| echo` で警告にする）。この規則は、手元の
+    `npm -w bot run lint`（違反があると終了コードが 1）とレビューで気づくためのもの。規則のテストは `bot/scripts/smoke-log-lint.js`
+    （違反と適合の例の文字列を ESLint の Node API で検査する）。
 - 自前の固定文の例外は名前を付けて投げる（`TimeoutError`・`LineCredentialsMissingError`・`GmailTokenMissingError` など）。
   文言を出さないログでも、`errorName` で原因を見分けられるようにするため。
 - **既知の限界**: 関数の外へ投げた例外は、`console.*` を通らずに実行環境（functions-framework）が `err.stack`
   （名前・文言・スタック）を Cloud Logging に出す。Gmail の Pub/Sub の再送のために `bot/src/gmail/handler.ts` の
   `handleGmailPubSub` が投げ直す例外（Firestore・Gmail API・LINE の失敗）と、スケジュール関数（`renewGmailWatch`・
   `postRecurringExpenses`）の失敗がこれに当たる。投げ直さないと再送・再試行が働かないため、そのままにしている。
-- テストは `bot/scripts/smoke-log-safety.js`（例外の文言・文書のパス・ヘッダーに入れた目印がログに出ないこと）。
+- テストは `bot/scripts/smoke-log-safety.js`（例外の文言・文書のパス・ヘッダーに入れた目印がログに出ないこと。
+  postback の認可の拒否のログ〔押した人・支出の ID は伏せ、action は既知の名前だけ〕を含む）。
   HTTP の応答や管理 API の戻り値（`/gmail/*` の `error`・`message`）は対象外（ログではない）。

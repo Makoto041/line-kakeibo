@@ -10,7 +10,7 @@ import { isGeminiAvailable } from "../geminiCategoryClassifier";
 import { errorFields } from "../logSafe";
 import { getLineClient, replyText } from "./client";
 import { handleJoin, handleLeave, handleMemberJoined, handleMemberLeft } from "./groupEvents";
-import { handlePostback } from "./postback";
+import { handlePostback, postbackActionForLog } from "./postback";
 import { handleTextMessage } from "./textMessage";
 
 export const webhookApp: Express = express();
@@ -105,7 +105,7 @@ webhookApp.post("/webhook", async (req: Request, res: Response) => {
         } else if (event.type === "postback") {
           // Postbackイベント処理（例外のログはここで 1 回だけ出す。handlePostback は投げ直すだけ）
           await handlePostback(event).catch(error => {
-            console.error("Postback processing error", errorFields(error));
+            console.error("Postback processing error", { action: postbackActionForLog(event), ...errorFields(error) });
           });
         } else if (event.type === "join") {
           await handleJoin(event);
