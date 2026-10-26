@@ -27,6 +27,12 @@ export interface GmailToken {
 export interface GmailWatchState {
   historyId: string;
   watchExpiration: number; // Unix timestamp (ms)
+  /**
+   * 連携中のアカウントのアドレス（小文字。watch の登録・更新で getProfile から保存する。watch.ts の registerWatch）。
+   * 取込が Pub/Sub の通知の emailAddress と照合する（handler.ts の notificationAccountOf）。
+   * この項目を足す前に登録した watch の状態には無い。ログ・API の応答には出さない
+   */
+  emailAddress?: string;
 }
 
 // ============================================
