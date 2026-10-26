@@ -1,13 +1,15 @@
 /**
  * ログの書き方の ESLint の規則（bot/eslint.config.mjs の no-restricted-syntax。docs/SECURITY_OPERATIONS.md §9）のスモークテスト
  *
- * ESLint の Node API で、違反の例と適合の例の文字列を bot/src のファイルとして検査し、規則が期待どおりに報告するかを確かめる
- * （bot/src の実際のファイルは検査しない。それは npm -w bot run lint で行う）。
+ * ESLint の Node API で、違反の例と適合の例の文字列を bot/src のファイルとして検査し、規則が期待どおりに報告するかを確かめる。
  *
- * - 1 つ目の引数のテンプレートリテラル
- * - 例外（e / err / error / 〜Error という名前の変数）をそのまま渡す（{ error }・[error]・`${error}`・String(error) なども）
+ * - 1 つ目の引数のテンプレートリテラル・値を含む + の連結
+ * - 例外（e / err / error / 〜Error という名前の変数。isError / hasError は除く）をそのまま渡す（{ error }・[error]・`${error}`・String(error) なども）
  * - .message / .stack を渡す
  * - 適合: errorFields(error)・errorName(parseError)・(error as { status?: unknown })?.status・typeof error など
+ *
+ * あわせて、実際の bot/src/**\/*.ts を検査し、この規則の報告が 0 件で、規則の重さが error であることを確かめる
+ * （CI の lint は `|| echo` で失敗しても落ちないため、規則は npm test のこのスモークで強制する）。
  *
  *   node bot/scripts/smoke-log-lint.js
  */
@@ -38,6 +40,7 @@ const KIND = {
 const PRELUDE = [
   'declare const error: any, e: any, err: any, replyError: any, parseError: any, id: any, ok: any;',
   'declare const list: any[], result: any, model: any, text: any, logger: any, status: any, TimeoutError: any;',
+  'declare const issueError: any, isError: boolean, hasError: boolean, event: any;',
   'declare function errorFields(x: unknown): any;',
   'declare function errorName(x: unknown): any;',
   'declare function maskId(x: unknown): any;',
@@ -51,6 +54,9 @@ const SRC_CASES = [
   ['1 つ目の引数のテンプレートリテラル', 'console.log(`saved ${id}`);', ['template']],
   ['値を埋め込まないテンプレートリテラルも', 'console.warn(`saved`);', ['template']],
   ['console.info / console.debug も', 'console.info(`a ${id}`); console.debug(`b ${id}`);', ['template', 'template']],
+  ['1 つ目の引数の + の連結', "console.log('saved ' + id);", ['template']],
+  ['1 つ目の引数の + の連結（関数の結果）', "console.log('saved ' + maskId(id) + ' done');", ['template']],
+  ['1 つ目の引数で例外を連結する', "console.error('Save failed: ' + error);", ['template', 'error']],
   // 例外をそのまま渡す
   ['例外をそのまま（error）', "console.error('Save failed', error);", ['error']],
   ['例外をそのまま（e）', "console.warn('Save failed', e);", ['error']],
@@ -67,7 +73,8 @@ const SRC_CASES = [
   ['オブジェクトに展開する（{ ...error }）', "console.error('Save failed', { ...error });", ['error']],
   ['配列に入れる', "console.error('Save failed', [error]);", ['error']],
   ['テンプレートリテラルで文字列にする', "console.error('Save failed', { detail: `${error}` });", ['error']],
-  ['+ で文字列にする', "console.error('Save failed: ' + error);", ['error']],
+  ['+ で文字列にする', "console.error('Save failed', 'detail: ' + error);", ['error']],
+  ['〜Error（is・has で始まっても次が小文字なら対象）', "console.error('Save failed', { cause: issueError });", ['error']],
   ['String() で文字列にする', "console.error('Save failed', { detail: String(error) });", ['error']],
   ['JSON.stringify() で文字列にする', "console.error('Save failed', JSON.stringify(err));", ['error']],
   ['?? の片側', "console.error('Save failed', { detail: error ?? null });", ['error']],
@@ -80,8 +87,13 @@ const SRC_CASES = [
   ["err['message']", "console.error('Save failed', { detail: err['message'] });", ['message']],
   ['関数の中の .message（Gemini の §7 の行と同じ形）', "console.error('Gemini request failed', { status, error: String((error as Error)?.message ?? '').slice(0, 300) });", ['message']],
   ['error.stack', "console.error('Save failed', { stack: error.stack });", ['message']],
+  // 名前が message のプロパティはすべて対象（LINE の event.message.text は利用者の入力）。種類だけを出したいときはログの外で別名の変数に入れる
+  ['LINE の event.message も対象', "console.log('Unhandled', { type: event.message.type });", ['message']],
+  ['ログの外で別名の変数に入れれば報告しない', "const messageType = event.message.type; console.log('Unhandled', { type: messageType });", []],
   // 適合（報告しない）
   ['固定文だけ', "console.log('Saved');", []],
+  ['固定の文字列どうしの + の連結（長い固定文の折り返し）', "console.warn('No app group is linked. ' + 'Check the members.', { members: list.length });", []],
+  ['真偽値の isError / hasError', "console.log('Done', { isError, hasError: hasError });", []],
   ['固定文 + オブジェクト', "console.warn('Gemini response received', { model, chars: text.length });", []],
   ['errorFields(error) を渡す', "console.error('Save failed', errorFields(error));", []],
   ['errorFields(error) を展開する', "console.error('Save failed', { user: maskId(id), ...errorFields(error) });", []],
@@ -141,6 +153,29 @@ async function main() {
     const code = "console.log(`  ok   ${name}`, error, error.message);\n";
     const [scripts] = await lint(`const name = 'x'; const error = new Error('x');\n${code}`, 'scripts/__smoke_log_lint__.js');
     check('bot/scripts の JavaScript は対象外（出力は手元の端末だけ）', scripts.length === 0, scripts.map(kindOf));
+  }
+
+  // CI の lint は `|| echo` で失敗しても落ちないので、規則はここ（npm test）で強制する
+  console.log('\n[実際の bot/src]');
+  {
+    const config = await eslint.calculateConfigForFile(path.join(botDir, 'src/index.ts'));
+    const setting = config.rules?.[RULE];
+    const severity = Array.isArray(setting) ? setting[0] : setting;
+    check('規則の重さが error', severity === 2 || severity === 'error', { severity });
+    check('規則のセレクタが読み込まれている', Array.isArray(setting) && setting.length > 1, { entries: Array.isArray(setting) ? setting.length - 1 : 0 });
+
+    const results = await eslint.lintFiles(['src/**/*.ts']);
+    // 規則の報告・構文の誤り・使われていない eslint-disable（例外の行が規則に当たらなくなった）を集める
+    const problems = results.flatMap((result) =>
+      result.messages
+        .filter((m) => m.ruleId === RULE || m.fatal || (m.ruleId === null && m.message.includes(RULE)))
+        .map((m) => `${path.relative(botDir, result.filePath)}:${m.line} ${m.message.slice(0, 60)}`)
+    );
+    check(
+      `bot/src の ${results.length} ファイルに報告が無い（geminiClient.ts の §7 の行は eslint-disable-next-line で除く）`,
+      results.length > 0 && problems.length === 0,
+      problems
+    );
   }
 
   console.log(failed === 0 ? '\nALL PASSED' : `\n${failed} FAILED`);

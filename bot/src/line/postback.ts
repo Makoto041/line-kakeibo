@@ -305,6 +305,7 @@ function logMembersOnlyRejection(userId: string, expenseId: string, action: unkn
   console.warn('Postback rejected: the presser is not a member of the household', {
     user: maskId(userId),
     expense: maskId(expenseId),
+    // ここに届く action は handlePostback の switch が通した既知の名前だけ。許可リストは多重の防御
     action: actionForLog(action),
   });
 }

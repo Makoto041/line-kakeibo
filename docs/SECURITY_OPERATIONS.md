@@ -406,17 +406,29 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
   次の ESLint の規則の唯一の例外で、`bot/src/geminiClient.ts` のその行に `eslint-disable-next-line` と理由を付けている。
 - **ESLint で検査する**: `bot/eslint.config.mjs` の `no-restricted-syntax`（`bot/src/**/*.ts` の `console.log` / `warn` / `error` /
   `info` / `debug`。error）で、次の書き方を報告する。
-  - 1 つ目の引数のテンプレートリテラル。
-  - `e` / `err` / `error` / 〜`Error` という名前の変数をそのまま渡すこと。引数・オブジェクトの値（`{ error }`・入れ子を含む）・
+  - 1 つ目の引数のテンプレートリテラルと、値（識別子）を含む `+` の連結（`'saved ' + id`）。固定の文字列どうしの連結
+    （長い固定文の折り返し）は対象外。
+  - `e` / `err` / `error` / 〜`Error` という名前の変数をそのまま渡すこと（`isError` / `hasError` のように `is` / `has` の次が
+    大文字の名前は真偽値とみなして除く）。引数・オブジェクトの値（`{ error }`・入れ子を含む）・
     展開（`{ ...error }`）・配列・`` `${error}` ``・`'…' + error`・`String(error)`・`JSON.stringify(error)`・`error ?? null`・
     `as` / `!` を付けたものが対象。`errorFields(error)` のように関数に渡す・`error.response?.status` のようにプロパティを読む・
     `typeof error` / `instanceof` は対象外。
   - `.message` / `.stack` を読むこと（`(error as Error).message`・`err?.message`・関数の引数の中を含む）。
-  - 例外を足すときは、この節に理由を書いてから、その行に `eslint-disable-next-line no-restricted-syntax -- 理由` を付ける。
-  - 名前と書き方で判定するので、別の名前の変数（`ex`・`reason`）、分割代入した `message`、一度変数に入れた文言は検出できない（レビューで見る）。
-  - CI の lint（`ci-cd.yml` の `npm run lint`）は失敗しても落ちない（`|| echo` で警告にする）。この規則は、手元の
-    `npm -w bot run lint`（違反があると終了コードが 1）とレビューで気づくためのもの。規則のテストは `bot/scripts/smoke-log-lint.js`
-    （違反と適合の例の文字列を ESLint の Node API で検査する）。
+    名前が `message` のプロパティはすべて対象にしている（LINE のイベントの `event.message.text` も利用者の入力のため）。
+  - **誤検知の例と回避策**: 次は値をそのまま出さないが報告される。ログの外で別の名前の変数に入れてから渡すか
+    （`const messageType = event.message.type;` → `{ type: messageType }`）、その行に理由付きの
+    `eslint-disable-next-line no-restricted-syntax -- 理由` を付ける。誤検知の除外は次の「例外」に当たらないので、この節への追記は要らない。
+    - `console.log('Unhandled', { type: event.message.type })`（LINE のイベントの `message` が `.message` の規則に当たる）
+    - 〜`Error` という名前の、例外でない値（`{ validationError: '金額が空' }` のような固定の値を入れた変数）
+  - **例外**（値を出すことを認めるもの）を足すときは、この節に理由を書いてから、その行に
+    `eslint-disable-next-line no-restricted-syntax -- 理由` を付ける。今は上の Gemini の行だけ。
+  - **検出できないもの**（レビューで見る）: 名前と書き方で判定するため、別の名前の変数（`ex`・`reason`）、分割代入した `message`、
+    一度変数に入れた文言、`ok && error`（`&&` の右側。`error && error.code` を誤検知しないため対象外）、`console['error'](…)` の
+    ように角かっこで呼ぶもの、タグ付きテンプレート（`` String.raw`…${id}` ``）、1 つ目の引数に変数をそのまま渡すもの。
+  - **テストと強制**: CI の lint（`ci-cd.yml` の `npm run lint`）は失敗しても落ちない（`|| echo` で警告にする）。この規則は
+    `bot/scripts/smoke-log-lint.js`（`npm -w bot test`。CI の build-and-test で実行）で強制する。違反と適合の例の文字列を ESLint の
+    Node API で検査するほか、実際の `bot/src/**/*.ts` を検査して、この規則の報告（と、使われなくなった `eslint-disable`）が 0 件で、
+    規則の重さが error であることを確かめる。手元では `npm -w bot run lint`（違反があると終了コードが 1）でも気づける。
 - 自前の固定文の例外は名前を付けて投げる（`TimeoutError`・`LineCredentialsMissingError`・`GmailTokenMissingError` など）。
   文言を出さないログでも、`errorName` で原因を見分けられるようにするため。
 - **既知の限界**: 関数の外へ投げた例外は、`console.*` を通らずに実行環境（functions-framework）が `err.stack`

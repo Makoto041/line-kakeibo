@@ -11,8 +11,8 @@ import tseslint from "typescript-eslint";
 // console.log / warn / error / info / debug の呼び出し
 const CONSOLE_CALL =
   "CallExpression[callee.type='MemberExpression'][callee.object.name='console'][callee.property.name=/^(log|warn|error|info|debug)$/]";
-// 例外を入れる変数の名前（e / err / error / 〜Error）
-const ERROR_NAME = "[name=/^(e|err|error)$|Error$/]";
+// 例外を入れる変数の名前（e / err / error / 〜Error）。isError / hasError のような真偽値（is・has の次が大文字）は除く
+const ERROR_NAME = "[name=/^(e|err|error)$|^(?!(is|has)[A-Z]).*Error$/]";
 // 型の注釈（`error as Error`・`error!`）
 const TS_WRAPPER = ":matches(TSAsExpression, TSSatisfiesExpression, TSNonNullExpression)";
 // 例外の変数が「そのまま」ログに入る位置。関数に渡す（errorFields(error)・errorName(parseError)）・
@@ -32,11 +32,15 @@ const ERROR_VALUE_POSITIONS = [
   `${CONSOLE_CALL} ConditionalExpression > Identifier:matches(.consequent, .alternate)`, // ok ? null : error
 ];
 const LOG_SAFETY_RULES = [
-  {
-    selector: `${CONSOLE_CALL} > TemplateLiteral.arguments:first-child`,
+  ...[
+    `${CONSOLE_CALL} > TemplateLiteral.arguments:first-child`, // console.log(`saved ${id}`)
+    // console.log('saved ' + id)。固定の文字列どうしの連結（長い固定文の折り返し）は識別子を含まないので対象外
+    `${CONSOLE_CALL} > BinaryExpression.arguments:first-child[operator='+']:has(Identifier)`,
+  ].map((selector) => ({
+    selector,
     message:
-      "ログの 1 つ目の引数は固定の文字列にする（テンプレートリテラルに値を埋め込まない）。値は 2 つ目の引数のオブジェクトで渡す（docs/SECURITY_OPERATIONS.md §9）",
-  },
+      "ログの 1 つ目の引数は固定の文字列にする（テンプレートリテラルや + の連結で値を埋め込まない）。値は 2 つ目の引数のオブジェクトで渡す（docs/SECURITY_OPERATIONS.md §9）",
+  })),
   ...ERROR_VALUE_POSITIONS.map((position) => ({
     selector: `${position}${ERROR_NAME}`,
     message:
@@ -45,7 +49,7 @@ const LOG_SAFETY_RULES = [
   {
     selector: `${CONSOLE_CALL} MemberExpression:matches([computed=false][property.name=/^(message|stack)$/], [computed=true][property.value=/^(message|stack)$/])`,
     message:
-      "例外の文言（.message）・スタック（.stack）をログに出さない（文書のパスや入力の断片が入る）。errorFields(error) で種類だけを出す（docs/SECURITY_OPERATIONS.md §9）",
+      "例外の文言（.message）・スタック（.stack）をログに出さない（文書のパスや入力の断片が入る。名前が message のプロパティはすべて対象で、LINE の event.message.text も利用者の入力）。errorFields(error) で種類だけを出す（docs/SECURITY_OPERATIONS.md §9）",
   },
 ];
 
@@ -73,7 +77,8 @@ export default tseslint.config(
   },
   {
     // Cloud Logging に出る bot 本体のログだけを検査する（スクリプトの出力は手元の端末に出るだけなので対象外）。
-    // 例外は geminiClient.ts の §7 の行（API のエラー文の先頭 300 文字）だけで、その行に eslint-disable-next-line を付けている
+    // 例外は geminiClient.ts の §7 の行（API のエラー文の先頭 300 文字）だけで、その行に eslint-disable-next-line を付けている。
+    // CI の lint は失敗しても落ちないため、bot/src に報告が無いことと重さが error であることは scripts/smoke-log-lint.js（npm test）で確かめる
     files: ["src/**/*.ts"],
     rules: {
       "no-restricted-syntax": ["error", ...LOG_SAFETY_RULES],
