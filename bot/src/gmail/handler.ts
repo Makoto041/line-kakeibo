@@ -8,7 +8,16 @@
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { formatJST, toJSTDateString } from '../time';
 import { getGmailClient, GmailTokenMissingError } from './auth';
-import { getWatchState, isUsableHistoryId, mailboxHistoryIdToSave, normalizeEmailAddress, updateHistoryId, updateLinkedEmailAddress } from './watch';
+import {
+  getWatchState,
+  isMailboxBehindStart,
+  isUsableHistoryId,
+  mailboxHistoryIdToSave,
+  normalizeEmailAddress,
+  replaceUnusableHistoryId,
+  updateHistoryId,
+  updateLinkedEmailAddress,
+} from './watch';
 import {
   isSMBCGoldVISANL,
   parseSMBCCardEmail,
@@ -314,6 +323,61 @@ function historyIdToSave(mailboxHistoryId: unknown, source: 'history.list' | 'ge
 }
 
 /**
+ * メールボックスの現在位置が実行の開始位置（保存値）より前か（watch.ts の isMailboxBehindStart）。前なら固定文の警告を出して true
+ *
+ * そのときの保存値はこのメールボックスの位置ではなく（#295 より前に偽の通知で入った値・revoke をせずにアカウントを切り替えた後の値）、
+ * 前進のみの更新では直らないので、手で直すまで何も取り込まれない（直し方は docs/GMAIL_AUTO_SPEC.md §11.2）。同時に走った実行による
+ * 正当な巻き戻しの回避（updateHistoryId の `Skipping historyId rollback`）と見分けられるよう、別の警告にする。
+ * 呼び出し側は historyId を書かず、送信待ちの印も消さずに終える。値は出さず、桁数と、どの応答の現在位置か（source）だけを出す。
+ */
+function warnIfMailboxBehindStart(next: string, startHistoryId: string, source: 'history.list' | 'getProfile'): boolean {
+  if (!isMailboxBehindStart(next, startHistoryId)) return false;
+  console.warn('Stored Gmail historyId is ahead of the mailbox; nothing is imported until it is reset (see GMAIL_AUTO_SPEC 11.2)', {
+    source,
+    storedDigits: startHistoryId.length,
+    mailboxDigits: next.length,
+  });
+  return true;
+}
+
+/**
+ * 保存してある historyId が使えない形（isUsableHistoryId）のときの自動復旧（#300）
+ *
+ * users.getProfile の historyId（連携中のメールボックスの現在位置）を、保存値がまだ使えない形のときだけ書く
+ * （watch.ts の replaceUnusableHistoryId。トランザクションの中で確かめる）。history.list は呼ばない（置き換えた位置から先は、
+ * 次の通知で処理する）。書く値は Gmail が返した位置で、通知の内容に関係しないので、通知のアカウントの照合より前に行う。
+ *
+ * 置き換えた位置より前のメール（この通知を起こしたメールを含む）は取り込まない。history.list の 404 で先へ飛ばすときと同じで、
+ * 以前（この復旧の前）も次の watch の更新（最長約 6 日）か /gmail/register-watch で watch の応答の位置に置き換わるまで取込が止まり、
+ * その間のメールは取り込まれなかった。飛ばした範囲のメールは再処理しないので、404 のときと同じく、失敗の記録にあるメールの
+ * 送信待ちの印も消す。
+ * getProfile の失敗・historyId が無いときは、投げずに固定文の警告を出して終える（保存値は変えない。次の通知か watch の更新で直る）。
+ * Firestore の失敗は一時的な失敗として投げる（Pub/Sub に再送させる）。値・アドレスはログに出さない。
+ */
+async function recoverUnusableHistoryId(gmail: Awaited<ReturnType<typeof getGmailClient>>): Promise<void> {
+  let profileHistoryId: unknown;
+  try {
+    const profile = await gmail.users.getProfile({ userId: 'me' });
+    profileHistoryId = profile.data.historyId;
+  } catch (error) {
+    console.warn('Stored Gmail historyId is not usable and getProfile failed; keeping it (retried on the next notification)', errorFields(error));
+    return;
+  }
+  const next = mailboxHistoryIdToSave(profileHistoryId);
+  if (next === null) {
+    console.warn('Stored Gmail historyId is not usable and getProfile returned no historyId; keeping it (retried on the next notification)');
+    return;
+  }
+  if (!(await replaceUnusableHistoryId(next))) {
+    // watch の更新・ほかの実行が先に置き換えた、または revoke で消えた
+    console.log('Stored Gmail historyId was already replaced or removed; skipping');
+    return;
+  }
+  console.error('Stored Gmail historyId was not usable; replaced it with the mailbox position, and mail before it is NOT imported');
+  await discardCardNotices(await failedMessageIds(), 'history_skipped');
+}
+
+/**
  * 失敗の記録に入れる、最後の失敗の種類（errorFields の項目。文言は入れない）
  *
  * Gmail・Firestore・LINE のエラーの文言には、文書のパス（LINE の ID を含みうる）・応答の本文が入るので保存しない。
@@ -408,15 +472,21 @@ async function clearMessageFailure(messageId: string): Promise<void> {
  * followLinkedAddressChange で書き直して続ける）、history.list を呼ばず、historyId も更新せずに終える。
  *
  * 保存する historyId は、常にメールボックスの現在位置（historyIdToSave）。通知の historyId は使わない（取込を起こす合図としてだけ
- * 使う。偽の通知で保存値を Gmail の返していない番号に置かせないため）。現在位置は history.list の最後のページ（nextPageToken の
- * 無い応答）の historyId（googleapis の型定義が、次の開始位置として保存してよいとする値）。この実行は保存値から現在位置までの
- * 全範囲を処理し終えてから保存するので、取りこぼさない。応答に無ければ historyId を進めない。保存値より前の位置は
- * updateHistoryId が書かない（前進のみ。同時に走った実行が先に進めていたときなど）。
+ * 使う。偽の通知で保存値を Gmail の返していない番号に置かせないため）。現在位置は history.list の最初のページの historyId
+ * （最初の要求の時点の位置 M1。#300）。googleapis の型定義が次の開始位置として保存してよいとするのは最後のページ（nextPageToken の
+ * 無い応答）の値だが、ページ送りが最初の要求の時点で区切られるなら、最後のページの値では途中に増えた記録を取りこぼす。M1 なら、
+ * （保存値, M1］の記録は全ページのどこかに載っていて、この実行は全ページを処理し終えてから保存するので取りこぼさない。M1 より後の
+ * 記録が後のページに載っても、次の実行で M1 から処理し直すだけ（重複は gmailMessageId で弾く）。諦めたメールは前の実行でも
+ * 見ていた（試行 3 回以上）ので記録は M1 以下で、M1 に進めたあと再処理されない（印を消してよい）。最初のページに historyId が
+ * 無ければ、後のページの値は使わず historyId を進めない。保存値より前の位置は updateHistoryId が書かない（前進のみ。同時に
+ * 走った実行が先に進めていたときなど）。
  * history.list が 404（開始位置が古すぎる）のときは、users.getProfile の historyId を現在位置にする（失敗したら投げて再送させる）。
+ * どちらの経路でも、現在位置が実行の開始位置（保存値）より前なら、保存値がこのメールボックスの位置でないので、固定文の警告を
+ * 出して書かずに終える（warnIfMailboxBehindStart。#300）。
  *
  * 保存してある historyId は、使う前に形を確かめる（isUsableHistoryId）。#295 より前に偽の通知で入った先頭ゼロ・長い値などは
- * history.list に渡しても失敗し続けるだけなので、固定文の警告を出し、Gmail API を呼ばずに終える（投げない。値はログに出さない。
- * 直し方は docs/GMAIL_AUTO_SPEC.md §3.2）。
+ * history.list に渡しても失敗し続けるだけなので、history.list を呼ばず、getProfile の現在位置に置き換えて終える
+ * （recoverUnusableHistoryId。#300。値はログに出さない。docs/GMAIL_AUTO_SPEC.md §3.2）。
  *
  * @param notifiedEmailAddress 通知の emailAddress（emailAddressOfPubSubData。無ければ null）
  */
@@ -442,9 +512,10 @@ async function processNewEmails(notifiedEmailAddress: string | null): Promise<vo
   }
 
   // 保存してある historyId の形を確かめる（isUsableHistoryId）。使えない値では history.list が失敗し続けるだけなので、
-  // Gmail API を呼ばずに終える（照合の getProfile も呼ばない）。やり直しても直らないので投げない。値はログに出さない
+  // history.list は呼ばず、getProfile の現在位置に置き換えて終える（recoverUnusableHistoryId。#300）。
+  // 照合より前に行う（置き換える値は連携中のアカウントの getProfile で決まり、通知の内容に関係しない）。値はログに出さない
   if (!isUsableHistoryId(watchState.historyId)) {
-    console.warn('Stored Gmail historyId is not usable; skipping without calling Gmail');
+    await recoverUnusableHistoryId(gmail);
     return;
   }
 
@@ -467,8 +538,9 @@ async function processNewEmails(notifiedEmailAddress: string | null): Promise<vo
 
   try {
     let pageToken: string | undefined;
-    // メールボックスの現在位置（最後のページの historyId。処理を終えたら保存する）
+    // メールボックスの現在位置（最初のページの historyId。処理を終えたら保存する。後のページの値は使わない）
     let mailboxHistoryId: unknown;
+    let firstPage = true;
 
     // 全ページを処理（ページネーション対応）
     do {
@@ -516,8 +588,11 @@ async function processNewEmails(notifiedEmailAddress: string | null): Promise<vo
         }
       }
 
+      if (firstPage) {
+        mailboxHistoryId = historyResponse.data.historyId;
+        firstPage = false;
+      }
       pageToken = historyResponse.data.nextPageToken || undefined;
-      mailboxHistoryId = historyResponse.data.historyId;
     } while (pageToken);
 
     if (abandonedFailures.length > 0) {
@@ -535,9 +610,11 @@ async function processNewEmails(notifiedEmailAddress: string | null): Promise<vo
     }
 
     // 全ページ処理完了後にhistoryIdを更新（メールボックスの現在位置を保存する。通知の値は使わない）。
-    // 現在位置が取れなければ進めない（範囲は次の通知でもう一度処理されるので、諦めたメールの印もここでは消さない）
+    // 現在位置が取れなければ進めない（範囲は次の通知でもう一度処理されるので、諦めたメールの印もここでは消さない）。
+    // 現在位置が開始位置より前（保存値がこのメールボックスの位置でない）なら、警告を出して書かない（印も消さない）
     const next = historyIdToSave(mailboxHistoryId, 'history.list');
     if (next === null) return;
+    if (warnIfMailboxBehindStart(next, startHistoryId, 'history.list')) return;
     await updateHistoryId(next);
     console.log('Processed Gmail messages; updated historyId', { messages: processedMessageIds.length, historyId: next });
 
@@ -552,6 +629,8 @@ async function processNewEmails(notifiedEmailAddress: string | null): Promise<vo
       const profile = await gmail.users.getProfile({ userId: 'me' });
       const next = historyIdToSave(profile.data.historyId, 'getProfile');
       if (next === null) return;
+      // 現在位置が開始位置より前なら、古すぎるのではなく保存値がこのメールボックスの位置でない。警告を出して書かない（印も消さない）
+      if (warnIfMailboxBehindStart(next, startHistoryId, 'getProfile')) return;
       // 値は出さず、桁数だけを出す
       console.error('Gmail historyId is too old (Gmail keeps ~1 week); skipping ahead, and mail in between is NOT imported', {
         fromDigits: startHistoryId.length,

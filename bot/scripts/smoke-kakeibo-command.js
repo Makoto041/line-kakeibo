@@ -14,6 +14,7 @@
  * - 拒否の返信に失敗しても、集計向けのフォールバック文を送らない
  * - 集計の取得に失敗したときのフォールバック文に、ID を載せない
  * - ログ・返信に、利用者 ID・LINE グループ ID を出さない
+ * - カテゴリ別の集計（getMonthlyGroupSummary）は、旧名（娯楽費・交際費など）を正準名にまとめ、知らない名前は別の行のまま（#243）
  *   node bot/scripts/smoke-kakeibo-command.js
  */
 
@@ -113,6 +114,7 @@ client.getLineClient = () => {
 
 const { nowJST } = require('../dist/time');
 const { handleKakeiboCommand } = require('../dist/line/commands/kakeibo');
+const { getMonthlyGroupSummary } = require('../dist/firestore');
 
 // --- データ ---
 // 世帯 G_house（LINE グループ L_house）: Alice・Bob が有効、Left は脱退済み。Self は自作グループ（lineGroupId なし）だけ。
@@ -135,6 +137,17 @@ docs.set('expenses/e_alice_personal', { lineId: 'U_alice_0001', amount: 500, des
 docs.set('expenses/e_stranger', { lineId: 'U_stranger_0001', amount: 800, description: '世帯外の人の支出', date: `${month}-06`, category: '娯楽', includeInTotal: true, createdAt: at(6) });
 docs.set('expenses/e_dup', { lineId: 'U_dup_0001', groupId: 'G_dupA', lineGroupId: 'L_dup_0001', amount: 900, description: '重複グループの支出', date: `${month}-07`, category: '食費', includeInTotal: true, createdAt: at(7) });
 docs.set('budgetSettings/L_house_0001', { monthlyBudget: 100000 });
+// カテゴリ別の集計（#243）: 旧名（娯楽費・交際費・投資）・知らない名前・空・カテゴリ無し・合計に含めない支出（別の LINE グループ L_cat）
+const catExpense = (id, amount, extra) =>
+  docs.set(`expenses/${id}`, { lineId: 'U_cat_0001', lineGroupId: 'L_cat_0001', amount, description: id, date: `${month}-08`, includeInTotal: true, createdAt: at(20), ...extra });
+catExpense('e_cat_canonical', 2000, { category: '娯楽' });
+catExpense('e_cat_legacy', 1500, { category: '娯楽費' });
+catExpense('e_cat_alias', 1000, { category: '交際費' });
+catExpense('e_cat_invest', 6000, { category: '投資' });
+catExpense('e_cat_custom', 800, { category: '推し活' });
+catExpense('e_cat_empty', 300, { category: '' });
+catExpense('e_cat_missing', 200, {});
+catExpense('e_cat_excluded', 9999, { category: '娯楽費', includeInTotal: false });
 
 const DESCRIPTIONS = ['世帯のランチ', 'パートナーの日用品', 'アリスの個人の本', '世帯外の人の支出', '重複グループの支出'];
 const MEMBERS_ONLY = '家計簿の集計を表示できるのは、世帯のメンバーだけです。';
@@ -143,7 +156,7 @@ const FALLBACK = '家計簿\n\n現在データを読み込み中です...';
 const WEB_URL = 'https://line-kakeibo.vercel.app';
 const IDS = [
   'U_alice_0001', 'U_bob_0001', 'U_left_0001', 'U_self_0001', 'U_stranger_0001', 'U_dup_0001',
-  'L_house_0001', 'L_other_0001', 'L_dup_0001', 'R_room_0001',
+  'L_house_0001', 'L_other_0001', 'L_dup_0001', 'R_room_0001', 'U_cat_0001', 'L_cat_0001',
 ];
 
 // --- 実行 ---
@@ -318,6 +331,24 @@ async function main() {
     check('フォールバック文を 1 通返す', r.tried.length === 1 && fallbackText.startsWith(FALLBACK) && fallbackText.includes(context), describe(r));
     check('リンクは ID もクエリも無い Web アプリの URL', fallbackText.endsWith(`\n${WEB_URL}`) && !fallbackText.includes('?'), fallbackText);
     check('文に ID を載せない', !IDS.some((id) => fallbackText.includes(id)), fallbackText);
+  }
+
+  console.log('\n# カテゴリ別の集計: 旧名は正準名にまとめ、知らない名前は別の行のまま（#243）');
+  const now = nowJST();
+  for (const [label, lineGroupId] of [['LINE グループ（lineGroupId で引く）', 'L_cat_0001'], ['1 対 1 のトーク（lineId で引く）', undefined]]) {
+    const catSummary = await getMonthlyGroupSummary(lineGroupId, 'U_cat_0001', now.year(), now.month() + 1, 5);
+    const rows = JSON.stringify(catSummary.categoryTotals.map((c) => [c.category, c.amount]));
+    console.log(`  (${label})`);
+    check(
+      '娯楽・娯楽費・交際費 は「娯楽」の 1 行、投資は「貯金」、知らない名前は別の行、空・カテゴリ無しは「その他」',
+      rows === JSON.stringify([['貯金', 6000], ['娯楽', 4500], ['推し活', 800], ['その他', 500]]),
+      rows
+    );
+    check(
+      '合計・件数は変わらない（合計に含めない支出はカテゴリ別に入れない）',
+      catSummary.includedTotalAmount === 11800 && catSummary.totalAmount === 21799 && catSummary.includedExpenseCount === 7,
+      JSON.stringify({ included: catSummary.includedTotalAmount, total: catSummary.totalAmount, count: catSummary.includedExpenseCount })
+    );
   }
 
   console.log('\n# ログ・返信');

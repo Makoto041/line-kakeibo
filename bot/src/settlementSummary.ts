@@ -22,6 +22,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { messagingApi } from '@line/bot-sdk';
 import type { DocumentReference, Firestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
+import { toCanonicalCategoryName } from './categoryNormalization';
 import type { GroupMember } from './firestore';
 import { sortActiveMembers, type HouseholdMember } from './householdMembers';
 import { errorFields, maskId } from './logSafe';
@@ -158,9 +159,10 @@ export function buildSettlementSummary(input: {
   const pool = periodPool(input.expenses, input.groupId, input.range);
   const counted = pool.filter(isSplitCounted);
 
+  // 旧名（娯楽費・交際費など）は正準名にまとめる（#243。「家計簿」コマンドの getMonthlyGroupSummary と同じ揃え方）
   const byCategory = new Map<string, number>();
   for (const e of counted) {
-    const category = typeof e.category === 'string' && e.category ? e.category : 'その他';
+    const category = typeof e.category === 'string' && e.category ? toCanonicalCategoryName(e.category) : 'その他';
     byCategory.set(category, (byCategory.get(category) ?? 0) + amountOf(e));
   }
   const sorted = Array.from(byCategory, ([category, amount]) => ({

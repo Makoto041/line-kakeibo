@@ -1,5 +1,6 @@
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { randomInt } from 'node:crypto';
+import { toCanonicalCategoryName } from './categoryNormalization';
 import { errorFields, maskId } from './logSafe';
 import { dayjs } from './time';
 
@@ -315,10 +316,12 @@ export async function getMonthlyGroupSummary(
     const includedExpenses = expenses.filter(e => e.includeInTotal !== false);
     const includedTotalAmount = includedExpenses.reduce((sum, e) => sum + e.amount, 0);
 
-    // カテゴリ別集計（includeInTotal: trueのみ）
+    // カテゴリ別集計（includeInTotal: trueのみ）。旧名（娯楽費・交際費など）は正準名にまとめる（#243）。
+    // 正準名・エイリアスと完全一致したときだけ揃え、それ以外の名前（カスタム名など）は別の行のまま
     const categoryMap: Record<string, number> = {};
     for (const expense of includedExpenses) {
-      const cat = expense.category || 'その他';
+      const cat =
+        typeof expense.category === 'string' && expense.category ? toCanonicalCategoryName(expense.category) : 'その他';
       categoryMap[cat] = (categoryMap[cat] || 0) + expense.amount;
     }
 
