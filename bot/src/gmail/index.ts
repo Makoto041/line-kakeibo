@@ -13,7 +13,9 @@ export {
   getGmailClient,
   isGmailAuthConfigured,
   gmailTokenRef,
+  revokeGmailTokenOnGoogle,
 } from './auth';
+export type { GoogleRevokeResult } from './auth';
 
 // Gmail Watch管理
 export {

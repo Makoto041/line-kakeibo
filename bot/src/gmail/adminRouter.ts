@@ -19,7 +19,9 @@ import {
   forceProcessMessage,
   gmailTokenRef,
   gmailStateRef,
+  revokeGmailTokenOnGoogle,
 } from "./index";
+import type { GoogleRevokeResult } from "./index";
 
 /**
  * Admin認証ミドルウェア
@@ -194,42 +196,43 @@ gmailRouter.post("/refresh-token", adminApiLimiter as any, requireAdminAuth, asy
   }
 });
 
+/** Google 側の失効を確かめられなかったときの案内（トークンはもう消えているので、やり直しても Google には送られない） */
+const MANUAL_GOOGLE_REVOKE_GUIDE =
+  "Google did not confirm the token revocation. Remove this app manually from the Google account: " +
+  "Security > Third-party apps & services (https://myaccount.google.com/connections). " +
+  "Retrying this request does not revoke it on Google, because the stored token has been deleted.";
+
+/** 応答に載せる Google 側の失効の結果。トークンが保存されていなかった（何も送っていない）ときは googleRevoked: null */
+function googleRevokeFields(google: GoogleRevokeResult | null) {
+  if (!google) {
+    return { googleRevoked: null };
+  }
+  return {
+    googleRevoked: google.revoked,
+    googleRevoke: { refreshToken: google.refreshToken, accessToken: google.accessToken },
+  };
+}
+
 /**
  * トークンを完全に削除して再認証を可能にする
- * 古いスコープでのトークンをクリアする場合に使用
+ * 古いスコープでのトークンをクリアする場合・アカウントを切り替える場合・トークンが漏れた場合に使用
  * Admin認証が必要
+ *
+ * 1. Google 側で失効させる（refresh_token → access_token。auth.ts の revokeGmailTokenOnGoogle）
+ * 2. Firestore のトークン（system/gmailToken）を消す（Google 側の失効に失敗しても消す。取込にもう使わせない）
+ * 3. watch の状態（system/gmailState）を消す
+ *
+ * 応答（HTTP の状態）:
+ * - 200 success: true … 1〜3 がすべて済んだ。トークンが保存されていなかったときも（googleRevoked: null。Google へは送らない）
+ * - 200 success: false・googleRevoked: false … 2・3 は済んだが、Google が失効を受け付けなかった（2xx 以外・タイムアウト・通信の失敗）。
+ *   やり直しても Google へは送られない（トークンはもう無い）ので、Google アカウントから手動で外す（message で案内する）
+ * - 500 watchStateCleared: false … 3 に失敗した。やり直す（googleRevoked も返す。false なら手動で外す案内も error に入れる）
  */
 gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_req, res) => {
+  let google: GoogleRevokeResult | null | undefined;
   try {
     const tokenDoc = await gmailTokenRef().get();
-    const tokenData = tokenDoc.data();
-
-    if (tokenData?.access_token) {
-      // Google側でトークンを無効化（タイムアウト付き）
-      try {
-        const revokeUrl = `https://oauth2.googleapis.com/revoke?token=${tokenData.access_token}`;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒タイムアウト
-
-        const response = await fetch(revokeUrl, {
-          method: 'POST',
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-
-        if (response.ok) {
-          console.log('Gmail token revoked on Google side');
-        } else {
-          console.warn('Failed to revoke token on Google side', { status: response.status });
-        }
-      } catch (revokeError) {
-        if (revokeError instanceof Error && revokeError.name === 'AbortError') {
-          console.warn('Token revocation timed out (5s)');
-        } else {
-          console.warn('Failed to revoke token on Google side (may already be invalid)', errorFields(revokeError));
-        }
-      }
-    }
+    google = await revokeGmailTokenOnGoogle(tokenDoc.data());
 
     // Firestoreからトークンを削除
     await gmailTokenRef().delete();
@@ -246,18 +249,36 @@ gmailRouter.delete("/revoke", adminApiLimiter as any, requireAdminAuth, async (_
       return res.status(500).json({
         success: false,
         watchStateCleared: false,
-        error: "Token deleted, but failed to delete system/gmailState. Retry DELETE /api/gmail/revoke.",
+        ...googleRevokeFields(google),
+        error:
+          "Token deleted, but failed to delete system/gmailState. Retry DELETE /api/gmail/revoke." +
+          (google && !google.revoked ? ` ${MANUAL_GOOGLE_REVOKE_GUIDE}` : ""),
+      });
+    }
+
+    if (google && !google.revoked) {
+      return res.json({
+        success: false,
+        watchStateCleared: true,
+        ...googleRevokeFields(google),
+        message: `Token deleted from Firestore. ${MANUAL_GOOGLE_REVOKE_GUIDE} Then re-authenticate via /api/gmail/auth`,
       });
     }
 
     res.json({
       success: true,
       watchStateCleared: true,
-      message: "Token revoked and deleted. Please re-authenticate via /api/gmail/auth"
+      ...googleRevokeFields(google),
+      message: google
+        ? "Token revoked on Google and deleted. Please re-authenticate via /api/gmail/auth"
+        : "No stored token, so nothing was sent to Google. Please re-authenticate via /api/gmail/auth",
     });
   } catch (error) {
     console.error("Failed to revoke token", errorFields(error));
-    res.status(500).json({ error: (error as Error).message });
+    res.status(500).json({
+      error: (error as Error).message,
+      ...(google !== undefined ? googleRevokeFields(google) : {}),
+    });
   }
 });
 

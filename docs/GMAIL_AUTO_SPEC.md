@@ -417,7 +417,7 @@ bot/src/
 | POST | `/api/gmail/test-process` | SMBC カードメール内容をプレビュー | Admin |
 | POST | `/api/gmail/force-process/:messageId` | 指定メッセージ ID を強制処理（冪等）。既に支出があり、送信待ちのカード（§3.2）が残っていれば送り直す（応答の `cardNotice` が `sent`） | Admin |
 | POST | `/api/gmail/refresh-token` | トークン強制リフレッシュ | Admin |
-| DELETE | `/api/gmail/revoke` | トークン削除・再認証用（`system/gmailState` も消す。消せなければ 500 と `watchStateCleared: false` を返すので、やり直す） | Admin |
+| DELETE | `/api/gmail/revoke` | トークンを Google 側で失効させてから削除する。再認証・アカウントの切替・トークンが漏れたときに使う（`system/gmailState` も消す。消せなければ 500 と `watchStateCleared: false` を返すので、やり直す）。Google 側の結果は `googleRevoked` で返す（下の「revoke の応答」） | Admin |
 
 > **注意**: `/api/gmail/callback` は Google からの OAuth2 リダイレクト先のため、Admin 認証は不要です。
 
@@ -447,6 +447,39 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
   "https://us-central1-line-kakeibo-0410.cloudfunctions.net/api/gmail/revoke"
 ```
 
+### revoke の応答
+
+`DELETE /api/gmail/revoke`（`adminRouter.ts`）は次の順に進む。
+
+1. 保存してあるトークンを Google 側で失効させる（`auth.ts` の `revokeGmailTokenOnGoogle`）。`POST https://oauth2.googleapis.com/revoke` に、トークンを `application/x-www-form-urlencoded` の本文（`token=...`）で送る（URL のクエリには載せない）。refresh_token を先に、access_token を後に送る。1 回の待ち時間は 5 秒（最大 2 回）
+   - Google の文書（[Token revocation](https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke)）は「access_token を失効させると、対応する refresh_token も失効する」と明記している。逆向き（refresh_token → access_token）の明記は無く、「失効はプロジェクトに与えた権限をすべて外し、発行済みのアクセス・リフレッシュトークンを無効にする」という一般的な記述だけなので、両方送る
+   - どちらかで Google が 2xx を返せば、失効できたとする（`googleRevoked: true`）。refresh_token の失効が通った後の access_token は既に無効なので 400 になりうるが、結果は変えない
+2. Firestore のトークン（`system/gmailToken`）を消す。Google 側の失効に失敗しても消す（取込にもう使わせない）
+3. `system/gmailState` を消す
+
+| HTTP | `success` | 状況 | 管理者がすること |
+|------|-----------|------|------------------|
+| 200 | `true` | 1〜3 がすべて済んだ（`googleRevoked: true`） | 再認証する |
+| 200 | `true` | トークンが保存されていなかった。Google へは何も送っていない（`googleRevoked: null`） | 前の revoke が `googleRevoked: false` だったなら、下の手動の手順で外す |
+| 200 | `false` | 2・3 は済んだが、Google が失効を受け付けなかった（2xx 以外・タイムアウト・通信の失敗。`googleRevoked: false`） | Google アカウントの「サードパーティのアクセス」（[サードパーティ製のアプリとサービスとの接続](https://myaccount.google.com/connections)）から、このアプリを手動で外す。トークンはもう消えているので、revoke をやり直しても Google へは送られない（`message` で案内する） |
+| 500 | `false` | 3 に失敗した（`watchStateCleared: false`） | revoke をやり直す。`googleRevoked: false` なら手動でも外す（`error` で案内する） |
+
+- Google 側に失敗しても 502 にしないのは、Firestore 側の処理は済んでいて、同じ要求をやり直しても直らない（トークンが無いので Google へ送られない）ため。500 は「やり直す」とき（`system/gmailState` を消せなかった）だけに使う。両方に失敗したら 500 を返す
+- 応答の `googleRevoke` は、トークンごとの結果（`refreshToken` / `accessToken`）。`result` は `revoked`（2xx）/ `rejected`（2xx 以外。`status` に Google の HTTP の状態）/ `timeout` / `network_error` / `skipped`（そのトークンが保存されていない）。トークン・Google の応答の本文・例外の文言は、応答にもログにも出さない（ログは固定文と結果だけ。通信の失敗は `errorFields`）
+
+```json
+{
+  "success": false,
+  "watchStateCleared": true,
+  "googleRevoked": false,
+  "googleRevoke": {
+    "refreshToken": { "result": "rejected", "status": 400 },
+    "accessToken": { "result": "timeout" }
+  },
+  "message": "Token deleted from Firestore. Google did not confirm the token revocation. Remove this app manually ..."
+}
+```
+
 ---
 
 ## 11. 注意事項
@@ -466,10 +499,10 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 - そのため、止まっていた `historyId` が残っていると、次の通知でその範囲のメールがまとめて処理される（二重登録は `gmailMessageId` で防ぐ）
 - `/gmail/register-watch` で「今の位置まで飛ばす」ことはできない。飛ばしたいときは `system/gmailState` の `historyId` を消してから `/gmail/register-watch` を呼ぶ
 - **別の Gmail アカウントに切り替える手順**:
-  1. `/gmail/revoke` を呼ぶ（トークンと `system/gmailState` を消す）。応答が `watchStateCleared: true` で `system/gmailState` が消えたことを確認する（消せなかったときは 500 と `watchStateCleared: false` が返るので、revoke をやり直す）
+  1. `/gmail/revoke` を呼ぶ（トークンを Google 側で失効させ、トークンと `system/gmailState` を消す）。応答が `watchStateCleared: true` で `system/gmailState` が消えたことを確認する（消せなかったときは 500 と `watchStateCleared: false` が返るので、revoke をやり直す）。`googleRevoked: false` なら、古いアカウントの Google アカウントの「サードパーティのアクセス」から、このアプリを手動で外す（§10「revoke の応答」）
   2. 新しいアカウントで `/gmail/auth` から認可する
   3. `/gmail/register-watch` を呼ぶ。新しいアカウントの位置から取り込みを始め、そのアドレスを `system/gmailState` の `emailAddress` に保存する
-  - revoke は現状 `users.stop` を呼ばない。呼ぶ場合も、トークンが有効なときだけ効く（取り消し済みのトークンでは stop できない）。このため古いアカウントの watch は最大 7 日、同じ topic に通知を送りうる（revoke は Google 側のトークンも取り消すが、それで通知が止まるかは確かめていない）。その通知は 3. の後は通知の `emailAddress` の照合で読み飛ばされ、`historyId` も変わらない（§3.2。連携中のアカウントの `getProfile` とも一致しないので、追従もしない）。1.〜3. の間は watch の状態が無いので、どの通知も処理されない（2. のあとは新しいアカウントのトークンはある）。7 日たてば古い watch は切れる
+  - revoke は現状 `users.stop` を呼ばない。呼ぶ場合も、トークンが有効なときだけ効く（取り消し済みのトークンでは stop できない）。このため古いアカウントの watch は最大 7 日、同じ topic に通知を送りうる（revoke は Google 側のトークンも失効させる〔refresh_token と access_token。結果は応答の `googleRevoked`〕が、それで通知が止まるかは確かめていない）。その通知は 3. の後は通知の `emailAddress` の照合で読み飛ばされ、`historyId` も変わらない（§3.2。連携中のアカウントの `getProfile` とも一致しないので、追従もしない）。1.〜3. の間は watch の状態が無いので、どの通知も処理されない（2. のあとは新しいアカウントのトークンはある）。7 日たてば古い watch は切れる
   - revoke をせずに別のアカウントで認可し直すと、`system/gmailState` の `historyId`（古いアカウントの位置）が残ったまま新しいアカウントで取り込もうとする。次の watch の登録・更新で、保存してあるアドレスと違うアカウントなら固定文の警告（`Gmail account differs from the saved one`）を出す（アドレスは新しいアカウントにするが、`historyId` は残す）。この警告が出たら、上の手順でやり直す。revoke をせずに認可し直した場合は、代わりに取込の `Linked Gmail address changed` が出ることもある（新しいアカウントの通知で `getProfile` と通知が一致して保存値が書き直されるので、`Gmail account differs from the saved one` の検知が出ない）。アドレスを変えた覚えが無いのにこの警告が出たら、切替の手順（先に revoke）でやり直す
 - 連携中のアカウントのアドレスが変わった（プライマリアドレスの変更など）ときは、取込が自動で追従する（照合が合わない通知で `getProfile` が通知と同じなら、保存値を書き直して処理する。§3.2）。それでも直らない（通知が読み飛ばされ続ける）ときは、`/gmail/register-watch` を呼べば `getProfile` のアドレスで保存し直す（`historyId` は変えない）
 - `emailAddress` の照合が効くのは、このコードをデプロイしたあとの最初の watch の登録・更新（`renewGmailWatch` は 6 日ごと。すぐに効かせたいときは `/gmail/register-watch`。`historyId` は変えないので、いつ呼んでもよい）から。それまでは照合せず、以前どおり処理する
@@ -479,6 +512,7 @@ curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" \
 ### 11.3 セキュリティ
 
 - OAuth2 のクライアント ID / シークレットは Secret Manager、発行されたトークンは Firestore `system/gmailToken`（クライアントからは読めない）
+- トークンが漏れたとき・連携をやめるときは `/api/gmail/revoke` を呼ぶ。応答が `googleRevoked: false`（Google が失効を受け付けなかった）なら、Google アカウントの「サードパーティのアクセス」から手動で外す（§10「revoke の応答」）
 - 共用カード以外のメールは送信元アドレスと本文キーワードで排除（表示名の偽装は判定に使わない）
 - 個人支出は「支出区分」の [変更] で `personal` に切り替える（`includeInTotal: false`）
 - Gmail スコープは `gmail.readonly` のみ
