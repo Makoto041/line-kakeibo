@@ -8,7 +8,8 @@
  * 通知の emailAddress と照合して、違うアカウントの通知では historyId を更新しないこと、保存してあるアドレスが古いだけ
  * （getProfile が通知と同じ）なら保存値を書き直して処理を続けることを確かめる（#280）。
  * 取込が保存する historyId が、通知の値ではなく常にメールボックスの現在位置（history.list の応答の historyId）であること、
- * 現在位置が保存値以下なら進めないこと、保存してある historyId が使えない形なら Gmail を呼ばずに終えることも確かめる（#298）。
+ * 現在位置が保存値以下なら進めないこと（#298）、現在位置が保存値より前なら書かないこと、保存してある historyId が使えない形なら
+ * getProfile の現在位置に置き換えること（トランザクションの中で、保存値がまだ使えない形のときだけ。#300）も確かめる。
  * Gmail API は呼ばない（dist/gmail/auth の getGmailClient を偽物に差し替える）。
  *
  * emulator-household-api.js と同じ形で実行する（npm -w bot run test:emulator から続けて動く）。
@@ -42,6 +43,8 @@ const fakeGmail = {
   profileAddress: 'linked@example.com',
   profileError: null,
   profileCalls: 0,
+  // getProfile が応答を返す直前に呼ぶ（その間に watch の更新・revoke が gmailState を書き換えるのを再現する。#300）
+  beforeProfileReply: null,
   // 取込（handler.ts）の history.list。メッセージは返さない（historyId の更新だけを見る）
   historyListCalls: 0,
   // history.list の応答の historyId（メールボックスの現在位置。取込はこれを保存する。#298）。
@@ -64,6 +67,7 @@ const fakeGmail = {
     getProfile: async () => {
       fakeGmail.profileCalls++;
       if (fakeGmail.profileError) throw fakeGmail.profileError;
+      if (fakeGmail.beforeProfileReply) await fakeGmail.beforeProfileReply();
       return { data: { emailAddress: fakeGmail.profileAddress, historyId: fakeGmail.watchHistoryId } };
     },
     history: {
@@ -130,6 +134,7 @@ function resetFake({
   fakeGmail.profileAddress = profileAddress;
   fakeGmail.profileError = profileError;
   fakeGmail.profileCalls = 0;
+  fakeGmail.beforeProfileReply = null;
   fakeGmail.historyListCalls = 0;
   fakeGmail.listQueue = [];
   fakeGmail.listDelayMs = {};
@@ -499,25 +504,112 @@ async function main() {
       );
     }
 
-    // すでに先頭ゼロの値が保存されていたら、取込は Gmail を呼ばずに終え（#298）、次の watch の更新で応答の値に置き換えて直す
+    // すでに先頭ゼロの値が保存されていたら、取込は history.list を呼ばず、getProfile の現在位置に置き換えて終える（#300）。
+    // 置き換える値は連携中のアカウントの getProfile で決まるので、照合が合わない通知でも置き換える（アドレスは変えない）
     await clearFirestore();
     await seedState({ historyId: '0001000', emailAddress: 'linked@example.com' });
-    resetFake({ mailboxHistoryId: '1600' });
+    resetFake({ historyId: '1500', mailboxHistoryId: '1600' });
     let r = await quietly(() => handleGmailPubSub(notification('someone-else@example.com', '1600')));
     let doc = await readState();
     check(
-      '先頭ゼロで保存された値: 取込は投げず、history.list・getProfile（照合）を呼ばず、保存値を変えない',
-      r === 'ok' && fakeGmail.historyListCalls === 0 && fakeGmail.profileCalls === 0 && doc.historyId === '0001000',
+      '先頭ゼロで保存された値: 取込は投げず、history.list を呼ばず、getProfile を 1 回呼んでその現在位置（"1500"）に置き換える',
+      r === 'ok' && fakeGmail.historyListCalls === 0 && fakeGmail.profileCalls === 1 && doc.historyId === '1500',
       { r: String(r), historyListCalls: fakeGmail.historyListCalls, profileCalls: fakeGmail.profileCalls, doc: doc.historyId }
     );
-    resetFake({ historyId: '500' });
-    const state = await renewWatch();
-    doc = await readState();
-    check('先頭ゼロで保存された値: watch の更新で応答の値（500）に置き換える', doc.historyId === '500' && state.historyId === '500', { doc: doc.historyId, state });
+    check(
+      '先頭ゼロで保存された値: historyId と updatedAt のほか（emailAddress・watchExpiration）は変えない',
+      doc.emailAddress === 'linked@example.com' && doc.watchExpiration === OLD_EXPIRATION && doc.updatedAt.toMillis() > OLD_UPDATED_AT.toMillis(),
+      doc
+    );
     resetFake({ mailboxHistoryId: '1600' });
     r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '1600')));
     doc = await readState();
     check('置き換えた後: 取込が再開し、現在位置（1600）まで進む', r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '1600', { r: String(r), doc });
+
+    // getProfile が失敗: 投げず、保存値を変えない（次の通知か watch の更新で直る）
+    await clearFirestore();
+    await seedState({ historyId: '0001000', emailAddress: 'linked@example.com' });
+    resetFake({ historyId: '1500', profileError: Object.assign(new Error('Backend Error'), { code: 503 }) });
+    r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '1600')));
+    doc = await readState();
+    check('先頭ゼロで保存された値・getProfile が失敗: 投げず、history.list を呼ばず、保存値を変えない', r === 'ok' && fakeGmail.historyListCalls === 0 && doc.historyId === '0001000', { r: String(r), doc: doc.historyId });
+
+    // watch の更新でも直る（resolveWatchHistoryId の replaced。以前からの直し方）
+    resetFake({ historyId: '500' });
+    const state = await renewWatch();
+    doc = await readState();
+    check('先頭ゼロで保存された値: watch の更新でも応答の値（500）に置き換わる', doc.historyId === '500' && state.historyId === '500', { doc: doc.historyId, state });
+
+    // getProfile を待つ間に watch の更新が先に置き換えた: トランザクションで読み直し、使える形なので上書きしない
+    await clearFirestore();
+    await seedState({ historyId: '0001000', emailAddress: 'linked@example.com' });
+    resetFake({ historyId: '1500' });
+    fakeGmail.beforeProfileReply = () => gmailStateRef().set({ historyId: '700' }, { merge: true });
+    r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '1600')));
+    doc = await readState();
+    check('getProfile の間に watch の更新が 700 に置き換えた: getProfile の 1500 で上書きしない', r === 'ok' && doc.historyId === '700', { r: String(r), doc: doc.historyId });
+
+    // getProfile を待つ間に /gmail/revoke が文書を消した: 作り直さない
+    await clearFirestore();
+    await seedState({ historyId: '0001000', emailAddress: 'linked@example.com' });
+    resetFake({ historyId: '1500' });
+    fakeGmail.beforeProfileReply = () => gmailStateRef().delete();
+    r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '1600')));
+    check('getProfile の間に revoke が文書を消した: gmailState を作り直さない', r === 'ok' && (await readState()) === null, { r: String(r), doc: await readState() });
+
+    // 2 つの取込が同時に置き換えようとしても、書くのは 1 回（後の方は使える形を読んで書かない）
+    await clearFirestore();
+    await seedState({ historyId: '0001000', emailAddress: 'linked@example.com' });
+    resetFake({ historyId: '1500' });
+    let profileReplies = 0;
+    fakeGmail.beforeProfileReply = async () => {
+      // 1 回目の応答は 1500、2 回目は 1700（Gmail の位置が進んだ）。2 回目の書き込みは 1 回目より後になるよう待たせる
+      profileReplies++;
+      if (profileReplies === 2) {
+        fakeGmail.watchHistoryId = '1700';
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    };
+    r = await quietly(() =>
+      Promise.all([handleGmailPubSub(notification('linked@example.com', '1600')), handleGmailPubSub(notification('linked@example.com', '1601'))])
+    );
+    doc = await readState();
+    check(
+      '同時に 2 つの取込が置き換えようとした: 先に書いた 1500 が残る（後の 1700 は、使える形を読んで書かない）',
+      r === 'ok' && fakeGmail.profileCalls === 2 && doc.historyId === '1500',
+      { r: String(r), profileCalls: fakeGmail.profileCalls, doc: doc.historyId }
+    );
+  }
+
+  console.log('取込: 現在位置が保存値より前（保存値がこのメールボックスの位置でない）なら書かない（#300）');
+  {
+    await clearFirestore();
+    await seedState({ historyId: '18446744073709551615', emailAddress: 'linked@example.com' });
+    resetFake({ mailboxHistoryId: '18446744073709551614' });
+    let r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '1600')));
+    let doc = await readState();
+    check(
+      '保存値 uint64 の最大値・現在位置がその 1 つ前: 投げず、保存値を変えない',
+      r === 'ok' && fakeGmail.historyListCalls === 1 && doc.historyId === '18446744073709551615',
+      { r: String(r), doc: doc.historyId }
+    );
+    // 404 の経路（getProfile の現在位置 < 保存値）も書かない
+    await clearFirestore();
+    await seedState({ historyId: '9000', emailAddress: 'linked@example.com' });
+    resetFake({ historyId: '5000' });
+    fakeGmail.listQueue = [];
+    const realList = fakeGmail.users.history.list;
+    fakeGmail.users.history.list = async () => {
+      fakeGmail.historyListCalls++;
+      throw Object.assign(new Error('Requested entity was not found.'), { code: 404 });
+    };
+    try {
+      r = await quietly(() => handleGmailPubSub(notification('linked@example.com', '1600')));
+    } finally {
+      fakeGmail.users.history.list = realList;
+    }
+    doc = await readState();
+    check('404・getProfile の現在位置（5000）< 保存値（9000）: 投げず、保存値を変えない', r === 'ok' && fakeGmail.profileCalls === 1 && doc.historyId === '9000', { r: String(r), doc: doc.historyId });
   }
 
   console.log(`\ngmail import emulator: ${passed} passed, ${failed} failed`);

@@ -2015,17 +2015,40 @@ async function saveFlowChecks() {
       );
       systemDocs.delete(noticeId);
 
-      // 複数ページ: 最後のページ（nextPageToken の無い応答）の historyId を保存する（前のページの値も通知の値も使わない）
+      // 複数ページ: 最初のページの historyId（最初の要求の時点の現在位置）を保存する（#300。後のページの値も通知の値も使わない）。
+      // 全ページのメールは処理する
       try {
         historyPages = [{ ids: ['msg-pubsub'], historyId: '700' }, { ids: [], historyId: '800' }];
+        historyBefore = historyUpdates.length;
         r = await handle(pubsubData({ historyId: '900' }));
-        checkJson('複数ページ・通知 900 > 最後のページ: 最後のページの historyId（800）を保存する', r === 'ok' && lastUpdate() === '800', { r: String(r), last: lastUpdate() });
+        checkJson(
+          '複数ページ・通知 900 > 最後のページ: 最初のページの historyId（700）を保存する（最後のページの 800 ではない）',
+          r === 'ok' && JSON.stringify(historyUpdates.slice(historyBefore)) === JSON.stringify(['700']),
+          { r: String(r), updates: historyUpdates.slice(historyBefore) }
+        );
         r = await handle(pubsubData({ historyId: '750' }));
-        checkJson('複数ページ・通知 750 < 最後のページ: 通知の値ではなく、最後のページの historyId（800）を保存する', r === 'ok' && lastUpdate() === '800', { r: String(r), last: lastUpdate() });
+        checkJson('複数ページ・通知 750（最初と最後のページの間）: 通知の値ではなく、最初のページの historyId（700）を保存する', r === 'ok' && lastUpdate() === '700', { r: String(r), last: lastUpdate() });
+        // 後のページのメールも処理する（保存は 1 回で、最初のページの値）
+        historyPages = [{ ids: [], historyId: '700' }, { ids: [], historyId: '750' }, { ids: ['msg-pubsub'], historyId: '800' }];
+        before = counts();
+        historyBefore = historyUpdates.length;
+        r = await handle(pubsubData({ historyId: '810' }));
+        checkJson(
+          '3 ページ・メールは最後のページ: そのメールを処理し、最初のページの historyId（700）を 1 回だけ保存する',
+          r === 'ok' && gmailSaved.length === before.saved + 1 && JSON.stringify(historyUpdates.slice(historyBefore)) === JSON.stringify(['700']),
+          { r: String(r), counts: counts(), updates: historyUpdates.slice(historyBefore) }
+        );
         historyPages = [{ ids: ['msg-pubsub'], historyId: '700' }, { ids: [] }];
         historyBefore = historyUpdates.length;
         r = await handle(pubsubData({ historyId: '760' }));
-        checkJson('最後のページに historyId が無い: 前のページの値は使わず、進めない', r === 'ok' && historyUpdates.length === historyBefore, { r: String(r), updates: historyUpdates.slice(historyBefore) });
+        checkJson('最後のページに historyId が無い: 最初のページの historyId（700）を保存する', r === 'ok' && JSON.stringify(historyUpdates.slice(historyBefore)) === JSON.stringify(['700']), { r: String(r), updates: historyUpdates.slice(historyBefore) });
+        historyPages = [{ ids: ['msg-pubsub'] }, { ids: [], historyId: '800' }];
+        from = allLines.length;
+        historyBefore = historyUpdates.length;
+        r = await handle(pubsubData({ historyId: '770' }));
+        checkJson('最初のページに historyId が無い: 後のページの値（800）は使わず、進めない', r === 'ok' && historyUpdates.length === historyBefore, { r: String(r), updates: historyUpdates.slice(historyBefore) });
+        warns = missingWarnsSince(from);
+        checkJson('最初のページに historyId が無い: 固定文の警告を 1 回だけ出す（source: history.list）', JSON.stringify(warns) === JSON.stringify([[MISSING_WARN, { source: 'history.list' }]]), warns);
       } finally {
         historyPages = null;
       }
