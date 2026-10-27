@@ -122,6 +122,7 @@ async function main() {
   const req = jevCalls[0];
   check('入力は state.input', req?.state?.input === 'ボルダリング');
   check('category の choice で聞く', req?.questions?.category?.type === 'choice');
+  check('大項目の要求の質問は category だけ（中項目は別の呼び出し）', Object.keys(req?.questions || {}).join(',') === 'category', Object.keys(req?.questions || {}).join(','));
   check('text 用の質問文', /家計簿アプリに利用者が入力した/.test(req?.questions?.category?.instructions || ''));
   const criteria = req?.questions?.category?.criteria || {};
   check('既定の 19 カテゴリが選択肢', Object.keys(criteria).length === 19, Object.keys(criteria).join(','));
@@ -151,6 +152,7 @@ async function main() {
   check('辞書の誤一致ではなく Jev の結果', r.category === '交通費', JSON.stringify(r));
   check('Gemini は呼ばれない', geminiCalls.length === 0);
   check('店名用の質問文', /利用明細/.test(jevCalls[0]?.questions?.category?.instructions || ''));
+  check('merchant: 大項目の要求の質問は category だけ', Object.keys(jevCalls[0]?.questions || {}).join(',') === 'category');
 
   console.log('\n# 信頼度は 0〜1 に丸める');
   reset();

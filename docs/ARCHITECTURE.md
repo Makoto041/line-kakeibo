@@ -38,7 +38,7 @@ flowchart LR
     subgraph External["外部サービス"]
         LMA["LINE Messaging API"]
         LLogin["LINE Login (LIFF)"]
-        Jev["TypeSafe AI Jev<br/>(カテゴリ分類のメイン)"]
+        Jev["TypeSafe AI Jev<br/>(カテゴリ分類のメイン・中項目)"]
         Gemini["Gemini 3.5 Flash-Lite<br/>(分類の退避先・フィードバック解析)"]
         Gmail["Gmail API"]
         GH["GitHub API<br/>(Issue起票)"]
@@ -111,12 +111,13 @@ LINEテキスト → webhook(署名検証)
   → 世帯メンバーかの判定（expenseGroupScope.ts の isHouseholdMember: LINE グループに紐づく世帯の有効メンバーか。取得済みの所属から判定し、読み取りは増やさない）
   → カテゴリ分類: キャッシュ → キーワードマップ → Jev（失敗時のみ Gemini）。確信度≥0.4で採用
      （世帯メンバーでない送信者はキーワードマップまで。Jev・Gemini を呼ばない。所属の確認に失敗したときはモデルを呼ぶ。§5）
-  → 中項目の判定（大項目が決まったあと。辞書だけで、時刻は当てない。決まらなければ付けない。SPECIFICATION §4.1）
+  → 中項目の判定（大項目が決まったあと。辞書で、時刻は当てない。辞書で決まらない食費・娯楽は、世帯メンバーの入力なら
+     Jev に聞く〔大項目の Jev が失敗した直後は聞かない。subCategoryClassifier.ts〕。決まらなければ付けない。SPECIFICATION §4.1）
   → グループ所属の決定（expenseGroupScope.ts: 発言元 LINE グループに紐づく世帯の有効メンバーなら groupId+lineGroupId、それ以外は個人支出）
   → expenses 保存 (confirmed:false, includeInTotal:false, inputSource:'line_text', subCategory は決まったときだけ)
   → 確認Flex返信（現在の設定4行〔支出区分・支払った人・立替・カテゴリ。中項目が一覧にあればカテゴリの行に「食費 › 昼ご飯」〕＋ボタン / OK / 修正 / レシート添付 / 家計簿一覧を見る）
   → postbackで status / includeInTotal / payerId / advanceBy / advanceFull / category を確定 → 最新値のカードを返信
-     （category で大項目が変わるときは、中項目 subCategory を辞書と時刻のルールで決め直す。決まらなければ消す。返信カードは決め直した中項目を出す）
+     （category で大項目が変わるときは、中項目 subCategory を辞書と時刻のルールだけで決め直す〔Jev には聞き直さない〕。決まらなければ消す。返信カードは決め直した中項目を出す）
      （［自分が払った］は押した人を支払った人に、［自分が立替］は押した人の立替〔全額を精算に加算〕にする。
        どちらも押せるのは世帯の有効メンバーだけ）
 ```
@@ -127,7 +128,8 @@ LINEテキスト → webhook(署名検証)
 SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
   → history API差分取得 → SMBCフィルタ → 利用先/金額/利用日時パース（メールに時刻が書かれていたか〔usedAtHasTime〕も取る）
   → カテゴリ分類（店名なので Jev → Gemini を優先。どちらも使えないときだけキーワードマップ）
-  → 中項目の判定（店名の辞書。時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。決まらなければ付けない。SPECIFICATION §4.1）
+  → 中項目の判定（店名の辞書。時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。辞書で決まらない食費・娯楽は、大項目が Jev で
+     決まったときだけ Jev に聞く〔Jev の外食に時刻は当てない〕。決まらなければ付けない。SPECIFICATION §4.1）
   → Firestoreトランザクションでアトミック保存（status: 'shared'・confirmed: true。自動で入るので要確認にしない。subCategory は決まったときだけ）
      （gmailMessageId ＋ date+amount+店舗名の類似+usedAt±1分 の二重チェックで重複排除）
      同じトランザクションで送信待ちの印 system/gmailCardNotice_{messageId} を作る（LINE グループがあるときだけ。gmail/cardNotice.ts）
@@ -230,7 +232,7 @@ LINE のテキスト（source: 'text'）
   └─ 4. FAST_KEYWORD_MAP（Jev・Gemini のどちらも使えないときだけ。店名は部分一致で取り違えやすいため後回し）
 
 Jev の「失敗」= 鍵なし（TYPESAFE_API_KEY が無い）・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリ。信頼度が低いだけでは Gemini に回さない。
-Jev・Gemini の失敗はキャッシュしない。どちらで決まったかは「Category classified」ログの provider（jev / gemini）
+Jev・Gemini の失敗はキャッシュしない。どちらで決まったかは「Category classified」ログの provider（jev / gemini。確信度 confidence も出す）
 
 世帯メンバーの確認（費用・無料枠の保護。#245）: LINE のテキストは、送信者が世帯（LINE グループに紐づくグループ）の
 有効メンバーのときだけ 3・4 に進む（expenseFlow.ts → classifyExpense の allowModels）。「グループ作成」で作った
@@ -249,6 +251,8 @@ Jev: @typesafe-ai/sdk 経由の System One（jevCategoryClassifier.ts）
   ・3s タイムアウト・再試行なし（失敗したら Gemini に回すほうが早い）
   ・choice 質問。選択肢はカテゴリ一覧（カスタムカテゴリ含む）、説明は CATEGORY_GUIDE（categoryGuide.ts。食費・娯楽だけ Jev 用に差し替え。説明の無いカスタムカテゴリは null）
   ・Jev・Gemini に送るのは入力・店名の先頭 100 文字だけ（長い入力でトークンを増やさない）
+  ・中項目（辞書で決まらない食費・娯楽）は別の呼び出し（classifySubCategoryWithJev。質問は subCategory の 1 問、
+    選択肢は中項目の一覧と SUB_CATEGORY_DESCRIPTIONS。クライアント・モデル・3s・再試行なしは大項目と同じ）
 
 Gemini（退避先）: @google/genai 経由、Flash-Lite 系だけを使う（Flash 系は無料枠外のため。geminiClient.ts）
   ・メイン = モデル一覧 API で見つかった一番新しい Flash-Lite の安定版（24h キャッシュ。現在 gemini-3.5-flash-lite）
@@ -258,8 +262,14 @@ Gemini（退避先）: @google/genai 経由、Flash-Lite 系だけを使う（Fl
   ・候補のカテゴリ一覧は Firestore から読み 30分キャッシュ（Jev と同じ一覧）
   └─ 出力を categoryNormalization で正準19カテゴリに正規化
 
-中項目（食費・娯楽だけ。#235）: 大項目が決まったあとに resolveSubCategory（subCategoryRules.ts。辞書と時刻のルール、モデルは呼ばない）で決め、決まらなければ付けない。
-  LINE は説明文の辞書だけ、カード利用通知は時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。詳細は SPECIFICATION §4.1
+中項目（食費・娯楽だけ。#235）: 大項目が決まったあとに resolveSubCategory（subCategoryRules.ts。辞書と時刻のルール、モデルは呼ばない）で決める。
+  LINE は説明文の辞書、カード利用通知は時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。
+  登録時に辞書で決まらなければ subCategoryByModel（subCategoryClassifier.ts）が Jev に中項目を選ばせる
+  （大項目とは別の呼び出し。質問は subCategory の 1 問、選択肢はその大項目の中項目の一覧と説明。確信度 0.4 以上で、
+   「その他の食費 / 娯楽」でないときだけ採用。Gemini には回さない。答えは 15 分キャッシュ、失敗はキャッシュしない）。
+  呼ばない: 一覧の無い大項目・説明が空 /「支出」/ カテゴリ名だけ・世帯メンバーでない LINE の送信者（キャッシュも使わない）・
+  鍵なし・同じ処理で大項目の Jev が失敗した（Gemini などで決まった）とき。決まらなければ付けない。
+  結果は「Subcategory classified by model」ログ（outcome など。入力・店名は出さない）。LINE で大項目を変えたときは辞書だけ。詳細は SPECIFICATION §4.1
   Web の編集画面では一覧から手で選べる（「その他の食費」「その他の娯楽」も選べる）
   LINE の確認カードは、カテゴリの行に「食費 › 昼ご飯」と出す（一覧にある値だけ。行は 4 行のまま。SPECIFICATION §2.4）
   Web の内訳シート（web/lib/drilldown.ts）は食費・娯楽を中項目別にまとめる（一覧にない値は「その他の食費 / 娯楽」、無ければ「中項目なし」。
@@ -327,6 +337,7 @@ line-kakeibo/
 │  │  ├─ geminiCategoryClassifier.ts # カテゴリ分類（キャッシュ・辞書・Jev → Gemini の順序）
 │  │  ├─ jevCategoryClassifier.ts / geminiClient.ts / categoryGuide.ts / categoryNormalization.ts # Jev・Gemini の呼び出し、カテゴリの説明、カテゴリ正規化
 │  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧（大項目は正準名の完全一致で引く。web/lib/categoryTaxonomy.ts に同じ一覧）と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。登録時〔LINE の入力・Gmail の取込〕と、LINE で大項目を変えたときに呼ぶ）
+│  │  ├─ subCategoryClassifier.ts # 登録時に辞書で決まらない中項目を Jev に聞く subCategoryByModel（呼ぶ条件・確信度の下限・15 分キャッシュ・ログ）
 │  │  ├─ linkUserResolver.ts / syncUserLinks.ts
 │  │  ├─ issueCreator.ts     # フィードバック→GitHub Issue（本文 1,000 文字まで。公開 Issue に載せる文の無害化。送れる人と件数の制限は line/commands/feedback.ts）
 │  │  ├─ auth/lineAuth.ts    # /auth/line（LIFF の ID トークン → Firebase カスタムトークン）

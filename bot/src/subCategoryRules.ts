@@ -1,7 +1,9 @@
-// 中項目を辞書と時刻のルールで決める（#235 の方式 C。モデルは呼ばない）
+// 中項目を辞書と時刻のルールで決める（#235。このモジュールはモデルを呼ばない）
 //
 // 呼ぶのは 2 か所: 登録時の保存（LINE の入力は line/expenseFlow.ts の textSubCategoryOf、Gmail のカード利用通知は
 // gmail/handler.ts の merchantSubCategoryOf）と、LINE で大項目を変えたときの決め直し（postback の set_category。expenseActions.ts の decideSetCategory）。
+// - 登録時は、ここで決まらなかった食費・娯楽だけ Jev に聞く（subCategoryClassifier.ts の subCategoryByModel。世帯メンバーの入力と
+//   カード利用通知だけ）。大項目を変えたときの決め直しは、ここ（辞書と時刻）だけで、Jev には聞き直さない。
 // - 辞書: 大項目ごとに順番つきのグループ。説明文・店名を normalizeForMatch で揃えてから照合し、最初に当たったグループの中項目を採る。
 //   keywords は部分一致（String.includes）、exact は揃えた入力の全体と一致したときだけ当てる。入力から正規表現は作らない。
 // - 時刻: Gmail の店名（source: 'merchant'）で、時刻の分かる usedAt が渡され、飲食店のグループ（mealTime）に当たったときだけ、
@@ -12,7 +14,7 @@
 //   1 文字の語は持たない／英数字だけの語は 4 文字以上／「マック」「バー」「スパ」は持たない（別の店・語に当たりやすい）。
 //   短い語・別の語の一部になりやすい語（本・マック・スキー・釣り・イオンなど）は exact（全体の一致）にだけ置く
 //   （例: 「ウイスキー」「お釣り」「銀座ライオン」に当てない）。
-import { toCanonicalCategoryName } from './categoryNormalization';
+import { toCanonicalCategoryName, toSelectableCategoryName } from './categoryNormalization';
 import { SUB_CATEGORIES } from './categoryTaxonomy';
 import { formatJST } from './time';
 
@@ -379,4 +381,17 @@ export function resolveSubCategory(input?: ResolveSubCategoryInput | null): stri
     sub = mealOfJst(usedAt) ?? sub;
   }
   return SUB_CATEGORIES[canonical].includes(sub) ? sub : null;
+}
+
+/**
+ * 中項目を決める手がかりの無い説明・店名か（Jev に送らない。subCategoryClassifier.ts）。文字列でない・空（空白だけ）・
+ * 「支出」だけ（LINE で説明もカテゴリも無いときの既定の説明）・カテゴリ名だけ（「食費」「娯楽費」のように、
+ * LINE でカテゴリだけを書くと説明になる。toSelectableCategoryName で正準名に揃えられる名前）なら true。
+ * 絵文字・記号だけの説明は手がかりとして送る（辞書の照合では消えるが、Jev には意味が分かることがある）
+ */
+export function isUninformativeSubCategoryText(text: string): boolean {
+  if (typeof text !== 'string') return true;
+  const trimmed = text.trim();
+  if (trimmed === '' || normalizeForMatch(trimmed) === NO_INFO_TEXT) return true;
+  return toSelectableCategoryName(trimmed) !== null;
 }

@@ -2,12 +2,15 @@
 // そのまま import できる（geminiClient.ts のような require + 型だけの参照は要らない）
 import { TypeSafeClient, choice } from '@typesafe-ai/sdk';
 import { CATEGORY_GUIDE } from './categoryGuide';
+import { SUB_CATEGORIES, SUB_CATEGORY_DESCRIPTIONS } from './categoryTaxonomy';
 import type { ClassificationSource, ClassificationResult } from './geminiCategoryClassifier';
 
 /**
  * Jev（TypeSafe AI の System One 決定モデル）によるカテゴリ分類。分類のメイン。
  * 失敗したら呼び出し側（geminiCategoryClassifier.ts）が Gemini に回す。
  * 質問文と選択肢の説明は、評価で選んだもの（評価スクリプト eval-classifier.js の --variant v3 はこのモジュールの値を使う）。
+ * 中項目（食費・娯楽）も、辞書で決まらなかったときだけ大項目とは別の呼び出しで選ばせる（classifySubCategoryWithJev。
+ * 呼ぶかどうかとキャッシュは subCategoryClassifier.ts）。
  */
 
 /**
@@ -104,5 +107,80 @@ export async function classifyWithJev(
       status: (error as { status?: unknown })?.status,
     });
     return null;
+  }
+}
+
+/**
+ * 中項目の質問文（`input` は大項目と同じ state のキー。決まった大項目を質問文に入れる）。
+ * 文言は評価スクリプト eval-classifier.js の SUB_QUESTIONS（--scheme stage2 の 2 回目）と同じ（smoke-eval-hierarchy.js で確かめる）
+ */
+export const JEV_SUB_QUESTIONS: Record<ClassificationSource, (major: string) => string> = {
+  text: (major) => `\`input\` は家計簿アプリに利用者が入力した支出の内容。この支出は「${major}」に分類された。「${major}」のうち、どの中項目？`,
+  merchant: (major) =>
+    `\`input\` はクレジットカードの利用明細に載った店名（半角カナ・ローマ字・略称が混ざる）。この支出は「${major}」に分類された。店の業態から、「${major}」のうち、どの中項目？`,
+};
+
+/**
+ * 中項目の選択肢（中項目名 → 説明）。major は正準名（SUB_CATEGORIES のキー）。「その他の食費」「その他の娯楽」も含む。
+ * 説明は SUB_CATEGORY_DESCRIPTIONS（無い中項目は null）。中項目の一覧が無い大項目は空
+ */
+export function jevSubCriteria(major: string): Record<string, string | null> {
+  const subs = Object.prototype.hasOwnProperty.call(SUB_CATEGORIES, major) ? SUB_CATEGORIES[major] : [];
+  const descriptions = Object.prototype.hasOwnProperty.call(SUB_CATEGORY_DESCRIPTIONS, major)
+    ? SUB_CATEGORY_DESCRIPTIONS[major]
+    : {};
+  return Object.fromEntries(
+    subs.map((sub) => [
+      sub,
+      Object.prototype.hasOwnProperty.call(descriptions, sub) && typeof descriptions[sub] === 'string' ? descriptions[sub] : null,
+    ])
+  );
+}
+
+/**
+ * 中項目の判定の結果。answered は Jev の答え（一覧の中の名前。「その他の食費」なども含む。確信度は 0〜1 に丸めたもの）。
+ * not_configured は鍵なし、failed はエラー・3 秒のタイムアウト・答えなし・一覧外（どれもキャッシュしない）
+ */
+export type JevSubCategoryResult =
+  | { kind: 'answered'; subCategory: string; confidence: number }
+  | { kind: 'not_configured' }
+  | { kind: 'failed' };
+
+/**
+ * Jev で中項目を選ばせる（大項目とは別の呼び出し。質問は subCategory の 1 問だけ）。major は正準名で、
+ * input はモデルに送る長さに切った入力（geminiCategoryClassifier.ts の toModelInput）。例外は投げない。
+ * クライアントは大項目と同じもの（3 秒・再試行なし・モデル固定）。入力と応答本文はログに出さない。
+ * 失敗のログは大項目と別の文言にする（`Jev classification failed` を数える失敗率の式を変えないため。SECURITY_OPERATIONS.md §7）
+ */
+export async function classifySubCategoryWithJev(
+  major: string,
+  input: string,
+  source: ClassificationSource
+): Promise<JevSubCategoryResult> {
+  if (!isJevConfigured()) return { kind: 'not_configured' };
+  const criteria = jevSubCriteria(major);
+  try {
+    const { answers } = await getClient().systemOne({
+      state: { input },
+      questions: { subCategory: choice(JEV_SUB_QUESTIONS[source](major), criteria) },
+    });
+    const answer = answers.subCategory;
+    if (typeof answer?.choice !== 'string') {
+      console.warn('Jev returned no subcategory');
+      return { kind: 'failed' };
+    }
+    if (!Object.prototype.hasOwnProperty.call(criteria, answer.choice)) {
+      console.warn('Jev suggested a subcategory outside the list');
+      return { kind: 'failed' };
+    }
+    const confidence = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? answer.confidence : 0;
+    return { kind: 'answered', subCategory: answer.choice, confidence: Math.max(0, Math.min(1, confidence)) };
+  } catch (error) {
+    // 大項目と同じく、種類と HTTP ステータスだけ（SDK のエラー文は API の応答本文から作られる）
+    console.warn('Jev subcategory classification failed', {
+      error: (error as Error)?.name,
+      status: (error as { status?: unknown })?.status,
+    });
+    return { kind: 'failed' };
   }
 }

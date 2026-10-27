@@ -256,9 +256,15 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
 支出のカテゴリを決めるため、bot は外部の API（TypeSafe AI の Jev）に次のものを送る
 （`bot/src/jevCategoryClassifier.ts`・`bot/src/geminiCategoryClassifier.ts`）。
 
-送るのはモデルで分類するときだけ。キャッシュで決まったとき、LINE のテキストで `textParser.ts` がカテゴリとして認識した名前を書いたときやキーワード辞書で決まったときは送らない
+送るのはモデルで分類するときだけ。大項目は、キャッシュで決まったとき、LINE のテキストで `textParser.ts` がカテゴリとして認識した名前を書いたときやキーワード辞書で決まったときは送らない
 （カード利用通知の店名は辞書より先にモデルに送る）。LINE のテキストの送信者が世帯のメンバー（LINE グループに紐づく世帯の有効メンバー）で
 ないときも送らない（#245。所属の確認そのものに失敗したときは送る。SPECIFICATION.md §2.3）。
+
+**中項目でも送る**（#235。`bot/src/subCategoryClassifier.ts`）: 大項目が食費・娯楽で、中項目が辞書で決まらなかったときは、大項目とは別の要求で
+Jev に中項目を選ばせる。そのため、**大項目が辞書・カテゴリの指定・既定のカテゴリで決まった LINE の入力でも送る**ことがある
+（大項目も Jev で決めた入力は、1 件で最大 2 回送る）。中項目で送らないのは、世帯のメンバーでない LINE の送信者（指定の有無にかかわらず。
+キャッシュも使わない）・説明が空・「支出」・カテゴリ名だけ・中項目の一覧の無い大項目・同じ処理で大項目の Jev が失敗したとき
+（Gemini にも送らない）・15 分のキャッシュに答えがあるとき。カード利用通知は、大項目が Jev で決まったときだけ送る。
 
 - 送るもの: 入力の先頭 100 文字、質問文、選択肢、モデル名、リクエストのヘッダー。
   - 入力は、カード利用通知なら店名。LINE のテキストなら、`textParser.ts` が金額・日付・支払方法・カテゴリとして取り出した
@@ -266,6 +272,9 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
     実在しない日付は説明に残り、そのまま送られる。
   - 選択肢は、カテゴリ名（利用者のカスタムカテゴリ名を含む）と、既定のカテゴリの説明（コードに持つ固定の文）。
     カスタムカテゴリの説明は送らない（説明なしで渡す）。
+  - 中項目の要求で送るのは、入力の先頭 100 文字（大項目と同じ）、大項目名（正準名。質問文に入る）、その大項目の中項目の一覧と
+    説明（`categoryTaxonomy.ts` の `SUB_CATEGORIES`・`SUB_CATEGORY_DESCRIPTIONS`。コードに持つ固定の文）、モデル名、ヘッダー。
+    利用者のカスタムカテゴリ名は送らない（中項目を聞くのは食費・娯楽だけ）。
   - ヘッダーは `Authorization`（鍵）、`User-Agent` / `X-TypeSafe-SDK`（`typesafe-sdk/<版>`）、
     `X-TypeSafe-Runtime`（`node/<版> (<OS>; <arch>)`）など。個人情報は含まない。
 - 送らないもの: 利用者 ID・世帯 ID・メール本文。
@@ -316,12 +325,26 @@ GitHub ホストランナーはこれらを設定しないため、CI には影�
 
 - Cloud Logging のログベース指標で `Jev classification failed` を数え、(a) 15 分で N 件以上（N は運用で決める）、
   (b) `status` が 401・402・403 のものが 1 件でもあれば（鍵・残高の問題は自然に回復しない）通知する。
+  (b) は中項目の失敗（`Jev subcategory classification failed`）の `status` も見る（鍵・残高は大項目と共通）。
 - Jev の失敗率 = `Jev classification failed` の件数 ÷（その件数 + `provider` が `jev` の `Category classified` の件数）。
   退避の頻度 = `provider` が `gemini` の `Category classified` の件数。答えなし・選択肢にないカテゴリは別の警告
   （`Jev returned no category` / `Jev suggested a category outside the list`）で出るため、この式には入らない。
+  中項目の失敗は別の文言（`Jev subcategory classification failed` / `Jev returned no subcategory` /
+  `Jev suggested a subcategory outside the list`）で出るため、この式には入らない（`Jev classification failed` の文字列を含まない）。
+  `Category classified` には確信度（`confidence`。小数 2 桁）も出る。
+- 中項目の段は `Subcategory classified by model`（`source`・`majorOrigin`・`majorConfidence`・`outcome`・`answer`・`confidence`・
+  `cached`・`ms`）で見る。`outcome` は `adopted`（採用）/ `low_confidence`（0.4 未満）/ `other`（「その他の食費」など）/ `failed` /
+  `no_info` / `models_not_allowed` / `jev_unavailable` / `not_configured`。
+  - 中項目の Jev を呼んだ回数 = `cached` が `false` で `outcome` が `adopted`・`low_confidence`・`other`・`failed` の件数。
+  - 中項目の Jev の失敗率 = `outcome` が `failed` の件数 ÷ 呼んだ回数（`failed` はキャッシュしないので、すべて呼んだ回）。
+  - 採用率 = `adopted` の件数 ÷ 呼んだ回数とキャッシュの件数の和（キャッシュでも同じ判定をする）。
+  - 指標の正規表現は大文字・小文字を区別したまま使う（`Subcategory classified by model` は小文字の `category classified` を含むので、
+    区別しない指定〔`(?i)`〕にすると `Category classified` の指標に混ざる）。
 - bot は `firebase-functions/logger` を使わず `console.warn('…', {…})` で出すので、Cloud Logging では `textPayload` の 1 行になる。
   ログベース指標で `status` や `provider` を絞るには、`textPayload =~ "…"` の正規表現が要る。
 - マージ後に、辞書に無い語を LINE で送り、`Category classified` の `provider` が `jev` になることを確かめる。
+  中項目は、辞書に無い飲食店の名前（例: 「万人力 2950」）を世帯のメンバーが LINE で送り、食費になったときに
+  `Subcategory classified by model` の `outcome` が出ること（`adopted` ならカードが「食費 › 外食」などになること）を確かめる。
 - 費用の天井: TypeSafe のクレジットは前払いで、自動リフィルを切る（または上限を決める）と、費用に天井ができる
   （単価・上限の公式な記載は確認できていない）。
 

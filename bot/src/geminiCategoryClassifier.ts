@@ -160,6 +160,14 @@ const GEMINI_TIMEOUT_MS = 8000;
  */
 const MODEL_INPUT_MAX_CHARS = 100;
 
+/**
+ * モデル（Jev・Gemini）に送る長さに切る（先頭 MODEL_INPUT_MAX_CHARS 文字）。文字単位（サロゲートペアを割らない）で切る。
+ * 大項目の分類と中項目の判定（subCategoryClassifier.ts）で共用する
+ */
+export function toModelInput(description: string): string {
+  return Array.from(description).slice(0, MODEL_INPUT_MAX_CHARS).join('');
+}
+
 const TEXT_EXAMPLES = `入力: "ランチ" → {"category":"食費","confidence":0.95}
 入力: "洗剤" → {"category":"日用品","confidence":0.95}
 入力: "電車賃" → {"category":"交通費","confidence":0.95}
@@ -281,16 +289,21 @@ async function classifyWithModels(
 ): Promise<ClassificationResult | null> {
   // どちらも使えないときは Firestore（カテゴリ一覧）も読まない
   if (!isJevConfigured() && !isGeminiConfigured()) return null;
-  // 文字単位（サロゲートペアを割らない）で切る
-  const input = Array.from(description).slice(0, MODEL_INPUT_MAX_CHARS).join('');
+  const input = toModelInput(description);
   const started = Date.now();
   const categoryNames = await categoriesFor(lineId);
   const jev = await classifyWithJev(categoryNames, input, source);
   const result = jev ?? (await classifyWithGemini(categoryNames, input, source));
   if (result) {
     // どちらで決まったか（Jev の失敗で Gemini に回った割合を見る）。入力・店名・利用者 ID は出さない。
+    // confidence は確信度（小数 2 桁。LINE で 0.4 未満を採用しなかった割合を見る）。
     // ms はカテゴリ一覧の取得（Firestore。通常は 30 分キャッシュ）を含む分類全体の時間
-    console.log('Category classified', { provider: jev ? 'jev' : 'gemini', source, ms: Date.now() - started });
+    console.log('Category classified', {
+      provider: jev ? 'jev' : 'gemini',
+      source,
+      confidence: Math.round(result.confidence * 100) / 100,
+      ms: Date.now() - started,
+    });
   }
   return result;
 }

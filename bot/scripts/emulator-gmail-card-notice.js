@@ -15,6 +15,8 @@
  * emulator-household-api.js と同じ形で実行する（npm -w bot run test:emulator から続けて動く）。
  * 本番のプロジェクトには接続しない（demo-* 以外は即終了）。
  */
+// 手元のシェルに本物の鍵があると、カテゴリ・中項目の Jev が本物の API を呼ぶため消す
+delete process.env.TYPESAFE_API_KEY;
 const { initializeApp, getApps } = require('firebase-admin/app');
 const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 

@@ -115,6 +115,23 @@ console.log('\n# SUB_QUESTIONS（stage2 の 2 回目の質問文）');
 check('大項目名と input を含む（text / merchant）', ['text', 'merchant'].every((s) => SUB_QUESTIONS[s]('食費').includes('「食費」') && SUB_QUESTIONS[s]('食費').includes('`input`')));
 check('merchant は店名の説明', SUB_QUESTIONS.merchant('娯楽').includes('店名') && !SUB_QUESTIONS.text('娯楽').includes('店名'));
 
+console.log('\n# 本番の中項目の要求（jevCategoryClassifier.ts の JEV_SUB_QUESTIONS / jevSubCriteria）と同じ');
+// 読み込むだけでは Jev のクライアントを作らない（API は呼ばない）
+const { JEV_SUB_QUESTIONS, jevSubCriteria } = require('../dist/jevCategoryClassifier');
+for (const major of Object.keys(SUB_CATEGORIES)) {
+  check(
+    `${major}: 質問文（text / merchant）が同じ`,
+    ['text', 'merchant'].every((s) => typeof JEV_SUB_QUESTIONS[s] === 'function' && JEV_SUB_QUESTIONS[s](major) === SUB_QUESTIONS[s](major))
+  );
+  // 本番は説明あり（--sub-desc on と同じ）。並び順も同じ（JSON の文字列で比べる）
+  check(
+    `${major}: 選択肢（名前・並び・説明）が同じ`,
+    same(jevSubCriteria(major), subCriteria(SUB_CATEGORIES[major], major, SUB_CATEGORY_DESCRIPTIONS)),
+    JSON.stringify(jevSubCriteria(major))
+  );
+}
+check('本番の質問の経路は text / merchant だけ', same(Object.keys(JEV_SUB_QUESTIONS).sort(), Object.keys(SUB_QUESTIONS).sort()));
+
 console.log('\n# flatChoices');
 const majors = { 食費: '架空の食費の説明', 日用品: '架空の日用品の説明', 娯楽: null, その他: null };
 const subsOf = (m) => ({ 食費: ['外食', 'カフェ'], 娯楽: ['映画'] })[m] || [];

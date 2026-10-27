@@ -30,7 +30,8 @@
  *   --show-errors                間違えた件を画面に出す（説明文・店名が出る。人に見せる画面では使わない）
  *
  * 階層化（大項目 / 中項目。#235）の評価（--scheme stage2|flat）:
- *   方式 C を採ったため本番では使わない。所感発表での方式 B との比較のために残す。
+ *   本番は、辞書で決まらなかった食費・娯楽の中項目だけを Jev に聞く（bot/src/subCategoryClassifier.ts。質問文・選択肢は stage2 の 2 回目と
+ *   同じで、説明あり〔--sub-desc on〕）。ここは辞書を通さず、対象の全件で Jev だけの精度を測る（本番の採用の下限 0.4 も当てない）。
  *   node bot/scripts/eval/eval-classifier.js --provider jev --variant v3 --scheme stage2 --limit 5          # 試運転
  *   node bot/scripts/eval/eval-classifier.js --provider jev --variant v3 --scheme stage2 --subset tune
  *   node bot/scripts/eval/eval-classifier.js --provider jev --variant v3 --scheme flat --decode sum --subset tune
@@ -138,8 +139,9 @@ const STAGE2_MAJORS = ['pred', 'gold'];
 const FLAT_SEP = '/';
 
 /**
- * stage2 の 2 回目の質問文（仮。#235 の評価用）。state は 1 回目と同じ { input } で、決まった大項目は質問文に入れる。
- * 入力の説明は 1 回目（本番の JEV_QUESTIONS）にそろえ、経路（text / merchant）で変える
+ * stage2 の 2 回目の質問文。state は 1 回目と同じ { input } で、決まった大項目は質問文に入れる。
+ * 入力の説明は 1 回目（本番の JEV_QUESTIONS）にそろえ、経路（text / merchant）で変える。
+ * 本番の中項目の質問文（bot/src/jevCategoryClassifier.ts の JEV_SUB_QUESTIONS）と同じ文言（smoke-eval-hierarchy.js で確かめる）
  */
 const SUB_QUESTIONS = {
   text: (major) => `\`input\` は家計簿アプリに利用者が入力した支出の内容。この支出は「${major}」に分類された。「${major}」のうち、どの中項目？`,
@@ -199,7 +201,10 @@ function countDescribed(subCategories, descriptions) {
   return { described: all.filter(([major, sub]) => describeSub(descriptions, major, sub) !== null).length, total: all.length };
 }
 
-/** stage2 の 2 回目の選択肢（中項目名 → 説明。descriptions が null なら説明なし） */
+/**
+ * stage2 の 2 回目の選択肢（中項目名 → 説明。descriptions が null なら説明なし）。
+ * descriptions が SUB_CATEGORY_DESCRIPTIONS なら本番の jevSubCriteria と同じ（smoke-eval-hierarchy.js で確かめる）
+ */
 function subCriteria(subs, major, descriptions) {
   return Object.fromEntries(subs.map((sub) => [sub, describeSub(descriptions, major, sub)]));
 }

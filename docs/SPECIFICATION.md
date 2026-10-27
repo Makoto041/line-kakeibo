@@ -57,7 +57,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 入力例: `500 ランチ` / `6/29 4800 家賃` / `1500 現金 ドラッグストア`
 
-> **カテゴリトークンを指定すると、そのカテゴリで登録する**: 登録処理（`processExpenseInBackground`）は `parsed.category` があればそれを使い（旧名は正準名に揃える）、分類（§4）は呼びません。指定が無いときは、分類（辞書 → Jev → Gemini）の結果かユーザーデフォルトからカテゴリを決定します。カテゴリの変更は登録後の「カテゴリ変更」ボタンで行います。
+> **カテゴリトークンを指定すると、そのカテゴリで登録する**: 登録処理（`processExpenseInBackground`）は `parsed.category` があればそれを使い（旧名は正準名に揃える）、大項目の分類（§4）は呼びません（食費・娯楽の中項目は、辞書で決まらなければ世帯メンバーの入力に限り Jev に聞く。§4.1）。指定が無いときは、分類（辞書 → Jev → Gemini）の結果かユーザーデフォルトからカテゴリを決定します。カテゴリの変更は登録後の「カテゴリ変更」ボタンで行います。
 
 ### 2.3 支出登録フロー（`processExpenseInBackground`, `bot/src/line/expenseFlow.ts`)
 
@@ -65,11 +65,11 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
    - 取得に失敗した（表示名が取れなかった）ときは「ユーザー情報の取得に失敗しました」と返して保存しない。その結果はキャッシュに残さず、次の入力で取り直す（個人チャット・LINE グループとも。#261）
 2. `appUid` 解決（LINE userId → Firebase Auth 匿名ユーザーを作成/取得。`linkUserResolver.ts`）
 3. カテゴリの決定: カテゴリトークン（§2.2）があればそれを使う（指定・既定カテゴリの旧名は正準名に揃える）。無ければカテゴリ分類（§4。辞書 → Jev → Gemini）とユーザーデフォルトカテゴリを並列取得し、分類結果の確信度 ≥ 0.4 なら採用（辞書・Jev・Gemini のどれで決まっても同じ閾値）、なければデフォルト、それも無ければ `その他`。カードに出す判定元（§2.4）も一緒に決める（`decideTextExpenseCategory`）
-   - **Jev・Gemini を呼ぶのは世帯メンバーの入力だけ**（費用・無料枠の保護。#245）: 世帯メンバー = LINE グループに紐づく世帯（`groups.lineGroupId` を持つグループ）の有効メンバー。LINE グループでの発言は、発言元の LINE グループに紐づく世帯のメンバーに限る（手順 4 で世帯の支出になる条件と同じ）。「グループ作成」で作った自分だけのグループ（`lineGroupId` なし）のメンバーは含めない（`expenseGroupScope.ts` の `isHouseholdMember`）
+   - **Jev・Gemini を呼ぶのは世帯メンバーの入力だけ**（費用・無料枠の保護。#245。手順 3 の最後の中項目の Jev も同じ。カテゴリを指定した入力でも、メンバーでなければ中項目を Jev に聞かない）: 世帯メンバー = LINE グループに紐づく世帯（`groups.lineGroupId` を持つグループ）の有効メンバー。LINE グループでの発言は、発言元の LINE グループに紐づく世帯のメンバーに限る（手順 4 で世帯の支出になる条件と同じ）。「グループ作成」で作った自分だけのグループ（`lineGroupId` なし）のメンバーは含めない（`expenseGroupScope.ts` の `isHouseholdMember`）
    - メンバーでなければ辞書だけで判定し、決まらなければデフォルト、それも無ければ `その他`（Jev・Gemini が使えないときと同じ。判定元は `辞書` / `既定` / `未判定`）。判定には手順 4 のために読む所属グループを使い、Firestore の読み取りは増やさない
    - 所属の確認（`getUserGroups` / `findLineGroupId`）自体が失敗したときは、メンバーの入力を辞書だけにしないようモデルを呼ぶ（メンバーでない人は Firestore の失敗を起こせない）。個人チャットではこの失敗をプロフィールのキャッシュ（15 分）に残さず、次の入力で読み直す
    - プロフィールのキャッシュの期限は取得した時点から 15 分で、キャッシュに当たっても延ばさない。管理スクリプトでの無効化は、個人チャットでは最長 15 分で反映される（LINE グループでの発言は発言ごとに所属を読み直す）
-   - 大項目が決まったあと（指定・分類・既定のどの経路でも）、説明文から中項目を決める（§4.1。辞書だけで、時刻は当てない。`textSubCategoryOf`）。判定元には影響しない
+   - 大項目が決まったあと（指定・分類・既定のどの経路でも）、説明文から中項目を決める（§4.1。まず辞書で、時刻は当てない。`textSubCategoryOf`）。辞書で決まらない食費・娯楽は、世帯メンバーの入力なら Jev に聞く（`subCategoryByModel`。大項目を分類して Jev で決まらなかった〔Gemini で決まった・どれでも決まらなかった〕ときは聞かない）。判定元には影響しない
 4. グループ所属の決定（`expenseGroupScope.ts`）: 発言元の LINE グループに紐づく世帯（`groups.lineGroupId` が一致）の有効メンバーなら `groupId` と `lineGroupId` を付ける。それ以外（第三者・脱退済み・紐づく世帯なし）は**どちらも付けず個人支出**として保存し、Web 一覧にも LINE の集計・精算にも入れない
 5. `expenses` に保存（`confirmed: false`, `includeInTotal: false`, `inputSource: 'line_text'`。`subCategory` は中項目が決まったときだけ付ける）
 6. 確認用 Flex メッセージを送信（§2.4 の登録・編集カード）
@@ -149,7 +149,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 | `set_advance`（`to: on \| off`） | on（自分が立替）= `status: 'advance_pending'`・`advanceFull: true`・`advanceBy` / `payerId` / `payerDisplayName` に押下者・`includeInTotal: true`・`confirmed: true`（除外からでも立替になる）/ off（取り消す）= `status: 'shared'`・`includeInTotal: true`・`confirmed: true`・`advanceBy` / `advanceFull` を削除（支払った人は変えないので、折半で支払った人の分になる）。立替でない支出の off は「立替ではないため、変更はありません」 |
 | `confirm`（OK） | `confirmed: true`。**`pending` のときだけ** `status: 'shared'`・`includeInTotal: true` へ昇格（設定済みの支出を共同費へ巻き戻さない）。押せるのは世帯の有効メンバーだけ |
 | `edit`（修正） | 押下者の `lineId` を含む Web 編集 URL（`/expenses?edit=<id>&lineId=...`）を返信。**押す人が分かっているカードでは「修正」は URI ボタンで直接 Web を開く**ため、この postback へ来るのは Gmail 通知と配信済みの古いカードだけ |
-| `show_category_select` / `set_category` | カテゴリ選択カルーセルを表示 / カテゴリを更新（`decideSetCategory`）。どちらも押せるのは世帯の有効メンバーだけ（カルーセルもメンバーにだけ返す）。**受け付けるカテゴリ**: `category` は 32 文字以内の文字列で、正準名（19 種）か、正準名に揃えられる名前（カルーセルの `医療費` や、LINE の入力の `趣味` `貯蓄` など）だけ（`toSelectableCategoryName`）。それ以外（文字列以外・一覧に無い名前・長すぎる値）は「このカテゴリには変更できません」と返して保存しない。カルーセルの選択肢は `医療費` などの名前のまま、保存は正準名（§2.2 のカテゴリと同じ揃え方）。「選択中」も正準名どうしで比べる（旧名 `趣味` のまま保存された支出では `娯楽費` が選択中）。**中項目（`subCategory`）**: 大項目が正準名どうしで同じなら触らない。変わるときは辞書と時刻のルール（`resolveSubCategory`。モデルは呼ばない）で決め直し、決まらなければ削除する。説明文を辞書に当て、時刻（朝・昼・夜ご飯）は Gmail 取込（`inputSource: 'gmail_auto'`）の飲食店で、保存済みの `usedAt` に時刻があるときだけ当てる（JST の 00:00:00.000 ちょうどは時刻なしとみなす）。制限: 日時の無いカード利用通知は、処理した時刻が `usedAt` に入るため、大項目を変え直したときの時刻ルールは、その処理時刻で判定される（登録時は、日時の無いメールには時刻ルールを当てないため、結果が食い違いうる。件数はごく少ない）。判定に失敗しても大項目は変え、中項目は削除する。postback に中項目が入っていても使わない。返信カードのカテゴリの行には、決め直した中項目を出す（決まらなければ大項目だけ。§2.4） |
+| `show_category_select` / `set_category` | カテゴリ選択カルーセルを表示 / カテゴリを更新（`decideSetCategory`）。どちらも押せるのは世帯の有効メンバーだけ（カルーセルもメンバーにだけ返す）。**受け付けるカテゴリ**: `category` は 32 文字以内の文字列で、正準名（19 種）か、正準名に揃えられる名前（カルーセルの `医療費` や、LINE の入力の `趣味` `貯蓄` など）だけ（`toSelectableCategoryName`）。それ以外（文字列以外・一覧に無い名前・長すぎる値）は「このカテゴリには変更できません」と返して保存しない。カルーセルの選択肢は `医療費` などの名前のまま、保存は正準名（§2.2 のカテゴリと同じ揃え方）。「選択中」も正準名どうしで比べる（旧名 `趣味` のまま保存された支出では `娯楽費` が選択中）。**中項目（`subCategory`）**: 大項目が正準名どうしで同じなら触らない。変わるときは辞書と時刻のルール（`resolveSubCategory`。モデルは呼ばない）で決め直し、決まらなければ削除する（**大項目を変えても Jev には聞き直さない**。登録時〔§4.1〕と違い、辞書で決まらなければ中項目なし。決め直しはトランザクションの中で同期に行う）。説明文を辞書に当て、時刻（朝・昼・夜ご飯）は Gmail 取込（`inputSource: 'gmail_auto'`）の飲食店で、保存済みの `usedAt` に時刻があるときだけ当てる（JST の 00:00:00.000 ちょうどは時刻なしとみなす）。制限: 日時の無いカード利用通知は、処理した時刻が `usedAt` に入るため、大項目を変え直したときの時刻ルールは、その処理時刻で判定される（登録時は、日時の無いメールには時刻ルールを当てないため、結果が食い違いうる。件数はごく少ない）。判定に失敗しても大項目は変え、中項目は削除する。postback に中項目が入っていても使わない。返信カードのカテゴリの行には、決め直した中項目を出す（決まらなければ大項目だけ。§2.4） |
 | `show_list` | 押下者の `lineId` を含む家計簿一覧 URL を返す |
 | `shared` / `personal` / `advance`（旧 UI） | 配信済みカードからの押下に備えて `set_split` / `set_advance`（`advance` は［自分が立替］）へ読み替える |
 
@@ -184,7 +184,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 ### 3.1 Gmail 連携（三井住友カード利用通知）
 
 - Gmail API（`gmail.readonly` スコープのみ）＋ **Pub/Sub push 通知**（topic: `gmail-notifications`）
-- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」と、メールに時刻が書かれていたか（`usedAtHasTime`。§4.1）を抽出 → カテゴリ分類（§4。Jev → Gemini → 辞書。確信度に関係なく採用）→ 中項目の判定（§4.1。`merchantSubCategoryOf`）→ **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 4 行＋ボタン）
+- フロー: 新着メール → `gmailPubSubHandler` → history API で差分取得 → SMBC 利用通知をフィルタ → `gmail/parser.ts` で「利用先・金額・利用日時」と、メールに時刻が書かれていたか（`usedAtHasTime`。§4.1）を抽出 → カテゴリ分類（§4。Jev → Gemini → 辞書。確信度に関係なく採用）→ 中項目の判定（§4.1。店名の辞書 `merchantSubCategoryOf` → 決まらない食費・娯楽は Jev〔大項目が Jev で決まったときだけ〕）→ **アトミック保存**（`gmailMessageId` に加え、`date+amount` が同じ `gmail_auto` 支出のうち店舗名が類似し `usedAt` が ±1 分のものを重複として弾く。`firestore.ts` の `saveGmailExpenseAtomic`）→ LINE グループへ Flex 通知（§2.4 の登録・編集カード。現在の設定 4 行＋ボタン）
 - 通知の送り直し: 保存と同じトランザクションで送信待ちの印（`system/gmailCardNotice_{messageId}`）を作り、送れたら消す。push の失敗や保存と push の間の中断で印が残ったら、同じメールの再処理（Pub/Sub の再送・`/gmail/force-process/:messageId`）で保存時点のカードを送り直す。メッセージから決まる `X-Line-Retry-Key` を付けて二重に届かないようにし（409 は送れた扱い）、key が効く 24 時間に収まるよう 23 時間を過ぎた印は送らずに消す。印の無い既存の支出には送らない（`gmail/cardNotice.ts`。詳細は [GMAIL_AUTO_SPEC.md](./GMAIL_AUTO_SPEC.md) §3.2）
 - 保存フィールド: `lineId`/`payerId` はシステムユーザー `gmail-auto-system`、`inputSource: 'gmail_auto'`, `status: 'shared'`, `confirmed: true`（自動で入るので要確認にしない）, `includeInTotal: true`, `usedAt`（カード利用日時）、`groupId`（`DEFAULT_GROUP_ID`）/ `lineGroupId`（`LINE_GROUP_ID`）、`subCategory`（中項目が決まったときだけ。手動処理の `/gmail/process-latest`・`/gmail/force-process/:messageId` でも同じ）
 - 失敗時: 1 通でも処理に失敗したら `historyId` を進めずに投げ、Pub/Sub の再送（`gmailPubSubHandler` の `retry: true`。10〜600 秒の間隔で最大 24 時間）で同じ範囲をやり直す。同じメッセージが試行 3 回以上 **かつ** 最初の失敗から 6 時間以上失敗し続けたら、その 1 通は諦めて先へ進む（`system/gmailFailures` の `attempts`・`firstFailedAt`）。消されたメール（`messages.get` の 404）は失敗として数えず読み飛ばす。やり直しても直らない失敗（`historyId` の読めない通知・Gmail のトークンが無い・watch の状態が無い）は投げずに終え、再送させない。12 時間より古い通知は処理せずに捨てる（取込は保存してある `historyId` からの全範囲を処理するので、次の新しい通知で拾われる）。詳細は [GMAIL_AUTO_SPEC.md](./GMAIL_AUTO_SPEC.md) §3.2
@@ -238,7 +238,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | カード利用通知の店名（`source: 'merchant'`、Gmail 取込） | 分類結果キャッシュ → **Jev → Gemini** → キーワード辞書（どちらも使えないときだけ） | 店名は半角カナ・ローマ字・略称が多く、部分一致の辞書は取り違えやすい（例: `au` `gu` `etc` `sim` `パン` が店名の一部に一致する） |
 
 - **Jev**（`bot/src/jevCategoryClassifier.ts`、`@typesafe-ai/sdk`）: System One の `choice` 質問で、カテゴリ一覧（利用者のカスタムカテゴリを含む）から 1 つ選ばせる。選択肢の説明は Gemini と同じ判断基準（`CATEGORY_GUIDE`）で、食費・娯楽だけ Jev 用に書き足したもの。説明の無いカスタムカテゴリは説明なし（`null`）で渡す。モデルは `jev-1.13.0` に固定、3 秒で打ち切り、再試行なし。Jev・Gemini に送るのは入力・店名の先頭 100 文字だけ（費用・無料枠の消費を抑える）
-- Jev が「失敗」したときだけ Gemini に回す。失敗 = 鍵なし（`TYPESAFE_API_KEY` が無い）・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリ。**信頼度が低いだけでは Gemini に回さない**（評価で効果が無かったため）。どちらで決まったかは `Category classified` のログ（`provider`・`source`・`ms`。入力・店名は出さない）で見られる
+- Jev が「失敗」したときだけ Gemini に回す。失敗 = 鍵なし（`TYPESAFE_API_KEY` が無い）・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリ。**信頼度が低いだけでは Gemini に回さない**（評価で効果が無かったため）。どちらで決まったかは `Category classified` のログ（`provider`・`source`・`confidence`〔小数 2 桁〕・`ms`。入力・店名は出さない）で見られる
 - Jev も Gemini と同じく、LINE のテキストでは確信度 0.4 未満なら採用しない（`expenseFlow.ts`。その場合は利用者の既定カテゴリか「その他」）。店名（Gmail 取込）は確信度に関係なく採用する
 - **Gemini（退避先）で使うモデルは Flash-Lite 系だけ**（Flash 系は無料枠から外れるため）。メインは「利用できる Flash-Lite の安定版のうち一番新しいもの」で、モデル一覧 API で調べて 24 時間キャッシュする（上位の Flash-Lite が出れば自動でメインになる）。予備はその次に新しい Flash-Lite。一覧を取れないときは既知の順（`gemini-3.5-flash-lite` → `gemini-3.1-flash-lite`）。`-preview` / `-image` などの派生と Flash（Lite でないもの）は使わない
 - メインが終了・提供停止（404、または「deprecated / no longer available」などの 400・403）になったときは予備の Flash-Lite に自動で切り替え、以後 1 時間はそのインスタンスで予備を直接使う。思考レベルを受け付けない 400 のときは思考の設定なしで同じモデルに送り直す。レート制限（429）やスキーマ誤りでは切り替えない
@@ -246,19 +246,27 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - Gemini の応答は構造化出力（JSON スキーマで `category` をカテゴリ一覧の enum に限定）。カテゴリ一覧は Firestore から取得し 30 分キャッシュ（Jev と Gemini で同じ一覧を使う）
 - Jev・Gemini の失敗はキャッシュしない（どちらも使えず辞書で決めた店名の結果も、復旧後にモデルで判定し直す）。成功した結果は提供元に関わらずキャッシュする
 - 分類の結果は判定元（`provider`: `dictionary` / `jev` / `gemini`）を持ち、キャッシュでも残る。最初のカードの括弧に出す（§2.4）
+- 中項目（食費・娯楽）は大項目とは別の段で決める（§4.1。辞書 → 決まらなければ Jev）。大項目の判定はこの段の有無で変わらない
 
 ユーザーの修正は `categoryFeedback` コレクションに記録される。
 
 ### 4.1 中項目の判定（#235）
 
-食費・娯楽の支出に、中項目（`subCategory`。一覧は `bot/src/categoryTaxonomy.ts` の `SUB_CATEGORIES`）を付ける。大項目が決まったあとに、**辞書と時刻のルールだけ**で決める（`bot/src/subCategoryRules.ts` の `resolveSubCategory`。モデルは呼ばず、外部にも送らない）。
+食費・娯楽の支出に、中項目（`subCategory`。一覧は `bot/src/categoryTaxonomy.ts` の `SUB_CATEGORIES`）を付ける。大項目が決まったあとに、まず**辞書と時刻のルール**で決め（`bot/src/subCategoryRules.ts` の `resolveSubCategory`。モデルは呼ばない）、登録時に辞書で決まらなかったときだけ **Jev** に中項目を選ばせる（`bot/src/subCategoryClassifier.ts` の `subCategoryByModel`。例: 辞書に無い店名の「万人力 2950」が食費になったとき、Jev が外食を選べば「食費 › 外食」）。
 
 - **辞書**: 大項目ごとに順番つきの語のグループを持ち、説明文・店名を揃えて（NFKC・小文字・記号除去）照合し、最初に当たったグループの中項目を採る。大項目は正準名の完全一致で見る（中項目の一覧が無い大項目・カスタム名では付けない）
-- **LINE の入力**: 説明文の辞書だけ。時刻は当てない（入力した時刻は食べた時刻とは限らない）。例: 「ランチ」→ 昼ご飯、「ラーメン」→ 外食
+- **LINE の入力**: 説明文の辞書。時刻は当てない（入力した時刻は食べた時刻とは限らない）。例: 「ランチ」→ 昼ご飯、「ラーメン」→ 外食
 - **カード利用通知（Gmail）**: 店名の辞書。メールに時刻が書かれていたとき（`gmail/parser.ts` の `usedAtHasTime`。日付と時刻の両方が取れ、時刻が 0:00〜23:59 の表記のときだけ true。時刻なし〔00:00 にする〕・日付なし〔処理した時刻にする〕・`25:00` のような表記は false）だけ、飲食店のグループに当たった店名を JST の時刻で朝ご飯（5:00〜10:59）・昼ご飯（11:00〜16:59）・夜ご飯（17:00〜翌 4:59）にする。時刻の無いメールの飲食店は外食。カフェ・コンビニ・飲み会などには時刻を当てない
-- **決まらなければ付けない**: 辞書に当たらない・説明が「支出」だけ・大項目に中項目の一覧が無いときは `subCategory` の項目を保存しない。「その他の食費」「その他の娯楽」は自動では付けない（手で選ぶためのもの）
-- 判定に失敗しても保存は続ける（中項目なし）。結果は `Subcategory resolved` のログ（`source`・`subCategory` だけ。説明・店名・ID は出さない）で見られる。食費・娯楽のときだけ出す
-- **既存のデータはそのまま**（遡って付けない）。LINE のカードで大項目を変えると決め直し（§2.5）、Web の編集画面では一覧から手で選べる（§5.1 の `/expenses`。大項目を変えると「中項目なし」に戻り、選び直さずに保存すると `subCategory` を消す）
+- **Jev（辞書で決まらなかったときだけ）**: 大項目とは別の呼び出しで、System One の `choice` 質問 1 問（`subCategory`）を送る。選択肢はその大項目の中項目の一覧（「その他の食費」「その他の娯楽」を含む）と説明（`SUB_CATEGORY_DESCRIPTIONS`）、質問文に大項目名、入力は大項目と同じ先頭 100 文字。モデル・3 秒の打ち切り・再試行なしは大項目と同じ。Gemini には回さない
+  - **呼ぶ条件**（すべて満たすとき）: 大項目（正準名）に中項目の一覧がある（食費・娯楽。日用品・その他〔未判定〕・カスタム名は呼ばない）／説明・店名が空・「支出」だけ・カテゴリ名だけ（「食費」「娯楽費」など）でない／モデルを呼んでよい（LINE は世帯メンバーの入力だけ。§2.3。カード利用通知は呼んでよい）／鍵（`TYPESAFE_API_KEY`）がある／同じ処理で大項目の Jev が失敗していない（LINE で大項目を分類して Gemini で決まった・どれでも決まらなかったとき、カード利用通知で大項目が Jev 以外で決まった・決まらなかったときは呼ばない）
+  - 大項目が既定カテゴリに置き換わった（判定元 `既定`）ときも、置き換わった大項目（食費など）の中項目を聞く。カテゴリを指定した入力（`指定`）でも聞く
+  - **採用**: 確信度 0.4 以上（`SUB_MIN_CONFIDENCE`。LINE・カード利用通知で同じ）で、「その他の食費」「その他の娯楽」でないときだけ。Jev が「外食」を返しても時刻のルールは当てない
+  - **キャッシュ**: Jev の答え（採用しなかったその他・低い確信度も含む）を 15 分（キーは経路・正準の大項目・送った入力の小文字。利用者 ID は含めない）。失敗はキャッシュしない。モデルを呼ばない送信者はキャッシュも使わない
+  - エラー・3 秒のタイムアウト・答えなし・一覧外は中項目なし（大項目と別の文言で警告: `Jev subcategory classification failed`〔`error`・`status`〕／`Jev returned no subcategory`／`Jev suggested a subcategory outside the list`）
+  - 結果は `Subcategory classified by model` のログ（`source`・`majorOrigin`・`majorConfidence`・`outcome`・`answer`〔一覧の名前だけ〕・`confidence`・`cached`・`ms`。確信度は小数 2 桁。入力・店名・ID は出さない）で見られる。`outcome` は `adopted` / `low_confidence` / `other` / `failed` / `no_info` / `models_not_allowed` / `jev_unavailable` / `not_configured`。辞書で決まったとき・一覧の無い大項目では出さない
+- **決まらなければ付けない**: 辞書にも Jev にも決まらない・説明が「支出」だけ・大項目に中項目の一覧が無いときは `subCategory` の項目を保存しない。「その他の食費」「その他の娯楽」は自動では付けない（手で選ぶためのもの）
+- 判定に失敗しても保存は続ける（中項目なし。Jev の失敗・タイムアウトでもカードは送る）。辞書の結果は `Subcategory resolved` のログ（`source`・`subCategory` だけ。説明・店名・ID は出さない）で見られる。食費・娯楽のときだけ出す
+- **既存のデータはそのまま**（遡って付けない）。LINE のカードで大項目を変えると辞書と時刻のルールだけで決め直す（Jev には聞き直さない。§2.5）。Web の編集画面では一覧から手で選べる（§5.1 の `/expenses`。大項目を変えると「中項目なし」に戻り、選び直さずに保存すると `subCategory` を消す）
 - Web の内訳シートで、食費・娯楽を中項目別の小計に分けて見られる（§5.2）
 
 ---
@@ -338,7 +346,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 | コレクション | 主なフィールド | 備考 |
 |---|---|---|
-| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `subCategory?`（中項目。任意で、`category`（大項目）とは別に持つ。bot は登録時〔LINE の入力・Gmail の取込〕に辞書と時刻のルールで決まったときだけ書き〔§4.1。決まらなければ項目が無い〕、LINE で大項目を変えたとき〔`set_category`。§2.5〕に決め直す・決まらなければ消す。Web の編集画面では食費・娯楽の一覧から選べ、「中項目なし」にするか、大項目を変えて選び直さないと消す〔§5.1〕）, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`。`advance_pending` は立替、`advance_settled` は以前の立替の精算か、全額にする前の立替を精算済みにしたもの), `inputSource`(`line_text\|gmail_auto\|recurring`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceFull?`（立替を全額で精算に加算する扱い。［自分が立替］で `true`。無い `advance_pending` は全額にする前の立替で、新しくは作られない。bot だけが書き、クライアントからは作成・更新とも不可）, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `recurringId?`, `receiptUrl?`, `needsEdit?`（**レガシー**。書き込み・読み出しとも廃止済みで既存データにのみ存在）, `items?[]`, `ocrText?`（レガシー）, `createdAt`, `updatedAt` | 中核コレクション。システムユーザーの `lineId`: Gmail 取込 `gmail-auto-system` / 固定費 `recurring-system`（ルールで世帯メンバーが修正・削除できる） |
+| `expenses` | `lineId`, `appUid?`, `groupId?`, `lineGroupId?`, `amount`, `description`, `date`(YYYY-MM-DD), `category`, `subCategory?`（中項目。任意で、`category`（大項目）とは別に持つ。bot は登録時〔LINE の入力・Gmail の取込〕に辞書と時刻のルール、または辞書で決まらなければ Jev で決まったときだけ書き〔§4.1。決まらなければ項目が無い〕、LINE で大項目を変えたとき〔`set_category`。§2.5〕に辞書と時刻のルールだけで決め直す・決まらなければ消す。Web の編集画面では食費・娯楽の一覧から選べ、「中項目なし」にするか、大項目を変えて選び直さないと消す〔§5.1〕）, `confirmed`, `includeInTotal`, `status`(`pending\|shared\|personal\|advance_pending\|advance_settled`。`advance_pending` は立替、`advance_settled` は以前の立替の精算か、全額にする前の立替を精算済みにしたもの), `inputSource`(`line_text\|gmail_auto\|recurring`。`line_ocr` は OCR 廃止に伴う**レガシー値**で既存データにのみ存在), `payerId`, `payerDisplayName`, `paymentMethod`, `advanceBy?`, `advanceFull?`（立替を全額で精算に加算する扱い。［自分が立替］で `true`。無い `advance_pending` は全額にする前の立替で、新しくは作られない。bot だけが書き、クライアントからは作成・更新とも不可）, `advanceSettledAt?`, `gmailMessageId?`, `usedAt?`, `recurringId?`, `receiptUrl?`, `needsEdit?`（**レガシー**。書き込み・読み出しとも廃止済みで既存データにのみ存在）, `items?[]`, `ocrText?`（レガシー）, `createdAt`, `updatedAt` | 中核コレクション。システムユーザーの `lineId`: Gmail 取込 `gmail-auto-system` / 固定費 `recurring-system`（ルールで世帯メンバーが修正・削除できる） |
 | `groups` | `name`, `inviteCode`(8桁・暗号学的乱数。参加には使わない), `createdBy`, `lineGroupId?`, `splitSettings?`(`{ collectFromLineId, updatedBy, updatedAt }`) | 汎用グループ機能はコード上「非推奨」— 実運用は LINE グループ共有。クライアント書込不可 |
 | `groupMembers/{groupId}_{lineId}` | `groupId`, `lineId`, `displayName`, `isActive`, `joinedAt`, `leftAt?`, `deactivatedReason?` | `isActive == true` が Web アクセス権。LINE グループ退出（`memberLeft`）で bot が `false` にする。発言による自動追加はしない（世帯2名固定、追加は管理スクリプト）。クライアント書込不可 |
 | `recurringExpenses` | `groupId`, `name`, `amount`, `category`, `dayOfMonth`, `payment`(`shared\|advance`), `payerLineId`, `active`, `lastPostedMonth`, `startDate`, `createdBy`, `createdAt`, `updatedAt` | 固定費の項目（§3.3）。クライアントからは読み書き不可（`/household/recurring` 経由） |
@@ -388,7 +396,7 @@ Storage: `receipts/{expenseId}/{fileName}` — cross-service rules で支出を�
 | `LINE_CHANNEL_TOKEN` / `LINE_CHANNEL_SECRET` | LINE Messaging API |
 | `LINE_LIFF_CHANNEL_ID` | `/auth/line` での LIFF ID トークン検証（`aud`） |
 | `WEB_ORIGINS` | `/auth/line` と `/household` の CORS 許可オリジン（任意。既定は本番 Vercel と localhost） |
-| `TYPESAFE_API_KEY` | カテゴリ分類のメイン（TypeSafe AI の Jev） |
+| `TYPESAFE_API_KEY` | カテゴリ分類のメイン（TypeSafe AI の Jev。辞書で決まらない中項目も） |
 | `GEMINI_API_KEY` | カテゴリ分類の退避先（Jev が失敗したとき）・フィードバック解析 |
 | `FIREBASE_PROJECT_ID` | 既定 `line-kakeibo-0410` |
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REDIRECT_URI` | Gmail OAuth |
