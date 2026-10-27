@@ -14,6 +14,7 @@ import { getCategoryEmoji } from "../gmail/types";
 import { isHouseholdMember, resolveExpenseGroupScope } from "../expenseGroupScope";
 import { resolveAppUidForExpense } from "../linkUserResolver";
 import { errorFields, maskId } from "../logSafe";
+import { subCategoryByModel } from "../subCategoryClassifier";
 import { resolveSubCategory } from "../subCategoryRules";
 import { getPaymentMethodLabel, PaymentMethod } from "../textParser";
 import { getLineClient, replyText, replyWithPushFallback } from "./client";
@@ -157,7 +158,7 @@ export function decideTextExpenseCategory(input: {
 
 /**
  * LINE の入力の中項目（#235）。説明文を辞書で照合する（resolveSubCategory。入力した時刻は食べた時刻とは限らないので、時刻は渡さない）。
- * 決まらなければ undefined（保存で項目ごと付かない）。判定に失敗しても投げず undefined にして、保存は続ける。
+ * 決まらなければ undefined（保存では、続けて Jev に聞く。subCategoryByModel）。判定に失敗しても投げず undefined にして、保存は続ける。
  * 大項目に中項目の一覧があるとき（食費・娯楽）だけ、結果をログに出す（説明・ID は出さない）。
  */
 export function textSubCategoryOf(category: string, description: string): string | undefined {
@@ -365,15 +366,18 @@ export async function processExpenseInBackground(
     // 低信頼→デフォルトカテゴリへ倒れて毎回カード上で付け直す必要があった。
     // 判定元（categoryOrigin）は最初のカードの括弧に出すだけで、保存しない。
     let decided: { category: string; origin?: CategoryOrigin };
+    // 大項目の分類の結果（カテゴリの指定があれば分類しないので null）。中項目を Jev に聞くかと、そのログに使う
+    let classified: ClassificationResult | null = null;
+
+    // モデル（Jev・Gemini）を呼ぶのは世帯メンバーの入力だけ（費用・無料枠の保護。#245）。大項目の分類と中項目の両方に使う。
+    // メンバーでなければ辞書だけで判定し、決まらなければ既定カテゴリか「その他」（モデルが使えないときと同じ）。
+    // 世帯の確認自体に失敗したときはモデルを呼ぶ（メンバーでない人は Firestore の失敗を起こせない。
+    // 一時的な失敗でメンバーの入力を辞書だけにしないほうを優先する）
+    const allowModels = membershipLookupFailed || isHouseholdMember(activeGroup, lineGroupId);
 
     if (parsed.category) {
       decided = decideTextExpenseCategory({ specified: parsed.category });
     } else {
-      // モデル（Jev・Gemini）を呼ぶのは世帯メンバーの入力だけ（費用・無料枠の保護。#245）。
-      // メンバーでなければ辞書だけで判定し、決まらなければ既定カテゴリか「その他」（モデルが使えないときと同じ）。
-      // 世帯の確認自体に失敗したときはモデルを呼ぶ（メンバーでない人は Firestore の失敗を起こせない。
-      // 一時的な失敗でメンバーの入力を辞書だけにしないほうを優先する）
-      const allowModels = membershipLookupFailed || isHouseholdMember(activeGroup, lineGroupId);
       if (!allowModels) {
         console.log("Skipping category models: poster is not a household member", {
           user: maskId(event.source.userId),
@@ -391,8 +395,9 @@ export async function processExpenseInBackground(
       ]);
 
       // 分類結果を優先使用（閾値0.4で精度向上）。決まらなければユーザーデフォルト（decideTextExpenseCategory）
+      classified = classification.status === 'fulfilled' ? classification.value : null;
       decided = decideTextExpenseCategory({
-        classified: classification.status === 'fulfilled' ? classification.value : null,
+        classified,
         defaultCategory: userSettingsResult.status === 'fulfilled'
           ? userSettingsResult.value?.defaultCategory
           : undefined,
@@ -401,8 +406,22 @@ export async function processExpenseInBackground(
 
     const finalCategory = decided.category;
     const categoryOrigin = decided.origin;
-    // 中項目は大項目が決まったあとに説明文から決める（指定・分類・既定のどの経路でも同じ。判定元には影響しない）
-    const subCategory = textSubCategoryOf(finalCategory, parsed.description);
+    // 中項目は大項目が決まったあとに説明文から決める（指定・分類・既定のどの経路でも同じ。判定元には影響しない）。
+    // 辞書で決まらなければ、食費・娯楽だけ Jev に聞く（subCategoryByModel。メンバーの入力だけ）。大項目を分類して
+    // Jev で決まらなかった（Gemini で決まった・どれでも決まらなかった）ときは、Jev が失敗した直後なので聞かない
+    const subCategory =
+      textSubCategoryOf(finalCategory, parsed.description) ??
+      (await subCategoryByModel({
+        major: finalCategory,
+        text: parsed.description,
+        source: "text",
+        allowModels,
+        // Gmail と違い、LINE は辞書が Jev より先なので、辞書で決まった（dictionary）は Jev を呼んでいない＝失敗扱いにしない
+        jevFailedForMajor:
+          !parsed.category && allowModels && classified?.provider !== "jev" && classified?.provider !== "dictionary",
+        majorOrigin: categoryOrigin,
+        majorConfidence: classified?.confidence,
+      }));
 
     // グループ所属の決定。発言元の LINE グループに紐づくグループの有効なメンバーで
     // なければ lineGroupId も付けず個人支出にする（LINE 集計・精算への混入防止）。

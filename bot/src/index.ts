@@ -62,7 +62,8 @@ export const webhook = onRequest(
     // 画像OCRは廃止済みだが、上の「メモリ」のとおり 512MiB より下げない。
     memory: "512MiB",
     // 1 回の配信に含まれるイベントは直列に処理して待つ。1 イベントの最悪ケースは
-    // プロフィール取得のリトライ（最大 ~30 秒）+ カテゴリ分類（Jev 3 秒 + 失敗時の Gemini 8 秒で打ち切り）
+    // プロフィール取得のリトライ（最大 ~30 秒）+ カテゴリ分類（Jev 3 秒 + 失敗時の Gemini 8 秒で打ち切り。
+    // 中項目の Jev〔3 秒〕は大項目の Jev が失敗しなかったときだけなので、分類の最悪 ~11 秒は変わらない）
     // + Firestore + 返信で ~45 秒。LINE API 劣化時に数イベントの配信が来ても途中で打ち切られて
     // 残りのイベントが保存されない、ということが無いよう 300 秒の余裕を持たせる
     // （540 秒はハング時の課金を 9 分まで伸ばすだけなので下げる）。
@@ -72,7 +73,7 @@ export const webhook = onRequest(
     maxInstances: 10,
     invoker: "public",
     // GITHUB_TOKEN: LINEフィードバックGitHub Issue自動作成に使用（issueCreator）。
-    // TYPESAFE_API_KEY: カテゴリ分類のメイン（Jev）。GEMINI_API_KEY は分類の退避先とフィードバック解析。
+    // TYPESAFE_API_KEY: カテゴリ分類のメイン（Jev。辞書で決まらない中項目も）。GEMINI_API_KEY は分類の退避先とフィードバック解析。
     secrets: ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET", "TYPESAFE_API_KEY", "GEMINI_API_KEY", "GITHUB_TOKEN"],
   },
   app
@@ -128,7 +129,7 @@ export const gmailPubSubHandler = onMessagePublished(
     region: "asia-northeast1",
     memory: "512MiB",
     retry: true,
-    // 再送のたびに、止まっている historyId からの範囲をまとめてやり直す（1 通あたり分類 最大 ~11 秒 + Firestore + LINE）。
+    // 再送のたびに、止まっている historyId からの範囲をまとめてやり直す（1 通あたり分類 最大 ~11 秒〔中項目の Jev を含めても〕 + Firestore + LINE）。
     // 範囲が大きくなっても途中で打ち切られない（打ち切りも失敗として再送される）よう 300 秒にする
     timeoutSeconds: 300,
     maxInstances: 3,

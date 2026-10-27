@@ -1,7 +1,9 @@
-// 中項目を辞書と時刻のルールで決める（#235 の方式 C。モデルは呼ばない）
+// 中項目を辞書と時刻のルールで決める（#235。このモジュールはモデルを呼ばない）
 //
 // 呼ぶのは 2 か所: 登録時の保存（LINE の入力は line/expenseFlow.ts の textSubCategoryOf、Gmail のカード利用通知は
 // gmail/handler.ts の merchantSubCategoryOf）と、LINE で大項目を変えたときの決め直し（postback の set_category。expenseActions.ts の decideSetCategory）。
+// - 登録時は、ここで決まらなかった食費・娯楽だけ Jev に聞く（subCategoryClassifier.ts の subCategoryByModel。世帯メンバーの入力と
+//   カード利用通知だけ）。大項目を変えたときの決め直しは、ここ（辞書と時刻）だけで、Jev には聞き直さない。
 // - 辞書: 大項目ごとに順番つきのグループ。説明文・店名を normalizeForMatch で揃えてから照合し、最初に当たったグループの中項目を採る。
 //   keywords は部分一致（String.includes）、exact は揃えた入力の全体と一致したときだけ当てる。入力から正規表現は作らない。
 // - 時刻: Gmail の店名（source: 'merchant'）で、時刻の分かる usedAt が渡され、飲食店のグループ（mealTime）に当たったときだけ、
@@ -14,6 +16,7 @@
 //   （例: 「ウイスキー」「お釣り」「銀座ライオン」に当てない）。
 import { toCanonicalCategoryName } from './categoryNormalization';
 import { SUB_CATEGORIES } from './categoryTaxonomy';
+import { VALID_CATEGORIES } from './textParser';
 import { formatJST } from './time';
 
 /** 照合に使う入力の長さの上限（文字） */
@@ -379,4 +382,16 @@ export function resolveSubCategory(input?: ResolveSubCategoryInput | null): stri
     sub = mealOfJst(usedAt) ?? sub;
   }
   return SUB_CATEGORIES[canonical].includes(sub) ? sub : null;
+}
+
+/**
+ * 中項目を決める手がかりの無い説明・店名か（Jev に送らない。subCategoryClassifier.ts）。textParser.ts が説明に入れる
+ * 決まった文字列だけを見る: 文字列でない・空（空白だけ）・「支出」（説明もカテゴリも無いとき）・VALID_CATEGORIES の名前そのもの
+ * （「食費 500」「娯楽費 800」のようにカテゴリだけを書くと、その名前が説明になる）なら true。
+ * カテゴリの別名（「書籍」「エンタメ」「飲食」など）・絵文字・記号は手がかりとして送る（Jev には意味が分かることがある）
+ */
+export function isUninformativeSubCategoryText(text: string): boolean {
+  if (typeof text !== 'string') return true;
+  const trimmed = text.trim();
+  return trimmed === '' || trimmed === '支出' || VALID_CATEGORIES.includes(trimmed);
 }

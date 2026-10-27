@@ -1,12 +1,14 @@
 // カテゴリの中項目（大項目の下の 2 階層目。#235）
 //
 // #235 で確定した一覧。中項目を持つのは食費・娯楽だけで、他の大項目は空（中項目なし）。
-// - 中項目は辞書と時刻のルール（subCategoryRules.ts の resolveSubCategory。モデルは呼ばない）で決める。
-//   resolveSubCategory は、登録時の保存（LINE の入力・Gmail のカード利用通知）と、LINE で大項目を変えたとき（decideSetCategory）に呼ぶ。
+// - 中項目は、まず辞書と時刻のルール（subCategoryRules.ts の resolveSubCategory）で決める。resolveSubCategory は、
+//   登録時の保存（LINE の入力・Gmail のカード利用通知）と、LINE で大項目を変えたとき（decideSetCategory）に呼ぶ。
+// - 登録時に辞書で決まらなければ、Jev にこの一覧から選ばせる（subCategoryClassifier.ts の subCategoryByModel。選択肢は
+//   jevCategoryClassifier.ts の jevSubCriteria）。LINE で大項目を変えたときは辞書だけ。
 // - 評価データに中項目の正解を付ける bot/scripts/eval/review-golden.js --sub と、
 //   階層化の評価 bot/scripts/eval/eval-classifier.js --scheme stage2|flat も、この一覧を使う。
-// - 「その他の食費」「その他の娯楽」は、利用者が手で選ぶためだけにある。resolveSubCategory は返さない
-//   （「判定できない」と「利用者がその他にした」を分けるため）。
+// - 「その他の食費」「その他の娯楽」は、利用者が手で選ぶためだけにある。resolveSubCategory は返さず、Jev が選んでも付けない
+//   （「判定できない」と「利用者がその他にした」を分けるため）。Jev の選択肢には入れる（無理に別の中項目を選ばせないため）。
 // - #250 の仮の一覧の名前はすべて残している（評価データに付けた中項目のラベルが無効にならないように）。
 // - 中項目名は、大項目の中で一意・空でない・50 文字以内（smoke-taxonomy.js で確かめる）。
 import { toCanonicalCategoryName } from './categoryNormalization';
@@ -37,8 +39,8 @@ export const SUB_CATEGORIES: Record<string, readonly string[]> = {
 };
 
 /**
- * 中項目の説明。階層化の評価（eval-classifier.js --sub-desc on）で、Jev の中項目の選択肢に付ける。
- * 方式 C を採ったため本番では使わない。所感発表での方式 B との比較のために残す。
+ * 中項目の説明。Jev の中項目の選択肢に付ける（本番の jevCategoryClassifier.ts の jevSubCriteria と、
+ * 階層化の評価 eval-classifier.js --sub-desc on）。外部（Jev）に送られる。
  * 評価データの説明文・店名は使っていない（中項目の名前から書いた一般的な説明）。
  * 説明の無い中項目は、説明なし（null）で送る。キーは SUB_CATEGORIES の大項目・中項目（smoke-taxonomy.js で確かめる）。
  */

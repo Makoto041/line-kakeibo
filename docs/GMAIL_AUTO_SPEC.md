@@ -55,6 +55,8 @@ gmailPubSubHandler（asia-northeast1）
     ↓ history API で差分取得 → SMBC フィルタ → パース
 既存のカテゴリ分類（Jev → 失敗時 Gemini → 辞書）
 geminiCategoryClassifier.ts / jevCategoryClassifier.ts
+    ↓ 食費・娯楽の中項目: 店名の辞書 → 決まらなければ Jev（大項目が Jev で決まったときだけ）
+subCategoryRules.ts / subCategoryClassifier.ts
     ↓
 Firestore 保存（トランザクション・重複排除）
 firestore.ts (saveGmailExpenseAtomic)
@@ -215,7 +217,7 @@ Flex Message 通知（line/flexMessage.ts。X-Line-Retry-Key 付き）→ 送れ
 | description | string | 説明・店舗名 | ✓ |
 | date | string | YYYY-MM-DD 形式（JST） | ✓ |
 | category | string | カテゴリ名 | ✓ |
-| subCategory | string | 中項目（食費・娯楽だけ。辞書で決まったときだけ。SPECIFICATION.md §4.1） | |
+| subCategory | string | 中項目（食費・娯楽だけ。辞書か、辞書で決まらなければ Jev で決まったときだけ。SPECIFICATION.md §4.1） | |
 | confirmed | boolean | 確認済みフラグ | ✓ |
 | payerId | string | 支払者 LINE ID | ✓ |
 | payerDisplayName | string | 支払者表示名 | |
@@ -309,7 +311,9 @@ TTL ポリシー（`system` コレクショングループの `expireAt`）は�
 
 ## 6. カテゴリ定義
 
-正準カテゴリは `categoryNormalization.ts` の 19 種で、Gmail 取込も同じ分類器（`classifyExpense`）を使う。ただし店名は部分一致のキーワード辞書で取り違えやすいため、`source: 'merchant'` を渡して **Jev → Gemini の順にモデルを先に使い**、どちらも使えないときだけ辞書で判定する（Jev から Gemini に回す条件も含めて SPECIFICATION.md §4）:
+正準カテゴリは `categoryNormalization.ts` の 19 種で、Gmail 取込も同じ分類器（`classifyExpense`）を使う。ただし店名は部分一致のキーワード辞書で取り違えやすいため、`source: 'merchant'` を渡して **Jev → Gemini の順にモデルを先に使い**、どちらも使えないときだけ辞書で判定する（Jev から Gemini に回す条件も含めて SPECIFICATION.md §4）。
+食費・娯楽の中項目は店名の辞書（時刻の書かれたメールの飲食店は朝・昼・夜ご飯）で決め、決まらなければ Jev に選ばせる
+（大項目が Jev で決まったときだけ。Gemini には回さず、Jev の外食に時刻のルールは当てない。SPECIFICATION.md §4.1）:
 
 食費 / 交通費 / 日用品 / 娯楽 / 衣服 / 医療・健康 / 教育 / 光熱費 / 住居費 / 保険 / 税金 / 美容 / 通信費 / サブスク / プレゼント / 旅行 / ペット / 貯金 / その他
 
@@ -346,7 +350,9 @@ bot/src/
 ├── firestore.ts                  # saveGmailExpenseAtomic（重複排除つき保存）
 ├── expenseActions.ts             # postback / Web の確認で共用する状態遷移
 ├── geminiCategoryClassifier.ts   # カテゴリ分類の入口（キャッシュ・辞書・Jev → Gemini の順序。Gemini の呼び出しもここ。ファイル名は従来のまま）
-├── jevCategoryClassifier.ts      # Jev（分類のメイン）の呼び出し
+├── jevCategoryClassifier.ts      # Jev（分類のメイン）の呼び出し（大項目と、中項目の別の呼び出し）
+├── subCategoryRules.ts           # 中項目の辞書と時刻のルール
+├── subCategoryClassifier.ts      # 辞書で決まらない中項目を Jev に聞くかの判定・キャッシュ
 ├── categoryNormalization.ts      # カテゴリ正規化
 └── adminAuth.ts                  # ADMIN_SECRET の定数時間比較
 ```

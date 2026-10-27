@@ -122,6 +122,7 @@ async function main() {
   const req = jevCalls[0];
   check('入力は state.input', req?.state?.input === 'ボルダリング');
   check('category の choice で聞く', req?.questions?.category?.type === 'choice');
+  check('大項目の要求の質問は category だけ（中項目は別の呼び出し）', Object.keys(req?.questions || {}).join(',') === 'category', Object.keys(req?.questions || {}).join(','));
   check('text 用の質問文', /家計簿アプリに利用者が入力した/.test(req?.questions?.category?.instructions || ''));
   const criteria = req?.questions?.category?.criteria || {};
   check('既定の 19 カテゴリが選択肢', Object.keys(criteria).length === 19, Object.keys(criteria).join(','));
@@ -151,6 +152,7 @@ async function main() {
   check('辞書の誤一致ではなく Jev の結果', r.category === '交通費', JSON.stringify(r));
   check('Gemini は呼ばれない', geminiCalls.length === 0);
   check('店名用の質問文', /利用明細/.test(jevCalls[0]?.questions?.category?.instructions || ''));
+  check('merchant: 大項目の要求の質問は category だけ', Object.keys(jevCalls[0]?.questions || {}).join(',') === 'category');
 
   console.log('\n# 信頼度は 0〜1 に丸める');
   reset();
@@ -195,7 +197,7 @@ async function main() {
   check('Jev 1 回 → Gemini 1 回', jevCalls.length === 1 && geminiCalls.length === 1);
   check('Gemini にも同じカテゴリ一覧', Array.isArray(geminiCalls[0]?.options?.schema?.properties?.category?.enum) && geminiCalls[0].options.schema.properties.category.enum.length === 19);
   const timeoutLog = logs.find((l) => l.args[0] === 'Jev classification failed');
-  check('失敗はエラーの種類だけをログに出す', timeoutLog?.args[1]?.error === 'APITimeoutError' && Object.keys(timeoutLog.args[1]).sort().join(',') === 'error,status', JSON.stringify(timeoutLog?.args));
+  check('失敗はエラーの種類だけをログに出す（errorFields。状態の無いタイムアウトは errorName だけ）', JSON.stringify(timeoutLog?.args[1]) === JSON.stringify({ errorName: 'APITimeoutError' }), JSON.stringify(timeoutLog?.args));
   check('提供元のログ（gemini）', lastProviderLog()?.provider === 'gemini', JSON.stringify(lastProviderLog()));
   check('判定元は gemini', r.provider === 'gemini', JSON.stringify(r));
   reset();
@@ -212,7 +214,7 @@ async function main() {
   r = await classify('gmail-auto-system', 'ENEOS ｴﾈｵｽ', { source: 'merchant' });
   check('Gemini の結果を採用', r.category === '交通費' && r.reasoning === 'Gemini classification', JSON.stringify(r));
   const rateLog = logs.find((l) => l.args[0] === 'Jev classification failed');
-  check('HTTP ステータスをログに出す', rateLog?.args[1]?.status === 429 && rateLog?.args[1]?.error === 'RateLimitError', JSON.stringify(rateLog?.args));
+  check('HTTP ステータスをログに出す（errorStatus）', JSON.stringify(rateLog?.args[1]) === JSON.stringify({ errorName: 'RateLimitError', errorStatus: 429 }), JSON.stringify(rateLog?.args));
 
   console.log('\n# (c) TYPESAFE_API_KEY が無い → Gemini');
   reset();

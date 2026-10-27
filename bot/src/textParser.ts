@@ -12,8 +12,8 @@ export interface ParsedTextExpense {
   category?: string;   // ユーザー指定カテゴリ（あれば）
 }
 
-// 有効なカテゴリー一覧
-const VALID_CATEGORIES = [
+// 有効なカテゴリー一覧（説明が無いときは、指定したこの名前が説明になる。中項目の Jev に送らない判定にも使う〔subCategoryRules.ts〕）
+export const VALID_CATEGORIES = [
   '食費', '日用品', '交通費', '医療費', '娯楽費',
   '衣服費', '教育費', '通信費', '光熱費', '住居費',
   '保険', '税金', '貯蓄', '投資', '美容',
