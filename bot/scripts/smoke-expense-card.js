@@ -9,6 +9,7 @@
 // 手元のシェルに本物の鍵があると、中項目の Jev（subCategoryClassifier.ts）が本物の API を呼ぶため消す
 // （保存データの確かめでは subCategoryByModel を偽物にする）
 delete process.env.TYPESAFE_API_KEY;
+const assert = require('node:assert');
 const {
   buildCardUsageFlexMessage,
   buildTextExpenseFlexMessage,
@@ -1025,12 +1026,14 @@ async function saveFlowChecks() {
   const groupsByUser = {};
   firestore.getUserGroups = async (lineId) => groupsByUser[lineId] ?? [];
   // 中項目の Jev（subCategoryClassifier.ts）。受け取った引数を残し、subModelReply を返す（既定は中項目なし）
+  const realSubCategoryByModel = subClassifier.subCategoryByModel;
   const subModelCalls = [];
   let subModelReply;
-  subClassifier.subCategoryByModel = async (input) => {
+  const fakeSubCategoryByModel = async (input) => {
     subModelCalls.push(input);
     return subModelReply;
   };
+  subClassifier.subCategoryByModel = fakeSubCategoryByModel;
   firestore.getUserSettings = async (lineId) => settingsByUser[lineId] ?? null;
   firestore.findLineGroupId = async () => null;
   linkUserResolver.resolveAppUidForExpense = async () => 'uid_test';
@@ -1224,17 +1227,15 @@ async function saveFlowChecks() {
     return { userId, expense: saved.length > before ? last(saved) : null, card: last(cards), subModel: subModelCalls.slice(subBefore) };
   }
   const dictionary = (category) => ({ category, confidence: 0.8, reasoning: 'Fast local keyword matching', provider: 'dictionary' });
-  /** subCategoryByModel の引数（比べる項目だけ。majorConfidence が無ければ null） */
-  const subArgs = (o) =>
-    JSON.stringify({
-      major: o?.major,
-      text: o?.text,
-      source: o?.source,
-      allowModels: o?.allowModels,
-      jevFailedForMajor: o?.jevFailedForMajor,
-      majorOrigin: o?.majorOrigin,
-      majorConfidence: o?.majorConfidence ?? null,
-    });
+  /** assert.deepStrictEqual で比べる（違えば false を返し、check で失敗として出す） */
+  const deepEqual = (actual, expected) => {
+    try {
+      assert.deepStrictEqual(actual, expected);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   classifyReply = dictionary('食費');
   const lunch = await lineInput('900 ランチ');
@@ -1303,9 +1304,9 @@ async function saveFlowChecks() {
   );
   check(
     '辞書で決まらなければ subCategoryByModel に渡す（メンバーでないので allowModels: false）',
-    unknownFood.subModel.length === 1 &&
-      subArgs(unknownFood.subModel[0]) ===
-        subArgs({ major: '食費', text: 'おみやげ', source: 'text', allowModels: false, jevFailedForMajor: false, majorOrigin: 'dictionary', majorConfidence: 0.8 }),
+    deepEqual(unknownFood.subModel, [
+      { major: '食費', text: 'おみやげ', source: 'text', allowModels: false, jevFailedForMajor: false, majorOrigin: 'dictionary', majorConfidence: 0.8 },
+    ]),
     JSON.stringify(unknownFood.subModel)
   );
 
@@ -1351,7 +1352,7 @@ async function saveFlowChecks() {
       '700 架空亭 五号店 食費',
       byProvider('gemini', '日用品', 0.9),
       null,
-      { major: '食費', text: '架空亭 五号店', source: 'text', allowModels: true, jevFailedForMajor: false, majorOrigin: 'specified' },
+      { major: '食費', text: '架空亭 五号店', source: 'text', allowModels: true, jevFailedForMajor: false, majorOrigin: 'specified', majorConfidence: undefined },
       '外食',
     ],
   ]) {
@@ -1359,7 +1360,7 @@ async function saveFlowChecks() {
     subModelReply = returned;
     if (setup) setup(`U_sub_${userSeq + 1}`);
     const r = await lineInput(input, { member: true });
-    check(`メンバー・${name}: subCategoryByModel を 1 回呼ぶ`, r.subModel.length === 1 && subArgs(r.subModel[0]) === subArgs(expected), JSON.stringify(r.subModel));
+    check(`メンバー・${name}: subCategoryByModel を 1 回呼ぶ`, deepEqual(r.subModel, [expected]), JSON.stringify(r.subModel));
     check(`メンバー・${name}: 返した中項目を保存し、カードにも渡す`, r.expense && r.expense.subCategory === returned && r.card && r.card.subCategory === returned, JSON.stringify([r.expense, r.card]));
     if (returned === '外食' && expected.majorOrigin === 'jev') {
       const row = rowText(settingsRows(buildTextExpenseFlexMessage(r.card))[3]);
@@ -1367,6 +1368,33 @@ async function saveFlowChecks() {
     }
   }
   subModelReply = undefined;
+
+  // 本物の subCategoryByModel で、説明が Jev に聞く側か（no_info でないか）を確かめる。鍵は先頭で消してあるので、
+  // 聞く側の入力は not_configured で止まる（API は呼ばない）
+  check('鍵が無い（本物の API を呼ばない）', process.env.TYPESAFE_API_KEY === undefined);
+  subClassifier.subCategoryByModel = realSubCategoryByModel;
+  try {
+    for (const [input, reply, outcome] of [
+      ['1500 娯楽費 書籍', null, 'not_configured'], // 説明「書籍」（教育の別名）
+      ['1500 エンタメ', byProvider('jev', '娯楽', 0.9), 'not_configured'], // 説明「エンタメ」（娯楽の別名）
+      ['800 食費 飲食', null, 'not_configured'], // 説明「飲食」（食費の別名）
+      ['500 食費', null, 'no_info'], // 説明はカテゴリ名「食費」
+      ['800 娯楽費', null, 'no_info'], // 説明はカテゴリ名「娯楽費」
+      ['800', byProvider('jev', '食費', 0.9), 'no_info'], // 説明は「支出」
+    ]) {
+      if (reply) classifyReply = reply;
+      const linesBefore = allLines.length;
+      const r = await lineInput(input, { member: true });
+      const modelLogs = allLines.slice(linesBefore).filter((l) => l.args[0] === 'Subcategory classified by model');
+      check(
+        `「${input}」（メンバー・説明「${r.expense?.description}」）: ${outcome === 'no_info' ? 'Jev に聞かない（no_info）' : 'Jev に聞く側（鍵が無いので not_configured）'}`,
+        modelLogs.length === 1 && modelLogs[0].args[1].outcome === outcome && r.expense && r.expense.subCategory === undefined,
+        JSON.stringify(modelLogs.map((l) => l.args[1]))
+      );
+    }
+  } finally {
+    subClassifier.subCategoryByModel = fakeSubCategoryByModel;
+  }
   classifyReply = dictionary('食費');
 
   const realResolve = subRules.resolveSubCategory;
@@ -1519,7 +1547,7 @@ async function saveFlowChecks() {
       const expected = { major: '食費', text: 'SAMPLE MART', source: 'merchant', allowModels: true, jevFailedForMajor, majorOrigin, majorConfidence: 0.55 };
       check(
         `${label}・大項目は${majorLabel}: subCategoryByModel を 1 回呼ぶ（jevFailedForMajor: ${jevFailedForMajor}）`,
-        calls.length === 1 && subArgs(calls[0]) === subArgs(expected),
+        deepEqual(calls, [expected]),
         JSON.stringify(calls)
       );
       check(`${label}・大項目は${majorLabel}: 返した中項目（${returned}）を保存する`, g && g.category === '食費' && g.subCategory === returned, JSON.stringify(g));

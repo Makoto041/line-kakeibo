@@ -441,6 +441,15 @@ async function main() {
   r = await post({ userId: 'U_sub2', description: '食費', category: '食費' });
   check('説明がカテゴリ名だけ（「食費 500」）なら聞かない', jevCalls.length === 0 && r.expense?.subCategory === undefined && subModelLog()?.outcome === 'no_info', JSON.stringify(subModelLog()));
 
+  console.log('\n# 中項目: 世帯の確認に失敗したら、カテゴリを指定した入力でも中項目を Jev に聞く（allowModels の fail-open）');
+  reset();
+  failingUsers.add('U_fail2');
+  subBehavior = () => answerOf('subCategory', '外食', 0.8);
+  r = await post({ userId: 'U_fail2', description: '架空亭 五号店', category: '食費' });
+  check('大項目は聞かず、中項目だけ 1 回', majorCalls().length === 0 && subCalls().length === 1 && geminiCalls === 0, `major ${majorCalls().length} / sub ${subCalls().length}`);
+  check('中項目は外食で保存（判定元は specified）', r.expense?.category === '食費' && r.expense?.subCategory === '外食' && r.card?.categoryOrigin === 'specified', JSON.stringify(r.expense));
+  failingUsers.delete('U_fail2');
+
   console.log('\n# 中項目: 大項目の Jev がタイムアウトして Gemini で決まったら、中項目は聞かない');
   reset();
   groupsByUser.U_sub3 = [household];

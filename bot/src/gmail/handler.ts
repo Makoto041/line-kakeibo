@@ -86,11 +86,10 @@ export function merchantSubCategoryOf(
  * 決まった、どれでも決まらなかった）ときは、Jev が失敗した直後なので聞かない。Jev が「外食」を返しても時刻のルールは当てない
  */
 async function merchantSubCategoryForSave(
-  category: string,
-  parsed: Pick<ParsedCardNotification, 'merchant' | 'usedAt' | 'usedAtHasTime'>,
   categoryResult: ClassificationResult,
-  categoryOrigin: CategoryOrigin | undefined
+  parsed: Pick<ParsedCardNotification, 'merchant' | 'usedAt' | 'usedAtHasTime'>
 ): Promise<string | undefined> {
+  const { category, origin: categoryOrigin } = merchantCategoryOf(categoryResult);
   return (
     merchantSubCategoryOf(category, parsed) ??
     (await subCategoryByModel({
@@ -757,7 +756,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     // 判定元は通知のカードに出すだけで、保存しない
     const { category, origin: categoryOrigin } = merchantCategoryOf(categoryResult);
     // 中項目（辞書 → 食費・娯楽で決まらなければ Jev）。カードにも同じ値を出す（決め直さない）
-    const subCategory = await merchantSubCategoryForSave(category, parsed, categoryResult, categoryOrigin);
+    const subCategory = await merchantSubCategoryForSave(categoryResult, parsed);
 
     // グループIDを取得（グループベースの集計に必要）
     const groupId = getDefaultGroupId();
@@ -874,8 +873,8 @@ export async function processLatestEmail(): Promise<{
         parsed.merchant,
         { source: 'merchant' }
       );
-      const { category, origin: categoryOrigin } = merchantCategoryOf(categoryResult);
-      const subCategory = await merchantSubCategoryForSave(category, parsed, categoryResult, categoryOrigin);
+      const { category } = merchantCategoryOf(categoryResult);
+      const subCategory = await merchantSubCategoryForSave(categoryResult, parsed);
 
       const expense = {
         lineId: GMAIL_SYSTEM_LINE_ID,
@@ -994,7 +993,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
     // 判定元は通知のカードに出すだけで、保存しない
     const { category, origin: categoryOrigin } = merchantCategoryOf(categoryResult);
     // 中項目（processMessage と同じ）
-    const subCategory = await merchantSubCategoryForSave(category, parsed, categoryResult, categoryOrigin);
+    const subCategory = await merchantSubCategoryForSave(categoryResult, parsed);
 
     // グループIDを取得
     const groupId = getDefaultGroupId();

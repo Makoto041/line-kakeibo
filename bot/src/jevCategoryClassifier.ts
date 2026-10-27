@@ -2,8 +2,10 @@
 // そのまま import できる（geminiClient.ts のような require + 型だけの参照は要らない）
 import { TypeSafeClient, choice } from '@typesafe-ai/sdk';
 import { CATEGORY_GUIDE } from './categoryGuide';
-import { SUB_CATEGORIES, SUB_CATEGORY_DESCRIPTIONS } from './categoryTaxonomy';
+import { toCanonicalCategoryName } from './categoryNormalization';
+import { SUB_CATEGORY_DESCRIPTIONS, subCategoriesOf } from './categoryTaxonomy';
 import type { ClassificationSource, ClassificationResult } from './geminiCategoryClassifier';
+import { errorFields } from './logSafe';
 
 /**
  * Jev（TypeSafe AI の System One 決定モデル）によるカテゴリ分類。分類のメイン。
@@ -101,11 +103,9 @@ export async function classifyWithJev(
       provider: 'jev',
     };
   } catch (error) {
-    // SDK のエラー文は API の応答本文から作られるので出さない（種類と HTTP ステータスだけ）
-    console.warn('Jev classification failed', {
-      error: (error as Error)?.name,
-      status: (error as { status?: unknown })?.status,
-    });
+    // SDK のエラー文は API の応答本文から作られるので出さない（種類と HTTP ステータスだけ。errorFields は
+    // 100〜599 の整数の status だけを errorStatus に出す）
+    console.warn('Jev classification failed', errorFields(error));
     return null;
   }
 }
@@ -121,34 +121,19 @@ export const JEV_SUB_QUESTIONS: Record<ClassificationSource, (major: string) => 
 };
 
 /**
- * 中項目の選択肢（中項目名 → 説明）。major は正準名（SUB_CATEGORIES のキー）。「その他の食費」「その他の娯楽」も含む。
- * 説明は SUB_CATEGORY_DESCRIPTIONS（無い中項目は null）。中項目の一覧が無い大項目は空
+ * 中項目の選択肢（中項目名 → 説明）。「その他の食費」「その他の娯楽」も含む。説明は SUB_CATEGORY_DESCRIPTIONS（無い中項目は null）。
+ * 中項目の一覧が無い大項目（プロトタイプの名前を含む）は空（subCategoriesOf）
  */
 export function jevSubCriteria(major: string): Record<string, string | null> {
-  const subs = Object.prototype.hasOwnProperty.call(SUB_CATEGORIES, major) ? SUB_CATEGORIES[major] : [];
-  const descriptions = Object.prototype.hasOwnProperty.call(SUB_CATEGORY_DESCRIPTIONS, major)
-    ? SUB_CATEGORY_DESCRIPTIONS[major]
-    : {};
-  return Object.fromEntries(
-    subs.map((sub) => [
-      sub,
-      Object.prototype.hasOwnProperty.call(descriptions, sub) && typeof descriptions[sub] === 'string' ? descriptions[sub] : null,
-    ])
-  );
+  const descriptions = SUB_CATEGORY_DESCRIPTIONS[toCanonicalCategoryName(major)];
+  return Object.fromEntries(subCategoriesOf(major).map((sub) => [sub, descriptions?.[sub] ?? null]));
 }
 
 /**
- * 中項目の判定の結果。answered は Jev の答え（一覧の中の名前。「その他の食費」なども含む。確信度は 0〜1 に丸めたもの）。
- * not_configured は鍵なし、failed はエラー・3 秒のタイムアウト・答えなし・一覧外（どれもキャッシュしない）
- */
-export type JevSubCategoryResult =
-  | { kind: 'answered'; subCategory: string; confidence: number }
-  | { kind: 'not_configured' }
-  | { kind: 'failed' };
-
-/**
  * Jev で中項目を選ばせる（大項目とは別の呼び出し。質問は subCategory の 1 問だけ）。major は正準名で、
- * input はモデルに送る長さに切った入力（geminiCategoryClassifier.ts の toModelInput）。例外は投げない。
+ * input はモデルに送る長さに切った入力（geminiCategoryClassifier.ts の toModelInput）。
+ * 鍵なし・エラー・3 秒のタイムアウト・答えなし・一覧外は null（例外は投げない。鍵の有無は呼び出し側が先に見る）。
+ * 答えは一覧の中の名前（「その他の食費」なども含む）で、確信度は 0〜1 に丸める。
  * クライアントは大項目と同じもの（3 秒・再試行なし・モデル固定）。入力と応答本文はログに出さない。
  * 失敗のログは大項目と別の文言にする（`Jev classification failed` を数える失敗率の式を変えないため。SECURITY_OPERATIONS.md §7）
  */
@@ -156,8 +141,8 @@ export async function classifySubCategoryWithJev(
   major: string,
   input: string,
   source: ClassificationSource
-): Promise<JevSubCategoryResult> {
-  if (!isJevConfigured()) return { kind: 'not_configured' };
+): Promise<{ subCategory: string; confidence: number } | null> {
+  if (!isJevConfigured()) return null;
   const criteria = jevSubCriteria(major);
   try {
     const { answers } = await getClient().systemOne({
@@ -167,20 +152,17 @@ export async function classifySubCategoryWithJev(
     const answer = answers.subCategory;
     if (typeof answer?.choice !== 'string') {
       console.warn('Jev returned no subcategory');
-      return { kind: 'failed' };
+      return null;
     }
     if (!Object.prototype.hasOwnProperty.call(criteria, answer.choice)) {
       console.warn('Jev suggested a subcategory outside the list');
-      return { kind: 'failed' };
+      return null;
     }
     const confidence = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? answer.confidence : 0;
-    return { kind: 'answered', subCategory: answer.choice, confidence: Math.max(0, Math.min(1, confidence)) };
+    return { subCategory: answer.choice, confidence: Math.max(0, Math.min(1, confidence)) };
   } catch (error) {
     // 大項目と同じく、種類と HTTP ステータスだけ（SDK のエラー文は API の応答本文から作られる）
-    console.warn('Jev subcategory classification failed', {
-      error: (error as Error)?.name,
-      status: (error as { status?: unknown })?.status,
-    });
-    return { kind: 'failed' };
+    console.warn('Jev subcategory classification failed', errorFields(error));
+    return null;
   }
 }

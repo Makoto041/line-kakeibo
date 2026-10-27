@@ -6,7 +6,7 @@
 //
 // 次の順に見て、当たれば Jev を呼ばずに中項目なし（undefined）にする（括弧はログの outcome）:
 //   1. 大項目（正準名）に中項目の一覧が無い（日用品・その他・カスタム名など）。ログも出さない
-//   2. 説明・店名に手がかりが無い（空・「支出」・カテゴリ名だけ。isUninformativeSubCategoryText）（no_info）
+//   2. 説明・店名に手がかりが無い（空・空白だけ・「支出」・LINE でカテゴリだけを書いたときのカテゴリ名。isUninformativeSubCategoryText）（no_info）
 //   3. allowModels が true でない（世帯メンバーでない送信者。#245。キャッシュも読まない）（models_not_allowed）
 //   4. 鍵（TYPESAFE_API_KEY）が無い（not_configured）
 //   5. 同じ処理で大項目の Jev が失敗した（Gemini・辞書で決まった、または決まらなかった。Gemini にも回さない）（jev_unavailable）
@@ -22,7 +22,10 @@ import type { CategoryOrigin } from './line/flexMessage';
 import { errorFields } from './logSafe';
 import { isUninformativeSubCategoryText } from './subCategoryRules';
 
-/** 中項目の Jev の答えを採用する確信度の下限（LINE・Gmail 共通） */
+/**
+ * 中項目の Jev の答えを採用する確信度の下限（LINE・Gmail 共通）。大項目の下限（expenseFlow.ts の CLASSIFY_MIN_CONFIDENCE）と
+ * 同じ 0.4 だが別の値（中項目の答えの確信度に当てる。片方を変えても、もう片方は変わらない）
+ */
 export const SUB_MIN_CONFIDENCE = 0.4;
 
 // Jev の答えのキャッシュ（15 分）。採用しなかった答え（その他・低い確信度）も入れ、失敗は入れない（復旧後に聞き直す）。
@@ -31,7 +34,7 @@ const subCategoryCache = new Map<string, { subCategory: string; confidence: numb
 const SUB_CATEGORY_CACHE_TTL = 15 * 60 * 1000;
 
 /** ログの outcome（上の説明を参照） */
-export type SubCategoryModelOutcome =
+type SubCategoryModelOutcome =
   | 'adopted'
   | 'low_confidence'
   | 'other'
@@ -70,7 +73,7 @@ export async function subCategoryByModel(input: SubCategoryByModelInput): Promis
   try {
     return await decideByModel(input, started);
   } catch (error) {
-    console.warn('Subcategory classification by model failed', { source: input?.source, ...errorFields(error) });
+    console.warn('Subcategory classification by model failed', { source: input.source, ...errorFields(error) });
     return undefined;
   }
 }
@@ -78,8 +81,7 @@ export async function subCategoryByModel(input: SubCategoryByModelInput): Promis
 async function decideByModel(input: SubCategoryByModelInput, started: number): Promise<string | undefined> {
   const { major, text, source, allowModels, jevFailedForMajor, majorOrigin, majorConfidence } = input;
   const canonical = toCanonicalCategoryName(major);
-  const subs = subCategoriesOf(canonical);
-  if (subs.length === 0) return undefined;
+  if (subCategoriesOf(canonical).length === 0) return undefined;
 
   const log = (outcome: SubCategoryModelOutcome, answer?: { subCategory: string; confidence: number }, cached = false) => {
     console.log('Subcategory classified by model', {
@@ -87,7 +89,7 @@ async function decideByModel(input: SubCategoryByModelInput, started: number): P
       majorOrigin: majorOrigin ?? null,
       majorConfidence: round2(majorConfidence),
       outcome,
-      answer: answer && subs.includes(answer.subCategory) ? answer.subCategory : null,
+      answer: answer?.subCategory ?? null, // 一覧の中の名前だけ（classifySubCategoryWithJev が確かめる）
       confidence: round2(answer?.confidence),
       cached,
       ms: Date.now() - started,
@@ -102,6 +104,7 @@ async function decideByModel(input: SubCategoryByModelInput, started: number): P
     log('models_not_allowed');
     return undefined;
   }
+  // 鍵の有無はここで見る（classifySubCategoryWithJev は鍵なしも失敗と同じ null を返すため）
   if (!isJevConfigured()) {
     log('not_configured');
     return undefined;
@@ -121,15 +124,15 @@ async function decideByModel(input: SubCategoryByModelInput, started: number): P
     cached = true;
   } else {
     const result = await classifySubCategoryWithJev(canonical, modelInput, source);
-    if (result.kind !== 'answered') {
-      log(result.kind);
+    if (!result) {
+      log('failed');
       return undefined;
     }
-    answer = { subCategory: result.subCategory, confidence: result.confidence };
+    answer = result;
     subCategoryCache.set(cacheKey, { ...answer, timestamp: Date.now() });
   }
 
-  // 答えは一覧の中の名前だけ（classifySubCategoryWithJev が確かめる）。「その他の食費」「その他の娯楽」は手で選ぶためのもの（自動では付けない）
+  // 「その他の食費」「その他の娯楽」は手で選ぶためのもの（自動では付けない）
   if (answer.subCategory.startsWith('その他の')) {
     log('other', answer, cached);
     return undefined;

@@ -416,6 +416,7 @@ export async function processExpenseInBackground(
         text: parsed.description,
         source: "text",
         allowModels,
+        // Gmail と違い、LINE は辞書が Jev より先なので、辞書で決まった（dictionary）は Jev を呼んでいない＝失敗扱いにしない
         jevFailedForMajor:
           !parsed.category && allowModels && classified?.provider !== "jev" && classified?.provider !== "dictionary",
         majorOrigin: categoryOrigin,

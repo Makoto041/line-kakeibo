@@ -14,8 +14,9 @@
 //   1 文字の語は持たない／英数字だけの語は 4 文字以上／「マック」「バー」「スパ」は持たない（別の店・語に当たりやすい）。
 //   短い語・別の語の一部になりやすい語（本・マック・スキー・釣り・イオンなど）は exact（全体の一致）にだけ置く
 //   （例: 「ウイスキー」「お釣り」「銀座ライオン」に当てない）。
-import { toCanonicalCategoryName, toSelectableCategoryName } from './categoryNormalization';
+import { toCanonicalCategoryName } from './categoryNormalization';
 import { SUB_CATEGORIES } from './categoryTaxonomy';
+import { VALID_CATEGORIES } from './textParser';
 import { formatJST } from './time';
 
 /** 照合に使う入力の長さの上限（文字） */
@@ -384,14 +385,13 @@ export function resolveSubCategory(input?: ResolveSubCategoryInput | null): stri
 }
 
 /**
- * 中項目を決める手がかりの無い説明・店名か（Jev に送らない。subCategoryClassifier.ts）。文字列でない・空（空白だけ）・
- * 「支出」だけ（LINE で説明もカテゴリも無いときの既定の説明）・カテゴリ名だけ（「食費」「娯楽費」のように、
- * LINE でカテゴリだけを書くと説明になる。toSelectableCategoryName で正準名に揃えられる名前）なら true。
- * 絵文字・記号だけの説明は手がかりとして送る（辞書の照合では消えるが、Jev には意味が分かることがある）
+ * 中項目を決める手がかりの無い説明・店名か（Jev に送らない。subCategoryClassifier.ts）。textParser.ts が説明に入れる
+ * 決まった文字列だけを見る: 文字列でない・空（空白だけ）・「支出」（説明もカテゴリも無いとき）・VALID_CATEGORIES の名前そのもの
+ * （「食費 500」「娯楽費 800」のようにカテゴリだけを書くと、その名前が説明になる）なら true。
+ * カテゴリの別名（「書籍」「エンタメ」「飲食」など）・絵文字・記号は手がかりとして送る（Jev には意味が分かることがある）
  */
 export function isUninformativeSubCategoryText(text: string): boolean {
   if (typeof text !== 'string') return true;
   const trimmed = text.trim();
-  if (trimmed === '' || normalizeForMatch(trimmed) === NO_INFO_TEXT) return true;
-  return toSelectableCategoryName(trimmed) !== null;
+  return trimmed === '' || trimmed === '支出' || VALID_CATEGORIES.includes(trimmed);
 }

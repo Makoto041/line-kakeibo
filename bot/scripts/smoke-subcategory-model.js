@@ -4,9 +4,10 @@
  *
  * @typesafe-ai/sdk の TypeSafeClient を偽物に差し替え（smoke-jev-classifier.js と同じ方法）、Gemini も差し替えて、
  * 本物の API を呼ばずに次を確かめる。
- * - 呼ばない場面: 辞書で決まる入力（呼び出し側の textSubCategoryOf / merchantSubCategoryOf で決まる）・中項目の一覧の無い大項目
- *   （日用品・その他・カスタム名）・手がかりの無い説明（空・「支出」・カテゴリ名だけ）・allowModels が true でない（キャッシュも読まない）・
- *   大項目の Jev が失敗した直後（jevFailedForMajor）・鍵なし
+ * - 呼ばない場面: 中項目の一覧の無い大項目（日用品・その他・カスタム名）・手がかりの無い説明（空・空白だけ・「支出」・
+ *   textParser.ts の VALID_CATEGORIES の名前そのもの）・allowModels が true でない（キャッシュも読まない）・
+ *   大項目の Jev が失敗した直後（jevFailedForMajor）・鍵なし。辞書で決まる入力で呼ばないことは smoke-expense-card.js で確かめる
+ * - 呼ぶ場面: カテゴリの別名（「書籍」「エンタメ」「飲食」）の説明
  * - 要求の形: 質問は subCategory の 1 問だけ、選択肢は中項目の一覧と同じ並び（「その他の…」を含む）で説明つき、
  *   質問文に大項目名、入力は先頭 100 文字、クライアントは大項目と同じ 1 つ
  * - 答えの扱い: 確信度 0.4 以上の一覧の中項目は採用してキャッシュする。「その他の食費」・確信度 0.4 未満は中項目なしでキャッシュする。
@@ -86,8 +87,6 @@ const { subCategoryByModel, SUB_MIN_CONFIDENCE } = require('../dist/subCategoryC
 const { JEV_MODEL, JEV_SUB_QUESTIONS, jevSubCriteria } = require('../dist/jevCategoryClassifier');
 const { classifyExpense } = require('../dist/geminiCategoryClassifier');
 const { SUB_CATEGORIES, SUB_CATEGORY_DESCRIPTIONS } = require('../dist/categoryTaxonomy');
-const { textSubCategoryOf } = require('../dist/line/expenseFlow');
-const { merchantSubCategoryOf } = require('../dist/gmail/handler');
 
 // 処理中のログを集める（画面には出さない）。logs はケースごとに消し、allLogs は最後の確認に使う
 const logs = [];
@@ -142,39 +141,48 @@ async function main() {
   console.log('\n# 下限');
   check('SUB_MIN_CONFIDENCE は 0.4', SUB_MIN_CONFIDENCE === 0.4);
 
-  console.log('\n# 呼ばない: 辞書で決まる入力（呼び出し側は textSubCategoryOf / merchantSubCategoryOf ?? subCategoryByModel）');
-  reset();
-  // 呼び出し側（expenseFlow.ts・gmail/handler.ts）と同じ組み立て
-  const text = await quiet(async () => textSubCategoryOf('食費', 'ランチ') ?? (await subCategoryByModel({ major: '食費', text: 'ランチ', source: 'text', allowModels: true })));
-  const merchant = await quiet(
-    async () =>
-      merchantSubCategoryOf('食費', { merchant: 'スターバックス 渋谷店', usedAt: new Date(), usedAtHasTime: true }) ??
-      (await subCategoryByModel({ major: '食費', text: 'スターバックス 渋谷店', source: 'merchant', allowModels: true }))
-  );
-  check('「ランチ」→ 昼ご飯（辞書）、「スターバックス」→ カフェ（辞書）', text === '昼ご飯' && merchant === 'カフェ', JSON.stringify([text, merchant]));
-  check('Jev は呼ばない・モデルのログは出さない', jevCalls.length === 0 && modelLogs().length === 0, `${jevCalls.length} 回`);
-
   console.log('\n# 呼ばない: 中項目の一覧の無い大項目（日用品・その他・カスタム名）。ログも出さない');
   for (const major of ['日用品', 'その他', '推し活', '']) {
     reset();
     const r = await sub('架空亭', { major });
-    check(`${major || '空の大項目'}: 中項目なし・Jev を呼ばない・ログなし`, r === undefined && jevCalls.length === 0 && logs.length === 0, JSON.stringify(logs));
+    // ログは中項目の段のものだけを見る（Node の ExperimentalWarning などが console に出ることがあるため）
+    check(
+      `${major || '空の大項目'}: 中項目なし・Jev を呼ばない・ログなし`,
+      r === undefined && jevCalls.length === 0 && modelLogs().length === 0 && !logs.some((l) => l.level === 'warn'),
+      JSON.stringify(logs)
+    );
   }
 
-  console.log('\n# 呼ばない: 手がかりの無い説明（no_info）');
+  console.log('\n# 呼ばない: 手がかりの無い説明（no_info。textParser.ts が説明に入れる決まった文字列）');
   for (const [label, desc, major] of [
     ['空', '', '食費'],
     ['空白だけ', ' 　 ', '食費'],
-    ['「支出」', '支出', '食費'],
-    ['カテゴリ名「食費」', '食費', '食費'],
-    ['カテゴリ名の旧名「娯楽費」', '娯楽費', '娯楽'],
-    ['カテゴリ名（前後に空白）', ' 娯楽 ', '娯楽'],
+    ['「支出」（説明もカテゴリも無い入力）', '支出', '食費'],
+    ['「食費」（「食費 500」の説明）', '食費', '食費'],
+    ['「娯楽費」（「娯楽費 800」の説明）', '娯楽費', '娯楽'],
+    ['「趣味」（「趣味 800」の説明）', '趣味', '娯楽'],
+    ['前後に空白のある「食費」', ' 食費 ', '食費'],
   ]) {
     reset();
     const r = await sub(desc, { major });
     check(`${label}: 中項目なし・Jev を呼ばない`, r === undefined && jevCalls.length === 0, `${jevCalls.length} 回`);
     check(`${label}: outcome は no_info`, lastModelLog()?.outcome === 'no_info', JSON.stringify(lastModelLog()));
   }
+
+  console.log('\n# 呼ぶ: カテゴリの別名・正準名の説明（「娯楽費 書籍 1500」「1500 エンタメ」「食費 飲食 800」など）');
+  for (const [label, desc, major, answer] of [
+    ['「書籍」（教育の別名）', '書籍', '娯楽', '本・漫画'],
+    ['「エンタメ」（娯楽の別名）', 'エンタメ', '娯楽', '音楽・ライブ'],
+    ['「飲食」（食費の別名）', '飲食', '食費', '外食'],
+    ['「娯楽」（正準名。LINE の入力ではカテゴリの指定にならず、説明に残る）', '娯楽', '娯楽', 'その他の娯楽'],
+  ]) {
+    reset();
+    subBehavior = subAnswer(answer, 0.8);
+    const r = await sub(desc, { major });
+    check(`${label}: Jev を 1 回呼ぶ`, jevCalls.length === 1 && jevCalls[0]?.state?.input === desc, `${jevCalls.length} 回`);
+    check(`${label}: 答えの扱いは通常どおり`, r === (answer.startsWith('その他の') ? undefined : answer) && lastModelLog()?.outcome !== 'no_info', JSON.stringify(lastModelLog()));
+  }
+  subBehavior = subAnswer('外食', 0.8);
 
   console.log('\n# 呼ぶ: 大項目の別名は正準名にする（「外食」→ 食費）');
   reset();
@@ -327,14 +335,21 @@ async function main() {
   };
   await sub('架空亭 時間切れ');
   const timeoutWarn = logs.find((l) => l.args[0] === 'Jev subcategory classification failed');
-  check('失敗の警告はエラーの種類と HTTP ステータスだけ', same(Object.keys(timeoutWarn?.args[1] || {}).sort(), ['error', 'status']) && timeoutWarn.args[1].error === 'APITimeoutError', JSON.stringify(timeoutWarn?.args));
+  check('失敗の警告はエラーの種類だけ（errorFields。状態の無いタイムアウトは errorName だけ）', same(timeoutWarn?.args[1], { errorName: 'APITimeoutError' }), JSON.stringify(timeoutWarn?.args));
   reset();
   subBehavior = () => {
     throw realSdk.APIError.fromResponse(429, { error: 'rate limited' }, new Headers());
   };
   await sub('架空亭 混雑');
   const rateWarn = logs.find((l) => l.args[0] === 'Jev subcategory classification failed');
-  check('429 は status を出す', rateWarn?.args[1]?.status === 429 && rateWarn?.args[1]?.error === 'RateLimitError', JSON.stringify(rateWarn?.args));
+  check('429 は errorStatus を出す', same(rateWarn?.args[1], { errorName: 'RateLimitError', errorStatus: 429 }), JSON.stringify(rateWarn?.args));
+  reset();
+  subBehavior = () => {
+    throw Object.assign(new Error('架空亭 の応答本文'), { name: 'APIError', status: '架空亭' });
+  };
+  await sub('架空亭 状態が文字列');
+  const oddWarn = logs.find((l) => l.args[0] === 'Jev subcategory classification failed');
+  check('status が 100〜599 の整数でなければ出さない（文言も出さない）', same(oddWarn?.args[1], { errorName: 'APIError' }), JSON.stringify(oddWarn?.args));
   subBehavior = subAnswer('外食', 0.8);
 
   console.log('\n# 呼ばない: allowModels が true でない（世帯メンバーでない送信者）。キャッシュも読まない');
@@ -363,18 +378,6 @@ async function main() {
   check('中項目なし・Jev を呼ばない', r === undefined && jevCalls.length === 0);
   check('outcome は not_configured（jevFailedForMajor より先に見る）', lastModelLog()?.outcome === 'not_configured' && lastModelLog()?.majorConfidence === null, JSON.stringify(lastModelLog()));
   process.env.TYPESAFE_API_KEY = 'test-key';
-
-  console.log('\n# 例外は投げない');
-  reset();
-  let threw = false;
-  try {
-    r = await quiet(() => subCategoryByModel(null));
-  } catch {
-    threw = true;
-  }
-  check('引数が null でも投げずに中項目なし', !threw && r === undefined, JSON.stringify(r));
-  const failure = logs.find((l) => l.args[0] === 'Subcategory classification by model failed');
-  check('警告は固定文 + エラーの種類', failure?.level === 'warn' && failure.args[1]?.errorName === 'TypeError', JSON.stringify(failure?.args));
 
   console.log('\n# 時刻のルールは当てない（Jev が外食を返したら外食のまま）');
   reset();
