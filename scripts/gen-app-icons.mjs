@@ -69,6 +69,9 @@ writeFileSync(join(PWA_DIR, 'icon-512.png'), png(rounded, 512));
 writeFileSync(join(PWA_DIR, 'icon-maskable-512.png'), png(svg({ scale: 0.8 }), 512));
 writeFileSync(join(APP_DIR, 'apple-icon.png'), png(svg(), 180));
 const favicon = svg({ scale: 1.15, radius: 20 });
+// 検索結果（Google）のロゴ用。Google は 48px の倍数の正方形アイコンを探すので、ICO とは別に PNG でも置く
+writeFileSync(join(PWA_DIR, 'favicon-48.png'), png(favicon, 48));
+writeFileSync(join(PWA_DIR, 'favicon-96.png'), png(favicon, 96));
 writeFileSync(join(APP_DIR, 'favicon.ico'), ico([16, 32, 48].map((size) => ({ size, data: png(favicon, size) }))));
 
 console.log('generated app icons -> web/public/pwa/, web/app/apple-icon.png, web/app/favicon.ico');

@@ -76,6 +76,13 @@ export function urlWithoutLiffReturnParams(): string {
   return url.toString();
 }
 
+// 検索エンジンのクローラー。LINE ログインへ送られるとトップの内容（プレビュー）を読めないため、ログインを始めない
+const CRAWLER_UA = /Googlebot|Google-InspectionTool|bingbot|Yahoo! Slurp|DuckDuckBot|Baiduspider|facebookexternalhit|Twitterbot|Slackbot|LinkedInBot/i;
+
+function isCrawler(): boolean {
+  return CRAWLER_UA.test(navigator.userAgent);
+}
+
 /**
  * サインイン状態を確立する。
  * - NEXT_PUBLIC_LIFF_ID あり: LIFF で LINE ログイン → ID トークンを
@@ -95,6 +102,9 @@ export function initLineAuth(): Promise<void> {
       console.error('Firebase Auth is not initialized; cannot start LINE auth');
       return;
     }
+
+    // クローラーにはログインを求めず、サインインしないまま（＝プレビューモードの）トップを見せる
+    if (isCrawler()) return;
 
     // 永続化されたセッションの復元完了を待ってから判定する
     // （復元前は currentUser が null のため、待たないと二重サインインし得る）

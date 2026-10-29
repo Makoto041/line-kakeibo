@@ -301,8 +301,9 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - framer-motion による SPA 風ページ遷移アニメーション＋ SWR キャッシュ（`lib/swrCache.ts`）で再読込感を排除。支出・集計・世帯・以前の立替（`advances:`）・設定のキャッシュは localStorage にも保存し（14 日で破棄。別の LINE アカウントに切り替わったら消す）、LINE から開き直したときも前回の内容をすぐ出して裏で取り直す
 - レスポンシブ: デスクトップはサイドバー、モバイルはボトムタブ。タブは **ホーム / 支出 / 精算 / 設定** の 4 つ（`components/layout/nav.ts`）
 - AppShell（`components/layout/AppShell.tsx`。ナビと、マウント時の LINE ログイン〔`lib/lineAuth.ts`〕・PWA の起動）で包むのは `app/(app)/layout.tsx` だけ。ルートの `app/layout.tsx` は html・フォント・テーマ・metadata だけで、`(app)` の外のページ（404）は AppShell・`lib/lineAuth.ts` を読み込まない
+- ログイン処理中（LIFF の初期化・LINE ログイン画面への移動・トークン交換）は `useLineAuth` の `loading` を true のままにし、ゲスト（プレビューモード）の画面を一瞬出さない。ログインが終わってもサインインしていない場合（クローラーは `lib/lineAuth.ts` でログインを始めない）だけ、トップはプレビューモードで表示する
 - `/attach` `/link` はナビ chrome なし（`components/layout/AppShell.tsx` の BARE_ROUTES）
-- セキュリティヘッダー（`next.config.ts`）: CSP は Report-Only、`X-Frame-Options: DENY`、`X-Robots-Tag: noindex`
+- セキュリティヘッダー（`next.config.ts`）: CSP は Report-Only、`X-Frame-Options: DENY`。検索エンジンに出すのはトップ（`/`）だけで、それ以外は `X-Robots-Tag: noindex`（ロゴの `/pwa/` `/favicon.ico` `/apple-icon.png` は除く）と `public/robots.txt`（`Allow: /$`）で止める。検索結果のロゴは `app/layout.tsx` の `icons`（48px の倍数の PNG）、サイト名は `WebSite` の JSON-LD で指定する
 
 ### 5.3 データアクセス
 

@@ -276,18 +276,23 @@ export function useLineAuth() {
   useEffect(() => {
     ensureFirebaseInitialized();
     // 起動時サインイン（LIFF もしくは匿名フォールバック）を確実に開始する
-    initLineAuth();
+    const init = initLineAuth();
 
     if (!auth) {
       setLoading(false);
       return;
     }
 
+    let cancelled = false;
+    let initSettled = false;
+
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
         cachedLineAuth = null;
         setState(null);
-        setLoading(false);
+        // サインインが終わるまで（LINE ログイン画面へ移る間・トークン交換の間）は「未ログイン」と決めない。
+        // 決めてしまうとゲスト（プレビューモード）の画面が一瞬出る。終わっても誰もいなければ下で確定する
+        if (initSettled) setLoading(false);
         return;
       }
 
@@ -323,7 +328,19 @@ export function useLineAuth() {
       if (lineId !== known) apply(lineId);
     });
 
-    return () => unsubscribe();
+    // サインインの処理が終わったのに誰もサインインしていない（クローラー・LIFF 未設定など）なら
+    // ゲストとして確定する。サインイン済みなら、上のリスナーが lineId を確かめて確定する
+    init
+      .catch(() => undefined)
+      .then(() => {
+        initSettled = true;
+        if (!cancelled && !auth?.currentUser) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   // 旧: URL に lineId を引き回すヘルパー。現在は認証が Firebase に永続化されるため
