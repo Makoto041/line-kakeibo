@@ -644,6 +644,8 @@ function common(name, msg) {
     ['Jev 0.39・既定なし → その他・unclassified', { classified: jev('娯楽', 0.39) }, 'その他', 'unclassified'],
     ['「その他」0.9・既定あり → default', { classified: jev('その他', 0.9), defaultCategory: '日用品' }, '日用品', 'default'],
     ['「その他」0.9・既定なし → その他・jev', { classified: jev('その他', 0.9) }, 'その他', 'jev'],
+    ['世帯のルールが「その他」→ 既定のカテゴリで置き換えない・rule', { classified: { category: 'その他', confidence: 1, reasoning: 'Household category rule', provider: 'rule' }, defaultCategory: '食費' }, 'その他', 'rule'],
+    ['世帯のルールのカテゴリ → rule', { classified: { category: '日用品', confidence: 1, reasoning: 'Household category rule', provider: 'rule' }, defaultCategory: '食費' }, '日用品', 'rule'],
     ['分類が失敗（null）・既定あり → default', { classified: null, defaultCategory: '日用品' }, '日用品', 'default'],
     ['分類が失敗（null）・既定なし → その他・unclassified', { classified: null, defaultCategory: undefined }, 'その他', 'unclassified'],
     ['決まらない（category: null）・既定あり → default', { classified: { category: null, confidence: 0 }, defaultCategory: '日用品' }, '日用品', 'default'],

@@ -490,7 +490,7 @@ export default function Settings() {
         {activeTab === 'category' && lineId && <CategoryRulesPanel lineId={lineId} />}
 
         {/* Save Button */}
-        {activeTab !== 'recurring' && (
+        {activeTab !== 'recurring' && activeTab !== 'category' && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

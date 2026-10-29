@@ -125,7 +125,8 @@ const CLASSIFY_MIN_CONFIDENCE = 0.4;
  *
  * - 入力でカテゴリを指定していればそれを使う（specified）
  * - 無ければ分類の結果を確信度 0.4 以上のときだけ採用する（判定元は分類の provider）
- * - それでも「その他」なら、利用者の既定カテゴリがあればそれにする（default）。無ければ「その他」（unclassified）
+ * - それでも「その他」なら、利用者の既定カテゴリがあればそれにする（default）。無ければ「その他」（unclassified）。
+ *   ただし世帯の確定ルールが「その他」と決めたもの（判定元 rule）は、利用者が選んだ結果なので既定カテゴリで置き換えない
  *
  * classified は分類が失敗（rejected）したら null、defaultCategory は設定を読めなかったら渡さない。
  * 指定と既定カテゴリは LINE の旧名（医療費・娯楽費など）のことがあるので、正準名に揃えて返す
@@ -148,7 +149,7 @@ export function decideTextExpenseCategory(input: {
   }
 
   // 分類できない（Jev・Gemini とも失敗し辞書にも無い）または low confidence の場合、ユーザーデフォルトを使用
-  if (category === "その他" && input.defaultCategory) {
+  if (category === "その他" && input.defaultCategory && origin !== "rule") {
     category = toCanonicalCategoryName(input.defaultCategory);
     origin = "default";
   }
