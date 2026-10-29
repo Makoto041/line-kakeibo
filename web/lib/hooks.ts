@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { db, auth, getFirebaseStatus, ensureFirebaseInitialized } from './firebase';
-import { initLineAuth } from './lineAuth';
+import { initLineAuth, LINE_AUTH_WAIT_MS } from './lineAuth';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
 import { sumCategoryTotals } from './budgetAnalytics';
@@ -296,6 +296,14 @@ export function useLineAuth() {
         return;
       }
 
+      // 匿名（前回の失敗で残ったセッション）は、サインインの処理が終わるまで確定しない。
+      // 処理はこの後 LINE ログイン画面へ進むことがあり、先に確定するとゲストの画面が一瞬出る
+      if (fbUser.isAnonymous && !initSettled) {
+        cachedLineAuth = null;
+        setState(null);
+        return;
+      }
+
       const apply = (lineId: string | null) => {
         const resolved: LineAuthState = {
           uid: fbUser.uid,
@@ -330,12 +338,19 @@ export function useLineAuth() {
 
     // サインインの処理が終わったのに誰もサインインしていない（クローラー・LIFF 未設定など）なら
     // ゲストとして確定する。サインイン済みなら、上のリスナーが lineId を確かめて確定する
-    init
-      .catch(() => undefined)
-      .then(() => {
-        initSettled = true;
-        if (!cancelled && !auth?.currentUser) setLoading(false);
-      });
+    // LIFF の初期化・認証 API・Firebase のサインインはタイムアウトを持たないため、上限で打ち切って確定する
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, LINE_AUTH_WAIT_MS));
+    Promise.race([init.catch(() => undefined), timeout]).then(() => {
+      initSettled = true;
+      if (cancelled) return;
+      const user = auth?.currentUser;
+      // 匿名はリスナーが保留にしていたので、ここでゲストとして確定する
+      if (!user || user.isAnonymous) {
+        cachedLineAuth = user ? { uid: user.uid, lineId: null, isAnonymous: true } : null;
+        setState(cachedLineAuth);
+        setLoading(false);
+      }
+    });
 
     return () => {
       cancelled = true;

@@ -18,7 +18,7 @@ const LOGIN_REDIRECT_WAIT_MS = 10_000;
 // waitForLineAuth() で待つ上限。LIFF の初期化・bot の /auth/line（コールドスタートを含む）・
 // Firebase へのサインインはどれもタイムアウトを持たないため、通信が止まると読み込み中のまま
 // 終わらなくなる。上限を過ぎたら呼び出し元にエラーを返し、再読み込みできるようにする。
-const LINE_AUTH_WAIT_MS = 20_000;
+export const LINE_AUTH_WAIT_MS = 20_000;
 
 // LINE ログイン画面へ送った時刻（localStorage）。ログインから戻ってきたのに（URL に
 // LIFF の戻りパラメータがある）ログインできていない（トークン交換の失敗など）ときに、
