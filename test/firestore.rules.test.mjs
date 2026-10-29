@@ -16,6 +16,7 @@ import {
   assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField, collection, query, where, getDocs,
 } from 'firebase/firestore';
@@ -163,61 +164,34 @@ await test('他人の個人支出は読めない', async () => {
 });
 
 // --- 作成 -----------------------------------------------------------------
-await test('自分の lineId なら個人支出を作成できる', async () => {
-  await assertSucceeds(setDoc(doc(userA, 'expenses/newA'), { lineId: 'A', amount: 5, date: '2026-08-02' }));
+// 支出の作成はクライアントからは禁止（登録は bot = Admin SDK だけ。web は支出を作成しない）。
+// /auth/line は LINE で検証できた人全員にトークンを出すため、作成を許すと、世帯の外の人が支出（とレシート画像）を
+// 無制限に作って保存容量を使えてしまう。どんな内容でも拒否する。
+await test('★ 支出はクライアントから作成できない（自分の個人支出でも）', async () => {
+  await assertFails(setDoc(doc(userA, 'expenses/newA'), { lineId: 'A', amount: 5, date: '2026-08-02' }));
 });
-await test('★ 他人の lineId では作成できない（lineId 偽装）', async () => {
-  await assertFails(setDoc(doc(userA, 'expenses/newX'), { lineId: 'B', amount: 5, date: '2026-08-02' }));
-});
-await test('匿名は作成できない', async () => {
-  await assertFails(setDoc(doc(anon, 'expenses/newAnon'), { lineId: null, amount: 5, date: '2026-08-02' }));
-});
-await test('有効なメンバーは自分のグループに作成できる（lineGroupId 一致）', async () => {
-  await assertSucceeds(setDoc(doc(userA, 'expenses/newAG'), {
+await test('★ 支出はクライアントから作成できない（グループ支出。有効なメンバーでも）', async () => {
+  await assertFails(setDoc(doc(userA, 'expenses/newAG'), {
     lineId: 'A', groupId: 'G1', lineGroupId: 'L1', amount: 1200, date: '2026-08-02',
     description: 'ランチ', category: '食費', includeInTotal: true, status: 'pending',
     createdAt: new Date(), updatedAt: new Date(),
   }));
 });
-await test('★ 非メンバーは他グループ（groupId 指定）に作成できない', async () => {
-  await assertFails(setDoc(doc(userC, 'expenses/newCG'), { lineId: 'C', groupId: 'G1', amount: 5, date: '2026-08-02' }));
+await test('★ 支出はクライアントから作成できない（中項目つき）', async () => {
+  await assertFails(setDoc(doc(userA, 'expenses/newASub'), { lineId: 'A', amount: 5, date: '2026-08-02', category: '食費', subCategory: '外食' }));
 });
-await test('★ 脱退済みメンバーはグループに作成できない', async () => {
+await test('★ 他人の lineId・匿名・非メンバー・脱退済みでも作成できない', async () => {
+  await assertFails(setDoc(doc(userA, 'expenses/newX'), { lineId: 'B', amount: 5, date: '2026-08-02' }));
+  await assertFails(setDoc(doc(anon, 'expenses/newAnon'), { lineId: null, amount: 5, date: '2026-08-02' }));
+  await assertFails(setDoc(doc(userC, 'expenses/newCG'), { lineId: 'C', groupId: 'G1', amount: 5, date: '2026-08-02' }));
   await assertFails(setDoc(doc(userD, 'expenses/newDG'), { lineId: 'D', groupId: 'G1', amount: 5, date: '2026-08-02' }));
 });
-await test('★ groupId なしで lineGroupId だけを持つ支出は作成できない（LINE 集計への注入防止）', async () => {
-  await assertFails(setDoc(doc(userC, 'expenses/newCL'), {
-    lineId: 'C', lineGroupId: 'L1', status: 'pending', amount: 50000, date: '2026-08-02',
-  }));
-});
-await test('★ グループと一致しない lineGroupId では作成できない', async () => {
-  await assertFails(setDoc(doc(userA, 'expenses/newAL2'), { lineId: 'A', groupId: 'G1', lineGroupId: 'L2', amount: 5, date: '2026-08-02' }));
-});
-await test('★ inputSource（gmail_auto の偽装）は作成時に書けない', async () => {
-  await assertFails(setDoc(doc(userA, 'expenses/newAGm'), {
-    lineId: 'A', amount: 5, date: '2026-08-02', description: '', inputSource: 'gmail_auto',
-  }));
-});
-await test('★ 立替・精算系フィールド（status advance_settled / advanceBy / advanceFull）は作成時に書けない', async () => {
-  await assertFails(setDoc(doc(userA, 'expenses/newAS'), { lineId: 'A', amount: 5, date: '2026-08-02', status: 'advance_settled' }));
-  await assertFails(setDoc(doc(userA, 'expenses/newAAdv'), { lineId: 'A', amount: 5, date: '2026-08-02', advanceBy: 'A' }));
-  await assertFails(setDoc(doc(userA, 'expenses/newAFull'), { lineId: 'A', amount: 5, date: '2026-08-02', advanceFull: true }));
-});
-await test('★ appUid は作成時に書けない（userLinks 同期の悪用防止）', async () => {
-  await assertFails(setDoc(doc(userA, 'expenses/newAUid'), { lineId: 'A', amount: 5, date: '2026-08-02', appUid: 'victim' }));
-});
-await test('★ 型・範囲の検証: 金額が文字列・負数・上限超過なら作成できない', async () => {
-  await assertFails(setDoc(doc(userA, 'expenses/newAStr'), { lineId: 'A', amount: 'abc', date: '2026-08-02' }));
-  await assertFails(setDoc(doc(userA, 'expenses/newANeg'), { lineId: 'A', amount: -1, date: '2026-08-02' }));
-  await assertFails(setDoc(doc(userA, 'expenses/newABig'), { lineId: 'A', amount: 10000001, date: '2026-08-02' }));
-});
-await test('★ 型・範囲の検証: 日付の形式と文字列長', async () => {
-  await assertFails(setDoc(doc(userA, 'expenses/newADate'), { lineId: 'A', amount: 5, date: '2026/08/02' }));
-  await assertFails(setDoc(doc(userA, 'expenses/newADesc'), { lineId: 'A', amount: 5, date: '2026-08-02', description: 'x'.repeat(501) }));
-  await assertFails(setDoc(doc(userA, 'expenses/newACat'), { lineId: 'A', amount: 5, date: '2026-08-02', category: 'x'.repeat(51) }));
-});
-await test('必須フィールド（amount / date）が無ければ作成できない', async () => {
-  await assertFails(setDoc(doc(userA, 'expenses/newAMissing'), { lineId: 'A', amount: 5 }));
+await test('★ 作成を断ったので、ドキュメントは増えない', async () => {
+  for (const id of ['newA', 'newAG', 'newASub']) {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      assert.equal((await getDoc(doc(ctx.firestore(), `expenses/${id}`))).exists(), false, id);
+    });
+  }
 });
 
 // --- グループ支出の read: メンバー限定 -------------------------------------
@@ -351,28 +325,6 @@ await test('★ 精算済み: 登録した本人でも削除できない', async
 
 // --- 中項目（subCategory。任意。#235） ---------------------------------------
 // 文字列 50 文字以内。web は大項目を変えるとき、元の支出が中項目を持っていれば削除する。
-await test('subCategory: 中項目つきの支出を作成できる（個人・グループ）', async () => {
-  await assertSucceeds(setDoc(doc(userA, 'expenses/newASub'), {
-    lineId: 'A', amount: 5, date: '2026-08-02', category: '食費', subCategory: '外食',
-  }));
-  await assertSucceeds(setDoc(doc(userA, 'expenses/newAGSub'), {
-    lineId: 'A', groupId: 'G1', lineGroupId: 'L1', amount: 1200, date: '2026-08-02',
-    description: 'ランチ', category: '食費', subCategory: 'x'.repeat(50), includeInTotal: true,
-    status: 'pending', createdAt: new Date(), updatedAt: new Date(),
-  }));
-});
-await test('★ subCategory: 作成時も 51 文字・文字列以外は拒否', async () => {
-  await assertFails(setDoc(doc(userA, 'expenses/newASubLong'), { lineId: 'A', amount: 5, date: '2026-08-02', subCategory: 'x'.repeat(51) }));
-  await assertFails(setDoc(doc(userA, 'expenses/newASubNum'), { lineId: 'A', amount: 5, date: '2026-08-02', subCategory: 1 }));
-  await assertFails(setDoc(doc(userA, 'expenses/newASubNull'), { lineId: 'A', amount: 5, date: '2026-08-02', subCategory: null }));
-  await assertFails(setDoc(doc(userA, 'expenses/newASubArr'), { lineId: 'A', amount: 5, date: '2026-08-02', subCategory: ['外食'] }));
-});
-await test('★ subCategory: 作成時の他の制限は従来どおり（lineId 偽装・非メンバー・許可外のキー）', async () => {
-  await assertFails(setDoc(doc(userA, 'expenses/newXSub'), { lineId: 'B', amount: 5, date: '2026-08-02', subCategory: '外食' }));
-  await assertFails(setDoc(doc(userC, 'expenses/newCGSub'), { lineId: 'C', groupId: 'G1', amount: 5, date: '2026-08-02', subCategory: '外食' }));
-  await assertFails(setDoc(doc(userA, 'expenses/newASubKey'), { lineId: 'A', amount: 5, date: '2026-08-02', subcategory: '外食' }));
-});
-
 await test('subCategory: メンバーは中項目を付けられる（50 文字まで）', async () => {
   await assertSucceeds(updateDoc(doc(userA, 'expenses/expSubNone'), { subCategory: 'x'.repeat(50), updatedAt: new Date() }));
   await assertSucceeds(updateDoc(doc(userA, 'expenses/expSubNone'), { subCategory: '外食', updatedAt: new Date() }));
@@ -485,7 +437,10 @@ await test('★ 非メンバーは Gmail 取込のグループ支出を削除で
 });
 
 await test('登録した本人（有効メンバー）は自分のグループ支出を削除できる', async () => {
-  await assertSucceeds(deleteDoc(doc(userA, 'expenses/newAG')));
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'expenses/ownAG'), { lineId: 'A', groupId: 'G1', lineGroupId: 'L1', amount: 1200, date: '2026-08-02', description: 'ランチ', status: 'pending' });
+  });
+  await assertSucceeds(deleteDoc(doc(userA, 'expenses/ownAG')));
 });
 await test('★ 脱退済みメンバーは自分が登録したグループ支出でも削除できない', async () => {
   await assertFails(deleteDoc(doc(userD, 'expenses/expByD')));
@@ -600,6 +555,55 @@ await test('設定: 他人のドキュメントには書けない', async () => 
 
 await test('設定: userSettings の自分のドキュメントに期間設定を保存できる', async () => {
   await assertSucceeds(setDoc(doc(userA, 'userSettings/A'), { dateSettings: { mode: 'monthly' } }, { merge: true }));
+});
+await test('設定: 予算の保存（web の形: 予算・カテゴリ別・閾値・updatedAt）', async () => {
+  await assertSucceeds(setDoc(doc(userA, 'budgetSettings/A'), { monthlyBudget: 200000, categoryBudgets: { 食費: 50000 }, alertThreshold: 20, updatedAt: new Date() }));
+});
+await test('★ 設定: 予算に許可外のキー・型違い・範囲外・大きな map は書けない（保存容量の悪用防止）', async () => {
+  await assertFails(setDoc(doc(userA, 'budgetSettings/A'), { monthlyBudget: 1, blob: 'x'.repeat(1000) }));
+  await assertFails(setDoc(doc(userA, 'budgetSettings/A'), { monthlyBudget: 'abc' }));
+  await assertFails(setDoc(doc(userA, 'budgetSettings/A'), { monthlyBudget: 1, alertThreshold: 101 }));
+  await assertFails(setDoc(doc(userA, 'budgetSettings/A'), { monthlyBudget: 1, alertThreshold: -1 }));
+  await assertFails(setDoc(doc(userA, 'budgetSettings/A'), { monthlyBudget: 1, categoryBudgets: 'x' }));
+  await assertFails(setDoc(doc(userA, 'budgetSettings/A'), { monthlyBudget: 1, categoryBudgets: Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`c${i}`, 1])) }));
+  await assertFails(setDoc(doc(userA, 'budgetSettings/A'), { monthlyBudget: 1, updatedAt: 'now' }));
+});
+await test('設定: 期間設定の形（モード・日付・起算日）と、defaultCategory', async () => {
+  await assertSucceeds(setDoc(doc(userA, 'userSettings/A'), { dateSettings: { mode: 'custom', startDate: '2026-08-01', endDate: '2026-08-31' }, updatedAt: new Date() }, { merge: true }));
+  await assertSucceeds(setDoc(doc(userA, 'userSettings/A'), { dateSettings: { mode: 'monthly', customStartDay: 25 } }, { merge: true }));
+  await assertSucceeds(setDoc(doc(userA, 'userSettings/A'), { lineId: 'A', defaultCategory: '食費', createdAt: new Date(), updatedAt: new Date() }, { merge: true }));
+});
+await test('★ 設定: userSettings に許可外のキー・長すぎる値・型違いは書けない（保存容量の悪用防止）', async () => {
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { blob: 'x'.repeat(1000) }, { merge: true }));
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { dateSettings: { mode: 'weird' } }, { merge: true }));
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { dateSettings: { mode: 'custom', startDate: 'x'.repeat(11) } }, { merge: true }));
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { dateSettings: { mode: 'monthly', customStartDay: 32 } }, { merge: true }));
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { dateSettings: { mode: 'monthly', extra: 'x'.repeat(1000) } }, { merge: true }));
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { dateSettings: 'x' }, { merge: true }));
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { defaultCategory: 'x'.repeat(51) }, { merge: true }));
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { lineId: 'B' }, { merge: true }));
+});
+await test('設定: 保存してある旧い形のキー（許可外）があっても、変えたキーが正しければ merge で保存できる（本番データの退行防止）', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'userSettings/A'), { legacyFlag: true, dateSettings: { mode: 'monthly' }, defaultCategory: 'x'.repeat(80) });
+  });
+  await assertSucceeds(setDoc(doc(userA, 'userSettings/A'), { dateSettings: { mode: 'monthly', customStartDay: 20 }, updatedAt: new Date() }, { merge: true }));
+  // 許可外のキーを新しく足すことはできない
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { anotherLegacy: 1 }, { merge: true }));
+  // 長すぎる defaultCategory は、それを書き換えるときだけ検査する
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { defaultCategory: 'y'.repeat(80) }, { merge: true }));
+});
+await test('設定: userSettings / budgetSettings は削除できない（web・bot は削除しない）', async () => {
+  await assertFails(deleteDoc(doc(userA, 'userSettings/A')));
+  await assertFails(deleteDoc(doc(userA, 'budgetSettings/A')));
+});
+await test('設定: dateRangeSettings は自分の分を読める（書き込みは禁止）', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => { await setDoc(doc(ctx.firestore(), 'dateRangeSettings/A'), { mode: 'monthly' }); });
+  await assertSucceeds(getDoc(doc(userA, 'dateRangeSettings/A')));
+  await assertFails(getDoc(doc(userA, 'dateRangeSettings/B')));
+});
+await test('設定: dateRangeSettings は読めるが、書き込みは禁止', async () => {
+  await assertFails(setDoc(doc(userA, 'dateRangeSettings/A'), { mode: 'monthly' }));
 });
 await test('★ 設定: 匿名は userSettings に書けない', async () => {
   await assertFails(setDoc(doc(anon, 'userSettings/anon-uid'), { x: 1 }));

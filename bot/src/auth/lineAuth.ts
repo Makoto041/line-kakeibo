@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { getAuth } from "firebase-admin/auth";
+import { clientIpKey } from "../clientIp";
 import { getOrCreateAppUidForLineId } from "../linkUserResolver";
 import { errorFields } from "../logSafe";
 import { applyWebCorsHeaders } from "../webOrigins";
@@ -29,12 +30,16 @@ const authCors = (req: Request, res: Response, next: express.NextFunction) => {
 
 authRouter.use(authCors);
 
-// 認証系のレート制限（総当り抑止）
+// 認証系のレート制限（総当り抑止）。キーは接続元の IP（clientIp.ts の clientIpKey）。
+// 既定のキー（req.ip）は、`trust proxy` が無い Cloud Run では前段のアドレスにまとまり、1 人の連打で全員が 429 になって
+// LINE ログインを止められてしまうため、/household/* と同じ方法で接続元を求める
 const authLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => clientIpKey(req),
+  validate: { ip: false, trustProxy: false, xForwardedForHeader: false, forwardedHeader: false },
 });
 
 const LINE_VERIFY_URL = "https://api.line.me/oauth2/v2.1/verify";

@@ -7,7 +7,7 @@
 import express, { Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { isAdminAuthorized } from "../adminAuth";
-import { clientIpKey } from "../householdApi";
+import { clientIpKey } from "../clientIp";
 import { errorFields } from "../logSafe";
 import {
   getAuthUrl,

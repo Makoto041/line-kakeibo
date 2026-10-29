@@ -141,14 +141,6 @@ service cloud.firestore {
       return ['amount', 'description', 'date', 'category', 'subCategory', 'includeInTotal',
               'payerId', 'payerDisplayName', 'receiptUrl', 'updatedAt'];
     }
-    // クライアントが作成時に書けるフィールド。inputSource / gmailMessageId / advanceBy /
-    // appUid などは bot 専用（Gmail 取込の重複判定や精算・userLinks 同期に使われるため
-    // クライアントに偽装させない）。
-    function creatableExpenseKeys() {
-      return ['lineId', 'groupId', 'lineGroupId', 'userDisplayName', 'amount',
-              'description', 'date', 'category', 'subCategory', 'includeInTotal', 'status',
-              'payerId', 'payerDisplayName', 'paymentMethod', 'createdAt', 'updatedAt'];
-    }
     // 精算済み（立替を精算した）支出か。精算額が後から変わらないよう、
     // クライアントからは金額・日付・支払者の変更と削除を禁止する（status はそもそも不変）。
     function isSettledDoc() {
@@ -165,19 +157,6 @@ service cloud.firestore {
     // 世帯の LINE 集計に入る支出を書き換えられないようにする）。
     function isPersonalDoc() {
       return docGroupId() == null && resource.data.get('lineGroupId', null) == null;
-    }
-    // 作成しようとしている支出のグループ所属が正当か。
-    //   - groupId なし: 個人支出。bot は lineGroupId だけで集計・精算するため、
-    //     groupId を持たずに lineGroupId だけを持つ支出（web からは見えないのに LINE の
-    //     集計に入る）は作らせない。
-    //   - groupId あり: そのグループの有効なメンバーであり、lineGroupId を付けるなら
-    //     グループに紐づく LINE グループと一致すること。
-    function validExpenseGroupOnCreate(d) {
-      return (!('groupId' in d) && !('lineGroupId' in d))
-          || ('groupId' in d
-              && isMemberOf(d.groupId)
-              && (!('lineGroupId' in d)
-                  || d.lineGroupId == get(/databases/$(database)/documents/groups/$(d.groupId)).data.get('lineGroupId', null)));
     }
     // 単一ドキュメントの書き込み（update / delete）で、呼び出し元がその支出を扱えるか。
     //   - グループ支出（groupId あり）: そのグループの有効なメンバーだけ。
@@ -205,15 +184,10 @@ service cloud.firestore {
       //   クエリがルールで証明できず一覧全体が拒否される。
       allow read: if ownsDoc() || isMemberOfDocGroup();
 
-      // create: LINE 本人確認済みで、自分の lineId を持ち、許可されたフィールドだけで、
-      // 値が妥当で、グループ所属が正当な場合のみ。
-      // （現状 web は支出を作成しない。登録は bot = Admin SDK が行う）
-      // （writingAsSelf() は isLineUser() を含む）
-      allow create: if writingAsSelf()
-                    && request.resource.data.keys().hasAll(['lineId', 'amount', 'date'])
-                    && request.resource.data.keys().hasOnly(creatableExpenseKeys())
-                    && expenseFieldsValid(request.resource.data, request.resource.data.keys())
-                    && validExpenseGroupOnCreate(request.resource.data);
+      // create: クライアントからは禁止（登録は bot = Admin SDK だけ。web は支出を作成しない）。
+      // 以前は、LINE 本人確認済みなら誰でも自分の個人支出を作れた。/auth/line は LINE で検証できた人全員にトークンを出す
+      // ため、世帯の外の人も、支出（とそのレシート画像）を無制限に作って保存容量を使えてしまう入口だった。
+      allow create: if false;
 
       // update: 扱える支出について、許可リストのフィールドだけを、妥当な値で変更できる。
       //   Gmail 自動取込の支出は lineId が固定のシステムユーザー
@@ -278,14 +252,57 @@ service cloud.firestore {
     // ---- userSettings / budgetSettings / dateRangeSettings ------------------
     // いずれもドキュメント ID = 利用者の LINE userId（web は user.uid=lineId を doc-id に使う）。
     // 自分の設定ドキュメントのみ read/write 可。
+    //
+    // 書き込みは、web が使う項目だけを、型と大きさを確かめて許す。/auth/line は LINE で検証できた人全員にトークンを
+    // 出すため、世帯の外の人が自分のドキュメントへ大きな値を書き込んで保存容量を使えないようにする
+    // （ドキュメントの大きさは、許可するキーと、文字列・map の大きさで抑える）。
+    // web が項目を増やすときは、ここと test/firestore.rules.test.mjs を更新すること。
+    function validTimestampField(d, key) {
+      return !(key in d) || d[key] is timestamp;
+    }
+    // この書き込みで変わるキー（作成なら全部）。merge の書き込みでは、すでに保存してある（旧い形の）キーを
+    // 今の検査に巻き込まない（本番に許可外のキーが残っていても、その人が設定を保存できなくならないように）。
+    function changedKeys() {
+      return resource == null ? request.resource.data.keys().toSet() : request.resource.data.diff(resource.data).affectedKeys();
+    }
+    // dateSettings（web/lib/dateSettings.ts の DateRangeSettings）
+    function validDateSettings(v) {
+      return v is map
+          && v.keys().hasOnly(['mode', 'startDate', 'endDate', 'customStartDay'])
+          && v.get('mode', 'monthly') in ['monthly', 'custom', 'customStart']
+          && (!('startDate' in v) || (v.startDate is string && v.startDate.size() <= 10))
+          && (!('endDate' in v) || (v.endDate is string && v.endDate.size() <= 10))
+          && (!('customStartDay' in v) || (v.customStartDay is int && v.customStartDay >= 1 && v.customStartDay <= 31));
+    }
+    // userSettings: bot が defaultCategory（LINE の「カテゴリー」コマンド）、web が dateSettings を書く。
     match /userSettings/{lineId} {
-      allow read, write: if isSignedIn() && lineId == myLineId();
+      allow read: if isSignedIn() && lineId == myLineId();
+      allow create, update: if isSignedIn() && lineId == myLineId()
+                   && changedKeys().hasOnly(['lineId', 'defaultCategory', 'dateSettings', 'createdAt', 'updatedAt'])
+                   && (!('lineId' in changedKeys()) || request.resource.data.lineId == lineId)
+                   && (!('defaultCategory' in changedKeys())
+                       || (request.resource.data.defaultCategory is string && request.resource.data.defaultCategory.size() <= 50))
+                   && (!('dateSettings' in changedKeys()) || validDateSettings(request.resource.data.dateSettings))
+                   && (!('createdAt' in changedKeys()) || validTimestampField(request.resource.data, 'createdAt'))
+                   && (!('updatedAt' in changedKeys()) || validTimestampField(request.resource.data, 'updatedAt'));
     }
+    // budgetSettings（web/lib/hooks.ts の BudgetConfig + updatedAt）
     match /budgetSettings/{lineId} {
-      allow read, write: if isSignedIn() && lineId == myLineId();
+      allow read: if isSignedIn() && lineId == myLineId();
+      allow create, update: if isSignedIn() && lineId == myLineId()
+                   && request.resource.data.keys().hasOnly(['monthlyBudget', 'categoryBudgets', 'alertThreshold', 'updatedAt'])
+                   && (!('monthlyBudget' in request.resource.data) || request.resource.data.monthlyBudget is number)
+                   && (!('alertThreshold' in request.resource.data)
+                       || (request.resource.data.alertThreshold is number
+                           && request.resource.data.alertThreshold >= 0 && request.resource.data.alertThreshold <= 100))
+                   && (!('categoryBudgets' in request.resource.data)
+                       || (request.resource.data.categoryBudgets is map && request.resource.data.categoryBudgets.size() <= 50))
+                   && validTimestampField(request.resource.data, 'updatedAt');
     }
+    // dateRangeSettings（web は書かない。旧版の名残。読み取りだけ許し、書き込みは禁止）
     match /dateRangeSettings/{lineId} {
-      allow read, write: if isSignedIn() && lineId == myLineId();
+      allow read: if isSignedIn() && lineId == myLineId();
+      allow write: if false;
     }
 
     // ---- userLinks ----------------------------------------------------------
