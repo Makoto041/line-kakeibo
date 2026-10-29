@@ -76,7 +76,8 @@ export function urlWithoutLiffReturnParams(): string {
   return url.toString();
 }
 
-// 検索エンジンのクローラー。LINE ログインへ送られるとトップの内容（プレビュー）を読めないため、ログインを始めない
+// 検索エンジンのクローラー。LINE ログインへ送られるとトップの内容（プレビュー）を読めないため、ログインを始めない。
+// UA は偽装できるため、これは表示を決めるだけの判定で、アクセス権の判断には使わない（データは Firestore ルールが lineId クレームで守る）
 const CRAWLER_UA = /Googlebot|Google-InspectionTool|bingbot|Yahoo! Slurp|DuckDuckBot|Baiduspider|facebookexternalhit|Twitterbot|Slackbot|LinkedInBot/i;
 
 function isCrawler(): boolean {
