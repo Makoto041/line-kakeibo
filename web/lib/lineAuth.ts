@@ -47,6 +47,20 @@ function setLoginAttempt(at: number | null): void {
   }
 }
 
+/**
+ * サインイン処理の結果。デモへ送るのは 'guest'（LINE ログインをしていないと確かめられた）だけ。
+ * - pending: 処理中（LIFF の初期化・LINE ログイン画面への移動・トークン交換）
+ * - signed-in: LINE でサインインした
+ * - guest: LINE ログインを本人がやめて戻ってきた（error=access_denied）・LIFF 未設定（匿名）。本当にログインしていない
+ * - failed: 通信や認証の失敗で匿名になった・上限切れ・クローラー。本人かもしれないので、デモへは送らない
+ */
+export type LineAuthOutcome = 'pending' | 'signed-in' | 'guest' | 'failed';
+let outcome: LineAuthOutcome = 'pending';
+
+export function getLineAuthOutcome(): LineAuthOutcome {
+  return outcome;
+}
+
 /** waitForLineAuth() が上限までに終わらなかったときのエラーコード */
 export const LINE_AUTH_TIMEOUT = 'line-auth/timeout';
 
@@ -101,11 +115,15 @@ export function initLineAuth(): Promise<void> {
     ensureFirebaseInitialized();
     if (!auth) {
       console.error('Firebase Auth is not initialized; cannot start LINE auth');
+      outcome = 'failed';
       return;
     }
 
     // クローラーにはログインを求めず、サインインしないまま（＝プレビューモードの）トップを見せる
-    if (isCrawler()) return;
+    if (isCrawler()) {
+      outcome = 'failed';
+      return;
+    }
 
     // 永続化されたセッションの復元完了を待ってから判定する
     // （復元前は currentUser が null のため、待たないと二重サインインし得る）
@@ -115,7 +133,10 @@ export function initLineAuth(): Promise<void> {
     // 匿名セッションは一時フォールバックの名残なのでスキップ対象にしない。
     // （匿名で早期 return すると、一度の失敗で以後 LIFF を再試行できず
     //   永久にゲスト化してしまう）
-    if (auth.currentUser && !auth.currentUser.isAnonymous) return;
+    if (auth.currentUser && !auth.currentUser.isAnonymous) {
+      outcome = 'signed-in';
+      return;
+    }
 
     const liffId = process.env.NEXT_PUBLIC_LIFF_ID;
 
@@ -128,6 +149,7 @@ export function initLineAuth(): Promise<void> {
           console.error('Anonymous sign-in failed:', e);
         }
       }
+      outcome = 'guest';
       return;
     }
 
@@ -139,6 +161,9 @@ export function initLineAuth(): Promise<void> {
         if (recentlyTriedLogin() && hasLiffReturnParams()) {
           console.warn('LINE login did not complete after the redirect; falling back to anonymous');
           await signInAnonymously(auth);
+          // 本人がログインをやめた（LINE が error=access_denied で戻す）ときだけ、ログインしていないと確かめられたことにする。
+          // ほかの戻り（トークン交換の失敗、別のカードを開き直したときの liff.state など）は本人かもしれないので送らない
+          outcome = new URLSearchParams(window.location.search).get('error') === 'access_denied' ? 'guest' : 'failed';
           return;
         }
         setLoginAttempt(Date.now());
@@ -149,6 +174,7 @@ export function initLineAuth(): Promise<void> {
         // 遷移までの間に権限エラーを表示してしまうため、ページが離れるまで待つ。
         liff.login({ redirectUri: urlWithoutLiffReturnParams() });
         await new Promise((resolve) => setTimeout(resolve, LOGIN_REDIRECT_WAIT_MS));
+        outcome = 'failed';
         return;
       }
 
@@ -157,6 +183,7 @@ export function initLineAuth(): Promise<void> {
         console.error('LIFF ID token is missing; falling back to anonymous');
         // 次の読み込みで LINE ログインからやり直せるよう、LIFF のログイン状態を消す
         liff.logout();
+        outcome = 'failed';
         await signInAnonymously(auth);
         return;
       }
@@ -166,6 +193,7 @@ export function initLineAuth(): Promise<void> {
         console.error(
           'NEXT_PUBLIC_AUTH_ENDPOINT is not set; falling back to anonymous'
         );
+        outcome = 'failed';
         await signInAnonymously(auth);
         return;
       }
@@ -182,6 +210,7 @@ export function initLineAuth(): Promise<void> {
         // 返し続けるため、ログイン状態を消さないと再読み込みしても同じトークンで失敗し続ける。
         // 消しておけば次の読み込みで LINE ログインからやり直す（この読み込み内では再試行しない）
         if (resp.status === 401) liff.logout();
+        outcome = 'failed';
         await signInAnonymously(auth);
         return;
       }
@@ -189,13 +218,16 @@ export function initLineAuth(): Promise<void> {
       const data = (await resp.json()) as { customToken?: string };
       if (!data.customToken) {
         console.error('No customToken in auth response; falling back to anonymous');
+        outcome = 'failed';
         await signInAnonymously(auth);
         return;
       }
 
       await signInWithCustomToken(auth, data.customToken);
       setLoginAttempt(null);
+      outcome = 'signed-in';
     } catch (e) {
+      outcome = 'failed';
       console.error('LINE auth flow failed; falling back to anonymous:', e);
       try {
         await signInAnonymously(auth);

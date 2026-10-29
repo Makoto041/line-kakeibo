@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Sidebar } from './Sidebar';
 import { BottomTabBar } from './BottomTabBar';
 import { TopBar } from './TopBar';
 import { initLineAuth } from '@/lib/lineAuth';
+import { useLineAuth } from '@/lib/hooks';
+import { GUEST_DEMO_HREF, isGuestDemoRoute } from '@/lib/guestRedirect';
 import { startPwa } from '@/lib/installApp';
 
 // Routes that should render without the app navigation chrome
@@ -15,7 +17,18 @@ const BARE_ROUTES = ['/attach', '/link'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
+  const router = useRouter();
   const reduceMotion = useReducedMotion();
+  const { lineId, loading: authLoading, outcome } = useLineAuth();
+
+  // LINE ログインをしていないと確かめられた人（ログインを済ませずに戻ってきた・LIFF 未設定）だけをデモへ送る。
+  // 通信や認証の失敗・処理が長引いただけの本人は送らない（行き先の URL が消え、デモから戻れないため）。
+  // 検索エンジンのクローラーは outcome が 'failed' なので送らず、トップのプレビューをそのまま見せる
+  const toDemo = !authLoading && !lineId && outcome === 'guest' && isGuestDemoRoute(pathname);
+
+  useEffect(() => {
+    if (toDemo) router.replace(GUEST_DEMO_HREF);
+  }, [toDemo, router]);
 
   // アプリ起動時に1度だけサインイン（LIFF または匿名フォールバック）を開始する。
   // 認証は Firebase に永続化されるため、遷移ごとに URL へ lineId を引き回す必要はない。
@@ -26,6 +39,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const hrefFor = (path: string) => path;
+
+  // デモへ移る間は、ゲストのプレビュー画面を出さない
+  if (toDemo) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center">
+        <div className="h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-label="読み込み中" />
+      </div>
+    );
+  }
 
   const bare = BARE_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
 
