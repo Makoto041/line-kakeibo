@@ -6,6 +6,8 @@ import {
   type User,
 } from 'firebase/auth';
 import { auth, ensureFirebaseInitialized } from './firebase';
+import { shouldStartLineLogin } from './guestRedirect';
+import { isLineInApp, isStandalone } from './installApp';
 
 // initLineAuth() はアプリ起動時に1度だけ実行する。
 // 二重実行や再マウントでも初回の Promise を使い回す。
@@ -87,6 +89,7 @@ export function urlWithoutLiffReturnParams(): string {
   for (const key of Array.from(url.searchParams.keys())) {
     if (isLiffReturnParam(key)) url.searchParams.delete(key);
   }
+
   return url.toString();
 }
 
@@ -164,6 +167,12 @@ export function initLineAuth(): Promise<void> {
           // 本人がログインをやめた（LINE が error=access_denied で戻す）ときだけ、ログインしていないと確かめられたことにする。
           // ほかの戻り（トークン交換の失敗、別のカードを開き直したときの liff.state など）は本人かもしれないので送らない
           outcome = new URLSearchParams(window.location.search).get('error') === 'access_denied' ? 'guest' : 'failed';
+          return;
+        }
+        // 外部ブラウザの初めての人は、入口（トップ・規約）ではログイン画面へ送らずデモを見せる（shouldStartLineLogin の条件のときだけ進める）
+        if (!shouldStartLineLogin({ pathname: window.location.pathname, search: window.location.search, inLine: liff.isInClient() || isLineInApp(navigator.userAgent), standalone: isStandalone() })) {
+          await signInAnonymously(auth);
+          outcome = 'guest';
           return;
         }
         setLoginAttempt(Date.now());

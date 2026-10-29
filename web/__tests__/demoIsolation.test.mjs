@@ -199,7 +199,7 @@ const BANNED_IN_DEMO = [
 const HREF_ATTR = /\bhref\s*=\s*(?:\{\s*)?(?:(['"`])([^'"`]*)\1|([^}\s>]+))/g;
 const HREF_PROP = /\bhref\s*:\s*(?:(['"`])([^'"`]*)\1|([^,}\s]+))/g;
 // 式で渡してよいのは、場面の一覧（lib/demo/demoScenes.ts。中身は demoData.test.mjs で確かめる）の href だけ
-const HREF_EXPR_OK = /^(?:[\w$]+\.href|DEMO_INDEX_HREF)$/;
+const HREF_EXPR_OK = /^(?:[\w$]+\.href|DEMO_INDEX_HREF|DEMO_LOGIN_HREF)$/;
 // 型の宣言（href: string）は値ではない
 const HREF_TYPE = /^(?:string|`\/demo\/\$\{string\}\/`)\s*;?$/;
 
@@ -369,6 +369,8 @@ test('デモの中身の検査が働くこと: 通信・保存・外部 URL・/d
   assert.equal(scan("await fetch('/api')").length, 1);
   assert.equal(scan('localStorage.setItem("a", "b")').length, 1);
   assert.equal(scan('const u = "https://example.com";').length >= 1, true);
+  assert.deepEqual(scan('<a href={DEMO_LOGIN_HREF}>ログイン</a>'), []);
+  assert.equal(scan('<a href="/?login=1">ログイン</a>').length, 1); // ログインへのリンクは定数でだけ許す
   assert.equal(scan('<a href="/">ホーム</a>').length, 1);
   assert.equal(scan("<Link href='/expenses/'>一覧</Link>").length, 1);
   assert.equal(scan('<Link href={`/expenses?edit=${id}`}>編集</Link>').length, 1);

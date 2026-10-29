@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Info, Wallet } from 'lucide-react';
 import { ThemeToggle } from '../ThemeToggle';
-import { DEMO_INDEX_HREF, demoScenes, sceneIndexOf, type DemoScene } from '../../lib/demo/demoScenes';
+import { DEMO_INDEX_HREF, DEMO_LOGIN_HREF, demoScenes, sceneIndexOf, type DemoScene } from '../../lib/demo/demoScenes';
 import { sceneIcon } from './sceneIcons';
 
 function StepLink({ scene, dir }: { scene: DemoScene | null; dir: 'prev' | 'next' }) {
@@ -66,7 +66,14 @@ export default function DemoShell({ children }: { children: ReactNode }) {
             <span className="truncate text-[15px] font-semibold tracking-tight text-fg">ぶちこむ家計簿</span>
             <span className="shrink-0 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">デモ</span>
           </Link>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {/* 本番へ出る唯一のリンク。ページごと読み込み直して、LINE ログインを始める */}
+            <a
+              href={DEMO_LOGIN_HREF}
+              className="rounded-xl bg-accent px-3 py-1.5 text-xs font-semibold text-accent-fg transition-opacity hover:opacity-90"
+            >
+              LINE でログイン
+            </a>
             <ThemeToggle size="sm" />
           </div>
         </div>

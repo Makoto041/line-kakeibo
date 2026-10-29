@@ -13,6 +13,10 @@ export interface DemoScene {
 
 export const DEMO_INDEX_HREF = '/demo/';
 
+// デモから本番のログインへ出る唯一のリンク（/demo 以外へのリンクを禁じる demoIsolation.test.mjs が、この定数だけ許す）。
+// ?login=1 を付けて開くと、外部ブラウザでも LINE ログインへ進む（lib/guestRedirect.ts の shouldStartLineLogin）
+export const DEMO_LOGIN_HREF = '/?login=1';
+
 // 入れる（LINE・カード利用の取込）→ 見る（ホーム・支出一覧）→ 精算する（精算・LINE に届く精算サマリー）の順
 export const demoScenes: readonly DemoScene[] = [
   { key: 'line', href: '/demo/line/', label: 'LINE', description: 'LINE に「ランチ 850」と送ると、分類して確認カードが返る' },
