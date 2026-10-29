@@ -41,6 +41,10 @@ r = resolveExpenseGroupScope(household, null);
 check('個人チャット: 所属グループの支出になり lineGroupId は付けない',
   r.groupId === 'G1' && r.lineGroupId === undefined, JSON.stringify(r));
 
+r = resolveExpenseGroupScope(personalGroup, null);
+check('個人チャット: 自作グループ（lineGroupId なし）だけのメンバーは個人支出（groupId を付けない。Storage のレシート判定のため）',
+  r.groupId === undefined && r.lineGroupId === undefined, JSON.stringify(r));
+
 r = resolveExpenseGroupScope(null, undefined);
 check('個人チャット・所属なし: どちらも付けない',
   r.groupId === undefined && r.lineGroupId === undefined, JSON.stringify(r));

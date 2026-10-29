@@ -100,7 +100,7 @@ LINE グループでの `家計簿` コマンドも送るたびに所属を読�
 ## 3. Firestore ルールの要点（`firestore.rules`）
 
 - `expenses` の作成: **クライアントからは禁止**（登録は bot = Admin SDK だけ。web は支出を作成しない）。`/auth/line` は LINE で検証できた人全員にトークンを出すため、作成を許すと、世帯の外の人が支出とそのレシート画像を無制限に作って保存容量を使える入口になる（2026-10 の再監査で指摘。Firestore 側の口は閉じた）
-  - **Storage も閉じた**: 世帯のメンバーでない人が LINE で bot に送った入力は個人支出（`groupId` なし）として保存される（#245）。「グループ作成」で作れる自分だけのグループ（`lineGroupId` なし）の支出も同じ。以前は、その持ち主が `receipts/` に画像（5MB まで）を枚数の制限なしに上げられた。`storage.rules` で、**新しいレシートを上げられるのは世帯（`lineGroupId` を持つグループ）の支出だけ**にした（`isHouseholdExpense`）。世帯のメンバーの入力は個人チャットでも世帯の支出（`groupId` あり）なので影響しない。既存のレシートの取得・削除は、これまでどおり
+  - **Storage も閉じた**: 世帯のメンバーでない人が LINE で bot に送った入力は個人支出（`groupId` なし）として保存される（#245）。以前は、その持ち主が `receipts/` に画像（5MB まで）を枚数の制限なしに上げられた。`storage.rules` で、**新しいレシートを上げられるのは `groupId` を持つ支出だけ**にした（`isHouseholdExpense`）。bot は、世帯（`lineGroupId` を持つグループ）のメンバーの入力にだけ `groupId` を付ける（個人チャットも。「グループ作成」で作れる自分だけのグループだけのメンバーには付けない。`bot/src/expenseGroupScope.ts`）。Storage ルールが 1 回の評価で参照できる Firestore のドキュメントは 2 件まで（支出と `groupMembers` で使い切る）なので、`groups` を引いて世帯かを確かめることはできず、支出の `groupId` で判定する。この変更より前に、自分だけのグループの人が個人チャットで登録した支出（`groupId` あり）は、これまでどおり添付できる（既存データの範囲）。既存のレシートの取得・削除は変えない
 - `userSettings` / `budgetSettings` の書き込み: 本人のドキュメントだけで、web / bot が使う項目だけを、型と大きさを確かめて許す（同じ理由で、世帯の外の人が大きな値を書けないようにする）。`userSettings` は merge で書くため、検査するのは**この書き込みで変わるキーだけ**（本番に旧い形のキーが残っていても保存できなくならないように）。`categoryBudgets` はキーの数（50 まで）だけを見ていて、値は見ない（1 人 1 ドキュメント・1MiB が上限なので許容している）。`dateRangeSettings` は書き込み禁止
 - `expenses` の更新: web が実際に編集するフィールドだけを変更できる（許可リスト）。
   `amount` / `description` / `date` / `category` / `subCategory` / `includeInTotal` / `payerId` / `payerDisplayName` / `receiptUrl` / `updatedAt`。

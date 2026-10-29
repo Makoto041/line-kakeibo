@@ -70,15 +70,15 @@ service firebase.storage {
     function isSettledExpense(expenseId) {
       return firestore.get(expensePath(expenseId)).data.get('status', null) == 'advance_settled';
     }
-    // 世帯（LINE グループに紐づくグループ）の支出か。新しいレシートを上げられるのはこの支出だけ。
-    // /auth/line は LINE で検証できた人全員にトークンを出し、世帯のメンバーでない人の LINE 入力も個人支出
-    // （groupId なし）として保存される。「グループ作成」で作れる自分だけのグループ（lineGroupId なし）の支出も同じ。
-    // それらに画像を無制限に上げられると、世帯の外の人が保存容量を使えてしまう（2026-10 の再監査）。
-    // 世帯のメンバーの入力は、個人チャットでも世帯の支出（groupId あり）として保存される（bot/src/expenseGroupScope.ts）。
+    // 世帯の支出（groupId を持つ支出）か。新しいレシートを上げられるのはこの支出だけ。
+    // /auth/line は LINE で検証できた人全員にトークンを出し、世帯のメンバーでない人の LINE 入力は個人支出
+    // （groupId なし）として保存される。それらに画像を無制限に上げられると、世帯の外の人が保存容量を使えてしまう
+    // （2026-10 の再監査）。bot は、世帯（LINE グループに紐づくグループ）のメンバーの入力にだけ groupId を付ける
+    // （bot/src/expenseGroupScope.ts。「グループ作成」の自分だけのグループの人には付けない）。
+    // Storage ルールが 1 回の評価で参照できる Firestore のドキュメントは 2 件まで（支出と groupMembers で使い切る）
+    // なので、groups は引かず、支出の groupId だけで判定する。
     function isHouseholdExpense(expenseId) {
-      let groupId = firestore.get(expensePath(expenseId)).data.get('groupId', null);
-      return groupId != null
-             && firestore.get(/databases/(default)/documents/groups/$(groupId)).data.get('lineGroupId', null) != null;
+      return firestore.get(expensePath(expenseId)).data.get('groupId', null) != null;
     }
     function expenseExists(expenseId) {
       return firestore.exists(expensePath(expenseId));
