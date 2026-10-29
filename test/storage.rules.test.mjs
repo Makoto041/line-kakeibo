@@ -100,8 +100,11 @@ await test('有効メンバーは Gmail 取込のグループ支出にも上げ�
 await test('有効メンバーは HEIF も上げられる', async () => {
   await assertSucceeds(put(userA, 'receipts/sGroup/d.heif', bytes(10), 'image/heif'));
 });
-await test('個人支出は所有者が上げられる', async () => {
-  await assertSucceeds(put(userA, 'receipts/sPersonalA/a.jpg', bytes(10), 'image/jpeg'));
+await test('★ 個人支出（groupId なし。世帯のメンバーでない人の LINE 入力）には、所有者でも新しいレシートを上げられない', async () => {
+  await assertFails(put(userA, 'receipts/sPersonalA/a.jpg', bytes(10), 'image/jpeg'));
+});
+await test('個人支出・自分だけのグループの既存レシートは、これまでどおり読める', async () => {
+  await assertSucceeds(get(userA, 'receipts/sPersonalA/existing.jpg'));
 });
 await test('★ 非メンバーはグループ支出に上げられない', async () => {
   await assertFails(put(userC, 'receipts/sGroup/c.jpg', bytes(10), 'image/jpeg'));

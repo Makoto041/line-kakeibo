@@ -17,8 +17,11 @@ export function resolveExpenseGroupScope(
   lineGroupId: string | null | undefined
 ): { groupId?: string; lineGroupId?: string } {
   if (!lineGroupId) {
-    // 個人チャット: 所属グループがあればその支出として扱う（LINE グループは付けない）
-    return { groupId: activeGroup?.id || undefined, lineGroupId: undefined };
+    // 個人チャット: 世帯（LINE グループに紐づくグループ）のメンバーなら、その世帯の支出として扱う（LINE グループは付けない）。
+    // 「グループ作成」で作れる自分だけのグループ（lineGroupId なし）だけのメンバーは、個人支出（groupId なし）にする。
+    // storage.rules は「groupId を持つ支出」を世帯の支出とみなして新しいレシートを上げさせる（Storage ルールが参照できる
+    // Firestore のドキュメントは 2 件までで、groups は引けない）ので、世帯の外の人の支出に groupId を付けない
+    return { groupId: isHouseholdMember(activeGroup, null) ? activeGroup?.id : undefined, lineGroupId: undefined };
   }
   const inHousehold =
     !!activeGroup && !!activeGroup.id && activeGroup.lineGroupId === lineGroupId;

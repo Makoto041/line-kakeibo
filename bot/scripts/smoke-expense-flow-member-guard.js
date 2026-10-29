@@ -237,7 +237,7 @@ async function main() {
   groupsByUser.U_self1 = [selfMade];
   r = await post({ userId: 'U_self1', description: 'ボルダリング' });
   check('Jev・Gemini は呼ばれない', jevCalls.length === 0 && geminiCalls === 0, `jev ${jevCalls.length} / gemini ${geminiCalls}`);
-  check('支出は自作グループのまま保存（所属の決め方は変えない）', r.expense?.groupId === 'G_self', JSON.stringify(r.expense));
+  check('支出は個人支出として保存（groupId を付けない。世帯の外の人の支出に groupId が付くと、Storage のレシート判定が世帯の支出とみなすため）', r.expense?.groupId === undefined && r.expense?.lineGroupId === undefined, JSON.stringify(r.expense));
 
   console.log('\n# 個人チャット: 世帯の確認に失敗 → モデルを呼ぶ（失敗はキャッシュに残さない）');
   reset();
