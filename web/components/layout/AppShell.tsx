@@ -6,7 +6,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Sidebar } from './Sidebar';
 import { BottomTabBar } from './BottomTabBar';
 import { TopBar } from './TopBar';
-import { initLineAuth, isCrawler } from '@/lib/lineAuth';
+import { initLineAuth } from '@/lib/lineAuth';
 import { useLineAuth } from '@/lib/hooks';
 import { GUEST_DEMO_HREF, isGuestDemoRoute } from '@/lib/guestRedirect';
 import { startPwa } from '@/lib/installApp';
@@ -23,13 +23,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // LINE ログインをしていないと確かめられた人（ログインを済ませずに戻ってきた・LIFF 未設定）だけをデモへ送る。
   // 通信や認証の失敗・処理が長引いただけの本人は送らない（行き先の URL が消え、デモから戻れないため）。
-  // 検索エンジンのクローラーには、トップのプレビューをそのまま見せる
-  const toDemo =
-    !authLoading &&
-    !lineId &&
-    outcome === 'guest' &&
-    isGuestDemoRoute(pathname) &&
-    !(typeof window !== 'undefined' && isCrawler());
+  // 検索エンジンのクローラーは outcome が 'failed' なので送らず、トップのプレビューをそのまま見せる
+  const toDemo = !authLoading && !lineId && outcome === 'guest' && isGuestDemoRoute(pathname);
 
   useEffect(() => {
     if (toDemo) router.replace(GUEST_DEMO_HREF);
