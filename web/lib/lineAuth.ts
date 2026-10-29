@@ -89,8 +89,7 @@ export function urlWithoutLiffReturnParams(): string {
   for (const key of Array.from(url.searchParams.keys())) {
     if (isLiffReturnParam(key)) url.searchParams.delete(key);
   }
-  // デモの「LINE でログイン」（?login=1）で来た場合、ログイン後の戻り先には残さない
-  url.searchParams.delete('login');
+
   return url.toString();
 }
 
@@ -170,8 +169,8 @@ export function initLineAuth(): Promise<void> {
           outcome = new URLSearchParams(window.location.search).get('error') === 'access_denied' ? 'guest' : 'failed';
           return;
         }
-        // 外部ブラウザの初めての人は、ログイン画面へ送らずデモを見せる（LINE の中・ホーム画面のアプリ・デモからのログインだけ進める）
-        if (!shouldStartLineLogin({ search: window.location.search, inLine: liff.isInClient() || isLineInApp(navigator.userAgent), standalone: isStandalone() })) {
+        // 外部ブラウザの初めての人は、入口（トップ・規約）ではログイン画面へ送らずデモを見せる（shouldStartLineLogin の条件のときだけ進める）
+        if (!shouldStartLineLogin({ pathname: window.location.pathname, search: window.location.search, inLine: liff.isInClient() || isLineInApp(navigator.userAgent), standalone: isStandalone() })) {
           await signInAnonymously(auth);
           outcome = 'guest';
           return;
