@@ -220,15 +220,16 @@ export async function fetchCategoryRules(groupId: string): Promise<CategoryRules
   return config;
 }
 
-/** 世帯のカテゴリのルールを丸ごと保存する。bot が整えた（空白・重複・長さ）結果を返す */
+/** 世帯のカテゴリのルールを丸ごと保存する。読んだときの版（expectedVersion）が古ければ 409 stale。bot が整えた（空白・重複・長さ）結果を返す */
 export async function saveCategoryRules(
   groupId: string,
-  input: { rules: CategoryRule[]; examples: Record<string, string[]> }
+  input: { rules: CategoryRule[]; examples: Record<string, string[]> },
+  expectedVersion: number
 ): Promise<CategoryRulesConfig> {
   if (!isValidDocId(groupId)) throw new HouseholdApiError('invalid_request');
   const res = await send('/household/category-rules', {
     method: 'POST',
-    body: { groupId, rules: input.rules, examples: input.examples },
+    body: { groupId, expectedVersion, rules: input.rules, examples: input.examples },
   });
   if (res.status !== 200) fail(res);
   const config = parseCategoryRulesResponse(res.body);

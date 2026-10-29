@@ -5,7 +5,7 @@
 // - AI へ伝える例: カテゴリごとの例。AI（Jev・Gemini）が判断するときの参考にする（従うとは限らない）
 // 保存は bot の /household/category-rules（lib/householdApi.ts）。編集は手元の下書きで行い、［保存］で送る。
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, Loader2, Plus, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { useHousehold } from '../../lib/hooks';
 import { CANONICAL_CATEGORIES } from '../../lib/categoryNormalization';
 import {
@@ -23,8 +23,10 @@ import {
   isDirty,
   matchExampleCategory,
   matchRule,
+  moveRule,
   removeExample,
   removeRule,
+  shadowedBy,
   type CategoryRulesDraft,
 } from '../../lib/categoryRules';
 
@@ -40,6 +42,8 @@ function saveErrorText(error: unknown): string {
       return 'ログインの有効期限が切れました。ページを開き直してください';
     case 'forbidden':
       return 'この世帯のカテゴリのルールを変更する権限がありません';
+    case 'stale':
+      return 'ふたりのうち相手が先に変更しました。［最新を読み込む］で読み直してから、やり直してください（今の編集内容は消えます）';
     case 'invalid_request':
       return '入力内容を確認してください（文字数や件数が上限を超えている可能性があります）';
     case 'rate_limited':
@@ -81,7 +85,7 @@ function ExampleAdder({
           maxLength={limits.maxExampleLength * 2}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
               e.preventDefault();
               submit();
             }
@@ -109,6 +113,9 @@ export default function CategoryRulesPanel({ lineId }: { lineId: string }) {
   const apiAvailable = isHouseholdApiConfigured();
 
   const [saved, setSaved] = useState<CategoryRulesDraft | null>(null);
+  // 読んだ・保存した時点の版。保存のときに送り、相手が先に変えていたら 409 で断られる
+  const [version, setVersion] = useState(0);
+  const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<CategoryRulesDraft>(EMPTY);
   const [limits, setLimits] = useState<CategoryRuleLimits>(DEFAULT_CATEGORY_RULE_LIMITS);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -130,6 +137,9 @@ export default function CategoryRulesPanel({ lineId }: { lineId: string }) {
         const loaded = { rules: config.rules, examples: config.examples };
         setSaved(loaded);
         setDraft(loaded);
+        setVersion(config.version);
+        setConflict(false);
+        setMessage(null);
         setLimits(config.limits);
         setLoadFailed(false);
       },
@@ -188,14 +198,16 @@ export default function CategoryRulesPanel({ lineId }: { lineId: string }) {
     setSaving(true);
     setMessage(null);
     try {
-      const config = await saveCategoryRules(groupId, draft);
+      const config = await saveCategoryRules(groupId, draft, version);
       const next = { rules: config.rules, examples: config.examples };
       setSaved(next);
       setDraft(next);
+      setVersion(config.version);
       setLimits(config.limits);
-      setMessage({ type: 'success', text: '保存しました。次の入力から使われます' });
+      setMessage({ type: 'success', text: '保存しました。次の入力から使われます（反映まで最大 1 分ほどかかることがあります）' });
     } catch (error) {
       console.error('Failed to save category rules:', error);
+      setConflict(householdErrorCode(error) === 'stale');
       setMessage({ type: 'error', text: saveErrorText(error) });
     } finally {
       setSaving(false);
@@ -207,7 +219,8 @@ export default function CategoryRulesPanel({ lineId }: { lineId: string }) {
       <div className={CARD}>
         <h3 className="text-sm font-semibold text-fg">カテゴリの決まり方</h3>
         <p className="mt-1 text-sm text-muted">
-          支出の内容を入力すると、①確定ルール ②キーワード辞書 ③AI（書いた例を参考に判断）の順でカテゴリが決まります。
+          まず確定ルールが当たるかを見て、当たればそのカテゴリに決まります。当たらなければ、LINE の入力は ①キーワード辞書 ②AI の順、
+          カード利用メールの店名は ①AI ②キーワード辞書 の順で決まります（AI は、書いた例を参考に判断します）。
           ふたりで同じルールを使い、LINE の入力にもカード利用メールにも効きます。
         </p>
       </div>
@@ -215,28 +228,62 @@ export default function CategoryRulesPanel({ lineId }: { lineId: string }) {
       <div className={CARD}>
         <h3 className="text-sm font-semibold text-fg">確定ルール</h3>
         <p className="mt-1 text-sm text-muted">
-          内容にこの言葉が含まれていたら、AI を使わずに必ずこのカテゴリにします。上のものから順に当てはめます（最大 {limits.maxRules} 件）。
+          内容にこの言葉が含まれていたら、AI を使わずに必ずこのカテゴリにします。上のものから順に当てはめ、最初に当たったものに決まります（最大 {limits.maxRules} 件）。
         </p>
         <ul className="mt-3 space-y-2">
           {draft.rules.length === 0 && <li className="text-sm text-muted">まだルールがありません。下の欄から足せます。</li>}
-          {draft.rules.map((rule, i) => (
-            <li key={`${rule.keyword}-${i}`} className="flex min-w-0 items-center gap-2 rounded-xl border border-line px-3 py-2">
-              <span className="min-w-0 flex-1 break-words text-sm font-semibold text-fg">「{rule.keyword}」を含む</span>
-              <span className="shrink-0 text-muted">→</span>
-              <span className="shrink-0 rounded-full bg-accent/12 px-2.5 py-0.5 text-xs font-semibold text-accent">{rule.category}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setDraft(removeRule(draft, i));
-                  setMessage(null);
-                }}
-                aria-label={`「${rule.keyword}」のルールを削除`}
-                className="shrink-0 rounded-lg p-1.5 text-muted hover:bg-fg/5 hover:text-fg"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </li>
-          ))}
+          {draft.rules.map((rule, i) => {
+            const hiddenBy = shadowedBy(draft.rules, i);
+            return (
+              <li key={`${rule.keyword}-${i}`} className="rounded-xl border border-line px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 flex-1 break-words text-sm font-semibold text-fg">「{rule.keyword}」を含む</span>
+                  <span className="shrink-0 text-muted">→</span>
+                  <span className="shrink-0 rounded-full bg-accent/12 px-2.5 py-0.5 text-xs font-semibold text-accent">{rule.category}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraft(moveRule(draft, i, -1));
+                      setMessage(null);
+                    }}
+                    disabled={i === 0}
+                    aria-label={`「${rule.keyword}」を1つ上へ`}
+                    className="shrink-0 rounded-lg p-1.5 text-muted hover:bg-fg/5 hover:text-fg disabled:opacity-30"
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraft(moveRule(draft, i, 1));
+                      setMessage(null);
+                    }}
+                    disabled={i === draft.rules.length - 1}
+                    aria-label={`「${rule.keyword}」を1つ下へ`}
+                    className="shrink-0 rounded-lg p-1.5 text-muted hover:bg-fg/5 hover:text-fg disabled:opacity-30"
+                  >
+                    <ArrowDown className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraft(removeRule(draft, i));
+                      setMessage(null);
+                    }}
+                    aria-label={`「${rule.keyword}」のルールを削除`}
+                    className="shrink-0 rounded-lg p-1.5 text-muted hover:bg-fg/5 hover:text-fg"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+                {hiddenBy !== null && (
+                  <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                    上にある「{draft.rules[hiddenBy].keyword}」が先に当たるため、このルールは使われません。順番を入れ替えてください。
+                  </p>
+                )}
+              </li>
+            );
+          })}
         </ul>
         <div className="mt-3 flex flex-wrap gap-2">
           <input
@@ -245,7 +292,7 @@ export default function CategoryRulesPanel({ lineId }: { lineId: string }) {
             maxLength={limits.maxKeywordLength * 2}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                 e.preventDefault();
                 submitRule();
               }
@@ -271,7 +318,10 @@ export default function CategoryRulesPanel({ lineId }: { lineId: string }) {
           </button>
         </div>
         {ruleError && <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{ruleError}</p>}
-        <p className="mt-2 text-xs text-muted">大文字・小文字と全角・半角の違いは区別しません。</p>
+        <p className="mt-2 text-xs text-muted">
+          大文字・小文字と全角・半角は区別しません（ひらがなとカタカナは別の言葉です）。短すぎる言葉は店名や別の言葉の一部に当たってしまうため、
+          日本語は {limits.minKeywordLength} 文字以上、英数字だけの言葉は {limits.minAsciiKeywordLength} 文字以上にしてください。
+        </p>
       </div>
 
       <div className={CARD}>
@@ -380,6 +430,11 @@ export default function CategoryRulesPanel({ lineId }: { lineId: string }) {
           <span className={`text-sm ${message.type === 'success' ? 'text-accent' : 'text-rose-600 dark:text-rose-400'}`} role="status">
             {message.text}
           </span>
+        )}
+        {conflict && (
+          <button type="button" onClick={() => setNonce((n) => n + 1)} className="text-sm font-medium text-accent hover:underline">
+            最新を読み込む
+          </button>
         )}
       </div>
     </div>

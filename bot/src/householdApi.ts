@@ -53,6 +53,7 @@ import {
   CATEGORY_RULES_LIMITS,
   invalidateCategoryRules,
   parseCategoryRulesInput,
+  categoryRulesVersionOf,
   readStoredCategoryRules,
 } from './categoryRules';
 
@@ -914,15 +915,17 @@ householdRouter.get(
     const ctx = await requireGroupMember(res, req.query.groupId, res.locals.lineId as string);
     if (!ctx) return;
     const snap = await ctx.db.collection('groups').doc(ctx.groupId).get();
-    const config = readStoredCategoryRules(snap.data()?.categoryRules);
-    res.status(200).json({ ...config, limits: CATEGORY_RULES_LIMITS });
+    const stored = snap.data()?.categoryRules;
+    res.status(200).json({ ...readStoredCategoryRules(stored), version: categoryRulesVersionOf(stored), limits: CATEGORY_RULES_LIMITS });
   })
 );
 
 /**
- * POST /household/category-rules  { groupId, rules: [{ keyword, category }], examples: { [category]: string[] } }
+ * POST /household/category-rules  { groupId, expectedVersion, rules: [{ keyword, category }], examples: { [category]: string[] } }
  *
- * 世帯のカテゴリのルールを丸ごと置き換える（groups/{groupId}.categoryRules）。groups はクライアントから書けないので
+ * 世帯のカテゴリのルールを丸ごと置き換える（groups/{groupId}.categoryRules）。ふたりの同時編集で後の保存が先の保存を黙って
+ * 消さないよう、読んだときの版（GET の version。保存したことがなければ 0）を expectedVersion で送らせ、今の版と違えば
+ * 409 stale で断る（書かない。画面は読み直してもらう）。groups はクライアントから書けないので
  * Admin SDK で書く。書けるのは世帯の有効メンバーだけ。上限・カテゴリの一覧・文字を検査し、満たさなければ 400（丸めない）。
  * 文はモデルへ渡るので、制御文字は取り除く（parseCategoryRulesInput）
  */
@@ -935,21 +938,30 @@ householdRouter.post(
     const ctx = await requireGroupMember(res, body?.groupId, lineId);
     if (!ctx || !body) return;
     const config = parseCategoryRulesInput({ rules: body.rules, examples: body.examples });
-    if (!config) {
+    const expectedVersion = body.expectedVersion;
+    if (!config || typeof expectedVersion !== 'number' || !Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
       sendError(res, 400, 'invalid_request');
       return;
     }
-    await ctx.db
-      .collection('groups')
-      .doc(ctx.groupId)
-      .update({ categoryRules: { ...config, updatedBy: lineId, updatedAt: new Date() } });
+    const groupRef = ctx.db.collection('groups').doc(ctx.groupId);
+    const updatedAt = new Date();
+    const stale = await ctx.db.runTransaction(async (tx) => {
+      const snap = await tx.get(groupRef);
+      if (categoryRulesVersionOf(snap.data()?.categoryRules) !== expectedVersion) return true;
+      tx.update(groupRef, { categoryRules: { ...config, updatedBy: lineId, updatedAt } });
+      return false;
+    });
+    if (stale) {
+      sendError(res, 409, 'stale');
+      return;
+    }
     invalidateCategoryRules(ctx.groupId);
     console.log('household category-rules: updated', {
       group: maskId(ctx.groupId),
       user: maskId(lineId),
       rules: config.rules.length,
     });
-    res.status(200).json({ ...config, limits: CATEGORY_RULES_LIMITS });
+    res.status(200).json({ ...config, version: updatedAt.getTime(), limits: CATEGORY_RULES_LIMITS });
   })
 );
 

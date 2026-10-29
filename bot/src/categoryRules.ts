@@ -11,12 +11,17 @@ import { errorFields, maskId } from './logSafe';
 
 export const MAX_RULES = 50;
 export const MAX_KEYWORD_LENGTH = 30;
+/** 言葉の最短。1 文字の言葉は何にでも当たって誤爆するので断る。英数字だけの言葉（au・gu・etc など）は店名の一部に当たりやすいので 3 文字から */
+export const MIN_KEYWORD_LENGTH = 2;
+export const MIN_ASCII_KEYWORD_LENGTH = 3;
 export const MAX_EXAMPLES_PER_CATEGORY = 5;
 export const MAX_EXAMPLE_LENGTH = 40;
 
 /** Web に返す上限（Web の入力欄の上限と同じ値） */
 export const CATEGORY_RULES_LIMITS = {
   maxRules: MAX_RULES,
+  minKeywordLength: MIN_KEYWORD_LENGTH,
+  minAsciiKeywordLength: MIN_ASCII_KEYWORD_LENGTH,
   maxKeywordLength: MAX_KEYWORD_LENGTH,
   maxExamplesPerCategory: MAX_EXAMPLES_PER_CATEGORY,
   maxExampleLength: MAX_EXAMPLE_LENGTH,
@@ -36,19 +41,31 @@ export interface CategoryRules {
 export const EMPTY_CATEGORY_RULES: CategoryRules = { rules: [], examples: {} };
 
 /**
- * 利用者の文を保存・モデルに渡せる形にする。制御文字（改行を含む）と行区切りを空白に、連続する空白を 1 つに、
- * 前後の空白を消して、max 文字までに切る。何も残らなければ空文字
+ * 利用者の文を保存・モデルに渡せる形にする。見えない文字（ゼロ幅・双方向制御などの書式文字、対にならないサロゲート）と
+ * 引用に使う「」は取り除き、制御文字（改行を含む）と行区切りは空白に、連続する空白を 1 つに、前後の空白を消して、
+ * max 文字までに切る。何も残らなければ空文字
  */
 export function sanitizeRuleText(value: unknown, max: number): string {
   if (typeof value !== 'string') return '';
   // eslint-disable-next-line no-control-regex
-  const cleaned = value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim();
+  const cleaned = value
+    .replace(/[\p{Cf}\p{Cs}「」]/gu, '')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   return Array.from(cleaned).slice(0, max).join('').trim();
 }
 
 /** 照合用に揃える（全角・半角、大文字・小文字、前後と連続する空白を区別しない） */
 export function normalizeForRuleMatch(value: string): string {
   return value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/** 保存できる言葉か（整えたあとの文字数。英数字だけの言葉は長めに） */
+export function isUsableKeyword(clean: string): boolean {
+  const length = Array.from(clean).length;
+  if (length < MIN_KEYWORD_LENGTH) return false;
+  return !(/^[\x20-\x7e]+$/.test(clean) && length < MIN_ASCII_KEYWORD_LENGTH);
 }
 
 /**
@@ -71,7 +88,7 @@ export function parseCategoryRulesInput(input: unknown): CategoryRules | null {
     // 上限より長い言葉は丸めずに断る（途中で切れた言葉が意図しないものに当たらないように）
     if (Array.from(keyword.trim()).length > MAX_KEYWORD_LENGTH) return null;
     const clean = sanitizeRuleText(keyword, MAX_KEYWORD_LENGTH);
-    if (!clean) return null;
+    if (!isUsableKeyword(clean)) return null;
     const key = normalizeForRuleMatch(clean);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -86,7 +103,7 @@ export function parseCategoryRulesInput(input: unknown): CategoryRules | null {
       if (typeof text !== 'string' || Array.from(text.trim()).length > MAX_EXAMPLE_LENGTH) return null;
       const clean = sanitizeRuleText(text, MAX_EXAMPLE_LENGTH);
       if (!clean) return null;
-      if (!cleaned.includes(clean)) cleaned.push(clean);
+      if (!cleaned.some((c) => normalizeForRuleMatch(c) === normalizeForRuleMatch(clean))) cleaned.push(clean);
     }
     if (cleaned.length > 0) examples[category] = cleaned;
   }
@@ -135,6 +152,13 @@ export function categoryRulesVersion(config: CategoryRules): string {
   let hash = 5381;
   for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
   return (hash >>> 0).toString(36);
+}
+
+/** 保存した版（更新時刻のミリ秒。保存したことがなければ 0）。ふたりの同時編集の検出に使う（householdApi.ts の category-rules） */
+export function categoryRulesVersionOf(raw: unknown): number {
+  const updatedAt = (raw as { updatedAt?: { toMillis?: () => number } } | null | undefined)?.updatedAt;
+  const millis = typeof updatedAt?.toMillis === 'function' ? updatedAt.toMillis() : 0;
+  return Number.isSafeInteger(millis) && millis > 0 ? millis : 0;
 }
 
 /** 選択肢の説明に利用者の例を足す。例が無ければ説明のまま（Jev・Gemini の両方で使う） */

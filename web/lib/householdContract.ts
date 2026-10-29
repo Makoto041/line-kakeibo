@@ -217,6 +217,8 @@ export interface CategoryRule {
 }
 
 export interface CategoryRuleLimits {
+  minKeywordLength: number;
+  minAsciiKeywordLength: number;
   maxRules: number;
   maxKeywordLength: number;
   maxExamplesPerCategory: number;
@@ -227,6 +229,8 @@ export interface CategoryRulesConfig {
   rules: CategoryRule[];
   /** カテゴリ名 → 例 */
   examples: Record<string, string[]>;
+  /** 読んだ・保存した時点の版。保存のときに送り返し、相手が先に変えていたら（409）読み直す */
+  version: number;
   limits: CategoryRuleLimits;
 }
 
@@ -243,14 +247,18 @@ export function parseCategoryRulesResponse(json: unknown): CategoryRulesConfig |
     examples[category] = list as string[];
   }
   const l = json.limits;
+  const version = json.version;
+  if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 0) return null;
   const limits = {
+    minKeywordLength: toNumber(l.minKeywordLength),
+    minAsciiKeywordLength: toNumber(l.minAsciiKeywordLength),
     maxRules: toNumber(l.maxRules),
     maxKeywordLength: toNumber(l.maxKeywordLength),
     maxExamplesPerCategory: toNumber(l.maxExamplesPerCategory),
     maxExampleLength: toNumber(l.maxExampleLength),
   };
   if (Object.values(limits).some((n) => !Number.isInteger(n) || n < 1)) return null;
-  return { rules, examples, limits };
+  return { rules, examples, version, limits };
 }
 
 export function parseConfirmResponse(json: unknown): ConfirmedExpensePatch | null {

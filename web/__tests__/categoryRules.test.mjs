@@ -9,9 +9,11 @@ import {
   isDirty,
   matchExampleCategory,
   matchRule,
+  moveRule,
   normalizeForMatch,
   removeExample,
   removeRule,
+  shadowedBy,
   tidyText,
 } from '../lib/categoryRules.ts';
 import { parseCategoryRulesResponse } from '../lib/householdContract.ts';
@@ -40,7 +42,7 @@ test('ルールを足せないとき: 空・長すぎ・同じ言葉・上限', 
   assert.equal(addRule(empty, 'あ'.repeat(L.maxKeywordLength), '食費', L).ok, true);
   const one = addRule(empty, 'Switch', '娯楽', L).value;
   assert.deepEqual(addRule(one, ' ｓｗｉｔｃｈ ', '食費', L), { ok: false, reason: 'duplicate' });
-  const full = { rules: Array.from({ length: L.maxRules }, (_, i) => ({ keyword: `k${i}`, category: '食費' })), examples: {} };
+  const full = { rules: Array.from({ length: L.maxRules }, (_, i) => ({ keyword: `キー${i}`, category: '食費' })), examples: {} };
   assert.deepEqual(addRule(full, 'new', '食費', L), { ok: false, reason: 'limit' });
 });
 
@@ -85,7 +87,7 @@ test('保存していない変更の判定（例の並びの違いは変更に�
 });
 
 test('応答の読み取り: 正しい形と、崩れた形', () => {
-  const good = { rules: [{ keyword: 'a', category: '食費' }], examples: { 食費: ['x'] }, limits: L };
+  const good = { rules: [{ keyword: 'a', category: '食費' }], examples: { 食費: ['x'] }, version: 1700000000000, limits: L };
   assert.deepEqual(parseCategoryRulesResponse(good), good);
   assert.equal(parseCategoryRulesResponse(null), null);
   assert.equal(parseCategoryRulesResponse({ ...good, rules: 'x' }), null);
@@ -93,4 +95,42 @@ test('応答の読み取り: 正しい形と、崩れた形', () => {
   assert.equal(parseCategoryRulesResponse({ ...good, examples: { 食費: [1] } }), null);
   assert.equal(parseCategoryRulesResponse({ ...good, limits: { ...L, maxRules: 0 } }), null);
   assert.equal(parseCategoryRulesResponse({ ...good, limits: undefined }), null);
+  assert.equal(parseCategoryRulesResponse({ ...good, version: undefined }), null);
+  assert.equal(parseCategoryRulesResponse({ ...good, version: -1 }), null);
+  assert.equal(parseCategoryRulesResponse({ ...good, limits: { ...L, minKeywordLength: 0 } }), null);
+});
+
+test('見えない文字・「」を取り除く', () => {
+  assert.equal(tidyText('ド\u200bン\ufeffキ'), 'ドンキ');
+  assert.equal(tidyText('\u202eabc\u2066'), 'abc');
+  assert.equal(tidyText('a\ud800b'), 'ab');
+  assert.equal(tidyText('「ジム」の'), 'ジムの');
+});
+
+test('短すぎる言葉は断る（日本語は 2 文字から、英数字だけは 3 文字から）', () => {
+  assert.deepEqual(addRule(empty, '茶', '食費', L), { ok: false, reason: 'too_short' });
+  assert.deepEqual(addRule(empty, 'au', '通信費', L), { ok: false, reason: 'too_short' });
+  assert.equal(addRule(empty, 'gst', '食費', L).ok, true);
+  assert.equal(addRule(empty, 'ガス', '光熱費', L).ok, true);
+});
+
+test('例の重複は照合用に揃えて判定する', () => {
+  const a = addExample(empty, '食費', 'ＡＢＣ', L).value;
+  assert.deepEqual(addExample(a, '食費', 'abc', L), { ok: false, reason: 'duplicate' });
+});
+
+test('ルールの並べ替え: 1 つ上・下へ。端は変えない', () => {
+  const d = { rules: [{ keyword: 'aa1', category: '食費' }, { keyword: 'bb2', category: '娯楽' }, { keyword: 'cc3', category: '美容' }], examples: {} };
+  assert.deepEqual(moveRule(d, 2, -1).rules.map((r) => r.keyword), ['aa1', 'cc3', 'bb2']);
+  assert.deepEqual(moveRule(d, 0, 1).rules.map((r) => r.keyword), ['bb2', 'aa1', 'cc3']);
+  assert.equal(moveRule(d, 0, -1), d);
+  assert.equal(moveRule(d, 2, 1), d);
+});
+
+test('前のルールの言葉を含むために当たらなくなっているルールを見つける', () => {
+  const rules = [{ keyword: 'ドン', category: '食費' }, { keyword: 'ドンキ', category: '日用品' }, { keyword: 'ランチ', category: '食費' }];
+  assert.equal(shadowedBy(rules, 1), 0);
+  assert.equal(shadowedBy(rules, 0), null);
+  assert.equal(shadowedBy(rules, 2), null);
+  assert.equal(shadowedBy([rules[1], rules[0]], 1), null); // 順番が逆なら、先に長い言葉が当たるので使われる
 });

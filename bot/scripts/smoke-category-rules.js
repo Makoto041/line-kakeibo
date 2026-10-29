@@ -59,6 +59,7 @@ const {
   sanitizeRuleText,
   normalizeForRuleMatch,
   categoryRulesVersion,
+  categoryRulesVersionOf,
   describeWithExamples,
   CATEGORY_RULES_LIMITS,
 } = rulesModule;
@@ -84,6 +85,9 @@ async function main() {
   check('改行・制御文字・連続する空白を 1 つの空白にする', sanitizeRuleText('  ド\nン\tキ\u0007  ホーテ ', 30) === 'ド ン キ ホーテ', sanitizeRuleText('  ド\nン\tキ\u0007  ホーテ ', 30));
   check('行区切り（U+2028）も空白にする', sanitizeRuleText('a b', 30) === 'a b');
   check('max 文字までに切る（サロゲートペアを割らない）', sanitizeRuleText('😀😀😀😀', 3) === '😀😀😀');
+  check('見えない文字（ゼロ幅・双方向制御・書式文字）を取り除く', sanitizeRuleText('ド\u200bン\ufeffキ', 30) === 'ドンキ' && sanitizeRuleText('\u202eabc\u2066', 30) === 'abc', sanitizeRuleText('ド\u200bン\ufeffキ', 30));
+  check('対にならないサロゲートを取り除く', sanitizeRuleText('a\ud800b', 30) === 'ab');
+  check('引用に使う「」を取り除く', sanitizeRuleText('「ジム」の', 40) === 'ジムの');
   check('文字列でなければ空', sanitizeRuleText(5, 10) === '' && sanitizeRuleText(null, 10) === '');
   check('照合用は全角・半角と大文字・小文字を区別しない', normalizeForRuleMatch(' ＤＯＮＫＩ  ﾄﾞﾝｷ ') === 'donki ドンキ');
 
@@ -106,6 +110,11 @@ async function main() {
   check('例が上限を超えたら断る', bad({ rules: [], examples: { 食費: Array.from({ length: CATEGORY_RULES_LIMITS.maxExamplesPerCategory + 1 }, (_, i) => `e${i}`) } }));
   check('長すぎる例は断る', bad({ rules: [], examples: { 食費: ['あ'.repeat(CATEGORY_RULES_LIMITS.maxExampleLength + 1)] } }));
   check('オブジェクトでない入力は断る', bad(null) && bad('x') && bad([]));
+  check('1 文字の言葉は断る', bad({ rules: [{ keyword: '茶', category: '食費' }], examples: {} }));
+  check('英数字だけの言葉は 3 文字から（au は断り、gst は通る）', bad({ rules: [{ keyword: 'au', category: '通信費' }], examples: {} }) && !bad({ rules: [{ keyword: 'gst', category: '食費' }], examples: {} }));
+  check('日本語の 2 文字は通る', !bad({ rules: [{ keyword: 'ガス', category: '光熱費' }], examples: {} }));
+  check('整えた結果が短すぎる（見えない文字だけで 1 文字）も断る', bad({ rules: [{ keyword: '茶\u200b', category: '食費' }], examples: {} }));
+  check('例の重複は照合用に揃えて 1 つ', JSON.stringify(parseCategoryRulesInput({ rules: [], examples: { 食費: ['ＡＢＣ', 'abc'] } }).examples) === JSON.stringify({ 食費: ['ＡＢＣ'] }));
   check('文字列でない言葉は断る', bad({ rules: [{ keyword: 1, category: '食費' }], examples: {} }));
 
   console.log('\n# 保存してある値の読み取り（崩れた分は捨て、読める分を使う）');
@@ -133,6 +142,7 @@ async function main() {
   check('例が無ければ説明のまま', describeWithExamples('基本', undefined) === '基本' && describeWithExamples(null, []) === null);
   check('例は説明の後ろに足す', describeWithExamples('基本', ['ジム']) === '基本。この家計では次もこのカテゴリ: 「ジム」', describeWithExamples('基本', ['ジム']));
   check('説明が無くても例だけ入る', describeWithExamples(null, ['ジム']) === 'この家計では次もこのカテゴリ: 「ジム」');
+  check('保存した版は更新時刻のミリ秒（無ければ 0）', categoryRulesVersionOf({ updatedAt: { toMillis: () => 1234 } }) === 1234 && categoryRulesVersionOf(undefined) === 0 && categoryRulesVersionOf({}) === 0 && categoryRulesVersionOf({ updatedAt: { toMillis: () => -5 } }) === 0);
   check('判定元の表示名にルールがある', CATEGORY_ORIGIN_LABELS.rule === 'ルール');
 
   console.log('\n# 選択肢・プロンプトに例が入る');
