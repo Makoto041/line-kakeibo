@@ -706,6 +706,69 @@ async function main() {
       check('LINE に送れなければ 502 line_failed', failedSend.status === 502 && failedSend.body.error === 'line_failed', failedSend.body);
     }
 
+    // ---------------- カテゴリのルール ----------------
+    console.log('\nGET・POST /household/category-rules');
+    {
+      const noTok = await call('GET', '/household/category-rules?groupId=g1');
+      check('トークン無しは 401', noTok.status === 401);
+      const stranger = await call('GET', '/household/category-rules?groupId=g1', { token: tokens.stranger });
+      check('メンバー外は読めない（403）', stranger.status === 403);
+      const left = await call('GET', '/household/category-rules?groupId=g1', { token: tokens.left });
+      check('脱退した人は読めない（403）', left.status === 403);
+      const empty = await call('GET', '/household/category-rules?groupId=g1', { token: tokens.alice });
+      check('最初は空のルールと上限が返る（版は 0）', empty.status === 200 && empty.body.version === 0 && empty.body.rules.length === 0 && Object.keys(empty.body.examples).length === 0 && empty.body.limits.maxRules === 50 && empty.body.limits.maxKeywordLength === 30, empty.body);
+
+      const body = {
+        groupId: 'g1',
+        expectedVersion: 0,
+        rules: [{ keyword: ' ドンキ ', category: '日用品' }, { keyword: 'ﾄﾞﾝｷ', category: '食費' }, { keyword: 'Switch\n', category: '娯楽' }],
+        examples: { '医療・健康': ['ジムのプロテイン', ' ジムのプロテイン '], 食費: [] },
+      };
+      const noTokPost = await call('POST', '/household/category-rules', { body });
+      check('POST はトークン無しだと 401', noTokPost.status === 401);
+      const strangerPost = await call('POST', '/household/category-rules', { token: tokens.stranger, body });
+      check('メンバー外は保存できない（403）', strangerPost.status === 403);
+      check('メンバー外の保存は書き込まない', (await db.doc('groups/g1').get()).get('categoryRules') === undefined);
+
+      const saved = await call('POST', '/household/category-rules', { token: tokens.alice, body });
+      check('メンバーは保存できる（200）', saved.status === 200, saved.body);
+      check('保存すると版（更新時刻のミリ秒）が返る', Number.isSafeInteger(saved.body.version) && saved.body.version > 0, saved.body.version);
+      const noVersion = await call('POST', '/household/category-rules', { token: tokens.alice, body: { groupId: 'g1', rules: [], examples: {} } });
+      check('expectedVersion が無ければ 400', noVersion.status === 400, noVersion.body);
+      const staleSave = await call('POST', '/household/category-rules', { token: tokens.bob, body: { groupId: 'g1', expectedVersion: 0, rules: [{ keyword: 'ランチ代', category: '食費' }], examples: {} } });
+      check('古い版での保存は 409 stale（相手の変更を消さない）', staleSave.status === 409 && staleSave.body.error === 'stale', staleSave.body);
+      check('409 の保存は書き込まない', (await db.doc('groups/g1').get()).get('categoryRules').rules.length === 2);
+      check('整えて返す（空白・改行を除き、照合用に同じ言葉は 1 つ）', saved.body.rules.length === 2 && saved.body.rules[0].keyword === 'ドンキ' && saved.body.rules[1].keyword === 'Switch', saved.body.rules);
+      check('例は重複を除き、空のカテゴリは持たない', JSON.stringify(saved.body.examples) === JSON.stringify({ '医療・健康': ['ジムのプロテイン'] }), saved.body.examples);
+      const stored = (await db.doc('groups/g1').get()).get('categoryRules');
+      check('groups/g1.categoryRules に保存し、更新した人を残す', stored && stored.rules.length === 2 && stored.updatedBy === 'Ualice' && stored.updatedAt, stored);
+      const again = await call('GET', '/household/category-rules?groupId=g1', { token: tokens.bob });
+      check('世帯のもうひとりも同じ内容と版を読める', again.status === 200 && again.body.version === saved.body.version && again.body.rules.length === 2 && again.body.examples['医療・健康'][0] === 'ジムのプロテイン', again.body);
+
+      const badCases = {
+        'カテゴリが一覧にない': { rules: [{ keyword: 'a', category: 'なぞ' }], examples: {} },
+        '言葉が 1 文字': { rules: [{ keyword: '茶', category: '食費' }], examples: {} },
+        '言葉が空': { rules: [{ keyword: ' \n ', category: '食費' }], examples: {} },
+        '言葉が長すぎる': { rules: [{ keyword: 'あ'.repeat(31), category: '食費' }], examples: {} },
+        'ルールが 51 件': { rules: Array.from({ length: 51 }, (_, i) => ({ keyword: `キー${i}`, category: '食費' })), examples: {} },
+        '例が 6 件': { rules: [], examples: { 食費: ['a', 'b', 'c', 'd', 'e', 'f'] } },
+        '例が長すぎる': { rules: [], examples: { 食費: ['あ'.repeat(41)] } },
+        'rules が配列でない': { rules: 'x', examples: {} },
+        'examples が無い': { rules: [] },
+      };
+      for (const [label, payload] of Object.entries(badCases)) {
+        const bad = await call('POST', '/household/category-rules', { token: tokens.alice, body: { groupId: 'g1', expectedVersion: saved.body.version, ...payload } });
+        check(`${label}は 400`, bad.status === 400, bad.body);
+      }
+      const unchanged = (await db.doc('groups/g1').get()).get('categoryRules');
+      check('断った保存は書き込まない', unchanged.rules.length === 2);
+      const badGroup = await call('POST', '/household/category-rules', { token: tokens.alice, body: { groupId: ['g1'], expectedVersion: 0, rules: [], examples: {} } });
+      check('groupId が文字列でなければ 400', badGroup.status === 400);
+
+      const cleared = await call('POST', '/household/category-rules', { token: tokens.alice, body: { groupId: 'g1', expectedVersion: saved.body.version, rules: [], examples: {} } });
+      check('空にして保存できる', cleared.status === 200 && cleared.body.rules.length === 0, cleared.body);
+    }
+
     // ---------------- レート制限 ----------------
     console.log('\nレート制限（lineId 単位。全体 60 回/分、以前の立替を精算済みにする操作は成功だけを数えて 5 回/分）');
     {

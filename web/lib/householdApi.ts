@@ -9,10 +9,13 @@ import {
   isValidDocId,
   parseAdvancesResponse,
   parseSettleLegacyAdvancesResult,
+  parseCategoryRulesResponse,
   parseConfirmResponse,
   parseSummarySendResult,
   parseSummaryStatus,
   type AdvancesResponse,
+  type CategoryRule,
+  type CategoryRulesConfig,
   type ConfirmedExpensePatch,
   type HouseholdErrorCode,
   type SettleLegacyAdvancesResult,
@@ -23,6 +26,8 @@ import {
 
 export type {
   AdvancesResponse,
+  CategoryRule,
+  CategoryRulesConfig,
   ConfirmedExpensePatch,
   HouseholdErrorCode,
   SettleLegacyAdvancesResult,
@@ -203,4 +208,31 @@ export async function saveSplitCollectFrom(groupId: string, collectFromLineId: s
   const saved = (res.body as { collectFromLineId?: unknown } | null)?.collectFromLineId;
   if (saved !== collectFromLineId) throw new HouseholdApiError('failed', res.status);
   return collectFromLineId;
+}
+
+/** 世帯のカテゴリのルール（確定ルールと、AI へ伝える例）を読む */
+export async function fetchCategoryRules(groupId: string): Promise<CategoryRulesConfig> {
+  if (!isValidDocId(groupId)) throw new HouseholdApiError('invalid_request');
+  const res = await send(`/household/category-rules?groupId=${encodeURIComponent(groupId)}`, { method: 'GET' });
+  if (res.status !== 200) fail(res);
+  const config = parseCategoryRulesResponse(res.body);
+  if (!config) throw new HouseholdApiError('failed', res.status);
+  return config;
+}
+
+/** 世帯のカテゴリのルールを丸ごと保存する。読んだときの版（expectedVersion）が古ければ 409 stale。bot が整えた（空白・重複・長さ）結果を返す */
+export async function saveCategoryRules(
+  groupId: string,
+  input: { rules: CategoryRule[]; examples: Record<string, string[]> },
+  expectedVersion: number
+): Promise<CategoryRulesConfig> {
+  if (!isValidDocId(groupId)) throw new HouseholdApiError('invalid_request');
+  const res = await send('/household/category-rules', {
+    method: 'POST',
+    body: { groupId, expectedVersion, rules: input.rules, examples: input.examples },
+  });
+  if (res.status !== 200) fail(res);
+  const config = parseCategoryRulesResponse(res.body);
+  if (!config) throw new HouseholdApiError('failed', res.status);
+  return config;
 }

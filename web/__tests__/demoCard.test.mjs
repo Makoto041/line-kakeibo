@@ -385,7 +385,7 @@ test('辞書の照合の手順は、bot のソースと同じ（テストで再�
   assertBefore(
     classify,
     'const local = byKeyword();\n  if (local) return remember(local);',
-    'const byModel = await classifyWithModels(lineId, description, source);\n  return byModel',
+    'const byModel = await classifyWithModels(lineId, description, source, examples);\n  return byModel',
     'テキストの入力で、辞書がモデルより先でない'
   );
   // 中項目: 揃えてから、最初に当たったグループ。テキストは時刻を渡さない
@@ -469,7 +469,7 @@ test('カード利用の通知: 店名はモデルを先に使う。共同費で
   // classifyExpense の店名: キャッシュ → モデル（Jev → Gemini）→ 辞書
   const classify = bodyOf(CLASSIFIER, 'classifyExpense');
   const merchant = classify.slice(classify.indexOf("if (source === 'merchant') {"));
-  assertBefore(merchant, 'await classifyWithModels(lineId, description, source)', 'const local = byKeyword();', '店名で、モデルが辞書より先でない');
+  assertBefore(merchant, 'await classifyWithModels(lineId, description, source, examples)', 'const local = byKeyword();', '店名で、モデルが辞書より先でない');
   assertBefore(classify, 'classificationCache.get(cacheKey)', "if (source === 'merchant') {", 'キャッシュが先でない');
   const models = bodyOf(CLASSIFIER, 'classifyWithModels');
   assertBefore(models, 'await classifyWithJev(', 'await classifyWithGemini(', 'Jev が Gemini より先でない');

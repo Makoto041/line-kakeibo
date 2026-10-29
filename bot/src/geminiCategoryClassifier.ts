@@ -3,10 +3,11 @@ import { CANONICAL_CATEGORIES, normalizeCategoryName } from './categoryNormaliza
 import { CATEGORY_GUIDE } from './categoryGuide';
 import { generateJson, isGeminiConfigured, Type, type Schema } from './geminiClient';
 import { classifyWithJev, isJevConfigured } from './jevCategoryClassifier';
+import { categoryRulesVersion, describeWithExamples, loadCategoryRules, matchCategoryRule } from './categoryRules';
 import { errorFields, maskId } from './logSafe';
 
-/** カテゴリがどこで決まったか（キーワード辞書・Jev・Gemini） */
-export type ClassificationProvider = 'dictionary' | 'jev' | 'gemini';
+/** カテゴリがどこで決まったか（世帯の確定ルール・キーワード辞書・Jev・Gemini） */
+export type ClassificationProvider = 'dictionary' | 'jev' | 'gemini' | 'rule';
 
 export interface ClassificationResult {
   category: string | null;
@@ -151,6 +152,11 @@ export interface ClassifyOptions {
    * カテゴリ一覧（Firestore）も読まない。LINE の入力で、送信者が世帯のメンバーでないときに使う（#245。expenseFlow.ts）
    */
   allowModels?: boolean;
+  /**
+   * 世帯の ID。あれば、世帯のカテゴリのルール（categoryRules.ts）を使う: 確定ルールに当たれば最優先でそのカテゴリにし
+   * （モデルも辞書も呼ばない）、当たらなければ「AI へ伝える例」を Jev・Gemini に渡す。無ければルールは使わない
+   */
+  groupId?: string | null;
 }
 
 const GEMINI_TIMEOUT_MS = 8000;
@@ -191,10 +197,14 @@ const MERCHANT_EXAMPLES = `入力: "ｾﾌﾞﾝ-ｲﾚﾌﾞﾝ" → {"category
 export function buildClassificationPrompt(
   description: string,
   categoryNames: string[],
-  source: ClassificationSource
+  source: ClassificationSource,
+  examples?: Record<string, string[]>
 ): string {
   const guide = categoryNames
-    .map((name) => `- ${name}${CATEGORY_GUIDE[name] ? `: ${CATEGORY_GUIDE[name]}` : ''}`)
+    .map((name) => {
+      const text = describeWithExamples(CATEGORY_GUIDE[name], examples?.[name]);
+      return `- ${name}${text ? `: ${text}` : ''}`;
+    })
     .join('\n');
   const subject =
     source === 'merchant'
@@ -253,11 +263,12 @@ async function categoriesFor(lineId: string): Promise<string[]> {
 async function classifyWithGemini(
   categoryNames: string[],
   description: string,
-  source: ClassificationSource
+  source: ClassificationSource,
+  examples?: Record<string, string[]>
 ): Promise<ClassificationResult | null> {
   if (!isGeminiConfigured()) return null;
   const parsed = await generateJson<{ category?: unknown; confidence?: unknown }>(
-    buildClassificationPrompt(description, categoryNames, source),
+    buildClassificationPrompt(description, categoryNames, source, examples),
     { schema: classificationSchema(categoryNames), timeoutMs: GEMINI_TIMEOUT_MS }
   );
   if (!parsed || typeof parsed.category !== 'string') return null;
@@ -285,15 +296,16 @@ async function classifyWithGemini(
 async function classifyWithModels(
   lineId: string,
   description: string,
-  source: ClassificationSource
+  source: ClassificationSource,
+  examples?: Record<string, string[]>
 ): Promise<ClassificationResult | null> {
   // どちらも使えないときは Firestore（カテゴリ一覧）も読まない
   if (!isJevConfigured() && !isGeminiConfigured()) return null;
   const input = toModelInput(description);
   const started = Date.now();
   const categoryNames = await categoriesFor(lineId);
-  const jev = await classifyWithJev(categoryNames, input, source);
-  const result = jev ?? (await classifyWithGemini(categoryNames, input, source));
+  const jev = await classifyWithJev(categoryNames, input, source, examples);
+  const result = jev ?? (await classifyWithGemini(categoryNames, input, source, examples));
   if (result) {
     // どちらで決まったか（Jev の失敗で Gemini に回った割合を見る）。入力・店名・利用者 ID は出さない。
     // confidence は確信度（小数 2 桁。LINE で 0.4 未満を採用しなかった割合を見る）。
@@ -326,7 +338,18 @@ export async function classifyExpense(
 ): Promise<ClassificationResult> {
   const source: ClassificationSource = options.source ?? 'text';
   const allowModels = options.allowModels ?? true;
-  const cacheKey = `${source}_${lineId}_${description.toLowerCase().trim()}`;
+
+  // 世帯のルール。確定ルールは辞書・キャッシュ・モデルより先に当てる（決まった結果は保存しない。ルールを変えたらすぐ効くように）。
+  // 読めなかったとき（null）はルール無しで続ける
+  const household = options.groupId ? await loadCategoryRules(options.groupId) : null;
+  const ruled = household ? matchCategoryRule(household.rules, description) : null;
+  if (ruled) {
+    return { category: ruled, confidence: 1, reasoning: 'Household category rule', provider: 'rule' };
+  }
+  const examples = household && Object.keys(household.examples).length > 0 ? household.examples : undefined;
+  // 例が変わると結果も変わるので、キャッシュのキーに版を入れる
+  const rulesKey = household ? categoryRulesVersion(household) : '-';
+  const cacheKey = `${source}_${lineId}_${rulesKey}_${description.toLowerCase().trim()}`;
 
   const cached = classificationCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CLASSIFICATION_CACHE_TTL) {
@@ -350,7 +373,7 @@ export async function classifyExpense(
   };
 
   if (source === 'merchant') {
-    const byModel = allowModels ? await classifyWithModels(lineId, description, source) : null;
+    const byModel = allowModels ? await classifyWithModels(lineId, description, source, examples) : null;
     if (byModel) return remember(byModel);
     const local = byKeyword();
     // モデルが使えなかった結果はキャッシュしない（復旧後にモデルで判定し直せるように）
@@ -360,7 +383,7 @@ export async function classifyExpense(
   const local = byKeyword();
   if (local) return remember(local);
   if (!allowModels) return { category: null, confidence: 0 };
-  const byModel = await classifyWithModels(lineId, description, source);
+  const byModel = await classifyWithModels(lineId, description, source, examples);
   return byModel ? remember(byModel) : { category: null, confidence: 0 };
 }
 

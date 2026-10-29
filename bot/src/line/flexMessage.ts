@@ -29,6 +29,7 @@ export type CategoryOrigin = ClassificationProvider | 'specified' | 'default' | 
 
 /** 判定元の表示名。文言を変えるときはここだけを直す */
 export const CATEGORY_ORIGIN_LABELS: Record<CategoryOrigin, string> = {
+  rule: 'ルール',
   dictionary: '辞書',
   jev: 'Jev',
   gemini: 'Gemini',
