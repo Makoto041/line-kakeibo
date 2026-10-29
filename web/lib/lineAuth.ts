@@ -18,7 +18,7 @@ const LOGIN_REDIRECT_WAIT_MS = 10_000;
 // waitForLineAuth() で待つ上限。LIFF の初期化・bot の /auth/line（コールドスタートを含む）・
 // Firebase へのサインインはどれもタイムアウトを持たないため、通信が止まると読み込み中のまま
 // 終わらなくなる。上限を過ぎたら呼び出し元にエラーを返し、再読み込みできるようにする。
-const LINE_AUTH_WAIT_MS = 20_000;
+export const LINE_AUTH_WAIT_MS = 20_000;
 
 // LINE ログイン画面へ送った時刻（localStorage）。ログインから戻ってきたのに（URL に
 // LIFF の戻りパラメータがある）ログインできていない（トークン交換の失敗など）ときに、
@@ -76,6 +76,14 @@ export function urlWithoutLiffReturnParams(): string {
   return url.toString();
 }
 
+// 検索エンジンのクローラー。LINE ログインへ送られるとトップの内容（プレビュー）を読めないため、ログインを始めない。
+// UA は偽装できるため、これは表示を決めるだけの判定で、アクセス権の判断には使わない（データは Firestore ルールが lineId クレームで守る）
+const CRAWLER_UA = /Googlebot|Google-InspectionTool|bingbot|Yahoo! Slurp|DuckDuckBot|Baiduspider|facebookexternalhit|Twitterbot|Slackbot|LinkedInBot/i;
+
+function isCrawler(): boolean {
+  return CRAWLER_UA.test(navigator.userAgent);
+}
+
 /**
  * サインイン状態を確立する。
  * - NEXT_PUBLIC_LIFF_ID あり: LIFF で LINE ログイン → ID トークンを
@@ -95,6 +103,9 @@ export function initLineAuth(): Promise<void> {
       console.error('Firebase Auth is not initialized; cannot start LINE auth');
       return;
     }
+
+    // クローラーにはログインを求めず、サインインしないまま（＝プレビューモードの）トップを見せる
+    if (isCrawler()) return;
 
     // 永続化されたセッションの復元完了を待ってから判定する
     // （復元前は currentUser が null のため、待たないと二重サインインし得る）

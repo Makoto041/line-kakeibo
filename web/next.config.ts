@@ -115,8 +115,6 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), payment=()",
   },
-  // 個人の家計簿なので検索エンジンにインデックスさせない（metadata.robots / robots.txt と併用）
-  { key: "X-Robots-Tag", value: "noindex, nofollow" },
   { key: "Content-Security-Policy-Report-Only", value: contentSecurityPolicy },
 ];
 
@@ -140,6 +138,12 @@ const nextConfig: NextConfig = {
       {
         source: "/:path*",
         headers: securityHeaders,
+      },
+      // 個人の家計簿なので、トップ（/）以外は検索エンジンにインデックスさせない（robots.txt と併用）。
+      // トップだけは検索結果にサイト名とロゴ（ぶ）を出すため許可し、ロゴの画像も取得できるよう外す
+      {
+        source: "/((?!pwa/|favicon\\.ico|apple-icon\\.png|_next/).+)",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
       },
       // Service Worker は毎回取り直し、更新をすぐ反映する（キャッシュされると古い sw.js が残り続ける）
       {

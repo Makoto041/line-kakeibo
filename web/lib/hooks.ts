@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { db, auth, getFirebaseStatus, ensureFirebaseInitialized } from './firebase';
-import { initLineAuth } from './lineAuth';
+import { initLineAuth, LINE_AUTH_WAIT_MS } from './lineAuth';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
 import { sumCategoryTotals } from './budgetAnalytics';
@@ -276,18 +276,31 @@ export function useLineAuth() {
   useEffect(() => {
     ensureFirebaseInitialized();
     // 起動時サインイン（LIFF もしくは匿名フォールバック）を確実に開始する
-    initLineAuth();
+    const init = initLineAuth();
 
     if (!auth) {
       setLoading(false);
       return;
     }
 
+    let cancelled = false;
+    let initSettled = false;
+
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
         cachedLineAuth = null;
         setState(null);
-        setLoading(false);
+        // サインインが終わるまで（LINE ログイン画面へ移る間・トークン交換の間）は「未ログイン」と決めない。
+        // 決めてしまうとゲスト（プレビューモード）の画面が一瞬出る。終わっても誰もいなければ下で確定する
+        if (initSettled) setLoading(false);
+        return;
+      }
+
+      // 匿名（前回の失敗で残ったセッション）は、サインインの処理が終わるまで確定しない。
+      // 処理はこの後 LINE ログイン画面へ進むことがあり、先に確定するとゲストの画面が一瞬出る
+      if (fbUser.isAnonymous && !initSettled) {
+        cachedLineAuth = null;
+        setState(null);
         return;
       }
 
@@ -323,7 +336,26 @@ export function useLineAuth() {
       if (lineId !== known) apply(lineId);
     });
 
-    return () => unsubscribe();
+    // サインインの処理が終わったのに誰もサインインしていない（クローラー・LIFF 未設定など）なら
+    // ゲストとして確定する。サインイン済みなら、上のリスナーが lineId を確かめて確定する
+    // LIFF の初期化・認証 API・Firebase のサインインはタイムアウトを持たないため、上限で打ち切って確定する
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, LINE_AUTH_WAIT_MS));
+    Promise.race([init.catch(() => undefined), timeout]).then(() => {
+      initSettled = true;
+      if (cancelled) return;
+      const user = auth?.currentUser;
+      // 匿名はリスナーが保留にしていたので、ここでゲストとして確定する
+      if (!user || user.isAnonymous) {
+        cachedLineAuth = user ? { uid: user.uid, lineId: null, isAnonymous: true } : null;
+        setState(cachedLineAuth);
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   // 旧: URL に lineId を引き回すヘルパー。現在は認証が Firebase に永続化されるため

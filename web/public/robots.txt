@@ -1,2 +1,4 @@
+# トップ（/）以外は X-Robots-Tag: noindex（next.config.ts）で検索結果に出さない。
+# Disallow にすると noindex を読めず URL だけが載ることがあるため、クロールは止めない
 User-agent: *
-Disallow: /
+Allow: /
