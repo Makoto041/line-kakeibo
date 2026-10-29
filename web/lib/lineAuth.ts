@@ -80,7 +80,7 @@ export function urlWithoutLiffReturnParams(): string {
 // UA は偽装できるため、これは表示を決めるだけの判定で、アクセス権の判断には使わない（データは Firestore ルールが lineId クレームで守る）
 const CRAWLER_UA = /Googlebot|Google-InspectionTool|bingbot|Yahoo! Slurp|DuckDuckBot|Baiduspider|facebookexternalhit|Twitterbot|Slackbot|LinkedInBot/i;
 
-function isCrawler(): boolean {
+export function isCrawler(): boolean {
   return CRAWLER_UA.test(navigator.userAgent);
 }
 

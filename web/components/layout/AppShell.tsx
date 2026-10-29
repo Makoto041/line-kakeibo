@@ -1,12 +1,15 @@
 'use client';
 
 import { useEffect } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Sidebar } from './Sidebar';
 import { BottomTabBar } from './BottomTabBar';
 import { TopBar } from './TopBar';
-import { initLineAuth } from '@/lib/lineAuth';
+import { initLineAuth, isCrawler } from '@/lib/lineAuth';
+import { auth } from '@/lib/firebase';
+import { useLineAuth } from '@/lib/hooks';
+import { GUEST_DEMO_HREF, isGuestDemoRoute } from '@/lib/guestRedirect';
 import { startPwa } from '@/lib/installApp';
 
 // Routes that should render without the app navigation chrome
@@ -15,7 +18,20 @@ const BARE_ROUTES = ['/attach', '/link'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
+  const router = useRouter();
   const reduceMotion = useReducedMotion();
+  const { lineId, loading: authLoading } = useLineAuth();
+
+  // ログインしていない人（サインイン処理が終わっても LINE のサインインが無い）は、デモへ送る。
+  // 検索エンジンのクローラーには、トップのプレビューをそのまま見せる。
+  // 前回の失敗などで LINE のユーザーが残っているのに lineId を読めなかった場合は、送らない（一時的な通信の失敗で戻れなくならないように）
+  const user = auth?.currentUser;
+  const toDemo =
+    !authLoading && !lineId && (!user || user.isAnonymous) && isGuestDemoRoute(pathname) && !(typeof window !== 'undefined' && isCrawler());
+
+  useEffect(() => {
+    if (toDemo) router.replace(GUEST_DEMO_HREF);
+  }, [toDemo, router]);
 
   // アプリ起動時に1度だけサインイン（LIFF または匿名フォールバック）を開始する。
   // 認証は Firebase に永続化されるため、遷移ごとに URL へ lineId を引き回す必要はない。
@@ -26,6 +42,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const hrefFor = (path: string) => path;
+
+  // デモへ移る間は、ゲストのプレビュー画面を出さない
+  if (toDemo) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center">
+        <div className="h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-label="読み込み中" />
+      </div>
+    );
+  }
 
   const bare = BARE_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
 
