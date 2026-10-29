@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { db, auth, getFirebaseStatus, ensureFirebaseInitialized } from './firebase';
-import { initLineAuth, LINE_AUTH_WAIT_MS } from './lineAuth';
+import { initLineAuth, getLineAuthOutcome, LINE_AUTH_WAIT_MS, type LineAuthOutcome } from './lineAuth';
 import dayjs from 'dayjs';
 import { normalizeCategoryName } from './categoryNormalization';
 import { sumCategoryTotals } from './budgetAnalytics';
@@ -272,6 +272,8 @@ async function readLineIdClaim(user: User): Promise<string | null | undefined> {
 export function useLineAuth() {
   const [state, setState] = useState<LineAuthState | null>(() => cachedLineAuth);
   const [loading, setLoading] = useState(() => cachedLineAuth === null);
+  // サインイン処理の結果（デモへ送るのは 'guest' だけ。上限切れ・失敗の匿名は送らない）。処理の完了まで待つ（上限では打ち切らない）
+  const [outcome, setOutcome] = useState<LineAuthOutcome>(() => getLineAuthOutcome());
 
   useEffect(() => {
     ensureFirebaseInitialized();
@@ -338,6 +340,12 @@ export function useLineAuth() {
 
     // サインインの処理が終わったのに誰もサインインしていない（クローラー・LIFF 未設定など）なら
     // ゲストとして確定する。サインイン済みなら、上のリスナーが lineId を確かめて確定する
+    init
+      .catch(() => undefined)
+      .then(() => {
+        if (!cancelled) setOutcome(getLineAuthOutcome());
+      });
+
     // LIFF の初期化・認証 API・Firebase のサインインはタイムアウトを持たないため、上限で打ち切って確定する
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, LINE_AUTH_WAIT_MS));
     Promise.race([init.catch(() => undefined), timeout]).then(() => {
@@ -365,6 +373,7 @@ export function useLineAuth() {
   return {
     lineId: state?.lineId ?? null,
     loading,
+    outcome,
     getUrlWithLineId,
   };
 }

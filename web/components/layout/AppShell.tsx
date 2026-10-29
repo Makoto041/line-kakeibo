@@ -7,7 +7,6 @@ import { Sidebar } from './Sidebar';
 import { BottomTabBar } from './BottomTabBar';
 import { TopBar } from './TopBar';
 import { initLineAuth, isCrawler } from '@/lib/lineAuth';
-import { auth } from '@/lib/firebase';
 import { useLineAuth } from '@/lib/hooks';
 import { GUEST_DEMO_HREF, isGuestDemoRoute } from '@/lib/guestRedirect';
 import { startPwa } from '@/lib/installApp';
@@ -20,14 +19,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
   const router = useRouter();
   const reduceMotion = useReducedMotion();
-  const { lineId, loading: authLoading } = useLineAuth();
+  const { lineId, loading: authLoading, outcome } = useLineAuth();
 
-  // ログインしていない人（サインイン処理が終わっても LINE のサインインが無い）は、デモへ送る。
-  // 検索エンジンのクローラーには、トップのプレビューをそのまま見せる。
-  // 前回の失敗などで LINE のユーザーが残っているのに lineId を読めなかった場合は、送らない（一時的な通信の失敗で戻れなくならないように）
-  const user = auth?.currentUser;
+  // LINE ログインをしていないと確かめられた人（ログインを済ませずに戻ってきた・LIFF 未設定）だけをデモへ送る。
+  // 通信や認証の失敗・処理が長引いただけの本人は送らない（行き先の URL が消え、デモから戻れないため）。
+  // 検索エンジンのクローラーには、トップのプレビューをそのまま見せる
   const toDemo =
-    !authLoading && !lineId && (!user || user.isAnonymous) && isGuestDemoRoute(pathname) && !(typeof window !== 'undefined' && isCrawler());
+    !authLoading &&
+    !lineId &&
+    outcome === 'guest' &&
+    isGuestDemoRoute(pathname) &&
+    !(typeof window !== 'undefined' && isCrawler());
 
   useEffect(() => {
     if (toDemo) router.replace(GUEST_DEMO_HREF);

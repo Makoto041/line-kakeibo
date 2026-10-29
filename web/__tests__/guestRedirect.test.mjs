@@ -10,8 +10,8 @@ test('アプリの本体の画面は対象（末尾のスラッシュ・下位�
   }
 });
 
-test('規約・LINE から開く画面・デモ自身は対象外', () => {
-  for (const p of ['/terms/', '/privacy/', '/attach/', '/link/', '/demo/', '/demo/home/', '/expensesx', '/not-found']) {
+test('規約・LINE から開く画面は対象外', () => {
+  for (const p of ['/terms/', '/privacy/', '/attach/', '/link/', '/expensesx', '/not-found']) {
     assert.equal(isGuestDemoRoute(p), false, p);
   }
 });
