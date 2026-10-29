@@ -97,7 +97,7 @@ async function merchantSubCategoryForSave(
       text: parsed.merchant,
       source: 'merchant',
       allowModels: true,
-      jevFailedForMajor: categoryResult.provider !== 'jev',
+      jevFailedForMajor: categoryResult.provider !== 'jev' && categoryResult.provider !== 'rule',
       majorOrigin: categoryOrigin,
       majorConfidence: categoryResult.confidence,
     }))
@@ -751,7 +751,7 @@ async function processMessage(gmail: any, messageId: string): Promise<void> {
     const categoryResult = await classifyExpense(
       GMAIL_SYSTEM_LINE_ID,
       parsed.merchant,
-      { source: 'merchant' }
+      { source: 'merchant', groupId: getDefaultGroupId() }
     );
     // 判定元は通知のカードに出すだけで、保存しない
     const { category, origin: categoryOrigin } = merchantCategoryOf(categoryResult);
@@ -871,7 +871,7 @@ export async function processLatestEmail(): Promise<{
       const categoryResult = await classifyExpense(
         GMAIL_SYSTEM_LINE_ID,
         parsed.merchant,
-        { source: 'merchant' }
+        { source: 'merchant', groupId: getDefaultGroupId() }
       );
       const { category } = merchantCategoryOf(categoryResult);
       const subCategory = await merchantSubCategoryForSave(categoryResult, parsed);
@@ -988,7 +988,7 @@ export async function forceProcessMessage(messageId: string): Promise<{
     const categoryResult = await classifyExpense(
       GMAIL_SYSTEM_LINE_ID,
       parsed.merchant,
-      { source: 'merchant' }
+      { source: 'merchant', groupId: getDefaultGroupId() }
     );
     // 判定元は通知のカードに出すだけで、保存しない
     const { category, origin: categoryOrigin } = merchantCategoryOf(categoryResult);

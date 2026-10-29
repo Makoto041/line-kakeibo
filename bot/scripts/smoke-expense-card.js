@@ -379,13 +379,14 @@ function common(name, msg) {
   };
   const expected = {
     dictionary: '（辞書）',
+    rule: '（ルール）',
     jev: '（Jev）',
     gemini: '（Gemini）',
     specified: '（指定）',
     default: '（既定）',
     unclassified: '（未判定）',
   };
-  check('判定元は 6 つ', Object.keys(CATEGORY_ORIGIN_LABELS).sort().join(',') === Object.keys(expected).sort().join(','), Object.keys(CATEGORY_ORIGIN_LABELS).join(','));
+  check('判定元は 7 つ', Object.keys(CATEGORY_ORIGIN_LABELS).sort().join(',') === Object.keys(expected).sort().join(','), Object.keys(CATEGORY_ORIGIN_LABELS).join(','));
 
   const plain = buildTextExpenseFlexMessage(base);
   const plainRows = settingsRows(plain);

@@ -109,7 +109,7 @@ LINEテキスト → webhook(署名検証)
   → 並列: プロフィール取得(15分cache) / appUid解決(匿名Auth) / 所属グループの取得（個人チャット。LINE グループでの発言はプロフィール取得の後）
      （表示名が取れなければ「ユーザー情報の取得に失敗しました」と返して保存しない。失敗はキャッシュに残さず、次の入力で取り直す）
   → 世帯メンバーかの判定（expenseGroupScope.ts の isHouseholdMember: LINE グループに紐づく世帯の有効メンバーか。取得済みの所属から判定し、読み取りは増やさない）
-  → カテゴリ分類: キャッシュ → キーワードマップ → Jev（失敗時のみ Gemini）。確信度≥0.4で採用
+  → カテゴリ分類: 世帯の確定ルール（設定の「カテゴリ」。当たれば最優先）→ キャッシュ → キーワードマップ → Jev（失敗時のみ Gemini。世帯の「AI へ伝える例」を渡す）。確信度≥0.4で採用
      （世帯メンバーでない送信者はキーワードマップまで。Jev・Gemini を呼ばない。所属の確認に失敗したときはモデルを呼ぶ。§5）
   → 中項目の判定（大項目が決まったあと。辞書で、時刻は当てない。辞書で決まらない食費・娯楽は、世帯メンバーの入力なら
      Jev に聞く〔大項目の Jev が失敗した直後は聞かない。subCategoryClassifier.ts〕。決まらなければ付けない。SPECIFICATION §4.1）
@@ -127,7 +127,7 @@ LINEテキスト → webhook(署名検証)
 ```text
 SMBC利用通知メール → Gmail push → Pub/Sub → gmailPubSubHandler
   → history API差分取得 → SMBCフィルタ → 利用先/金額/利用日時パース（メールに時刻が書かれていたか〔usedAtHasTime〕も取る）
-  → カテゴリ分類（店名なので Jev → Gemini を優先。どちらも使えないときだけキーワードマップ）
+  → カテゴリ分類（世帯の確定ルールが最優先。店名なので次に Jev → Gemini を優先。どちらも使えないときだけキーワードマップ）
   → 中項目の判定（店名の辞書。時刻の書かれたメールの飲食店だけ朝/昼/夜ご飯。辞書で決まらない食費・娯楽は、大項目が Jev で
      決まったときだけ Jev に聞く〔Jev の外食に時刻は当てない〕。決まらなければ付けない。SPECIFICATION §4.1）
   → Firestoreトランザクションでアトミック保存（status: 'shared'・confirmed: true。自動で入るので要確認にしない。subCategory は決まったときだけ）
@@ -219,6 +219,10 @@ viewport-fit=cover: ノッチ・ホームバーは env(safe-area-inset-*) で避
 ## 5. カテゴリ分類パイプライン（コスト最適化）
 
 ```text
+どちらの入力も、最初に世帯の確定ルール（groups/{id}.categoryRules。設定の「カテゴリ」で編集。メモリに 60 秒キャッシュ）を見る
+  ── 内容に言葉を含めば、そのカテゴリで終了（判定元 rule。モデル・辞書・キャッシュは使わない）。当たらなければ以降へ進み、
+     「AI へ伝える例」を Jev の選択肢の説明と Gemini のプロンプトに足す（結果キャッシュのキーに例の版を含める）
+
 LINE のテキスト（source: 'text'）
   ├─ 1. 結果キャッシュ（関数インスタンスのメモリ内。15分TTL）── ヒット→終了
   ├─ 2. FAST_KEYWORD_MAP（メモリ内・即時・conf 0.8）── ヒット→終了（世帯メンバーでない送信者はここまで）
@@ -232,7 +236,7 @@ LINE のテキスト（source: 'text'）
   └─ 4. FAST_KEYWORD_MAP（Jev・Gemini のどちらも使えないときだけ。店名は部分一致で取り違えやすいため後回し）
 
 Jev の「失敗」= 鍵なし（TYPESAFE_API_KEY が無い）・エラー・3 秒のタイムアウト・答えなし・選択肢にないカテゴリ。信頼度が低いだけでは Gemini に回さない。
-Jev・Gemini の失敗はキャッシュしない。どちらで決まったかは「Category classified」ログの provider（jev / gemini。確信度 confidence も出す）
+Jev・Gemini の失敗はキャッシュしない。どちらで決まったかは「Category classified」ログの provider（jev / gemini。確定ルールで決まったときはこのログを出さない。確信度 confidence も出す）
 
 世帯メンバーの確認（費用・無料枠の保護。#245）: LINE のテキストは、送信者が世帯（LINE グループに紐づくグループ）の
 有効メンバーのときだけ 3・4 に進む（expenseFlow.ts → classifyExpense の allowModels）。「グループ作成」で作った
@@ -335,7 +339,8 @@ line-kakeibo/
 │  │  ├─ adminAuth.ts        # ADMIN_SECRET の定数時間比較
 │  │  ├─ logSafe.ts / time.ts # ログのマスク・JST 日付
 │  │  ├─ docId.ts            # Firestore の文書 ID の入力検証 isValidDocId（/household と LINE の postback で共用）
-│  │  ├─ geminiCategoryClassifier.ts # カテゴリ分類（キャッシュ・辞書・Jev → Gemini の順序）
+│  │  ├─ geminiCategoryClassifier.ts # カテゴリ分類（世帯の確定ルール・キャッシュ・辞書・Jev → Gemini の順序）
+│  │  ├─ categoryRules.ts   # 世帯のカテゴリのルール（確定ルールと AI へ伝える例）の検査・照合・読み込み（groups/{id}.categoryRules。API は /household/category-rules）
 │  │  ├─ jevCategoryClassifier.ts / geminiClient.ts / categoryGuide.ts / categoryNormalization.ts # Jev・Gemini の呼び出し、カテゴリの説明、カテゴリ正規化
 │  │  ├─ categoryTaxonomy.ts / subCategoryRules.ts # 中項目の一覧（大項目は正準名の完全一致で引く。web/lib/categoryTaxonomy.ts に同じ一覧）と説明 / 辞書と時刻で中項目を決める resolveSubCategory（#235。モデルは呼ばない。登録時〔LINE の入力・Gmail の取込〕と、LINE で大項目を変えたときに呼ぶ）
 │  │  ├─ subCategoryClassifier.ts # 登録時に辞書で決まらない中項目を Jev に聞く subCategoryByModel（呼ぶ条件・確信度の下限・15 分キャッシュ・ログ）

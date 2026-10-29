@@ -209,6 +209,50 @@ export function parseSummarySendResult(json: unknown): SummarySendResult | null 
   return range ? { range, interim: json.interim === true } : null;
 }
 
+// ---- カテゴリのルール（確定ルールと、AI へ伝える例） ---------------------------------
+
+export interface CategoryRule {
+  keyword: string;
+  category: string;
+}
+
+export interface CategoryRuleLimits {
+  maxRules: number;
+  maxKeywordLength: number;
+  maxExamplesPerCategory: number;
+  maxExampleLength: number;
+}
+
+export interface CategoryRulesConfig {
+  rules: CategoryRule[];
+  /** カテゴリ名 → 例 */
+  examples: Record<string, string[]>;
+  limits: CategoryRuleLimits;
+}
+
+export function parseCategoryRulesResponse(json: unknown): CategoryRulesConfig | null {
+  if (!isRecord(json) || !Array.isArray(json.rules) || !isRecord(json.examples) || !isRecord(json.limits)) return null;
+  const rules: CategoryRule[] = [];
+  for (const item of json.rules) {
+    if (!isRecord(item) || typeof item.keyword !== 'string' || typeof item.category !== 'string') return null;
+    rules.push({ keyword: item.keyword, category: item.category });
+  }
+  const examples: Record<string, string[]> = {};
+  for (const [category, list] of Object.entries(json.examples)) {
+    if (!Array.isArray(list) || list.some((t) => typeof t !== 'string')) return null;
+    examples[category] = list as string[];
+  }
+  const l = json.limits;
+  const limits = {
+    maxRules: toNumber(l.maxRules),
+    maxKeywordLength: toNumber(l.maxKeywordLength),
+    maxExamplesPerCategory: toNumber(l.maxExamplesPerCategory),
+    maxExampleLength: toNumber(l.maxExampleLength),
+  };
+  if (Object.values(limits).some((n) => !Number.isInteger(n) || n < 1)) return null;
+  return { rules, examples, limits };
+}
+
 export function parseConfirmResponse(json: unknown): ConfirmedExpensePatch | null {
   if (!isRecord(json) || !isRecord(json.expense)) return null;
   const e = json.expense;

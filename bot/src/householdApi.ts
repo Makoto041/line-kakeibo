@@ -49,6 +49,12 @@ import {
 import { sendSettlementSummaryNow, settlementSummaryStatus, type SummaryPeriodKind } from './settlementSummary';
 import { todayJST } from './time';
 import { applyWebCorsHeaders } from './webOrigins';
+import {
+  CATEGORY_RULES_LIMITS,
+  invalidateCategoryRules,
+  parseCategoryRulesInput,
+  readStoredCategoryRules,
+} from './categoryRules';
 
 /** 1 回に精算済みにできる以前の立替の件数の上限 */
 export const MAX_LEGACY_SETTLE_IDS = 500;
@@ -893,6 +899,57 @@ householdRouter.post(
       .update({ splitSettings: { collectFromLineId, updatedBy: lineId, updatedAt: new Date() } });
     console.log('household split-settings: updated', { group: maskId(ctx.groupId), user: maskId(lineId) });
     res.status(200).json({ collectFromLineId });
+  })
+);
+
+// ============================================
+// 世帯のカテゴリのルール（確定ルールと、AI へ伝える例）
+// ============================================
+
+/** GET /household/category-rules?groupId=<id> — 世帯のカテゴリのルールと、上限 */
+householdRouter.get(
+  '/category-rules',
+  userLimiter,
+  route('category-rules-get', async (req, res) => {
+    const ctx = await requireGroupMember(res, req.query.groupId, res.locals.lineId as string);
+    if (!ctx) return;
+    const snap = await ctx.db.collection('groups').doc(ctx.groupId).get();
+    const config = readStoredCategoryRules(snap.data()?.categoryRules);
+    res.status(200).json({ ...config, limits: CATEGORY_RULES_LIMITS });
+  })
+);
+
+/**
+ * POST /household/category-rules  { groupId, rules: [{ keyword, category }], examples: { [category]: string[] } }
+ *
+ * 世帯のカテゴリのルールを丸ごと置き換える（groups/{groupId}.categoryRules）。groups はクライアントから書けないので
+ * Admin SDK で書く。書けるのは世帯の有効メンバーだけ。上限・カテゴリの一覧・文字を検査し、満たさなければ 400（丸めない）。
+ * 文はモデルへ渡るので、制御文字は取り除く（parseCategoryRulesInput）
+ */
+householdRouter.post(
+  '/category-rules',
+  userLimiter,
+  route('category-rules-save', async (req, res) => {
+    const lineId = res.locals.lineId as string;
+    const body = isPlainObject(req.body) ? req.body : null;
+    const ctx = await requireGroupMember(res, body?.groupId, lineId);
+    if (!ctx || !body) return;
+    const config = parseCategoryRulesInput({ rules: body.rules, examples: body.examples });
+    if (!config) {
+      sendError(res, 400, 'invalid_request');
+      return;
+    }
+    await ctx.db
+      .collection('groups')
+      .doc(ctx.groupId)
+      .update({ categoryRules: { ...config, updatedBy: lineId, updatedAt: new Date() } });
+    invalidateCategoryRules(ctx.groupId);
+    console.log('household category-rules: updated', {
+      group: maskId(ctx.groupId),
+      user: maskId(lineId),
+      rules: config.rules.length,
+    });
+    res.status(200).json({ ...config, limits: CATEGORY_RULES_LIMITS });
   })
 );
 

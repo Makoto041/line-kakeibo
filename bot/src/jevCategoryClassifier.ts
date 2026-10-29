@@ -2,6 +2,7 @@
 // そのまま import できる（geminiClient.ts のような require + 型だけの参照は要らない）
 import { TypeSafeClient, choice } from '@typesafe-ai/sdk';
 import { CATEGORY_GUIDE } from './categoryGuide';
+import { describeWithExamples } from './categoryRules';
 import { toCanonicalCategoryName } from './categoryNormalization';
 import { SUB_CATEGORY_DESCRIPTIONS, subCategoriesOf } from './categoryTaxonomy';
 import type { ClassificationSource, ClassificationResult } from './geminiCategoryClassifier';
@@ -38,9 +39,12 @@ export const JEV_QUESTIONS: Record<ClassificationSource, string> = {
 };
 
 /** 選択肢（カテゴリ名 → 説明）。説明の無い名前（利用者のカスタムカテゴリなど）は null */
-export function jevCriteria(categoryNames: string[]): Record<string, string | null> {
+export function jevCriteria(categoryNames: string[], examples?: Record<string, string[]>): Record<string, string | null> {
   return Object.fromEntries(
-    categoryNames.map((name) => [name, JEV_DESCRIPTION_OVERRIDES[name] ?? CATEGORY_GUIDE[name] ?? null])
+    categoryNames.map((name) => [
+      name,
+      describeWithExamples(JEV_DESCRIPTION_OVERRIDES[name] ?? CATEGORY_GUIDE[name] ?? null, examples?.[name]),
+    ])
   );
 }
 
@@ -77,13 +81,14 @@ function getClient(): TypeSafeClient {
 export async function classifyWithJev(
   categoryNames: string[],
   description: string,
-  source: ClassificationSource
+  source: ClassificationSource,
+  examples?: Record<string, string[]>
 ): Promise<ClassificationResult | null> {
   if (!isJevConfigured()) return null;
   try {
     const { answers } = await getClient().systemOne({
       state: { input: description },
-      questions: { category: choice(JEV_QUESTIONS[source], jevCriteria(categoryNames)) },
+      questions: { category: choice(JEV_QUESTIONS[source], jevCriteria(categoryNames, examples)) },
     });
     const answer = answers.category;
     if (typeof answer?.choice !== 'string') {

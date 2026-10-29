@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Wallet, CalendarRange, Repeat } from 'lucide-react';
+import { Wallet, CalendarRange, Repeat, Tags } from 'lucide-react';
 import RecurringExpensesPanel from '@/components/RecurringExpensesPanel';
+import CategoryRulesPanel from '@/components/settings/CategoryRulesPanel';
 import InstallAppCard from '@/components/settings/InstallAppCard';
 import SettlementNotifyCard from '@/components/settings/SettlementNotifyCard';
 import { useLineAuth, DEFAULT_BUDGET_CONFIG, type BudgetConfig } from '@/lib/hooks';
@@ -68,7 +69,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(!(cachedDate && cachedBudget));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<'period' | 'budget' | 'recurring'>('budget');
+  const [activeTab, setActiveTab] = useState<'period' | 'budget' | 'recurring' | 'category'>('budget');
   // 期間設定を保存した回数（精算の通知のカードが起算日を読み直す）
   const [savedCount, setSavedCount] = useState(0);
 
@@ -281,6 +282,17 @@ export default function Settings() {
             <Repeat className="h-4 w-4" />
             固定費
           </button>
+          <button
+            onClick={() => setActiveTab('category')}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors ${
+              activeTab === 'category'
+                ? 'bg-accent text-accent-fg shadow-sm'
+                : 'text-muted hover:bg-fg/5 hover:text-fg'
+            }`}
+          >
+            <Tags className="h-4 w-4" />
+            カテゴリ
+          </button>
         </div>
 
         {/* Budget Settings Tab */}
@@ -473,6 +485,9 @@ export default function Settings() {
 
         {/* Recurring Expenses Tab（項目ごとに保存するので、下の保存ボタンは出さない） */}
         {activeTab === 'recurring' && <RecurringExpensesPanel lineId={lineId} />}
+
+        {/* Category Rules Tab */}
+        {activeTab === 'category' && lineId && <CategoryRulesPanel lineId={lineId} />}
 
         {/* Save Button */}
         {activeTab !== 'recurring' && (

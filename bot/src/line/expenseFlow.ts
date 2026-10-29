@@ -390,7 +390,7 @@ export async function processExpenseInBackground(
 
       // カテゴリ分類を並列実行（辞書・モデル〔Jev → 失敗時 Gemini〕 + ユーザーデフォルト）
       const [classification, userSettingsResult] = await Promise.allSettled([
-        classifyExpense(event.source.userId, parsed.description, { allowModels }),
+        classifyExpense(event.source.userId, parsed.description, { allowModels, groupId: activeGroup?.id }),
         getUserSettings(event.source.userId)
       ]);
 
@@ -418,7 +418,7 @@ export async function processExpenseInBackground(
         allowModels,
         // Gmail と違い、LINE は辞書が Jev より先なので、辞書で決まった（dictionary）は Jev を呼んでいない＝失敗扱いにしない
         jevFailedForMajor:
-          !parsed.category && allowModels && classified?.provider !== "jev" && classified?.provider !== "dictionary",
+          !parsed.category && allowModels && classified?.provider !== "jev" && classified?.provider !== "dictionary" && classified?.provider !== "rule",
         majorOrigin: categoryOrigin,
         majorConfidence: classified?.confidence,
       }));

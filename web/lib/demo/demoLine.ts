@@ -7,6 +7,7 @@
 
 /** 判定元の表示名（bot: CATEGORY_ORIGIN_LABELS） */
 export const CATEGORY_ORIGIN_LABELS = {
+  rule: 'ルール',
   dictionary: '辞書',
   jev: 'Jev',
   gemini: 'Gemini',
