@@ -583,6 +583,25 @@ await test('★ 設定: userSettings に許可外のキー・長すぎる値・�
   await assertFails(setDoc(doc(userA, 'userSettings/A'), { defaultCategory: 'x'.repeat(51) }, { merge: true }));
   await assertFails(setDoc(doc(userA, 'userSettings/A'), { lineId: 'B' }, { merge: true }));
 });
+await test('設定: 保存してある旧い形のキー（許可外）があっても、変えたキーが正しければ merge で保存できる（本番データの退行防止）', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'userSettings/A'), { legacyFlag: true, dateSettings: { mode: 'monthly' }, defaultCategory: 'x'.repeat(80) });
+  });
+  await assertSucceeds(setDoc(doc(userA, 'userSettings/A'), { dateSettings: { mode: 'monthly', customStartDay: 20 }, updatedAt: new Date() }, { merge: true }));
+  // 許可外のキーを新しく足すことはできない
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { anotherLegacy: 1 }, { merge: true }));
+  // 長すぎる defaultCategory は、それを書き換えるときだけ検査する
+  await assertFails(setDoc(doc(userA, 'userSettings/A'), { defaultCategory: 'y'.repeat(80) }, { merge: true }));
+});
+await test('設定: userSettings / budgetSettings は削除できない（web・bot は削除しない）', async () => {
+  await assertFails(deleteDoc(doc(userA, 'userSettings/A')));
+  await assertFails(deleteDoc(doc(userA, 'budgetSettings/A')));
+});
+await test('設定: dateRangeSettings は自分の分を読める（書き込みは禁止）', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => { await setDoc(doc(ctx.firestore(), 'dateRangeSettings/A'), { mode: 'monthly' }); });
+  await assertSucceeds(getDoc(doc(userA, 'dateRangeSettings/A')));
+  await assertFails(getDoc(doc(userA, 'dateRangeSettings/B')));
+});
 await test('設定: dateRangeSettings は読めるが、書き込みは禁止', async () => {
   await assertFails(setDoc(doc(userA, 'dateRangeSettings/A'), { mode: 'monthly' }));
 });

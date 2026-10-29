@@ -1,7 +1,7 @@
-import { clientIpKey } from "../clientIp";
 import express, { Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { getAuth } from "firebase-admin/auth";
+import { clientIpKey } from "../clientIp";
 import { getOrCreateAppUidForLineId } from "../linkUserResolver";
 import { errorFields } from "../logSafe";
 import { applyWebCorsHeaders } from "../webOrigins";

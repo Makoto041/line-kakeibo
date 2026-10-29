@@ -22,9 +22,8 @@
  *   app.use("/household", householdRouter, householdErrorHandler);
  */
 
-import { isIP } from 'node:net';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import rateLimit from 'express-rate-limit';
 import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore, type DocumentData, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { parseBearerToken } from './adminAuth';

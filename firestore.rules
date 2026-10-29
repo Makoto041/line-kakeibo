@@ -260,6 +260,11 @@ service cloud.firestore {
     function validTimestampField(d, key) {
       return !(key in d) || d[key] is timestamp;
     }
+    // この書き込みで変わるキー（作成なら全部）。merge の書き込みでは、すでに保存してある（旧い形の）キーを
+    // 今の検査に巻き込まない（本番に許可外のキーが残っていても、その人が設定を保存できなくならないように）。
+    function changedKeys() {
+      return resource == null ? request.resource.data.keys().toSet() : request.resource.data.diff(resource.data).affectedKeys();
+    }
     // dateSettings（web/lib/dateSettings.ts の DateRangeSettings）
     function validDateSettings(v) {
       return v is map
@@ -272,19 +277,19 @@ service cloud.firestore {
     // userSettings: bot が defaultCategory（LINE の「カテゴリー」コマンド）、web が dateSettings を書く。
     match /userSettings/{lineId} {
       allow read: if isSignedIn() && lineId == myLineId();
-      allow write: if isSignedIn() && lineId == myLineId()
-                   && request.resource.data.keys().hasOnly(['lineId', 'defaultCategory', 'dateSettings', 'createdAt', 'updatedAt'])
-                   && (!('lineId' in request.resource.data) || request.resource.data.lineId == lineId)
-                   && (!('defaultCategory' in request.resource.data)
+      allow create, update: if isSignedIn() && lineId == myLineId()
+                   && changedKeys().hasOnly(['lineId', 'defaultCategory', 'dateSettings', 'createdAt', 'updatedAt'])
+                   && (!('lineId' in changedKeys()) || request.resource.data.lineId == lineId)
+                   && (!('defaultCategory' in changedKeys())
                        || (request.resource.data.defaultCategory is string && request.resource.data.defaultCategory.size() <= 50))
-                   && (!('dateSettings' in request.resource.data) || validDateSettings(request.resource.data.dateSettings))
-                   && validTimestampField(request.resource.data, 'createdAt')
-                   && validTimestampField(request.resource.data, 'updatedAt');
+                   && (!('dateSettings' in changedKeys()) || validDateSettings(request.resource.data.dateSettings))
+                   && (!('createdAt' in changedKeys()) || validTimestampField(request.resource.data, 'createdAt'))
+                   && (!('updatedAt' in changedKeys()) || validTimestampField(request.resource.data, 'updatedAt'));
     }
     // budgetSettings（web/lib/hooks.ts の BudgetConfig + updatedAt）
     match /budgetSettings/{lineId} {
       allow read: if isSignedIn() && lineId == myLineId();
-      allow write: if isSignedIn() && lineId == myLineId()
+      allow create, update: if isSignedIn() && lineId == myLineId()
                    && request.resource.data.keys().hasOnly(['monthlyBudget', 'categoryBudgets', 'alertThreshold', 'updatedAt'])
                    && (!('monthlyBudget' in request.resource.data) || request.resource.data.monthlyBudget is number)
                    && (!('alertThreshold' in request.resource.data)

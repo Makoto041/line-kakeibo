@@ -359,8 +359,8 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | `groups` | `name`, `inviteCode`(8桁・暗号学的乱数。参加には使わない), `createdBy`, `lineGroupId?`, `splitSettings?`(`{ collectFromLineId, updatedBy, updatedAt }`), `categoryRules?`(`{ rules, examples, updatedBy, updatedAt }`。§4) | 汎用グループ機能はコード上「非推奨」— 実運用は LINE グループ共有。クライアント書込不可 |
 | `groupMembers/{groupId}_{lineId}` | `groupId`, `lineId`, `displayName`, `isActive`, `joinedAt`, `leftAt?`, `deactivatedReason?` | `isActive == true` が Web アクセス権。LINE グループ退出（`memberLeft`）で bot が `false` にする。発言による自動追加はしない（世帯2名固定、追加は管理スクリプト）。クライアント書込不可 |
 | `recurringExpenses` | `groupId`, `name`, `amount`, `category`, `dayOfMonth`, `payment`(`shared\|advance`), `payerLineId`, `active`, `lastPostedMonth`, `startDate`, `createdBy`, `createdAt`, `updatedAt` | 固定費の項目（§3.3）。クライアントからは読み書き不可（`/household/recurring` 経由） |
-| `userSettings/{lineId}` | `defaultCategory?`, `dateSettings` | 集計期間設定も格納。本人のみ read/write |
-| `budgetSettings/{lineId or lineGroupId}` | `monthlyBudget`, `categoryBudgets`, `alertThreshold` | Web が書き、Bot のサマリーも参照。本人のみ read/write |
+| `userSettings/{lineId}` | `defaultCategory?`, `dateSettings` | 集計期間設定も格納。本人のみ read、write は使う項目だけを検証して許可 |
+| `budgetSettings/{lineId or lineGroupId}` | `monthlyBudget`, `categoryBudgets`, `alertThreshold` | Web が書き、Bot のサマリーも参照。本人のみ read、write は使う項目だけを検証して許可 |
 | `userLinks/{appUid}` | `lineId`（1:1, `firestore.ts`。`/auth/line` が作成）／ `lineIds[]`（1:N, `userLinks.ts`。`syncUserLinks` トリガーは書き込みを停止済み） | **2形式が併存**（§8）。クライアントは本人分の read のみ |
 | `linkTokens/{token}` | `lineId`, `expiresAt`(15分), `used` | クライアントからは読み書き不可 |
 | `userCustomCategories` | `lineId`, `name`, `icon?`, `keywords?[]` | Bot 専用 |
