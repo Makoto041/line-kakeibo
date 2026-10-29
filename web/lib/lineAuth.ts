@@ -51,7 +51,7 @@ function setLoginAttempt(at: number | null): void {
  * サインイン処理の結果。デモへ送るのは 'guest'（LINE ログインをしていないと確かめられた）だけ。
  * - pending: 処理中（LIFF の初期化・LINE ログイン画面への移動・トークン交換）
  * - signed-in: LINE でサインインした
- * - guest: LINE ログインを済ませずに戻ってきた・LIFF 未設定（匿名）。本当にログインしていない
+ * - guest: LINE ログインを本人がやめて戻ってきた（error=access_denied）・LIFF 未設定（匿名）。本当にログインしていない
  * - failed: 通信や認証の失敗で匿名になった・上限切れ・クローラー。本人かもしれないので、デモへは送らない
  */
 export type LineAuthOutcome = 'pending' | 'signed-in' | 'guest' | 'failed';
@@ -161,7 +161,9 @@ export function initLineAuth(): Promise<void> {
         if (recentlyTriedLogin() && hasLiffReturnParams()) {
           console.warn('LINE login did not complete after the redirect; falling back to anonymous');
           await signInAnonymously(auth);
-          outcome = 'guest';
+          // 本人がログインをやめた（LINE が error=access_denied で戻す）ときだけ、ログインしていないと確かめられたことにする。
+          // ほかの戻り（トークン交換の失敗、別のカードを開き直したときの liff.state など）は本人かもしれないので送らない
+          outcome = new URLSearchParams(window.location.search).get('error') === 'access_denied' ? 'guest' : 'failed';
           return;
         }
         setLoginAttempt(Date.now());

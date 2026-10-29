@@ -245,7 +245,7 @@ flowchart LR
     <div class="body">
       <ul class="plain">
         <li><b>ログイン</b>: LIFF の ID トークンを <code>/auth/line</code> が LINE に照会し、<code>lineId</code> クレーム付きの Firebase カスタムトークンを発行する。</li>
-        <li><b>未ログイン</b>: LINE ログインをしていないと確かめられた人（<code>guest</code>）は、<code>AppShell</code> が <code>/demo/</code>（架空データのデモ）へ移す。通信の失敗などで匿名になった本人は移さない。</li>
+        <li><b>未ログイン</b>: LINE ログインをやめて戻った人（<code>guest</code>）は、<code>AppShell</code> が <code>/demo/</code>（架空データのデモ）へ移す。通信の失敗などで匿名になった本人は移さない。</li>
         <li><b>Firestore ルール</b>: 世帯のデータは <code>groupMembers/{groupId}_{lineId}</code> が有効なメンバーだけが読める。支出の項目は型と値を検証し、精算済みの立替は金額・日付・支払者の変更と削除を拒否する。</li>
         <li><b>Storage ルール</b>: レシート画像は Firestore のメンバー情報を参照して制限（cross-service rules）。</li>
         <li><b>/household API</b>: ID トークンを検証し、世帯メンバーかを確認。レート制限と CORS の許可リストあり。</li>
