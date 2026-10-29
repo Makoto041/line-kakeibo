@@ -23,14 +23,20 @@ Web では予算の進捗、支出の確認・編集、ふたりの精算、家�
 
 ### 集計と精算
 
-- 🤖 **AI カテゴリ分類**: キャッシュ・キーワード辞書・Jev（TypeSafe AI）を組み合わせ、コストを抑えつつ 19 カテゴリに分類。Jev が失敗したときは Gemini（Flash-Lite 系のみ。現在 3.5 Flash-Lite）に回す
-- 📈 **ホーム**: 月次の支出・予算の進捗・カテゴリ別・日別推移・前月比。要確認の支出があれば案内
+- 🤖 **AI カテゴリ分類**: キャッシュ・キーワード辞書・Jev（TypeSafe AI）を組み合わせ、コストを抑えつつ 19 カテゴリに分類。Jev が失敗したときは Gemini（Flash-Lite 系のみ。現在 3.5 Flash-Lite）に回す。食費・娯楽は **中項目**（昼ご飯・カフェなど）も辞書と時刻のルールで決め、決まらなければ Jev に選ばせる
+- 📈 **ホーム**: 月次の支出・予算の進捗・カテゴリ別 / 支払い者別・日別推移・前月比。カテゴリ・中項目・支払い者から内訳シート（小計・割合・明細）へ掘り下げられる。要確認の支出があれば案内
 - 🧾 **支出**: すべて / 要確認 / 立替 の絞り込み、検索、確認ボタン（LINE の OK と同じ処理）
 - 🤝 **精算**: 期間の支出を折半して「誰が誰にいくら送金するか」を出す。誰が払ったかは支出の「支払った人」で数え、立替は折半せず全額をその期間の精算に加算する。毎月の起算日に LINE グループへ精算額を通知（設定から今すぐ送ることもできる）
+- 📲 **PWA**: ホーム画面に追加すると、アイコン「ぶちこむ」から全画面のアプリとして開ける（設定にやり方の案内）
 - 👫 **世帯**: メンバーは 2 名固定。LINE グループから退出すると Web のアクセス権も外れる
 - 🛠️ **フィードバック起票**: 世帯のメンバーが LINE で「要望 〜」「不具合 〜」と送ると GitHub Issue を自動作成
 
 > ⚠️ レシート画像の OCR は廃止済み。画像を送るとテキスト入力を案内します。
+
+### デモと公開範囲
+
+- 🎬 **デモ**（`/demo`）: ログイン不要・架空のデータで、LINE の入力 → Gmail 取込 → ホーム → 支出一覧 → 精算 → 精算サマリーの流れを見られる。LINE でログインしていない人（ログインをやめて戻った人）は、アプリの画面を開くとデモへ移る。発表後に削除する予定（手順は [docs/SPECIFICATION.md](docs/SPECIFICATION.md) §5.1）
+- 🔍 **検索エンジン**: 個人の家計簿なので、トップ（`/`）以外は noindex。トップだけ検索結果に出し、ロゴは「ぶ」のアイコン
 
 ## 💬 LINE Bot の使い方
 
@@ -75,7 +81,7 @@ flowchart LR
 
 | レイヤー | 技術 |
 |---|---|
-| Frontend | Next.js 16（App Router）+ React 19 + TypeScript + Tailwind CSS 4 + Recharts + framer-motion |
+| Frontend | Next.js 16（App Router）+ React 19 + TypeScript + Tailwind CSS 4 + Recharts + framer-motion（PWA 対応） |
 | Backend | Node.js 22 + TypeScript + Express 5 + `@line/bot-sdk` v11（Firebase Functions gen2） |
 | Data | Firestore + Cloud Storage（ルールでアクセス制御） |
 | AI | Jev（TypeSafe AI、`@typesafe-ai/sdk`。カテゴリ分類）+ Gemini 3.5 Flash-Lite（`@google/genai`。分類の退避先・フィードバック解析） |
@@ -90,9 +96,9 @@ line-kakeibo/
 │  ├─ src/               # index.ts（webhook・API）, householdApi.ts, recurringExpenses.ts, line/, gmail/ など
 │  └─ scripts/           # スモーク・エミュレータのテスト
 ├─ web/                  # Next.js（Vercel）
-│  ├─ app/               # layout・404・manifest。画面は (app)/（ホーム / expenses / settlement / settings / attach / dashboard / link / privacy / terms。AppShell で包む）
-│  ├─ components/        # 画面部品
-│  ├─ lib/               # Firebase クライアント・hooks・ロジック（純関数）
+│  ├─ app/               # layout・404・manifest。画面は (app)/（ホーム / expenses / settlement / settings / attach / dashboard / link / privacy / terms。AppShell で包む）と demo/（ログイン不要のデモ）
+│  ├─ components/        # 画面部品（demo/ はデモ用）
+│  ├─ lib/               # Firebase クライアント・hooks・ロジック（純関数。demo/ はデモ用の架空データ）
 │  └─ __tests__/         # node --test
 ├─ docs/                 # architecture.html（説明資料） / ARCHITECTURE / SPECIFICATION / SETUP / SECURITY_OPERATIONS / GMAIL_AUTO_SPEC
 ├─ scripts/              # 管理スクリプト（世帯メンバー・アイコン生成）
