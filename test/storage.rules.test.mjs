@@ -40,6 +40,12 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'expenses/sGmail'), { lineId: 'gmail-auto-system', ...group, amount: 400, date: '2026-08-01' });
   await setDoc(doc(db, 'expenses/sPersonalA'), { lineId: 'A', amount: 100, date: '2026-08-01' });
   await setDoc(doc(db, 'expenses/sByD'), { lineId: 'D', ...group, amount: 500, date: '2026-08-01' });
+  // 世帯（LINE グループに紐づくグループ）。SG3 は「グループ作成」で作れる自分だけのグループ（lineGroupId なし）
+  await setDoc(doc(db, 'groups/SG1'), { createdBy: 'B', lineGroupId: 'SL1' });
+  await setDoc(doc(db, 'groups/SG2'), { createdBy: 'E', lineGroupId: 'SL2' });
+  await setDoc(doc(db, 'groups/SG3'), { createdBy: 'F' });
+  await setDoc(doc(db, 'groupMembers/SG3_F'), { groupId: 'SG3', lineId: 'F', isActive: true });
+  await setDoc(doc(db, 'expenses/sSolo'), { lineId: 'F', groupId: 'SG3', amount: 100, date: '2026-08-01' });
   await setDoc(doc(db, 'groupMembers/SG1_A'), { groupId: 'SG1', lineId: 'A', isActive: true });
   await setDoc(doc(db, 'groupMembers/SG1_B'), { groupId: 'SG1', lineId: 'B', isActive: true });
   await setDoc(doc(db, 'groupMembers/SG1_D'), { groupId: 'SG1', lineId: 'D', isActive: false });
@@ -68,6 +74,7 @@ const userB = storageOf('appuid-B', { lineId: 'B' }); // SG1 の有効メンバ�
 const userC = storageOf('appuid-C', { lineId: 'C' }); // メンバーではない LINE ユーザー
 const userD = storageOf('appuid-D', { lineId: 'D' }); // isActive:false の元メンバー
 const userE = storageOf('appuid-E', { lineId: 'E' }); // 別の世帯（SG2）の有効メンバー
+const userF = storageOf('appuid-F', { lineId: 'F' }); // 自分だけのグループ（世帯ではない）の有効メンバー
 const anon = storageOf('anon-uid', {});
 const unauth = storageOf(null, null);
 
@@ -100,8 +107,14 @@ await test('有効メンバーは Gmail 取込のグループ支出にも上げ�
 await test('有効メンバーは HEIF も上げられる', async () => {
   await assertSucceeds(put(userA, 'receipts/sGroup/d.heif', bytes(10), 'image/heif'));
 });
-await test('個人支出は所有者が上げられる', async () => {
-  await assertSucceeds(put(userA, 'receipts/sPersonalA/a.jpg', bytes(10), 'image/jpeg'));
+await test('★ 個人支出（groupId なし。世帯のメンバーでない人の LINE 入力）には、所有者でも新しいレシートを上げられない', async () => {
+  await assertFails(put(userA, 'receipts/sPersonalA/a.jpg', bytes(10), 'image/jpeg'));
+});
+await test('★ 自分だけのグループ（lineGroupId なし）の支出にも、有効なメンバーが新しいレシートを上げられない', async () => {
+  await assertFails(put(userF, 'receipts/sSolo/f.jpg', bytes(10), 'image/jpeg'));
+});
+await test('個人支出・自分だけのグループの既存レシートは、これまでどおり読める', async () => {
+  await assertSucceeds(get(userA, 'receipts/sPersonalA/existing.jpg'));
 });
 await test('★ 非メンバーはグループ支出に上げられない', async () => {
   await assertFails(put(userC, 'receipts/sGroup/c.jpg', bytes(10), 'image/jpeg'));

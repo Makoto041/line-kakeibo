@@ -7,7 +7,8 @@ rules_version = '2';
 // パスの expenseId から Firestore の支出ドキュメントを cross-service rules
 // （firestore.get() / firestore.exists()）で参照し、呼び出し元がその支出を扱えるかを
 // firestore.rules の expenses と同じ基準で判定する。
-//   - 個人支出（groupId も lineGroupId もなし）: 所有者（lineId が一致）だけ。
+//   - 個人支出（groupId も lineGroupId もなし）: 所有者（lineId が一致）だけが読み・削除できる。
+//     新しいレシートを上げられるのは世帯（lineGroupId を持つグループ）の支出だけ（isHouseholdExpense）。
 //   - グループ支出（groupId あり）: そのグループの有効なメンバー（isActive == true）だけ。
 //     groupMembers のドキュメントIDは `${groupId}_${lineId}`（bot/src/firestore.ts の
 //     groupMemberDocId() と同じ規則）。
@@ -69,6 +70,16 @@ service firebase.storage {
     function isSettledExpense(expenseId) {
       return firestore.get(expensePath(expenseId)).data.get('status', null) == 'advance_settled';
     }
+    // 世帯（LINE グループに紐づくグループ）の支出か。新しいレシートを上げられるのはこの支出だけ。
+    // /auth/line は LINE で検証できた人全員にトークンを出し、世帯のメンバーでない人の LINE 入力も個人支出
+    // （groupId なし）として保存される。「グループ作成」で作れる自分だけのグループ（lineGroupId なし）の支出も同じ。
+    // それらに画像を無制限に上げられると、世帯の外の人が保存容量を使えてしまう（2026-10 の再監査）。
+    // 世帯のメンバーの入力は、個人チャットでも世帯の支出（groupId あり）として保存される（bot/src/expenseGroupScope.ts）。
+    function isHouseholdExpense(expenseId) {
+      let groupId = firestore.get(expensePath(expenseId)).data.get('groupId', null);
+      return groupId != null
+             && firestore.get(/databases/(default)/documents/groups/$(groupId)).data.get('lineGroupId', null) != null;
+    }
     function expenseExists(expenseId) {
       return firestore.exists(expensePath(expenseId));
     }
@@ -95,6 +106,7 @@ service firebase.storage {
       allow create, update: if isLineUser()
                             && expenseExists(expenseId)
                             && canWriteExpense(expenseId)
+                            && isHouseholdExpense(expenseId)
                             && (resource == null || !isSettledExpense(expenseId))
                             && request.resource.size <= 5 * 1024 * 1024
                             && isAllowedImage();
