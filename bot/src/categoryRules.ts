@@ -47,9 +47,9 @@ export const EMPTY_CATEGORY_RULES: CategoryRules = { rules: [], examples: {} };
  */
 export function sanitizeRuleText(value: unknown, max: number): string {
   if (typeof value !== 'string') return '';
-  // eslint-disable-next-line no-control-regex
   const cleaned = value
     .replace(/[\p{Cf}\p{Cs}「」]/gu, '')
+    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

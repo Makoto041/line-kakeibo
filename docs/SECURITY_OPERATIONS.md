@@ -99,10 +99,8 @@ LINE グループでの `家計簿` コマンドも送るたびに所属を読�
 
 ## 3. Firestore ルールの要点（`firestore.rules`）
 
-- `expenses` の作成: LINE 本人確認済みで `lineId == 自分`、許可フィールドだけ、型と範囲を検証
-  （`amount` は 0〜10,000,000 の数値、`date` は `YYYY-MM-DD`、文字列は長さ上限あり）。
-  `groupId` を付けるなら、そのグループの有効なメンバーで、`lineGroupId` はグループのものと一致すること。
-  `groupId` を付けずに `lineGroupId` だけを持つ支出は作れない。LINE の集計にだけ入る支出を注入できないようにするため。
+- `expenses` の作成: **クライアントからは禁止**（登録は bot = Admin SDK だけ。web は支出を作成しない）。`/auth/line` は LINE で検証できた人全員にトークンを出すため、作成を許すと、世帯の外の人が支出とそのレシート画像を無制限に作って保存容量を使える入口になる（2026-10 の再監査で指摘。閉じた）
+- `userSettings` / `budgetSettings` の書き込み: 本人のドキュメントだけで、web / bot が使う項目だけを、型と大きさを確かめて許す（同じ理由で、世帯の外の人が大きな値を書けないようにする）。`dateRangeSettings` は書き込み禁止
 - `expenses` の更新: web が実際に編集するフィールドだけを変更できる（許可リスト）。
   `amount` / `description` / `date` / `category` / `subCategory` / `includeInTotal` / `payerId` / `payerDisplayName` / `receiptUrl` / `updatedAt`。
   `subCategory`（中項目。任意）は 50 文字以内の文字列で、削除もできる（Web の編集画面は食費・娯楽の固定の一覧から選んだ値を送り、
@@ -519,6 +517,12 @@ Cloud Logging に、利用者の入力・伏せていない ID・秘密値を残
   `bot/scripts/smoke-function-errors.js`（関数の外へ投げる例外・functions-framework と firebase-functions が出すログ・
   Gmail の失敗の記録に目印が無いこと、再送の判定が変わらないこと）。
   HTTP の応答や管理 API の戻り値（`/gmail/*` の `error`・`message`）は対象外（ログではない）。
+
+## 9.5 `/auth/line` のレート制限
+
+`bot/src/auth/lineAuth.ts`。1 分 60 回で、接続元の IP（`bot/src/clientIp.ts` の `clientIpKey`。X-Forwarded-For の末尾。
+`/household/*` と同じ）ごとに数える。以前は既定のキー（`req.ip`）で、`trust proxy` が無い Cloud Run では前段のアドレスに
+まとまり、1 人の連打で全員の LINE ログインが 429 になりえた。`bot/scripts/smoke-auth-rate-limit.js` で確かめる。
 
 ## 10. 管理 API（`/gmail/*`）のレート制限
 
