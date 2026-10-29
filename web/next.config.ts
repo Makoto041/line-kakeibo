@@ -105,6 +105,12 @@ const contentSecurityPolicy = Object.entries(cspDirectives)
   .map(([directive, sources]) => `${directive} ${Array.from(new Set(sources)).join(" ")}`)
   .join("; ");
 
+// 強制する CSP（上の全体の方針とは別に、画面を壊さない 3 つだけ）。全体の方針は、実機で違反が出ないことを確かめるまで
+// Report-Only のまま。次の 3 つは、プラグイン（object / embed）を使わない・<base> を使わない・フレームに入れない（X-Frame-Options と同じ）
+// アプリの動作に影響しないので、先に強制して、XSS が入ったときの持ち出し先と足場を減らす。
+// form-action は、LINE ログインなどの遷移に影響しうるため、全体の方針の確認が済んでから強制する。
+const enforcedContentSecurityPolicy = "object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -115,6 +121,7 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), payment=()",
   },
+  { key: "Content-Security-Policy", value: enforcedContentSecurityPolicy },
   { key: "Content-Security-Policy-Report-Only", value: contentSecurityPolicy },
 ];
 
