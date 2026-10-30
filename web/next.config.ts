@@ -34,7 +34,7 @@ const firebaseAuthOrigin = originOf(
 );
 
 /**
- * Content-Security-Policy（まずは Report-Only で違反を観測する。強制はしない）
+ * Content-Security-Policy（全体を強制する。実機で Report-Only の違反が出ないことを確認済み）
  *
  * 許可リストはアプリが実際に読み込む・通信する先から作っている:
  * - Firebase Auth: identitytoolkit / securetoken、モバイルでは authDomain の iframe と apis.google.com
@@ -48,8 +48,8 @@ const firebaseAuthOrigin = originOf(
  * - Next.js はインラインスクリプトを使うため script-src に 'unsafe-inline' が必要（nonce 化は別途）
  *
  * report-uri / report-to は未設定のため、違反はブラウザの DevTools コンソールでしか見えない。
- * 強制に切り替える前に、実機（iPhone の LINE アプリ内ブラウザ / PC）で LIFF ログイン・
- * 支出編集・レシート添付を一通り行い、Report Only の違反が出ないことを確認すること。
+ * 新しい通信先（外部のスクリプト・API・画像）を足すときは、ここの許可リストにも足すこと。
+ * 足さないと本番でブロックされる（Vercel のプレビューでは vercel.live などを別途許可している）。
  */
 const cspDirectives: Record<string, string[]> = {
   "default-src": ["'self'"],
@@ -105,12 +105,6 @@ const contentSecurityPolicy = Object.entries(cspDirectives)
   .map(([directive, sources]) => `${directive} ${Array.from(new Set(sources)).join(" ")}`)
   .join("; ");
 
-// 強制する CSP（上の全体の方針とは別に、画面を壊さない 3 つだけ）。全体の方針は、実機で違反が出ないことを確かめるまで
-// Report-Only のまま。次の 3 つは、プラグイン（object / embed）を使わない・<base> を使わない・フレームに入れない（X-Frame-Options と同じ）
-// アプリの動作に影響しないので、先に強制して、XSS が入ったときの持ち出し先と足場を減らす。
-// form-action は、LINE ログインなどの遷移に影響しうるため、全体の方針の確認が済んでから強制する。
-const enforcedContentSecurityPolicy = "object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
-
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -121,8 +115,7 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), payment=()",
   },
-  { key: "Content-Security-Policy", value: enforcedContentSecurityPolicy },
-  { key: "Content-Security-Policy-Report-Only", value: contentSecurityPolicy },
+  { key: "Content-Security-Policy", value: contentSecurityPolicy },
 ];
 
 const nextConfig: NextConfig = {
