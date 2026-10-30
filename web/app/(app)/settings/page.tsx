@@ -21,6 +21,15 @@ import dayjs from 'dayjs';
 // 予算は category.name をキーに保存するため、名称を揃えることで実支出と突き合う。
 const defaultCategories = CANONICAL_CATEGORIES.map((name) => ({ id: name, name }));
 
+type SettingsTab = 'period' | 'budget' | 'recurring' | 'category';
+
+const SETTINGS_TABS: { id: SettingsTab; label: string; Icon: typeof Wallet }[] = [
+  { id: 'budget', label: '予算設定', Icon: Wallet },
+  { id: 'period', label: '期間設定', Icon: CalendarRange },
+  { id: 'recurring', label: '固定費', Icon: Repeat },
+  { id: 'category', label: 'カテゴリ', Icon: Tags },
+];
+
 function normalizeBudgetConfig(data: unknown): BudgetConfig {
   const raw = data as Partial<BudgetConfig> | undefined;
   const normalizedCategoryBudgets: Record<string, number> = {};
@@ -69,7 +78,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(!(cachedDate && cachedBudget));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<'period' | 'budget' | 'recurring' | 'category'>('budget');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('budget');
   // カテゴリのルールは、一度開いたら閉じずに隠す（保存していない編集中の下書きを、タブの切り替えで消さないため）
   const [categoryOpened, setCategoryOpened] = useState(false);
   // 期間設定を保存した回数（精算の通知のカードが起算日を読み直す）
@@ -251,53 +260,24 @@ export default function Settings() {
 
         {/* Tab Navigation */}
         <div className="glass mb-5 flex gap-1 rounded-2xl p-1 shadow-glass">
-          <button
-            onClick={() => setActiveTab('budget')}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors ${
-              activeTab === 'budget'
-                ? 'bg-accent text-accent-fg shadow-sm'
-                : 'text-muted hover:bg-fg/5 hover:text-fg'
-            }`}
-          >
-            <Wallet className="h-4 w-4" />
-            予算設定
-          </button>
-          <button
-            onClick={() => setActiveTab('period')}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors ${
-              activeTab === 'period'
-                ? 'bg-accent text-accent-fg shadow-sm'
-                : 'text-muted hover:bg-fg/5 hover:text-fg'
-            }`}
-          >
-            <CalendarRange className="h-4 w-4" />
-            期間設定
-          </button>
-          <button
-            onClick={() => setActiveTab('recurring')}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors ${
-              activeTab === 'recurring'
-                ? 'bg-accent text-accent-fg shadow-sm'
-                : 'text-muted hover:bg-fg/5 hover:text-fg'
-            }`}
-          >
-            <Repeat className="h-4 w-4" />
-            固定費
-          </button>
-          <button
-            onClick={() => {
-              setActiveTab('category');
-              setCategoryOpened(true);
-            }}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors ${
-              activeTab === 'category'
-                ? 'bg-accent text-accent-fg shadow-sm'
-                : 'text-muted hover:bg-fg/5 hover:text-fg'
-            }`}
-          >
-            <Tags className="h-4 w-4" />
-            カテゴリ
-          </button>
+          {SETTINGS_TABS.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              onClick={() => {
+                setActiveTab(id);
+                if (id === 'category') setCategoryOpened(true);
+              }}
+              // 狭い画面ではアイコンを上に積み、ラベルを途中で改行させない
+              className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-1 whitespace-nowrap rounded-xl px-1 py-2 text-xs font-medium transition-colors sm:flex-row sm:gap-1.5 sm:px-2 sm:py-2.5 sm:text-sm ${
+                activeTab === id
+                  ? 'bg-accent text-accent-fg shadow-sm'
+                  : 'text-muted hover:bg-fg/5 hover:text-fg'
+              }`}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* Budget Settings Tab */}
