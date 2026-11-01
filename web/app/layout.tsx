@@ -17,10 +17,17 @@ export const metadata: Metadata = {
   title: "ぶちこむ家計簿アプリ",
   description: "LINEで入力した支出を家計簿に保存するアプリ",
   applicationName: "ぶちこむ家計簿",
-  // 個人の家計簿なので検索エンジンにインデックスさせない
+  // 個人の家計簿なので検索エンジンにインデックスさせない（全ページの既定）。
+  // トップ（/）だけは app/(app)/page.tsx で上書きして検索に出す（サイト名とアイコンの表示のため）
   robots: {
     index: false,
     follow: false,
+  },
+  // app/favicon.ico は Next が先頭に足す。Google の検索結果のアイコンは 48px の倍数の正方形が条件のため、192px の PNG も出す。
+  // icons を書くと app/apple-icon.png の link が自動では出なくなるので、apple も書く（画像は scripts/gen-app-icons.mjs で生成）
+  icons: {
+    icon: [{ url: "/pwa/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
   },
   // iPhone でホーム画面に追加したときの名前と表示（manifest は app/manifest.ts）
   appleWebApp: {

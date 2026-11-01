@@ -302,7 +302,14 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 - レスポンシブ: デスクトップはサイドバー、モバイルはボトムタブ。タブは **ホーム / 支出 / 精算 / 設定** の 4 つ（`components/layout/nav.ts`）
 - AppShell（`components/layout/AppShell.tsx`。ナビと、マウント時の LINE ログイン〔`lib/lineAuth.ts`〕・PWA の起動）で包むのは `app/(app)/layout.tsx` だけ。ルートの `app/layout.tsx` は html・フォント・テーマ・metadata だけで、`(app)` の外のページ（404）は AppShell・`lib/lineAuth.ts` を読み込まない
 - `/attach` `/link` はナビ chrome なし（`components/layout/AppShell.tsx` の BARE_ROUTES）
-- セキュリティヘッダー（`next.config.ts`）: CSP は Report-Only、`X-Frame-Options: DENY`、`X-Robots-Tag: noindex`
+- セキュリティヘッダー（`next.config.ts`）: CSP は Report-Only、`X-Frame-Options: DENY`、`X-Robots-Tag: noindex, nofollow`（トップ `/` と、検索結果のアイコンに使う `/favicon.ico`・`/apple-icon.png`・`/pwa/*` を除く。下の「検索エンジン」）
+- **検索エンジン**: 巡回と検索への表示を許可するのは**トップ（`/`）だけ**（検索結果のサイト名が「Vercel」、アイコンが Vercel のロゴ、説明が古いままになっていたのを直すため）。ほかのページ（支出・精算・設定・`/demo` など）は巡回も検索も止める
+  - `public/robots.txt`（`User-agent: *`）: `Allow: /$` と `Disallow: /`。Google は一致した規則のうち最も長いものを使い、`$` は URL の終わりにだけ一致するので、許可されるのは `/` だけ（`/?code=…` などクエリ付きと、ほかのページは止まる）。ほかに許可するのは、アイコン（`/favicon.ico`・`/apple-icon.png`・`/pwa/`。HTML の link はキャッシュ用のクエリが付くので前方一致）と Search Console の確認用ファイル（`/google87fb942043bd85e4.html`）だけ
+  - `/_next/static/` は許可しない（JS を実行させると、本番では未ログインの訪問者を LIFF のログイン画面〔access.line.me〕へ移すため、トップが外部への転送と見なされうる）。検索に使われるのはサーバーで描いた HTML（タイトル・説明・ナビの文字と「読み込み中...」・JSON-LD・アイコンの link）で、利用者のデータは含まない。Search Console の URL 検査で「ページのリソースを読み込めなかった」と出るのは想定どおり
+  - metadata の `robots`: ルートの `app/layout.tsx` が全ページの既定で `noindex, nofollow`。トップ（`app/(app)/page.tsx`。サーバー側のページで、画面は `HomeClientPage.tsx`）だけ `index: true, follow: false`（リンクはたどらせない）
+  - サイト名: トップに schema.org の `WebSite` の JSON-LD（`lib/site.ts`。名前「ぶちこむ家計簿」・別名「ぶちこむ家計簿アプリ」・URL `https://line-kakeibo.vercel.app/`。`<` は `<` にして埋め込む）と `og:site_name`。`<title>` は「ぶちこむ家計簿アプリ」、説明は manifest と同じ「LINEで入力した支出を家計簿に保存するアプリ」
+  - アイコン: ルートの metadata の `icons` で `favicon.ico`（16・32・48px）に加えて `/pwa/icon-192.png`（192px。Google の条件は 48px の倍数の正方形）と `apple-icon.png` の link を出す（`icons` を書くと apple-icon.png の link が自動では出なくなるため、apple も書く）。画像は `scripts/gen-app-icons.mjs` で生成
+  - 規則の一致する範囲・metadata・JSON-LD の値は `__tests__/searchIndexing.test.mjs` で確かめる。反映には Search Console でトップの URL 検査 → インデックス登録のリクエストが要る（数日〜数週間）
 
 ### 5.3 データアクセス
 

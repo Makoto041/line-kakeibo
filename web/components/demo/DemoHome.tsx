@@ -1,6 +1,6 @@
 'use client';
 
-// デモのホーム。本番のホーム（app/(app)/page.tsx）と同じ部品を、架空データ（lib/demo/demoData.ts）で描く。
+// デモのホーム。本番のホーム（app/(app)/HomeClientPage.tsx）と同じ部品を、架空データ（lib/demo/demoData.ts）で描く。
 // 集計は本番と同じ純関数（toDrillItems・computePeriodInsights など）で出す。内訳シートから一覧・編集へのリンクは出さない。
 import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';

@@ -115,10 +115,14 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), payment=()",
   },
-  // 個人の家計簿なので検索エンジンにインデックスさせない（metadata.robots / robots.txt と併用）
-  { key: "X-Robots-Tag", value: "noindex, nofollow" },
   { key: "Content-Security-Policy-Report-Only", value: contentSecurityPolicy },
 ];
+
+// 個人の家計簿なので検索エンジンにインデックスさせない（metadata.robots / public/robots.txt と併用）。
+// トップ（/）と、検索結果のアイコンに使う画像（favicon.ico・apple-icon.png・/pwa/*）には付けない。
+// ヘッダーの noindex は metadata の index より優先されるため、トップに付けるとトップも検索に出なくなる。
+// 一致する範囲は __tests__/searchIndexing.test.mjs で確かめる
+const noindexSource = "/:path((?!favicon\\.ico$|apple-icon\\.png$|pwa/).+)";
 
 const nextConfig: NextConfig = {
   // `output: 'export'` removed: the static export produced RSC flight files
@@ -140,6 +144,10 @@ const nextConfig: NextConfig = {
       {
         source: "/:path*",
         headers: securityHeaders,
+      },
+      {
+        source: noindexSource,
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
       },
       // Service Worker は毎回取り直し、更新をすぐ反映する（キャッシュされると古い sw.js が残り続ける）
       {

@@ -351,6 +351,7 @@ line-kakeibo/
 │  ├─ app/                   # layout.tsx（html・フォント・テーマ・metadata。AppShell は含まない）/ not-found.tsx（404。AppShell の外でナビなし）
 │  ├─ app/(app)/             # ルートグループ（URL に出ない）: / , /expenses , /settlement , /settings , /attach , /link , /dashboard , /terms , /privacy
 │  │                         # layout.tsx が AppShell（ナビと、LINE ログイン・PWA の起動）で包む。グループの外のページは AppShell・lineAuth を読み込まない
+│  │                         # page.tsx（/）はサーバー側のページで、検索に出す metadata（ここだけ index）と WebSite の JSON-LD を出す。画面は HomeClientPage.tsx
 │  ├─ app/demo/              # /demo（発表用のデモ。ログイン不要・架空データだけ）。(app) の外で AppShell・lineAuth・firebase を読み込まない。場面は LINE → Gmail → ホーム → 支出一覧 → 精算 → 精算サマリー。部品は components/demo/、データは lib/demo/（LINE のカード・精算サマリーの文言は demoLine.ts・demoSummary.ts。bot のソースとの一致は __tests__/demoCard.test.mjs）。発表後に消す
 │  ├─ app/manifest.ts        # PWA の manifest（apple-icon.png / favicon.ico も app/ に置く）
 │  ├─ components/            # Charts, PeriodSplitCard（精算の取得・保存）・PeriodSplitView（精算の表示）, LeftoverAdvancesCard（全額にする前の立替のお知らせ）, RecurringExpensesPanel, GuestGuide,
@@ -360,11 +361,12 @@ line-kakeibo/
 │  │                         # periodSplit.ts, leftoverAdvances.ts, expenseState.ts, dateSettings.ts, swrCache.ts, categoryNormalization.ts,
 │  │                         # expenseEdit.ts（支出の編集の純関数）, categoryTaxonomy.ts（中項目の一覧。bot と同じ内容）,
 │  │                         # drilldown.ts（内訳シートの集計。合計 → カテゴリ → 中項目 / 支払い者 → 明細）,
-│  │                         # installApp.ts（PWA の案内の出し分け・Service Worker の登録）ほか
-│  ├─ __tests__/             # renewal-logic / expenseUpdate / categoryTaxonomy（bot の中項目の一覧との一致）/ periodSplit / periodSplitView（精算の表示が Firebase 系を値として import しない）/ drilldown / swrCache / installApp（node --test）
+│  │                         # installApp.ts（PWA の案内の出し分け・Service Worker の登録）, site.ts（検索結果のサイト名・URL と JSON-LD）ほか
+│  ├─ __tests__/             # renewal-logic / expenseUpdate / categoryTaxonomy（bot の中項目の一覧との一致）/ periodSplit / periodSplitView（精算の表示が Firebase 系を値として import しない）/ drilldown / swrCache / installApp / searchIndexing（検索に出すのはトップだけ: robots.txt・X-Robots-Tag・metadata）（node --test）
 │  ├─ public/icons/          # Flex メッセージ用アイコン PNG（scripts/gen-line-icons.mjs で生成）
 │  ├─ public/pwa/            # PWA のアイコン（scripts/gen-app-icons.mjs で生成）
 │  ├─ public/sw.js / offline.html # Service Worker とオフライン画面（公開されるのでコメントを書かない）
+│  ├─ public/robots.txt      # 巡回を許可するのはトップ（/）とアイコン・Search Console の確認用ファイルだけ（SPECIFICATION.md §5.2「検索エンジン」）
 │  └─ .env.example
 ├─ scripts/                  # manage-group-members.mjs（世帯メンバー管理）/ gen-line-icons.mjs（LINE カードのアイコン生成）/ gen-app-icons.mjs（PWA のアイコン生成）
 ├─ test/                     # firestore.rules.test.mjs / storage.rules.test.mjs（エミュレータ）

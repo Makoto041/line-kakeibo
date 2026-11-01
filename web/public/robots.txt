@@ -1,2 +1,7 @@
 User-agent: *
+Allow: /$
+Allow: /favicon.ico
+Allow: /apple-icon.png
+Allow: /pwa/
+Allow: /google87fb942043bd85e4.html$
 Disallow: /
