@@ -5,7 +5,7 @@
 //   デモに書いた大項目・中項目に決まること、カード利用の取込の店名と時刻が、中項目の時刻のルールで昼ご飯になることを確かめる。
 // bot のモジュールは web から import できない（CommonJS・拡張子なしの import・firebase-admin など）ので、ソースを文字列として読む
 // （前例: categoryTaxonomy.test.mjs）。辞書の照合は bot と同じ手順をここで再現する（手順の行もソースにあることを確かめる）。
-// レイアウト（余白・折り返し・大きさ）のずれは検出できない。発表後に /demo と一緒に消す。node --test で実行する。
+// レイアウト（余白・折り返し・大きさ）のずれは検出できない。node --test で実行する。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
