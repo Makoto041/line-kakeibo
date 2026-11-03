@@ -114,6 +114,10 @@ API キーを `GEMINI_API_KEY` に入れる。カテゴリ分類の退避先（J
 
 - Git 連携で、`master` への push が本番、PR がプレビューになる。ワークフローからはデプロイしない。
 - ビルド設定はルートの `vercel.json`（`cd web && npm run build`）。Root Directory はリポジトリのルート。
+- プレビューは、そのブランチで前回成功したデプロイ（`VERCEL_GIT_PREVIOUS_SHA`）からの差分に `web/`・ルートと `bot/` の `package.json`・`package-lock.json`・`vercel.json`・`.vercelignore`・`.npmrc` の変更が無ければビルドしない（`vercel.json` の `ignoreCommand`。Vercel では Canceled になる）。
+  本番、ブランチの初回のデプロイ、基準のコミットを取れないとき（Vercel の浅いクローンの 10 コミットより前など）、`VERCEL_ENV` が `preview` でないとき（システム環境変数の公開が無効なときを含む）は常にビルドする。
+  スキップされたコミットのプレビューが要るときは、Vercel の Deployments で Redeploy し「Use project's Ignore Build Step」を外す。web のビルドに関わるファイルを `web/` の外に足したら、`ignoreCommand` のパスにも足す。
+  `.vercelignore` は Git 連携のデプロイにも効く。`.git` を足すと `git diff` が失敗し、プレビューを毎回ビルドするようになる。
 - 環境変数は §3 の web のキーをダッシュボードに入れる。
 
 ## 5. ローカル開発

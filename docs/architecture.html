@@ -300,7 +300,7 @@ flowchart LR
         <table>
           <thead><tr><th>対象</th><th>いつ</th><th>どうやって</th></tr></thead>
           <tbody>
-            <tr><td>Web</td><td>master へのマージ（PR はプレビュー）</td><td>Vercel の Git 連携</td></tr>
+            <tr><td>Web</td><td>master へのマージ（PR のプレビューは web のビルドに関わる変更があるときだけ）</td><td>Vercel の Git 連携</td></tr>
             <tr><td>Bot・ルール</td><td>master へのマージで bot / ルールに変更があるとき</td><td><code>ci-cd.yml</code> の <code>deploy-bot</code> → <code>post-deploy-check</code></td></tr>
             <tr><td>タグ・Release</td><td>実装のマージごと</td><td><code>release.yml</code> が <code>vX.Y.Z</code> と GitHub Release を作成</td></tr>
           </tbody>

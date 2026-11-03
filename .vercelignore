@@ -27,6 +27,7 @@ dist
 **/dist
 
 # その他
-.git
+# .git は書かない。Git 連携のデプロイにもこのファイルが効き、ignoreCommand（vercel.json）の git diff が動かなくなる。
+# CLI からのアップロードでは Vercel が .git を既定で除外する。
 .firebase
 *.log
