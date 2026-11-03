@@ -1,7 +1,7 @@
 // デモ（/demo）の架空データ（lib/demo/demoData.ts）と場面の一覧（lib/demo/demoScenes.ts）のテスト。
 // 画面に出る主な数字（合計・支払った人ごとの合計・送金額）を、本番と同じ純関数に通した結果で固定する。
 // 架空と分かるデータであること（LINE の ID の形でない・URL やレシートが無い・実在の店名らしい名前が無い）も確かめる。
-// 発表後に /demo と一緒に消す。node --test で実行する（型除去で .ts を直接読む）。
+// node --test で実行する（型除去で .ts を直接読む）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 

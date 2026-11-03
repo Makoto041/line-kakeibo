@@ -1,4 +1,4 @@
-// デモ（/demo）の LINE の場面（会話・確認カード・カード利用の取込）の文言・色・文例。発表後に lib/demo ごと消す。
+// デモ（/demo）の LINE の場面（会話・確認カード・カード利用の取込）の文言・色・文例。
 // 確認カードは bot の Flex Message（bot/src/line/flexMessage.ts の buildExpenseCard）を手で写したもの。
 // 文言・色・アイコン・判定元の表示名・ボタンは bot のソースと同じにし、__tests__/demoCard.test.mjs で bot のソースと突き合わせる
 // （bot のモジュールは web から import できないので、テストがソースを文字列として読む）。レイアウトのずれは検出できない。

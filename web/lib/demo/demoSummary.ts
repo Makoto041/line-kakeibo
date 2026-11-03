@@ -1,4 +1,4 @@
-// デモ（/demo）の「精算サマリー」（毎月の起算日に LINE グループへ届く期間の精算）の文言・色・集計。発表後に lib/demo ごと消す。
+// デモ（/demo）の「精算サマリー」（毎月の起算日に LINE グループへ届く期間の精算）の文言・色・集計。
 // bot の buildSettlementSummary（bot/src/settlementSummary.ts）と buildSettlementSummaryMessages / buildSettlementSummaryFlex
 // （bot/src/line/settlementSummaryMessage.ts）を手で写したもの。文言・色は __tests__/demoCard.test.mjs で bot のソースと突き合わせる。
 // 送金額などの数字は、画面（components/demo/LineSettlementSummary.tsx）が本番と同じ computePeriodSplit・periodPool の結果を渡して出す

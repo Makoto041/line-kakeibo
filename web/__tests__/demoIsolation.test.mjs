@@ -6,7 +6,7 @@
 // .tsx は node の型除去で読めないので、ソースを文字列として読み、import の文を正規表現で取り出す。
 // 1 行に複数の import があっても拾えるよう、行頭に依存しない。決まった形で読めない import があれば失敗にする。
 // あわせて、デモのファイル自身に通信・保存・外部 URL・/demo 以外へのリンクが無いことを確かめる。
-// 発表後に /demo と一緒に消す。node --test で実行する。
+// node --test で実行する。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
