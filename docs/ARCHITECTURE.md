@@ -81,7 +81,7 @@ flowchart LR
 
 ### デプロイ単位が Vercel と Firebase に分かれている点に注意
 
-- Web → Vercel の Git 連携（PR ごとのプレビュー、`master` で本番）
+- Web → Vercel の Git 連携（PR のプレビューは web のビルドに関わる変更があるときだけ〔SETUP.md §4〕、`master` で本番）
 - Bot・Firestore ルール/インデックス・Storage ルール → GitHub Actions `ci-cd.yml` の `deploy-bot`（`firebase deploy`）
 - Flex メッセージのアイコン PNG は **Vercel（web/public/icons）から配信**され Bot が参照する（`bot/src/line/flexMessage.ts` の `ICON_BASE`）、というクロス依存がある
 
@@ -312,7 +312,7 @@ Web のアクセス制御は **LIFF ログイン → Firebase カスタムトー
 
 - **ブランチ運用**: `master` が本番。作業ブランチを切って PR → CI 完了 → squash マージ。`develop` ブランチと手動デプロイスクリプトは廃止
 - **デプロイの担当**:
-  - Web（Vercel）→ **Vercel の Git 連携**が実行する（PR ごとにプレビュー、`master` へのマージで本番）。GitHub Actions 側にデプロイジョブは持たない。ロールバックは Vercel ダッシュボードから
+  - Web（Vercel）→ **Vercel の Git 連携**が実行する（PR のプレビューは web のビルドに関わるファイルが変わったときだけ作る〔`vercel.json` の `ignoreCommand`。SETUP.md §4〕、`master` へのマージで本番は常にビルド）。GitHub Actions 側にデプロイジョブは持たない。ロールバックは Vercel ダッシュボードから
   - Bot / Firestore ルール・インデックス / Storage ルール → `ci-cd.yml` の `deploy-bot`。`master` への push で `bot/**` やルール類に変更があるとき、または `master` 上での `workflow_dispatch`（再デプロイ用）に実行。Storage の cross-service rules に必要な IAM ロールを事前確認し、確認できない場合は `storage` を除外してデプロイする（SECURITY_OPERATIONS.md §4）。成功後に `post-deploy-check` が webhook の `/health` を確認し Slack へ通知
 - **`deploy-bot` の前提**: GitHub の `production-bot` Environment に **`GCP_SA_KEY`**（Firebase プロジェクトのサービスアカウント JSON）が必要。`onRequest({ secrets: [...] })` を使う関数をデプロイするため、Cloud Functions / Cloud Run のデプロイ権限に加えて **Secret Manager の参照権限**も要る。`secrets` に宣言した名前（`TYPESAFE_API_KEY` など）が Secret Manager に無いとデプロイが失敗するので、新しい Secret を足す PR はマージ前に `firebase functions:secrets:set` で登録しておく。`FIREBASE_PROJECT_ID` は任意（未設定時は `line-kakeibo-0410`）、`SLACK_WEBHOOK_URL` は任意
 - **GitHub Actions**: `ci-cd.yml`（changes → install-deps → lint / build-and-test → security（PR のみ）→ deploy-bot → post-deploy-check）と `pr-checks.yml`（`rules-tests`）。詳細は `.github/README.md`
