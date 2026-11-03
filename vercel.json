@@ -4,6 +4,7 @@
   "installCommand": "cd web && npm install",
   "framework": "nextjs",
   "outputDirectory": "web/.next",
+  "ignoreCommand": "[ \"$VERCEL_ENV\" = preview ] && [ -n \"$VERCEL_GIT_PREVIOUS_SHA\" ] && git diff --quiet \"$VERCEL_GIT_PREVIOUS_SHA\" HEAD -- web package.json package-lock.json bot/package.json vercel.json .vercelignore .npmrc || exit 1",
   "git": {
     "deploymentEnabled": {
       "master": true
