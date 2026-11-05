@@ -17,7 +17,9 @@ import {
   timestampToMillis,
   canClientWrite,
   canClientDelete,
-  canServerConfirm,
+  canServerWrite,
+  isSplitUndecided,
+  shouldSendInclude,
   isPersonalExpense,
   filterExpenses,
   categoriesIn,
@@ -49,7 +51,7 @@ import {
   isValidDocId,
   parseAdvancesResponse,
   parseSettleLegacyAdvancesResult,
-  parseConfirmResponse,
+  parseExpenseActionResponse,
   parseSummaryStatus,
   parseSummarySendResult,
   classifyHouseholdFailure,
@@ -73,8 +75,9 @@ function expense(overrides = {}) {
   };
 }
 
-// ---- 要確認・区分 ---------------------------------------------------------------
+// ---- 未読・区分 ---------------------------------------------------------------
 
+// isPending は画面の「未読」（既読 = confirmed）。式は変えていない（以前の「要確認」と同じ判定）
 test('isPending: 手入力で status なし / pending かつ confirmed !== true のものだけ', () => {
   assert.equal(isPending({}), true); // LINE 手入力（status なし）
   assert.equal(isPending({ inputSource: 'line_text', confirmed: false }), true);
@@ -92,6 +95,43 @@ test('isPending: 手入力で status なし / pending かつ confirmed !== true 
   assert.equal(isPending({ status: 'advance_settled' }), false);
   assert.equal(countPending([{}, { status: 'shared' }, { status: 'pending' }, { confirmed: true }]), 2);
   assert.equal(countPending([{}, { inputSource: 'gmail_auto', status: 'pending', confirmed: false }]), 1);
+});
+
+test('isSplitUndecided: 手入力で status なし / pending（既読にしただけのものも）。区分のチップを出さない条件', () => {
+  assert.equal(isSplitUndecided({}), true);
+  assert.equal(isSplitUndecided({ status: 'pending' }), true);
+  // 既読（confirmed: true）にしても status が未定なら区分は決まっていない（isPending とはここが違う）
+  assert.equal(isSplitUndecided({ status: 'pending', confirmed: true }), true);
+  assert.equal(isPending({ status: 'pending', confirmed: true }), false);
+  assert.equal(isSplitUndecided({ inputSource: 'line_text', confirmed: true }), true);
+  // 自動で入った支出は未定にしない（以前に pending で入ったカード取込も）
+  assert.equal(isSplitUndecided({ inputSource: 'gmail_auto', status: 'pending' }), false);
+  assert.equal(isSplitUndecided({ inputSource: 'recurring' }), false);
+  for (const status of ['shared', 'personal', 'advance_pending', 'advance_settled']) {
+    assert.equal(isSplitUndecided({ status }), false, status);
+  }
+});
+
+test('shouldSendInclude: 未読なら同じ値でも送る（押すと既読になる）。既読で今と同じ値なら送らない', () => {
+  // 未読（LINE の手入力。含めない）
+  const unread = { status: undefined, confirmed: false, includeInTotal: false };
+  assert.equal(shouldSendInclude(unread, true), true);
+  assert.equal(shouldSendInclude(unread, false), true);
+  // 既読
+  const included = { status: 'shared', confirmed: true, includeInTotal: true };
+  assert.equal(shouldSendInclude(included, true), false);
+  assert.equal(shouldSendInclude(included, false), true);
+  const excluded = { status: 'personal', confirmed: true, includeInTotal: false };
+  assert.equal(shouldSendInclude(excluded, false), false);
+  assert.equal(shouldSendInclude(excluded, true), true);
+  // 既読にしただけ（status は未定）
+  const readOnly = { status: 'pending', confirmed: true, includeInTotal: false };
+  assert.equal(shouldSendInclude(readOnly, false), false);
+  assert.equal(shouldSendInclude(readOnly, true), true);
+  // 自動で入った支出は未読にしないので、値が変わるときだけ送る
+  const card = { inputSource: 'gmail_auto', status: 'pending', confirmed: false, includeInTotal: true };
+  assert.equal(shouldSendInclude(card, true), false);
+  assert.equal(shouldSendInclude(card, false), true);
 });
 
 test('splitChip と状態の判定（bot の deriveExpenseSettings と同じ分け方）', () => {
@@ -165,7 +205,6 @@ test('formFromExpense: 支払い者の既定は入力者', () => {
     date: '2026-09-12',
     category: '食費',
     subCategory: '',
-    includeInTotal: true,
     payerId: ME,
     payerDisplayName: 'あおい',
   });
@@ -225,8 +264,10 @@ test('buildEditUpdate: 変更したキーだけ・精算済みは 4 キーを送
   const payerChanged = { ...formFromExpense(e), payerId: PARTNER, payerDisplayName: 'べん' };
   assert.deepEqual(buildEditUpdate(payerChanged, e), { payerId: PARTNER, payerDisplayName: 'べん' });
 
+  // 会計に含めるか（includeInTotal）は編集画面では送らない（支出一覧のカードから API で切り替える）
   const toggled = { ...formFromExpense(e), includeInTotal: false, amount: 1350 };
-  assert.deepEqual(buildEditUpdate(toggled, e), { amount: 1350, includeInTotal: false });
+  assert.deepEqual(buildEditUpdate(toggled, e), { amount: 1350 });
+  assert.equal('includeInTotal' in formFromExpense(e), false);
 
   // 精算済み
   const settled = expense({ status: 'advance_settled', userDisplayName: 'あおい' });
@@ -330,7 +371,7 @@ test('buildCategoryOptions: 正準 → 既存 → 現在値', () => {
 
 // ---- 書き込み可否（master と PR #172 の共通部分） --------------------------------------
 
-test('canClientWrite / canServerConfirm', () => {
+test('canClientWrite / canServerWrite', () => {
   const groups = ['g1'];
   // 個人支出: 所有者だけ
   assert.equal(canClientWrite(expense(), ME, groups), true);
@@ -353,10 +394,10 @@ test('canClientWrite / canServerConfirm', () => {
   // 精算済みでも編集（許可されたキー）はできる
   assert.equal(canClientWrite(expense({ status: 'advance_settled', groupId: 'g1' }), ME, groups), true);
 
-  assert.equal(canServerConfirm(expense({ groupId: 'g1', lineId: GMAIL }), ME, groups), true);
-  assert.equal(canServerConfirm(expense({ lineGroupId: 'C1' }), ME, groups), false);
-  assert.equal(canServerConfirm(expense({ groupId: 'g9' }), ME, groups), false);
-  assert.equal(canServerConfirm(expense({ groupId: 'g1', lineId: PARTNER }), ME, groups), true);
+  assert.equal(canServerWrite(expense({ groupId: 'g1', lineId: GMAIL }), ME, groups), true);
+  assert.equal(canServerWrite(expense({ lineGroupId: 'C1' }), ME, groups), false);
+  assert.equal(canServerWrite(expense({ groupId: 'g9' }), ME, groups), false);
+  assert.equal(canServerWrite(expense({ groupId: 'g1', lineId: PARTNER }), ME, groups), true);
   assert.equal(isPersonalExpense({}), true);
   assert.equal(isPersonalExpense({ lineGroupId: 'C1' }), false);
 });
@@ -502,16 +543,24 @@ test('残っている立替のお知らせ: 日付の範囲と各行の補足', 
   assert.equal(advanceItemMeta(advancesResponse.items[0], names, 2027), '2026年8月15日・誠が立替');
 });
 
-test('parseConfirmResponse', () => {
+test('parseExpenseActionResponse（mark_read / set_include の応答）', () => {
   assert.deepEqual(
-    parseConfirmResponse({
+    parseExpenseActionResponse({
       ok: true,
       expense: { id: 'e1', status: 'shared', includeInTotal: true, confirmed: true, advanceBy: null, category: '食費', updatedAt: 'x' },
     }),
     { id: 'e1', status: 'shared', includeInTotal: true, confirmed: true, advanceBy: null, category: '食費' }
   );
-  assert.equal(parseConfirmResponse({ ok: true }), null);
-  assert.equal(parseConfirmResponse({ ok: true, expense: { id: 'e1', status: 'hacked' } }).status, undefined);
+  // 未読を含めないにした結果（個人）
+  assert.deepEqual(
+    parseExpenseActionResponse({
+      ok: true,
+      expense: { id: 'e2', status: 'personal', includeInTotal: false, confirmed: true, advanceBy: null, category: '日用品', updatedAt: 'x' },
+    }),
+    { id: 'e2', status: 'personal', includeInTotal: false, confirmed: true, advanceBy: null, category: '日用品' }
+  );
+  assert.equal(parseExpenseActionResponse({ ok: true }), null);
+  assert.equal(parseExpenseActionResponse({ ok: true, expense: { id: 'e1', status: 'hacked' } }).status, undefined);
 });
 
 test('エラーの分類（K5-1）', () => {

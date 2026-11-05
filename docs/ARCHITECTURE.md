@@ -74,8 +74,8 @@ flowchart LR
 
 | コンポーネント | 技術 | ホスティング | 役割 |
 |---|---|---|---|
-| `bot/` | Node.js 22 + TypeScript + Express 5 + `@line/bot-sdk` v11 + `firebase-functions` v7 | Firebase Functions gen2（`firebase.json` の `functions.source: "bot"` / `runtime: nodejs22` / region `asia-northeast1`。`api` 関数のみ `us-central1`） | LINE webhook、Gmail 取込、cron バッチ（Gmail watch 更新・固定費計上・精算サマリー）、Web 向け API（LIFF ログイン・確認・以前の立替の精算済み・固定費・折半設定・精算の通知） |
-| `web/` | Next.js 16（App Router）+ React 19 + TypeScript + Tailwind CSS v4 + Recharts + framer-motion + `@line/liff` | Vercel（Git 連携。設定はリポジトリ直下の `vercel.json`） | ダッシュボード・支出管理 UI。読み取りと通常の編集は**クライアントから Firestore/Storage 直アクセス**（セキュリティルールで制御）。確認・以前の立替を精算済みにする操作・固定費・折半設定・精算の通知の送信は bot の `api` 関数経由 |
+| `bot/` | Node.js 22 + TypeScript + Express 5 + `@line/bot-sdk` v11 + `firebase-functions` v7 | Firebase Functions gen2（`firebase.json` の `functions.source: "bot"` / `runtime: nodejs22` / region `asia-northeast1`。`api` 関数のみ `us-central1`） | LINE webhook、Gmail 取込、cron バッチ（Gmail watch 更新・固定費計上・精算サマリー）、Web 向け API（LIFF ログイン・支出の既読と会計の切り替え・以前の立替の精算済み・固定費・折半設定・精算の通知） |
+| `web/` | Next.js 16（App Router）+ React 19 + TypeScript + Tailwind CSS v4 + Recharts + framer-motion + `@line/liff` | Vercel（Git 連携。設定はリポジトリ直下の `vercel.json`） | ダッシュボード・支出管理 UI。読み取りと通常の編集は**クライアントから Firestore/Storage 直アクセス**（セキュリティルールで制御）。支出の既読と会計に含める / 含めないの切り替え・以前の立替を精算済みにする操作・固定費・折半設定・精算の通知の送信は bot の `api` 関数経由 |
 | Firestore | − | GCP | 唯一の永続データストア。ルール/インデックスはリポジトリ管理（`firestore.rules` / `firestore.indexes.json`） |
 | Cloud Storage | − | GCP | レシート画像（`receipts/{expenseId}/`）。`storage.rules` は cross-service rules で Firestore の支出・メンバーシップを参照 |
 
@@ -179,7 +179,8 @@ Web を開く（LINE の「家計簿一覧を見る」/「修正」リンク、�
   → 編集/削除/レシート添付はクライアントSDKでFirestore/Storageへ直書き（ルールで許可された範囲のみ）
      編集ドロワーでは食費・娯楽の中項目（subCategory）も選べる。一覧は lib/categoryTaxonomy.ts（bot の
      categoryTaxonomy.ts のコピー。一致はテストで確かめる）。「中項目なし」と、大項目を変えて選び直さないときは削除を送る
-  → 確認（要確認→共同費）・以前の立替を精算済みにする・固定費・折半設定・精算の通知の送信は ID トークン付きで api 関数の /household/* を呼ぶ
+  → 支出の既読・会計に含める / 含めない（未読を含める→共同費、含めない→個人。あわせて既読）・以前の立替を精算済みにする・
+     固定費・折半設定・精算の通知の送信は ID トークン付きで api 関数の /household/* を呼ぶ（confirm は Web は使わない。旧キャッシュ向けに残す）
 ```
 
 ### 4.3.1 PWA（ホーム画面に追加）

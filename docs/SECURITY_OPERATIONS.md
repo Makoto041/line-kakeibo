@@ -104,6 +104,8 @@ LINE グループでの `家計簿` コマンドも送るたびに所属を読�
 - `userSettings` / `budgetSettings` の書き込み: 本人のドキュメントだけで、web / bot が使う項目だけを、型と大きさを確かめて許す（同じ理由で、世帯の外の人が大きな値を書けないようにする）。`userSettings` は merge で書くため、検査するのは**この書き込みで変わるキーだけ**（本番に旧い形のキーが残っていても保存できなくならないように）。`categoryBudgets` はキーの数（50 まで）だけを見ていて、値は見ない（1 人 1 ドキュメント・1MiB が上限なので許容している）。`dateRangeSettings` は書き込み禁止
 - `expenses` の更新: web が実際に編集するフィールドだけを変更できる（許可リスト）。
   `amount` / `description` / `date` / `category` / `subCategory` / `includeInTotal` / `payerId` / `payerDisplayName` / `receiptUrl` / `updatedAt`。
+  Web は会計に含める / 含めない（`includeInTotal`）を `/household` API で切り替え、Firestore には直接書かない（SPECIFICATION.md §5.3）。
+  `includeInTotal` は、キャッシュに残った旧い Web が直接書くため許可リストに残している。
   `subCategory`（中項目。任意）は 50 文字以内の文字列で、削除もできる（Web の編集画面は食費・娯楽の固定の一覧から選んだ値を送り、
   「中項目なし」と、大項目を変えて選び直さないときは削除を送る）。
   それ以外（`lineId` / `groupId` / `lineGroupId` / `createdAt` / `inputSource` / `status` / `advanceBy` / `advanceFull` など）は不変。

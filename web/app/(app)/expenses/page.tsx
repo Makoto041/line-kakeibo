@@ -10,8 +10,10 @@ import {
   categoriesIn,
   filterExpenses,
   resolvePayerName,
+  shouldSendInclude,
   sortForList,
   summarizeExpenses,
+  type ExpenseActionKind,
   type Segment,
   type SortKey,
 } from "@/lib/expenseState";
@@ -30,7 +32,7 @@ import {
   type EditForm,
 } from "@/lib/expenseEdit";
 import { subCategoriesOf } from "@/lib/categoryTaxonomy";
-import { confirmExpense, isHouseholdApiConfigured, householdErrorCode } from "@/lib/householdApi";
+import { markExpenseRead, setExpenseInclude, isHouseholdApiConfigured, householdErrorCode } from "@/lib/householdApi";
 import type { Expense } from "@/lib/hooks";
 import PreviewModeBanner from "@/components/PreviewModeBanner";
 import ExpenseControls from "@/components/expenses/ExpenseControls";
@@ -89,10 +91,13 @@ function ExpensesPageContent() {
   const [editMonthSet, setEditMonthSet] = useState(false);
 
   const editExpenseId = searchParams.get('edit');
-  // ?filter=pending / advance（ホームの「要確認」から開いたとき）
+  // ?filter=pending / advance（ホームの「未読」から開いたとき。値の pending は未読）
   const [segment, setSegment] = useState<Segment>(() => parseSegment(searchParams.get('filter')));
   const [query, setQuery] = useState("");
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  // カードごとの送信中の操作（支出 ID → 既読にする / 会計に含める / 含めない）
+  const [busyActions, setBusyActions] = useState<Readonly<Record<string, ExpenseActionKind>>>({});
+  // 同じカードの連打で二重に送らないよう、描画を待たずに送信中かを見る
+  const busyIdsRef = useRef<Set<string>>(new Set());
   const [editError, setEditError] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -203,7 +208,7 @@ function ExpensesPageContent() {
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeDrawerRef = useRef<() => void>(() => {});
   const lastFocusedRef = useRef<HTMLElement | null>(null);
-  const [editForm, setEditForm] = useState<EditForm>({ amount: 0, description: "", date: "", category: "", subCategory: "", includeInTotal: true, payerId: "", payerDisplayName: "" });
+  const [editForm, setEditForm] = useState<EditForm>({ amount: 0, description: "", date: "", category: "", subCategory: "", payerId: "", payerDisplayName: "" });
   // 大項目を変えて中項目を「中項目なし」に戻した（中項目を選び直すまで注記を出す）
   const [subCategoryReset, setSubCategoryReset] = useState(false);
   // Flag to prevent re-triggering edit mode after user closes the editor
@@ -223,7 +228,6 @@ function ExpensesPageContent() {
           date: expenseToEdit.date,
           category: expenseToEdit.category,
           subCategory: expenseToEdit.subCategory ?? "",
-          includeInTotal: expenseToEdit.includeInTotal,
           payerId: expenseToEdit.payerId || expenseToEdit.lineId,
           payerDisplayName: expenseToEdit.payerDisplayName || expenseToEdit.userDisplayName || "",
         });
@@ -324,7 +328,7 @@ function ExpensesPageContent() {
 
   const pendingCount = countPending(expenses);
 
-  // フィルターの選択肢は「すべて / 合計に含む / 合計から除外 / 各カテゴリ」の 1 つ
+  // フィルターの選択肢は「すべて / 会計に含める / 会計に含めない / 各カテゴリ」の 1 つ
   const budgetFilter = filter === "included" || filter === "excluded" ? filter : "all";
   const filteredExpenses = filterExpenses(
     expenses.filter((expense) => matchesSegment(expense, segment)),
@@ -340,7 +344,7 @@ function ExpensesPageContent() {
 
   // 支払い者名の解決ルール（金額/件数/チップ表示で共通利用）
   const payerNameOf = (expense: Expense) => resolvePayerName(expense, allHistoricalUsers);
-  // 合計カード・支払い者別の合計（承認済みの項目のみ合計に含める）
+  // 合計カード・支払い者別の合計（会計に含めるものだけを合計する）
   const summary = summarizeExpenses(filteredExpenses, payerNameOf);
 
   const handleEditStart = (expense: Expense) => {
@@ -352,7 +356,6 @@ function ExpensesPageContent() {
       date: expense.date,
       category: expense.category,
       subCategory: expense.subCategory ?? "",
-      includeInTotal: expense.includeInTotal,
       payerId: expense.payerId || expense.lineId,
       payerDisplayName: expense.payerDisplayName || expense.userDisplayName || "",
     };
@@ -370,7 +373,6 @@ function ExpensesPageContent() {
       date: "",
       category: "",
       subCategory: "",
-      includeInTotal: true,
       payerId: "",
       payerDisplayName: "",
     });
@@ -410,25 +412,39 @@ function ExpensesPageContent() {
     }
   };
 
-  // 要確認の支出を確認する（LINE の OK ボタンと同じ処理をサーバーで行う）
-  const handleConfirm = async (expense: Expense) => {
-    setConfirmingId(expense.id);
+  // カードの操作（既読にする / 会計に含める / 含めない）。判定と書き込みはサーバーが 1 つのトランザクションで行う
+  // （未読の支出は、会計に含める・含めないを押すとあわせて既読になる。既読にするは会計を変えない）
+  const handleExpenseAction = async (expense: Expense, kind: ExpenseActionKind) => {
+    const include = kind === "include";
+    // 既読で、会計がすでに押した値なら送らない
+    if (kind !== "read" && !shouldSendInclude(expense, include)) return;
+    if (busyIdsRef.current.has(expense.id)) return;
+    busyIdsRef.current.add(expense.id);
+    setBusyActions((prev) => ({ ...prev, [expense.id]: kind }));
     try {
-      const { advanceBy, ...patch } = await confirmExpense(expense.id);
+      const { advanceBy, ...patch } =
+        kind === "read" ? await markExpenseRead(expense.id) : await setExpenseInclude(expense.id, include);
       patchLocal(expense.id, { ...patch, ...(advanceBy ? { advanceBy } : {}) });
-      // ホームの集計（予算に計上される額）が古いまま出ないように
+      // ホームの集計（会計に含める額）が古いまま出ないように
       invalidateStatsCache();
     } catch (error) {
       const code = householdErrorCode(error);
       alert(
         code === "forbidden"
-          ? "この支出を確認する権限がありません"
+          ? "この支出を変更する権限がありません"
           : code === "not_found"
           ? "支出が見つかりません（削除された可能性があります）"
-          : "確認に失敗しました。時間をおいてやり直してください"
+          : code === "rate_limited"
+          ? "操作が多すぎます。少し待ってからやり直してください"
+          : "変更に失敗しました。時間をおいてやり直してください"
       );
     } finally {
-      setConfirmingId(null);
+      busyIdsRef.current.delete(expense.id);
+      setBusyActions((prev) => {
+        const next = { ...prev };
+        delete next[expense.id];
+        return next;
+      });
     }
   };
 
@@ -460,13 +476,6 @@ function ExpensesPageContent() {
         [name]: type === "number" ? Number(value) : value,
       }));
     }
-  };
-
-  const handleEditCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setEditForm((prev) => ({
-      ...prev,
-      includeInTotal: e.target.checked,
-    }));
   };
 
   const handleDeleteExpense = async (id: string) => {
@@ -531,9 +540,9 @@ function ExpensesPageContent() {
                 isGuest={isGuest}
                 apiAvailable={apiAvailable}
                 activeGroupIds={activeGroupIds}
-                confirming={confirmingId === expense.id}
-                onConfirm={() => handleConfirm(expense)}
-                onToggleInclude={() => updateExpense(expense.id, { includeInTotal: !expense.includeInTotal })}
+                busy={busyActions[expense.id] ?? null}
+                onMarkRead={() => handleExpenseAction(expense, "read")}
+                onSetInclude={(include) => handleExpenseAction(expense, include ? "include" : "exclude")}
                 onEdit={() => handleEditStart(expense)}
                 onPreviewReceipt={(url) => setReceiptPreview({ url, expenseId: expense.id })}
                 onDelete={() => handleDeleteExpense(expense.id)}
@@ -555,7 +564,6 @@ function ExpensesPageContent() {
             error={editError}
             saving={savingEdit}
             onChange={handleEditInputChange}
-            onCheckboxChange={handleEditCheckboxChange}
             onSave={() => editingExpense && handleEditSave(editingExpense)}
             onCancel={handleEditCancel}
           />

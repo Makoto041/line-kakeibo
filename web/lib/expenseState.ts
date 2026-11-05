@@ -14,8 +14,8 @@ export const RECURRING_SYSTEM_LINE_ID = 'recurring-system';
 // ---- 状態 ------------------------------------------------------------------
 
 /**
- * 自動で入った支出（Gmail のカード取込・固定費の自動計上）。確認を求めない。
- * 固定費は登録時から確認済みなので、実際に効くのは以前に pending で入ったカード取込
+ * 自動で入った支出（Gmail のカード取込・固定費の自動計上）。未読にしない・区分を未定として扱わない。
+ * 固定費は登録時から既読（confirmed: true）なので、実際に効くのは以前に pending で入ったカード取込
  * （LINE のカード再表示 bot/src/line/flexMessage.ts の buildExpenseCardFromRecord も同じ扱い）
  */
 export function isAutoInput(e: Pick<ExpenseFields, 'inputSource'>): boolean {
@@ -23,13 +23,36 @@ export function isAutoInput(e: Pick<ExpenseFields, 'inputSource'>): boolean {
 }
 
 /**
- * 要確認: 手入力の支出で、status が無い / pending のまま確認済みフラグが立っていない（bot の OK と同じ判定）。
- * 自動で入った支出は確認不要（以前に pending で入ったカード取込も含む。集計にはもとから入っている）
+ * 画面では「未読」。手入力の支出で、status が無い / pending のまま confirmed（既読 = confirmed）が立っていない。
+ * 自動で入った支出は未読にしない（以前に pending で入ったカード取込も含む。集計にはもとから入っている）
  */
 export function isPending(e: Pick<ExpenseFields, 'status' | 'confirmed' | 'inputSource'>): boolean {
   if (isAutoInput(e)) return false;
   return (e.status == null || e.status === 'pending') && e.confirmed !== true;
 }
+
+/**
+ * 区分（共同費・個人・立替）がまだ決まっていない: 手入力の支出で、status が無い / pending。
+ * 既読にしただけ（confirmed: true）の支出も含む（既読は区分を変えない）。区分のチップを出さない条件
+ */
+export function isSplitUndecided(e: Pick<ExpenseFields, 'status' | 'inputSource'>): boolean {
+  if (isAutoInput(e)) return false;
+  return e.status == null || e.status === 'pending';
+}
+
+/**
+ * 会計に含める / 含めないを押したとき、サーバーに送るか。
+ * 未読なら同じ値でも送る（押すと既読になる）。既読で、今と同じ値なら送らない
+ */
+export function shouldSendInclude(
+  e: Pick<ExpenseFields, 'status' | 'confirmed' | 'inputSource' | 'includeInTotal'>,
+  include: boolean
+): boolean {
+  return isPending(e) || e.includeInTotal !== include;
+}
+
+/** 支出一覧のカードの操作（既読にする / 会計に含める / 会計に含めない） */
+export type ExpenseActionKind = 'read' | 'include' | 'exclude';
 
 export function isAdvance(e: Pick<ExpenseFields, 'status'>): boolean {
   return e.status === 'advance_pending' || e.status === 'advance_settled';
@@ -41,7 +64,7 @@ export function isSettled(e: Pick<ExpenseFields, 'status'>): boolean {
 
 export type SplitChip = 'shared' | 'personal' | 'advance' | 'settled';
 
-/** 負担区分のチップ（bot の deriveExpenseSettings と同じ分け方。未確認かどうかは別の表示で示す） */
+/** 負担区分のチップ（bot の deriveExpenseSettings と同じ分け方。区分が未定かは isSplitUndecided で別に判定する） */
 export function splitChip(e: Pick<ExpenseFields, 'status'>): SplitChip {
   switch (e.status) {
     case 'personal':
@@ -55,6 +78,7 @@ export function splitChip(e: Pick<ExpenseFields, 'status'>): SplitChip {
   }
 }
 
+/** 未読（isPending）の件数（画面では「未読」） */
 export function countPending(list: ReadonlyArray<Pick<ExpenseFields, 'status' | 'confirmed' | 'inputSource'>>): number {
   let n = 0;
   for (const e of list) if (isPending(e)) n += 1;
@@ -186,7 +210,7 @@ function isActiveMemberOf(groupId: string, activeGroupIds: readonly string[] | n
   return activeGroupIds === null || activeGroupIds.includes(groupId);
 }
 
-/** 編集・計上トグルをクライアントから書けるか */
+/** 編集をクライアントから書けるか */
 export function canClientWrite(
   e: OwnershipFields,
   me: string | null,
@@ -216,8 +240,8 @@ export function canClientDelete(
   );
 }
 
-/** 確認（サーバー経由）を出せるか。サーバーの認可と同じ条件で、最終判断はサーバー */
-export function canServerConfirm(
+/** 既読・会計の切り替え（サーバー経由）を出せるか。サーバーの認可と同じ条件で、最終判断はサーバー */
+export function canServerWrite(
   e: OwnershipFields,
   me: string | null,
   activeGroupIds: readonly string[] | null
@@ -230,7 +254,7 @@ export function canServerConfirm(
 }
 
 // ---- 絞り込み・集計（明細のフィルター・合計カード） ---------------------------------
-// フィルター（すべて / 合計に含む / 合計から除外 / カテゴリ）と合計カードの計算。
+// フィルター（すべて / 会計に含める / 会計に含めない / カテゴリ）と合計カードの計算。
 
 export type BudgetFilter = 'all' | 'included' | 'excluded';
 

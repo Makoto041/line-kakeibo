@@ -122,7 +122,7 @@ export default function DemoHome() {
           className="mt-4 flex items-center gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-amber-800 transition-colors hover:bg-amber-500/15 dark:text-amber-200"
         >
           <Clock className="h-5 w-5 shrink-0" />
-          <span className="flex-1 text-sm font-semibold">要確認の支出が {pendingCount}件 あります</span>
+          <span className="flex-1 text-sm font-semibold">未読の支出が {pendingCount}件 あります</span>
           <span className="text-xs font-medium">確認する</span>
           <ChevronRight className="h-4 w-4 shrink-0" />
         </Link>

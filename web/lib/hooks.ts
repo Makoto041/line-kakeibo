@@ -76,7 +76,7 @@ export interface Expense {
   date: string;             // YYYY-MM-DD format
   category: string;
   subCategory?: string;     // 中項目。任意。category（大項目）とは別
-  confirmed?: boolean;      // 確認済みフラグ
+  confirmed?: boolean;      // 既読（Web の支出一覧の未読 / 既読。LINE の OK・Web の操作で立つ）
   includeInTotal: boolean;  // 合計に含めるかどうか
   status?: ExpenseStatus;   // 支出ステータス（確認待ち、共同費、立替など）
   inputSource?: InputSource; // 入力元（LINE テキスト、OCR、Gmail自動取得）
@@ -427,7 +427,7 @@ async function queryMyActiveGroupIds(lineId: string): Promise<string[]> {
 const NO_EXPENSES: Expense[] = [];
 
 // 支出を書き換えた回数。取得の途中で書き換えがあったら、その取得結果（書き換え前の内容）は
-// 使わずに取り直す（確認したばかりの行が「要確認」に戻るのを防ぐ）
+// 使わずに取り直す（既読にしたばかりの行が「未読」に戻るのを防ぐ）
 let expensesWriteGen = 0;
 
 export function useExpenses(userId: string | null, periodDays: number = 50, limitCount: number = 200, customStartDate?: string) {
@@ -684,7 +684,7 @@ export function useExpenses(userId: string | null, periodDays: number = 50, limi
     }
   };
 
-  // サーバー経由の変更（確認など）の結果を、再取得せずに一覧へ反映する。
+  // サーバー経由の変更（既読・会計の切り替えなど）の結果を、再取得せずに一覧へ反映する。
   // 他の画面が持つ同じ支出のキャッシュも揃える。
   const patchLocal = useCallback((id: string, patch: Partial<Expense>) => {
     expensesWriteGen += 1;

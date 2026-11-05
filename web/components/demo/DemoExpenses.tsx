@@ -1,7 +1,7 @@
 'use client';
 
 // デモの支出一覧。本番の支出一覧（app/(app)/expenses/page.tsx）と同じ部品・純関数で、検索・絞り込み・並び替えはその場の状態で動く。
-// カードは lineId=null で描くので、確認・計上の切り替え・編集・削除・レシート添付のボタンは出ない（何も保存しない）。
+// カードは lineId=null で描くので、既読にする・会計に含める / 含めない・編集・削除・レシート添付のボタンは出ない（何も保存しない）。
 // 本番のカードは中項目を出さないので、デモでは中項目をカードの下の行に重ねて出す。
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -49,7 +49,7 @@ export default function DemoExpenses() {
   const searchParams = useSearchParams();
   const [monthIndex, setMonthIndex] = useState(DEMO_DEFAULT_MONTH_INDEX);
   const month = DEMO_MONTHS[monthIndex];
-  // ?filter=pending（デモのホームの「要確認」から開いたとき）
+  // ?filter=pending（デモのホームの「未読」から開いたとき）
   const [segment, setSegment] = useState<Segment>(() => parseSegment(searchParams.get('filter')));
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
@@ -105,9 +105,9 @@ export default function DemoExpenses() {
                 isGuest
                 apiAvailable={false}
                 activeGroupIds={null}
-                confirming={false}
-                onConfirm={noop}
-                onToggleInclude={noop}
+                busy={null}
+                onMarkRead={noop}
+                onSetInclude={noop}
                 onEdit={noop}
                 onPreviewReceipt={noop}
                 onDelete={noop}

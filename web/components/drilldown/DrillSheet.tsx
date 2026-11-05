@@ -587,9 +587,9 @@ function ItemRow({
           <span className="rounded px-1.5 py-px font-medium" style={{ color, background: `${color}1f` }}>{item.payerName}</span>
           {showSub && item.subCategory !== undefined && item.subCategory !== NO_SUB_CATEGORY && <span>{item.subCategory}</span>}
           {item.pending && (
-            <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1.5 py-px font-semibold text-amber-700 dark:text-amber-300">
+            <span className="inline-flex items-center gap-0.5 rounded bg-sky-500/15 px-1.5 py-px font-semibold text-sky-700 dark:text-sky-300">
               <Clock className="h-3 w-3" />
-              要確認
+              未読
             </span>
           )}
         </span>
@@ -649,7 +649,7 @@ function ItemView({
       {item.pending && (
         <p className="flex items-start gap-1.5 rounded-xl bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
           <Clock className="mt-px h-3.5 w-3.5 shrink-0" />
-          要確認です。LINE で手入力した支出は、確認するまで合計に入りません
+          未読です。LINE で手入力した支出は、支出一覧で『会計に含める』にするまで合計に入りません
         </p>
       )}
       <dl className="divide-y divide-line overflow-hidden rounded-xl border border-line text-sm">
