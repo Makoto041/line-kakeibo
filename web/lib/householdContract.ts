@@ -60,8 +60,8 @@ export interface SummarySendResult {
   interim: boolean;
 }
 
-/** POST /household/expenses/:id/actions（confirm）の応答から画面に反映する項目 */
-export interface ConfirmedExpensePatch {
+/** POST /household/expenses/:id/actions（mark_read / set_include）の応答から画面に反映する項目 */
+export interface ExpenseActionPatch {
   id: string;
   status?: ExpenseStatus;
   includeInTotal: boolean;
@@ -103,7 +103,7 @@ function normalizeBase(value: string): string | null {
 
 /**
  * API のベース URL。明示の値（空文字は未設定扱い）→ 認証エンドポイントの /auth/line を除いたもの。
- * どちらからも得られなければ null（確認・立替の印を外す・通知の送信などの操作は無効にする）。
+ * どちらからも得られなければ null（既読・会計の切り替え・立替の印を外す・通知の送信などの操作は無効にする）。
  * 明示の値が off / none のときは機能を止める（bot を戻したときに web を出し直さずに済むように）。
  */
 export function deriveApiBase(explicit: string | undefined, authEndpoint: string | undefined): string | null {
@@ -261,7 +261,7 @@ export function parseCategoryRulesResponse(json: unknown): CategoryRulesConfig |
   return { rules, examples, version, limits };
 }
 
-export function parseConfirmResponse(json: unknown): ConfirmedExpensePatch | null {
+export function parseExpenseActionResponse(json: unknown): ExpenseActionPatch | null {
   if (!isRecord(json) || !isRecord(json.expense)) return null;
   const e = json.expense;
   const id = toStr(e.id);

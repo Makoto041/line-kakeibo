@@ -20,7 +20,6 @@ interface Props {
   error: string | null;
   saving: boolean;
   onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => void;
-  onCheckboxChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onSave: () => void;
   onCancel: () => void;
 }
@@ -37,7 +36,6 @@ export default function EditDrawer({
   error,
   saving,
   onChange,
-  onCheckboxChange,
   onSave,
   onCancel,
 }: Props) {
@@ -182,17 +180,6 @@ export default function EditDrawer({
                 <p className="mt-1 text-xs text-muted">デフォルトは入力者と同じです</p>
               </div>
             </div>
-
-            <label className="flex cursor-pointer items-center rounded-lg border border-line bg-card p-3">
-              <input
-                type="checkbox"
-                name="includeInTotal"
-                checked={form.includeInTotal}
-                onChange={onCheckboxChange}
-                className="h-4 w-4 rounded border-line accent-accent"
-              />
-              <span className="ml-3 text-sm font-medium text-fg">合計に含める</span>
-            </label>
 
             {settled && (
               <p className="rounded-lg bg-fg/[0.04] p-3 text-xs text-muted">

@@ -1,6 +1,6 @@
 'use client';
 
-// bot の /household/* エンドポイントのクライアント（確認・以前の立替の精算済み・精算の通知など）。
+// bot の /household/* エンドポイントのクライアント（支出の既読と会計の切り替え・以前の立替の精算済み・精算の通知など）。
 // Firebase の ID トークンを Authorization: Bearer で送る。匿名ユーザーからは呼ばない。
 import { auth, ensureFirebaseInitialized } from './firebase';
 import {
@@ -10,13 +10,13 @@ import {
   parseAdvancesResponse,
   parseSettleLegacyAdvancesResult,
   parseCategoryRulesResponse,
-  parseConfirmResponse,
+  parseExpenseActionResponse,
   parseSummarySendResult,
   parseSummaryStatus,
   type AdvancesResponse,
   type CategoryRule,
   type CategoryRulesConfig,
-  type ConfirmedExpensePatch,
+  type ExpenseActionPatch,
   type HouseholdErrorCode,
   type SettleLegacyAdvancesResult,
   type SummaryPeriodKind,
@@ -28,7 +28,7 @@ export type {
   AdvancesResponse,
   CategoryRule,
   CategoryRulesConfig,
-  ConfirmedExpensePatch,
+  ExpenseActionPatch,
   HouseholdErrorCode,
   SettleLegacyAdvancesResult,
   SummaryPeriodKind,
@@ -42,7 +42,7 @@ const MAX_LEGACY_SETTLE_IDS = 500;
 // NEXT_PUBLIC_* はビルド時に埋め込まれるため、参照は字句どおりに書く
 const API_BASE = deriveApiBase(process.env.NEXT_PUBLIC_API_BASE, process.env.NEXT_PUBLIC_AUTH_ENDPOINT);
 
-/** API のベース URL があるか（無ければ確認などのボタンを無効にする） */
+/** API のベース URL があるか（無ければ既読・会計の切り替えなどのボタンを出さない） */
 export function isHouseholdApiConfigured(): boolean {
   return API_BASE !== null;
 }
@@ -126,17 +126,30 @@ function fail(res: RawResponse): never {
   throw new HouseholdApiError(classifyHouseholdFailure(res.status, res.body), res.status);
 }
 
-/** 確認（LINE の OK と同じ処理）。成功したら画面に反映する項目を返す */
-export async function confirmExpense(expenseId: string): Promise<ConfirmedExpensePatch> {
+type ExpenseActionBody = { action: 'mark_read' } | { action: 'set_include'; includeInTotal: boolean };
+
+/** 支出の操作（既読・会計の切り替え）。判定と書き込みはサーバーが 1 つのトランザクションで行う。成功したら画面に反映する項目を返す */
+async function postExpenseAction(expenseId: string, body: ExpenseActionBody): Promise<ExpenseActionPatch> {
   if (!isValidDocId(expenseId)) throw new HouseholdApiError('invalid_request');
-  const res = await send(`/household/expenses/${encodeURIComponent(expenseId)}/actions`, {
-    method: 'POST',
-    body: { action: 'confirm' },
-  });
+  const res = await send(`/household/expenses/${encodeURIComponent(expenseId)}/actions`, { method: 'POST', body });
   if (res.status !== 200) fail(res);
-  const patch = parseConfirmResponse(res.body);
+  const patch = parseExpenseActionResponse(res.body);
   if (!patch || patch.id !== expenseId) throw new HouseholdApiError('failed', res.status);
   return patch;
+}
+
+/** 既読にする（会計に含めるかは変えない） */
+export function markExpenseRead(expenseId: string): Promise<ExpenseActionPatch> {
+  return postExpenseAction(expenseId, { action: 'mark_read' });
+}
+
+/**
+ * 会計に含める / 含めない。あわせて既読にする。
+ * status が無い / pending（区分が未定）なら、含める → 共同費、含めない → 個人（LINE の［除外］と同じ）。
+ * 個人を含める → 共同費。それ以外の status は変えない（判定はサーバーが読んだ最新の status で行う）
+ */
+export function setExpenseInclude(expenseId: string, includeInTotal: boolean): Promise<ExpenseActionPatch> {
+  return postExpenseAction(expenseId, { action: 'set_include', includeInTotal });
 }
 
 /** 全額にする前の立替（advanceFull の無い advance_pending）の全件 */

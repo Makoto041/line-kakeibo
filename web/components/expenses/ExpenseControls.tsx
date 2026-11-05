@@ -47,12 +47,12 @@ export default function ExpenseControls({
 }: Props) {
   return (
     <div className="glass mb-4 rounded-2xl p-4 shadow-glass">
-      {/* 状態で絞り込み（すべて / 要確認 / 立替）と検索 */}
+      {/* 状態で絞り込み（すべて / 未読 / 立替）と検索 */}
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <div role="group" aria-label="状態で絞り込み" className="flex gap-1 rounded-xl bg-fg/[0.04] p-1">
           {([
             { key: "all", label: "すべて" },
-            { key: "pending", label: "要確認" },
+            { key: "pending", label: "未読" },
             { key: "advance", label: "立替" },
           ] as const).map(({ key, label }) => (
             <button
@@ -68,7 +68,7 @@ export default function ExpenseControls({
               {key === "pending" && pendingCount > 0 && (
                 <span
                   className={`rounded-full px-1.5 text-xs tabular-nums ${
-                    segment === key ? "bg-white/25" : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                    segment === key ? "bg-white/25" : "bg-sky-500/15 text-sky-700 dark:text-sky-300"
                   }`}
                 >
                   {pendingCount}
@@ -121,8 +121,8 @@ export default function ExpenseControls({
               className="rounded-lg border border-line bg-card px-3 py-2 text-sm text-fg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
               <option value="all">すべて</option>
-              <option value="included">合計に含む</option>
-              <option value="excluded">合計から除外</option>
+              <option value="included">会計に含める</option>
+              <option value="excluded">会計に含めない</option>
               {categories.map((category) => (
                 <option key={category} value={category}>{category}</option>
               ))}

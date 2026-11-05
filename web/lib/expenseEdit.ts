@@ -10,20 +10,19 @@ export interface EditForm {
   category: string;
   /** 中項目。'' は「中項目なし」（保存すると subCategory を消す。shouldClearSubCategory） */
   subCategory: string;
-  includeInTotal: boolean;
   payerId: string;
   payerDisplayName: string;
 }
 
 export type EditKey = keyof EditForm;
 
+// 会計に含める / 含めない（includeInTotal）は編集画面では変えない。支出一覧のカードから API 経由で切り替える
 const EDIT_KEYS: readonly EditKey[] = [
   'amount',
   'description',
   'date',
   'category',
   'subCategory',
-  'includeInTotal',
   'payerId',
   'payerDisplayName',
 ];
@@ -33,7 +32,7 @@ export const SETTLED_LOCKED_KEYS: readonly EditKey[] = ['amount', 'date', 'payer
 
 type EditSource = Pick<
   Expense,
-  'amount' | 'description' | 'date' | 'category' | 'includeInTotal' | 'lineId'
+  'amount' | 'description' | 'date' | 'category' | 'lineId'
 > &
   Partial<Pick<Expense, 'subCategory' | 'payerId' | 'payerDisplayName' | 'userDisplayName' | 'status'>>;
 
@@ -45,7 +44,6 @@ export function formFromExpense(e: EditSource): EditForm {
     date: e.date ?? '',
     category: e.category ?? '',
     subCategory: e.subCategory ?? '',
-    includeInTotal: !!e.includeInTotal,
     payerId: e.payerId || e.lineId,
     payerDisplayName: e.payerDisplayName || e.userDisplayName || '',
   };
@@ -175,7 +173,7 @@ type SubCategoryFields = Partial<Pick<Expense, 'category' | 'subCategory'>>;
  * - 大項目は、正規化した後の値で比べる（別名が同じ大項目になる入力では消さない。編集画面の
  *   changeEditCategory も同じ正規化で比べ、中項目を「中項目なし」に戻さない）
  * - 更新が中項目（'' 以外）を自分で指定しているときは、それに任せる
- * - 元の支出が渡されない更新（合計に含めるトグルなど）では、大項目を理由には消さない
+ * - 元の支出が渡されない更新では、大項目を理由には消さない
  */
 export function shouldClearSubCategory(
   update: SubCategoryFields,

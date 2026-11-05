@@ -22,8 +22,8 @@ const RULES: ReadonlyArray<{ Icon: LucideIcon; title: string; body: string }> = 
   { Icon: Users, title: '世帯はふたり', body: '合計に入る支出を ÷2 して、ひとりあたりの負担にする' },
   { Icon: CreditCard, title: '支払った人で分ける', body: 'Aさん・Bさん・カード・共通口座。カードと共通口座は、受け取る人の側に数える' },
   { Icon: ArrowRightLeft, title: '立替（全額）', body: '相手の分を立て替えた支出は折半せず、全額を返す' },
-  { Icon: Ban, title: '除外', body: '個人の支出（合計から除外）は精算に入れない' },
-  { Icon: Clock, title: '要確認', body: 'LINE で入れた支出は、確認するまで合計に入らない' },
+  { Icon: Ban, title: '除外', body: '個人の支出（会計に含めない）は精算に入れない' },
+  { Icon: Clock, title: '未読', body: 'LINE で入れた支出は、会計に含めるまで合計に入らない' },
 ];
 
 function SplitBar({ target, range }: { target: string; range: (typeof DEMO_MONTHS)[number]['range'] }) {

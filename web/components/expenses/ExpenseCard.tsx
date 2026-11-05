@@ -5,22 +5,20 @@ import {
   ChevronRight,
   Pencil,
   Trash2,
-  Check,
-  Ban,
   Paperclip,
   CreditCard,
   Smartphone,
-  CircleCheck,
-  Clock,
+  MailOpen,
   Loader2,
 } from "lucide-react";
 import type { Expense } from "../../lib/hooks";
+import type { ExpenseActionKind } from "../../lib/expenseState";
 import {
   isPending,
   splitChip,
   canClientWrite,
   canClientDelete,
-  canServerConfirm,
+  canServerWrite,
   isCardSource,
 } from "../../lib/expenseState";
 import { getCategoryVisual } from "../../lib/categoryVisuals";
@@ -37,10 +35,12 @@ interface Props {
   isGuest: boolean;
   apiAvailable: boolean;
   activeGroupIds: readonly string[] | null;
-  /** 確認の送信中 */
-  confirming: boolean;
-  onConfirm: () => void;
-  onToggleInclude: () => void;
+  /** 送信中の操作（無ければ null）。送信中は既読・会計のボタンを押せなくし、押したボタンにスピナーを出す */
+  busy: ExpenseActionKind | null;
+  /** 既読にする（会計は変えない） */
+  onMarkRead: () => void;
+  /** 会計に含める / 含めない（未読なら、あわせて既読になる） */
+  onSetInclude: (include: boolean) => void;
   onEdit: () => void;
   /** https / blob に正規化したレシート画像の URL */
   onPreviewReceipt: (url: string) => void;
@@ -58,14 +58,16 @@ export default function ExpenseCard({
   isGuest,
   apiAvailable,
   activeGroupIds,
-  confirming,
-  onConfirm,
-  onToggleInclude,
+  busy,
+  onMarkRead,
+  onSetInclude,
   onEdit,
   onPreviewReceipt,
   onDelete,
   showAttachLink = true,
 }: Props) {
+  // 未読（画面の「未読」。既読 = confirmed）
+  const pending = isPending(expense);
   return (
     <div
       id={`expense-${expense.id}`}
@@ -79,7 +81,10 @@ export default function ExpenseCard({
           {/* Header with title and amount */}
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
             <div className="min-w-0 flex-1">
-              <h3 className="mb-1 break-words text-base font-semibold text-fg">
+              <h3 className={`mb-1 break-words text-base text-fg ${pending ? "font-bold" : "font-semibold"}`}>
+                {pending && (
+                  <span aria-hidden="true" className="mr-2 inline-block h-2 w-2 rounded-full bg-sky-500 align-middle" />
+                )}
                 {expense.description}
               </h3>
               <p className="text-sm text-muted">
@@ -96,6 +101,11 @@ export default function ExpenseCard({
 
           {/* Tags */}
           <div className="flex flex-wrap items-center gap-2">
+            {pending && (
+              <span className="rounded-md bg-sky-500/12 px-2 py-0.5 text-xs font-semibold text-sky-700 dark:text-sky-300">
+                未読
+              </span>
+            )}
             {(() => {
               const v = getCategoryVisual(expense.category);
               const Icon = v.icon;
@@ -129,12 +139,6 @@ export default function ExpenseCard({
                 </span>
               );
             })()}
-            {isPending(expense) && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
-                <Clock className="h-3 w-3" />
-                要確認
-              </span>
-            )}
             {(() => {
               const chip = splitChip(expense);
               // 立替（全額）は期間の精算で全額を返す。全額にする前の立替は「立替」のまま
@@ -145,8 +149,8 @@ export default function ExpenseCard({
                 advance: "bg-violet-500/12 text-violet-600 dark:text-violet-400",
                 settled: "bg-fg/5 text-muted",
               }[chip];
-              // 要確認のうちは区分がまだ決まっていないので出さない
-              return isPending(expense) ? null : (
+              // 未読のうちは区分がまだ決まっていないので出さない
+              return pending ? null : (
                 <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${tone}`}>{label}</span>
               );
             })()}
@@ -161,7 +165,7 @@ export default function ExpenseCard({
             )}
             {!expense.includeInTotal && (
               <span className="rounded-md bg-rose-500/12 px-2 py-0.5 text-xs font-medium text-rose-600 dark:text-rose-400">
-                合計から除外
+                会計に含めない
               </span>
             )}
             {expense.receiptUrl && (
@@ -204,48 +208,60 @@ export default function ExpenseCard({
             className="flex flex-wrap gap-2 border-t border-line pt-3"
             style={{ position: "relative", zIndex: 10 }}
           >
-            {/* 要確認の支出を確認（LINE の OK と同じ。サーバー経由） */}
-            {isPending(expense) && !isGuest && apiAvailable && canServerConfirm(expense, lineId, activeGroupIds) && (
+            {/* 既読にする・会計に含める / 含めない（サーバー経由。未読で会計を押すと、あわせて既読になる）。
+                書けない人（ゲスト・デモを含む）には何も出さない */}
+            {!isGuest && apiAvailable && canServerWrite(expense, lineId, activeGroupIds) && (<>
+            {pending && (
               <button
                 type="button"
-                disabled={confirming}
+                disabled={busy !== null}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  onConfirm();
+                  onMarkRead();
                 }}
-                className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:opacity-90 disabled:opacity-60"
+                className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm font-medium text-sky-700 transition-colors hover:bg-sky-500/15 disabled:cursor-default disabled:opacity-60 dark:text-sky-300"
                 style={{ pointerEvents: "auto" }}
               >
-                {confirming ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <CircleCheck className="h-4 w-4" />
-                )}
-                確認
+                {busy === "read" ? <Loader2 className="h-4 w-4 animate-spin" /> : <MailOpen className="h-4 w-4" />}
+                既読にする
               </button>
             )}
-
-            {/* 合計に含める/除外する切り替えボタン */}
-            {canClientWrite(expense, lineId, activeGroupIds) && (<>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onToggleInclude();
-              }}
-              className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                expense.includeInTotal
-                  ? "bg-accent/12 text-accent hover:bg-accent/20"
-                  : "bg-fg/5 text-muted hover:bg-fg/10"
-              }`}
+            <div
+              role="group"
+              aria-label="会計"
+              className="inline-flex overflow-hidden rounded-lg border border-line bg-card"
               style={{ pointerEvents: "auto" }}
             >
-              {expense.includeInTotal ? <Check className="h-4 w-4" /> : <Ban className="h-4 w-4" />}
-              {expense.includeInTotal ? "合計に含む" : "合計から除外"}
-            </button>
+              {([
+                { include: true, kind: "include", label: "会計に含める" },
+                { include: false, kind: "exclude", label: "含めない" },
+              ] as const).map(({ include, kind, label }) => {
+                const pressed = include ? expense.includeInTotal === true : expense.includeInTotal !== true;
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    aria-pressed={pressed}
+                    disabled={busy !== null}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onSetInclude(include);
+                    }}
+                    className={`flex cursor-pointer items-center gap-1.5 px-3 py-2 text-sm transition-colors disabled:cursor-default disabled:opacity-60 ${
+                      pressed ? "bg-accent/12 font-semibold text-accent" : "font-medium text-muted hover:bg-fg/5 hover:text-fg"
+                    }`}
+                  >
+                    {busy === kind && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            </>)}
 
+            {canClientWrite(expense, lineId, activeGroupIds) && (
             <button
               type="button"
               onClick={(e) => {
@@ -259,7 +275,7 @@ export default function ExpenseCard({
               <Pencil className="h-4 w-4" />
               編集
             </button>
-            </>)}
+            )}
 
             {/* レシート: 編集の隣に並べて発見しやすく。新規タブではなくアプリ内でプレビュー */}
             {expense.receiptUrl ? (

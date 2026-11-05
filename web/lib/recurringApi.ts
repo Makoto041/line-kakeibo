@@ -27,7 +27,7 @@ export interface RecurringMember {
 
 export type RecurringInput = Omit<RecurringItem, 'id' | 'lastPostedMonth'>;
 
-// NEXT_PUBLIC_* はビルド時に埋め込まれるため、参照は字句どおりに書く（確認・精算の API と同じ導き方）
+// NEXT_PUBLIC_* はビルド時に埋め込まれるため、参照は字句どおりに書く（既読・会計の切り替え・精算の API と同じ導き方）
 const API_BASE = deriveApiBase(process.env.NEXT_PUBLIC_API_BASE, process.env.NEXT_PUBLIC_AUTH_ENDPOINT);
 
 export class RecurringApiError extends Error {
