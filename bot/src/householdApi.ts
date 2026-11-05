@@ -1,11 +1,11 @@
 /**
- * Web（精算タブ・設定・明細の確認ボタン）向けの認証付き API
+ * Web（精算タブ・設定・支出一覧の既読と、会計に含める / 含めないの切り替え）向けの認証付き API
  *
  * `api` 関数（Express）に `/household` としてマウントする。Firestore ルールではクライアントから
  * status / confirmed を書けないため、状態を変える操作はここで Admin SDK を使って行う。判定と書き込みは
- * LINE の postback と同じ関数（expenseActions.ts）。
+ * LINE の postback と同じ仕組み（expenseActions.ts）。
  *
- * - POST /household/expenses/:expenseId/actions   { action: 'confirm' }
+ * - POST /household/expenses/:expenseId/actions   { action: 'mark_read' | 'set_include' | 'confirm'（旧 Web 用） }
  * - GET  /household/legacy-advances?groupId=<id>   全額にする前の立替（advanceFull の無い advance_pending）
  * - POST /household/legacy-advances/settle        { groupId, expectedExpenseIds }（精算済みにする）
  * - POST /household/split-settings                { groupId, collectFromLineId }（期間の折半精算で集金するメンバー）
@@ -28,7 +28,14 @@ import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore, type DocumentData, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { parseBearerToken } from './adminAuth';
 import { isValidDocId } from './docId';
-import { applyExpenseChange, decideConfirm, decideSettleLegacyAdvance } from './expenseActions';
+import {
+  applyExpenseChange,
+  decideConfirm,
+  decideMarkRead,
+  decideSetInclude,
+  decideSettleLegacyAdvance,
+  type ExpenseDecider,
+} from './expenseActions';
 import { getPendingAdvances, type Expense } from './firestore';
 import { readActiveMember } from './householdMembers';
 import { getLineClient } from './line/client';
@@ -94,6 +101,33 @@ export function sameIdSet(a: string[], b: string[]): boolean {
   if (setA.size !== setB.size) return false;
   for (const id of setA) if (!setB.has(id)) return false;
   return true;
+}
+
+/**
+ * 支出の操作（POST /household/expenses/:expenseId/actions の body）
+ *
+ * - confirm: LINE の OK と同じ確認（旧 Web 用に残す）
+ * - mark_read: 既読にする
+ * - set_include: 会計（合計）に含める / 含めない
+ */
+export type ExpenseActionRequest =
+  | { action: 'confirm' }
+  | { action: 'mark_read' }
+  | { action: 'set_include'; includeInTotal: boolean };
+
+/** 支出の操作の body を許可リストで検証する（不正なら null。set_include の includeInTotal は boolean だけ） */
+export function parseExpenseAction(body: unknown): ExpenseActionRequest | null {
+  if (!isPlainObject(body)) return null;
+  switch (body.action) {
+    case 'confirm':
+      return { action: 'confirm' };
+    case 'mark_read':
+      return { action: 'mark_read' };
+    case 'set_include':
+      return typeof body.includeInTotal === 'boolean' ? { action: 'set_include', includeInTotal: body.includeInTotal } : null;
+    default:
+      return null;
+  }
 }
 
 /** 手動で送る期間（closed: 締まった期間 / current: 今の期間の途中経過）。不正なら null */
@@ -413,25 +447,45 @@ householdRouter.use(householdCors);
 householdRouter.use(preAuthLimiter);
 householdRouter.use(requireLineUser);
 
+/** 操作に対応する判定関数（LINE の postback と共用の expenseActions.ts） */
+function expenseDeciderFor(request: ExpenseActionRequest): ExpenseDecider {
+  switch (request.action) {
+    case 'confirm':
+      return decideConfirm();
+    case 'mark_read':
+      return decideMarkRead();
+    case 'set_include':
+      return decideSetInclude(request.includeInTotal);
+  }
+}
+
 /**
- * POST /household/expenses/:expenseId/actions  { action: 'confirm' }
+ * POST /household/expenses/:expenseId/actions
+ *   { action: 'mark_read' } | { action: 'set_include', includeInTotal: boolean } | { action: 'confirm' }（旧 Web 用）
  *
- * LINE の OK ボタンと同じ処理。未確認（status 無し / pending）なら共同費にして予算に計上する。
- * それ以外の status は確認済みにするだけで 200（現在の status を返す）。
+ * - mark_read: 既読（`confirmed: true`）にするだけ。status・includeInTotal は変えない（decideMarkRead）。
+ * - set_include: 会計に含める / 含めないを切り替えて既読にする。未確認（status 無し / pending）は含める → shared、
+ *   含めない → personal、personal を含める → shared、それ以外の status はそのまま（decideSetInclude）。
+ * - confirm: LINE の OK ボタンと同じ処理。未確認なら共同費にして予算に計上する。それ以外の status は確認済みにするだけ。
+ *
+ * どれも拒否しない（精算済みも 200。現在の status を返す）。これ以外の action・includeInTotal が boolean でなければ 400。
  */
 householdRouter.post(
   '/expenses/:expenseId/actions',
   userLimiter,
-  route('confirm', async (req, res) => {
+  route('expense-action', async (req, res) => {
     const lineId = res.locals.lineId as string;
     const expenseId = req.params.expenseId;
-    if (!isValidDocId(expenseId) || !isPlainObject(req.body) || req.body.action !== 'confirm') {
+    const request = parseExpenseAction(req.body);
+    if (!isValidDocId(expenseId) || !request) {
       sendError(res, 400, 'invalid_request');
       return;
     }
+    // ログに出すのは許可リストで照合した値だけ（利用者の入力そのものは出さない）
+    const action = request.action;
 
     const db = getFirestore();
-    const decide = decideConfirm();
+    const decide = expenseDeciderFor(request);
     const written: { update?: Record<string, any> } = {};
     const result = await applyExpenseChange(
       expenseId,
@@ -449,18 +503,19 @@ householdRouter.post(
     }
     if ('forbidden' in result) {
       // ID は利用者の入力なので、書式文字列に埋め込まず伏せてオブジェクトで出す
-      console.warn('household confirm: forbidden', { expense: maskId(expenseId), user: maskId(lineId) });
+      console.warn('household expense action: forbidden', { action, expense: maskId(expenseId), user: maskId(lineId) });
       sendError(res, 403, 'forbidden');
       return;
     }
     if ('reject' in result) {
-      // decideConfirm は拒否しない（精算済みも確認済みにするだけ）。ここに来たら判定関数の変更漏れなので 500
-      throw new Error('confirm decision unexpectedly rejected');
+      // どの判定関数も拒否しない（精算済みも既読・確認済みにする）。ここに来たら判定関数の変更漏れなので 500
+      throw new Error('expense action decision unexpectedly rejected');
     }
 
     const record = result.record;
     const updatedAt = written.update?.updatedAt instanceof Date ? written.update.updatedAt : new Date();
-    console.log('household confirm', {
+    console.log('household expense action', {
+      action,
       expense: maskId(expenseId),
       user: maskId(lineId),
       status: typeof record.status === 'string' ? record.status : null,

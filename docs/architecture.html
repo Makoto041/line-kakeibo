@@ -275,7 +275,7 @@ flowchart LR
             <tr><td class="name">bot/src/line/client.ts</td><td>LINE クライアントと返信・push の共通処理（返信できなければ push）</td></tr>
             <tr><td class="name">bot/src/line/flexMessage.ts · postback.ts</td><td>確認カードの組み立てと、カードのボタン操作</td></tr>
             <tr><td class="name">bot/src/auth/lineAuth.ts</td><td><code>/auth/line</code>（LIFF → カスタムトークン）</td></tr>
-            <tr><td class="name">bot/src/householdApi.ts</td><td><code>/household/*</code>（確認・以前の立替の精算済み・固定費・折半設定・精算の通知）</td></tr>
+            <tr><td class="name">bot/src/householdApi.ts</td><td><code>/household/*</code>（支出の既読と会計の切り替え・確認（旧 Web）・以前の立替の精算済み・固定費・折半設定・精算の通知）</td></tr>
             <tr><td class="name">bot/src/gmail/</td><td>Gmail 取込と管理 API（<code>adminRouter.ts</code>）。カード通知の送信待ちと送り直しは <code>cardNotice.ts</code></td></tr>
             <tr><td class="name">bot/src/recurringExpenses.ts</td><td>固定費の計上ロジック</td></tr>
             <tr><td class="name">bot/src/categoryTaxonomy.ts · subCategoryRules.ts</td><td>中項目（食費・娯楽）の一覧と、辞書と時刻で中項目を決める <code>resolveSubCategory</code>（モデルは呼ばない。登録時の保存〔LINE の入力・カード利用メール〕と、LINE のカードでカテゴリを変えたときに呼ぶ）</td></tr>

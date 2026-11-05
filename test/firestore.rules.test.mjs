@@ -274,6 +274,12 @@ await test('★ 不変フィールド: status / advanceBy / advanceFull / appUid
   await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { advanceFull: true }));
   await assertFails(updateDoc(doc(userA, 'expenses/expA'), { appUid: 'x' }));
 });
+// confirmed は Web の支出一覧の既読として使う。書くのは bot の API（POST /household/expenses/:id/actions の mark_read・set_include）だけ
+await test('★ confirmed（既読）はクライアントから書けない（ほかは通る更新に足しても）', async () => {
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { confirmed: true, updatedAt: new Date() }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expFull'), { confirmed: false, updatedAt: new Date() }));
+  await assertFails(updateDoc(doc(userA, 'expenses/expGmail'), { includeInTotal: true, confirmed: true, updatedAt: new Date() }));
+});
 await test('★ groupId の削除（web から見えなくする）はできない', async () => {
   await assertFails(updateDoc(doc(userB, 'expenses/expFull'), { groupId: deleteField() }));
 });

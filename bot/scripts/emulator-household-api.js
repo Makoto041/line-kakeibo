@@ -361,7 +361,7 @@ async function main() {
       check('拒否されたときは書き込まない', unchanged.status === undefined && unchanged.confirmed === false && unchanged.includeInTotal === false);
 
       const badAction = await call('POST', '/household/expenses/e_line_manual/actions', { token: tokens.bob, body: { action: 'set_split', to: 'personal' } });
-      check('confirm 以外の action は 400', badAction.status === 400 && badAction.body.error === 'invalid_request');
+      check('許可リスト外の action（set_split）は 400', badAction.status === 400 && badAction.body.error === 'invalid_request');
       const arrBody = await call('POST', '/household/expenses/e_line_manual/actions', { token: tokens.bob, body: ['confirm'] });
       check('配列の body は 400', arrBody.status === 400);
       const noBody = await call('POST', '/household/expenses/e_line_manual/actions', { token: tokens.bob });
@@ -418,6 +418,81 @@ async function main() {
       check('自分の個人支出は 200', personalOwner.status === 200 && personalOwner.body.expense.status === 'shared');
       const legacy = await call('POST', '/household/expenses/e_legacy/actions', { token: tokens.alice, body: { action: 'confirm' } });
       check('lineGroupId だけの旧形式は 403（所有者でも）', legacy.status === 403);
+    }
+
+    // ---------------- 既読・会計に含める / 含めない ----------------
+    console.log('\nPOST /household/expenses/:id/actions（mark_read・set_include）');
+    {
+      const read = async (id) => (await db.doc(`expenses/${id}`).get()).data();
+      const act = (id, token, body) => call('POST', `/household/expenses/${id}/actions`, { token, body });
+      const MARK_READ = { action: 'mark_read' };
+      const INCLUDE = { action: 'set_include', includeInTotal: true };
+      const EXCLUDE = { action: 'set_include', includeInTotal: false };
+      const seededAt = ts('2026-09-12T01:00:00Z');
+      // 未読の LINE 手入力（status 無し・未確認・合計に入っていない）。立替は advanceFull 付き（以前の立替の一覧に入れない）
+      const unread = { lineId: 'Ualice', payerId: 'Ualice', groupId: 'g1', lineGroupId: 'C_line1', amount: 1200, description: '未読', date: '2026-09-25', category: '食費', includeInTotal: false, confirmed: false, createdAt: seededAt, updatedAt: seededAt };
+      await db.doc('expenses/rd_unread').set(unread);
+      await db.doc('expenses/inc_on').set(unread);
+      await db.doc('expenses/inc_off').set(unread);
+      await db.doc('expenses/inc_adv').set({ ...unread, status: 'advance_pending', advanceBy: 'Ualice', advanceFull: true, includeInTotal: true });
+      await db.doc('expenses/inc_personal').set({ ...unread, status: 'personal', confirmed: true });
+      await db.doc('expenses/inc_settled').set({ ...unread, status: 'advance_settled', advanceBy: 'Ualice', includeInTotal: true, confirmed: true });
+
+      // 認可（confirm と同じ authorizeExpenseWrite）
+      for (const [who, token] of [['メンバー外', tokens.stranger], ['脱退者', tokens.left]]) {
+        for (const body of [MARK_READ, INCLUDE]) {
+          const r = await act('rd_unread', token, body);
+          check(`${body.action}: ${who}は 403`, r.status === 403 && r.body.error === 'forbidden', r.body);
+        }
+      }
+      for (const body of [MARK_READ, EXCLUDE]) {
+        const legacy = await act('e_legacy', tokens.alice, body);
+        check(`${body.action}: lineGroupId だけの旧形式は 403（所有者でも）`, legacy.status === 403, legacy.body);
+        const missing = await act('no_such', tokens.bob, body);
+        check(`${body.action}: 存在しない支出は 404`, missing.status === 404 && missing.body.error === 'not_found', missing.body);
+      }
+      // 入力検証（includeInTotal は boolean だけ）
+      const noInclude = await act('rd_unread', tokens.bob, { action: 'set_include' });
+      check('set_include: includeInTotal が無ければ 400', noInclude.status === 400 && noInclude.body.error === 'invalid_request', noInclude.body);
+      const strInclude = await act('rd_unread', tokens.bob, { action: 'set_include', includeInTotal: 'false' });
+      check('set_include: includeInTotal が文字列なら 400', strInclude.status === 400 && strInclude.body.error === 'invalid_request', strInclude.body);
+      const untouched = await read('rd_unread');
+      check('拒否・400 のときは書き込まない', untouched.confirmed === false && untouched.status === undefined && untouched.includeInTotal === false && untouched.updatedAt.isEqual(seededAt), untouched);
+
+      // 既読: confirmed と updatedAt だけ
+      const markRead = await act('rd_unread', tokens.bob, MARK_READ);
+      const mr = markRead.body && markRead.body.expense ? markRead.body.expense : {};
+      check('mark_read: 200（status・includeInTotal は今の値を返す）', markRead.status === 200 && markRead.body.ok === true && mr.id === 'rd_unread' && mr.status === null && mr.includeInTotal === false && mr.confirmed === true && mr.advanceBy === null && mr.category === '食費' && !Number.isNaN(Date.parse(mr.updatedAt)), markRead.body);
+      const readDoc = await read('rd_unread');
+      const same = (a, b) => (a instanceof Timestamp && b instanceof Timestamp ? a.isEqual(b) : a === b);
+      const changed = Object.keys({ ...unread, ...readDoc }).filter((k) => !same(unread[k], readDoc[k])).sort();
+      check('mark_read: 文書は confirmed=true と updatedAt だけ変わる', readDoc.confirmed === true && readDoc.updatedAt.toMillis() > seededAt.toMillis() && JSON.stringify(changed) === '["confirmed","updatedAt"]', { changed, doc: readDoc });
+      // 既読にしただけ（status は未確認のまま）なら、LINE の OK で共同費・計上になる（判定は confirmed ではなく status。既知の挙動）
+      const okAfterRead = await pressPostback({ action: 'confirm', expenseId: 'rd_unread' }, 'Ubob');
+      const readThenOk = await read('rd_unread');
+      check('既読にする → LINE の OK → shared・計上（既知の挙動）', !!okAfterRead.flex && readThenOk.status === 'shared' && readThenOk.includeInTotal === true && readThenOk.confirmed === true, readThenOk);
+
+      // 未読に含める / 含めない
+      const on = await act('inc_on', tokens.bob, INCLUDE);
+      const onDoc = await read('inc_on');
+      check('set_include true: 未読 → shared・計上・既読', on.status === 200 && on.body.expense.status === 'shared' && on.body.expense.includeInTotal === true && on.body.expense.confirmed === true && onDoc.status === 'shared' && onDoc.includeInTotal === true && onDoc.confirmed === true && onDoc.amount === 1200, { body: on.body, doc: onDoc });
+      const off = await act('inc_off', tokens.bob, EXCLUDE);
+      const offDoc = await read('inc_off');
+      check('set_include false: 未読 → personal・除外・既読（LINE の［除外］と同じ状態）', off.status === 200 && off.body.expense.status === 'personal' && off.body.expense.includeInTotal === false && off.body.expense.confirmed === true && offDoc.status === 'personal' && offDoc.includeInTotal === false && offDoc.confirmed === true, { body: off.body, doc: offDoc });
+      // 含めない → 古いカードの LINE の OK を押しても、合計に戻らない
+      const okAfterExclude = await pressPostback({ action: 'confirm', expenseId: 'inc_off' }, 'Ubob');
+      const excludeThenOk = await read('inc_off');
+      check('含めない → LINE の OK → 除外のまま', !!okAfterExclude.flex && excludeThenOk.status === 'personal' && excludeThenOk.includeInTotal === false, excludeThenOk);
+
+      const adv = await act('inc_adv', tokens.bob, EXCLUDE);
+      const advDoc = await read('inc_adv');
+      check('set_include false: 立替（advance_pending）は立替のまま除外', adv.status === 200 && adv.body.expense.status === 'advance_pending' && adv.body.expense.includeInTotal === false && adv.body.expense.advanceBy === 'Ualice' && advDoc.status === 'advance_pending' && advDoc.includeInTotal === false && advDoc.advanceBy === 'Ualice' && advDoc.advanceFull === true && advDoc.confirmed === true, { body: adv.body, doc: advDoc });
+      const personal = await act('inc_personal', tokens.bob, INCLUDE);
+      const personalDoc = await read('inc_personal');
+      check('set_include true: personal → shared・計上（LINE の［戻す］と同じ）', personal.status === 200 && personal.body.expense.status === 'shared' && personalDoc.status === 'shared' && personalDoc.includeInTotal === true, { body: personal.body, doc: personalDoc });
+      const settled = await act('inc_settled', tokens.bob, EXCLUDE);
+      const settledDoc = await read('inc_settled');
+      check('set_include false: 精算済みも拒否せず、status はそのまま', settled.status === 200 && settled.body.expense.status === 'advance_settled' && settledDoc.status === 'advance_settled' && settledDoc.includeInTotal === false, { body: settled.body, doc: settledDoc });
     }
 
     // ---------------- 支払った人・支出区分・立替（LINE の［自分が払った］［除外］［自分が立替］［取り消す］） ----------------
