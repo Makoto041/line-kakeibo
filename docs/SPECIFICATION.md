@@ -161,7 +161,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 **変更後の再表示**: LINE は送信済みメッセージを編集できないため、状態を変えたら最新値のカードを `replyToken` で返信する（`buildExpenseCardFromRecord()`）。登録直後のカードと同じビルダーを通すので表現がぶれない。
 
-**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`。OK・支払った人・立替・取り消しの判定 `decideConfirm()` / `decideSetPayer()` / `decideSetAdvance()` / `decideClearAdvance()` とともに `bot/src/expenseActions.ts` にあり、Web の既読・会計の切り替え（§5.4。`decideMarkRead()` / `decideSetInclude()`）、現行 Web の確認ボタン（`decideConfirm()`。次の PR で新 UI に置き換え）、以前の立替を精算済みにする操作（`decideSettleLegacyAdvance()`）も同じ仕組みを使う。支出を変える postback のメンバー確認も同じトランザクション内で読む）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
+**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`。OK・支払った人・立替・取り消しの判定 `decideConfirm()` / `decideSetPayer()` / `decideSetAdvance()` / `decideClearAdvance()` とともに `bot/src/expenseActions.ts` にあり、Web の既読・会計の切り替え（§5.4。`decideMarkRead()` / `decideSetInclude()`）、API の `confirm`（`decideConfirm()`。Web は使わない。旧キャッシュの Web 向けに残す）、以前の立替を精算済みにする操作（`decideSettleLegacyAdvance()`）も同じ仕組みを使う。支出を変える postback のメンバー確認も同じトランザクション内で読む）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
 
 ### 2.6 メッセージ送信ポリシー
 
@@ -331,7 +331,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 | メソッド・パス | リクエスト | 成功時 | 主なエラー |
 |---|---|---|---|
-| `POST /household/expenses/:expenseId/actions` | `{ "action": "mark_read" }`（既読）/ `{ "action": "set_include", "includeInTotal": true \| false }`（会計に含める / 含めない）/ `{ "action": "confirm" }`（LINE の OK と同じ。現行 Web の確認ボタン用で、次の PR で新 UI に置き換え）。これ以外の action、`includeInTotal` が boolean でないものは 400 | 200 `{ ok: true, expense: { id, status, includeInTotal, confirmed: true, advanceBy \| null, category, updatedAt(ISO) } }`。判定は下の「支出の操作」（どの action も拒否しない。精算済みも 200） | 403 / 404（拒否しないので 409 は無い） |
+| `POST /household/expenses/:expenseId/actions` | `{ "action": "mark_read" }`（既読）/ `{ "action": "set_include", "includeInTotal": true \| false }`（会計に含める / 含めない）/ `{ "action": "confirm" }`（LINE の OK と同じ。Web は使わない。旧キャッシュの Web の確認ボタン向けに残す）。これ以外の action、`includeInTotal` が boolean でないものは 400 | 200 `{ ok: true, expense: { id, status, includeInTotal, confirmed: true, advanceBy \| null, category, updatedAt(ISO) } }`。判定は下の「支出の操作」（どの action も拒否しない。精算済みも 200） | 403 / 404（拒否しないので 409 は無い） |
 | `GET /household/legacy-advances?groupId=<id>` | − | 200 `{ groupId, items: [{ id, date, description, amount, category, advanceBy, advanceByName }], expenseIds: [...], asOf }`。全額にする前の立替（`advanceFull` の無い `advance_pending`。全額の立替は期間の精算で返すので含めない）を `createdAt` の新しい順で全件。`advanceBy` は `advanceBy`、無ければ `payerId`。`advanceByName` は支出に記録された名前（`advanceBy` があれば `userDisplayName` → `payerDisplayName`、無ければ `payerDisplayName`。分からなければ空文字） | 403 / 404 |
 | `POST /household/legacy-advances/settle` | `{ "groupId": "<id>", "expectedExpenseIds": ["…"] }`（ID は重複を除いて 500 件まで照合する。GET の `expenseIds` が 500 件を超えていてそのまま送った場合は 400 にせず、現在も 500 件超なら `too_many`、500 件以下に減っていれば `stale`） | 200 `{ ok: true, settled, skipped }`。1 件ずつトランザクションで `status: 'advance_settled'`・`advanceSettledAt`（`decideSettleLegacyAdvance`）。精算済みはどの期間の折半にも入らない。その間に範囲外になった・精算済みや取り消しになった・全額の立替になった支出は飛ばして `skipped` に数える（全額の立替〔`advanceFull`〕は変えない） | 409 `too_many`（500 件超）/ `stale`（ID の集合が現在と違う。`current` に最新の GET 内容）/ `nothing_to_settle`（対象も画面も 0 件、または 1 件も精算済みにできなかった） |
 | `GET /household/settlement-summary?groupId=<id>` | − | 200 `{ reason, startDay, closed: { startDate, endDate } \| null, current: { startDate, endDate } \| null, closedSentAt: ISO \| null }`（設定の「LINEへの精算の通知」の状態。§3.4）。`reason` は送れるなら `null`、送れなければ `no_line_group`（LINE グループに紐づいていない）/ `no_collect_from`（集金するメンバー未指定。脱退も含む）/ `not_two_members`（有効メンバーが 2 人でない）/ `fixed_period`（期間を日付で固定）。`closedSentAt` は締まった期間を送った時刻（自動・手動のどちらでも） | 403 / 404 |
@@ -346,7 +346,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 **支出の操作**（`POST /household/expenses/:expenseId/actions`。判定は `bot/src/expenseActions.ts`）: Web の支出一覧の「既読」と「会計に含める / 含めない」。`confirmed` を既読として使う（データの移行はしない）。判定はトランザクション内で読んだ最新の `status` で行い（`confirmed` では分けない）、どの action も拒否しない（精算済みも通す）。
 
-| 今の `status` | `mark_read`（`decideMarkRead`） | `set_include` 含める（`decideSetInclude(true)`） | `set_include` 含めない（`decideSetInclude(false)`） | `confirm`（現行 Web の確認ボタン用。`decideConfirm`） |
+| 今の `status` | `mark_read`（`decideMarkRead`） | `set_include` 含める（`decideSetInclude(true)`） | `set_include` 含めない（`decideSetInclude(false)`） | `confirm`（Web は使わない。旧キャッシュの Web 向け。`decideConfirm`） |
 |---|---|---|---|---|
 | 無し / `pending`（未確認） | そのまま | `shared` | `personal` | `shared`・`includeInTotal: true` |
 | `shared` | そのまま | そのまま | そのまま | そのまま |

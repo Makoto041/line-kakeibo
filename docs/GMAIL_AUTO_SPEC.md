@@ -348,7 +348,7 @@ bot/src/
 bot/src/
 ├── index.ts                      # Function エクスポート（gmailPubSubHandler / renewGmailWatch / api）
 ├── firestore.ts                  # saveGmailExpenseAtomic（重複排除つき保存）
-├── expenseActions.ts             # postback / Web の確認で共用する状態遷移
+├── expenseActions.ts             # postback / Web の既読・会計の切り替えで共用する状態遷移
 ├── geminiCategoryClassifier.ts   # カテゴリ分類の入口（キャッシュ・辞書・Jev → Gemini の順序。Gemini の呼び出しもここ。ファイル名は従来のまま）
 ├── jevCategoryClassifier.ts      # Jev（分類のメイン）の呼び出し（大項目と、中項目の別の呼び出し）
 ├── subCategoryRules.ts           # 中項目の辞書と時刻のルール

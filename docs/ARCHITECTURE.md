@@ -95,7 +95,7 @@ flowchart LR
 | `importMoneyForward` | cron `0 5 * * *` JST | asia-northeast1 | **廃止（何もしない）**。旧 MoneyForward CSV 取込。送信先 `/api/mf/import` が存在せず機能していなかったため処理を削除。`syncUserLinks` と同じ理由で関数名だけ残置。削除は手動 `firebase functions:delete importMoneyForward --region asia-northeast1` |
 | `postRecurringExpenses` | cron `10 9 * * *` JST | asia-northeast1 | 毎日のバッチ。固定費（`recurringExpenses`）のうち引き落とし日を迎えた項目を `expenses` に計上（`recurringExpenses.ts`。同じ月に 2 回は入らない。LINE 通知なし）。期間の起算日には、締まった期間の精算サマリーを LINE グループへメンション付きで送る（`settlementSummary.ts`。同じ期間は 1 回。Web の設定から手動で送った期間は送らない）。Secret: `LINE_CHANNEL_TOKEN` / `LINE_CHANNEL_SECRET` |
 | `syncUserLinks` | Firestore `expenses/{id}` onCreate | asia-northeast1 | **無効化済み（何もしない）**。export から外すと CI の非対話デプロイが関数削除の確認で失敗するため残置。削除は手動 `firebase functions:delete syncUserLinks` |
-| `api` | HTTPS（Express） | **us-central1** | Gmail OAuth / watch 管理 `/gmail/*`（`ADMIN_SECRET` 認証）、LIFF ログイン `/auth/line`、Web の既読・会計の切り替え・確認（現行 Web の確認ボタン。次の PR で新 UI に置き換え）・以前の立替の精算済み・固定費・折半設定・精算の通知 `/household/*`（Firebase ID トークン認証。SPECIFICATION.md §5.4） |
+| `api` | HTTPS（Express） | **us-central1** | Gmail OAuth / watch 管理 `/gmail/*`（`ADMIN_SECRET` 認証）、LIFF ログイン `/auth/line`、Web の既読・会計の切り替え・確認（`confirm`。Web は使わない。旧キャッシュの Web 向けに残す）・以前の立替の精算済み・固定費・折半設定・精算の通知 `/household/*`（Firebase ID トークン認証。SPECIFICATION.md §5.4） |
 
 メモリは全関数 512MiB。どの関数も `bot/src/index.ts` から全関数の依存（特に googleapis）を起動時に読み込むため、256MiB では何もしない関数でも cold start の直後に上限を超えていた。下げる場合は、関数ごとに依存を遅延読み込みしてから cold start 時の使用量を計測する。
 
@@ -208,7 +208,7 @@ viewport-fit=cover: ノッチ・ホームバーは env(safe-area-inset-*) で避
 - **立替**は「押した人が払って、相手の分を立て替えた」支出。LINE のカードの［自分が立替］（`set_advance`）で `status: 'advance_pending'`・`advanceFull: true`・立て替えた人 = 支払った人 = 押した人になり、折半せず支出の日付の期間の精算で全額を返してもらう（`isFullAdvance`）。以前は立替が折半と別の立替の精算の両方に入り、二重に払うおそれがあったため、立替の精算（`GET /household/settlement`・`POST /household/settlement/settle` と旧 `householdSettlement.ts` の精算額の計算。メンバーと表示名の関数は `householdMembers.ts` に残した）は削除し、期間の精算にまとめた。`立替一覧` / `立替` / `精算` コマンドは案内を返すだけ
 - 全額にする前の立替（`advanceFull` の無い `advance_pending`）は、これまでどおり支払った人の分として折半する（過去の期間の金額を変えないため）。残っていれば精算タブにお知らせ（`components/LeftoverAdvancesCard.tsx`）を出し、`GET /household/legacy-advances` で一覧（世帯に `lineGroupId` があればその基準、無ければ `groupId`）を取り、`POST /household/legacy-advances/settle` で精算済み（`advance_settled`。どの期間の精算にも入らない）にする
 - 期間の起算日には、締まった期間の精算サマリーを LINE グループへ送る（`settlementSummary.ts`。内訳に立替（全額）の行を含む）。Web の設定 > 期間タブ（`components/settings/SettlementNotifyCard.tsx`）から、締まった期間（自動と同じ内容）か今の期間の途中経過を今すぐ送れる（`GET /household/settlement-summary`・`POST /household/settlement-summary/send`。締まった期間を送ったら送信済みの印を付け、自動の通知と二重にならない。自動で送った時刻は上書きしない）
-- 支出の確認（LINE の OK / 現行 Web の確認ボタン。次の PR で新 UI に置き換え）・Web の既読と会計に含める / 含めない（`POST /household/expenses/:id/actions` の `mark_read` / `set_include`）・支払った人・立替・取り消し・以前の立替の精算済みは `expenseActions.ts` の `applyExpenseChange` + `decideConfirm` / `decideMarkRead` / `decideSetInclude` / `decideSetPayer` / `decideSetAdvance` / `decideClearAdvance` / `decideSettleLegacyAdvance` を共用する（判定表は SPECIFICATION.md §5.4）
+- 支出の確認（LINE の OK。`/household` API の `confirm` も同じ判定で、Web は使わない。旧キャッシュの Web 向けに残す）・Web の既読と会計に含める / 含めない（`POST /household/expenses/:id/actions` の `mark_read` / `set_include`）・支払った人・立替・取り消し・以前の立替の精算済みは `expenseActions.ts` の `applyExpenseChange` + `decideConfirm` / `decideMarkRead` / `decideSetInclude` / `decideSetPayer` / `decideSetAdvance` / `decideClearAdvance` / `decideSettleLegacyAdvance` を共用する（判定表は SPECIFICATION.md §5.4）
 - Web の支出一覧では支払者（`payerId`/`payerDisplayName`）別集計を表示
 
 ### 4.5 固定費（毎月の自動計上）
