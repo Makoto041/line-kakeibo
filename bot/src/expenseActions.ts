@@ -72,6 +72,53 @@ export function decideConfirm(): ExpenseDecider {
 }
 
 /**
+ * 既読にする（Web の支出一覧。`confirmed` を既読として使う）
+ *
+ * `confirmed: true` と `updatedAt` だけを書く。status・includeInTotal は変えず、どの状態でも拒否しない
+ * （精算済みも既読にするだけ）。未確認（status 無し / pending）のまま既読になるので、そのあと LINE の OK を
+ * 押せば decideConfirm が共同費・計上へ昇格させる（判定は confirmed ではなく status で行う）。
+ */
+export function decideMarkRead(): ExpenseDecider {
+  return () => ({
+    update: { confirmed: true, updatedAt: new Date() },
+    cardPatch: {},
+  });
+}
+
+/**
+ * 会計（合計）に含める / 含めないを切り替える（Web の支出一覧）
+ *
+ * includeInTotal を押した値にし、既読（`confirmed: true`）にする。どの状態でも拒否しない（精算済みも通す）。
+ * status はトランザクション内で読んだ最新の値で決める:
+ *
+ * | 今の status                         | 含める     | 含めない   |
+ * |-------------------------------------|------------|------------|
+ * | 無し / pending（未確認）            | shared     | personal   |
+ * | shared                              | そのまま   | そのまま   |
+ * | personal                            | shared     | そのまま   |
+ * | advance_pending / advance_settled   | そのまま   | そのまま   |
+ *
+ * - 未確認を「含めない」にしたときは、LINE の［除外］と同じ personal にする。未確認のまま除外にすると、古いカードの
+ *   OK・［自分が払った］・カテゴリの変更（decideConfirm / decideSetPayer / decideSetCategory）が未確認として
+ *   共同費・計上へ昇格させ、黙って合計に戻ってしまう（personal は昇格しない）。
+ * - personal を「含める」にしたときは、LINE の［戻す］と同じ shared にする。
+ * - 立替は立替のまま（除外した立替は期間の精算で返さない。SPECIFICATION.md §5.4）。
+ *
+ * `cardPatch` には status（変わるときだけ）と includeInTotal を入れる。
+ */
+export function decideSetInclude(include: boolean): ExpenseDecider {
+  return (data) => {
+    let statusPatch: { status?: 'shared' | 'personal' } = {};
+    if (isPendingStatus(data.status)) statusPatch = { status: include ? 'shared' : 'personal' };
+    else if (data.status === 'personal' && include) statusPatch = { status: 'shared' };
+    return {
+      update: { ...statusPatch, includeInTotal: include, confirmed: true, updatedAt: new Date() },
+      cardPatch: { ...statusPatch, includeInTotal: include },
+    };
+  };
+}
+
+/**
  * 支払った人を変える（LINE の［自分が払った］）
  *
  * 期間の折半は支払った人（payerId）で数えるので、ここを変えれば精算に反映される。あわせて確認済みにし、

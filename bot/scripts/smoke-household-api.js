@@ -11,8 +11,10 @@ const { Timestamp } = require('firebase-admin/firestore');
 const {
   decideClearAdvance,
   decideConfirm,
+  decideMarkRead,
   decideSetAdvance,
   decideSetCategory,
+  decideSetInclude,
   decideSetPayer,
   decideSettleLegacyAdvance,
   isPendingStatus,
@@ -29,6 +31,7 @@ const {
   householdErrorHandler,
   clientIpKey,
   parseCollectFromLineId,
+  parseExpenseAction,
   MAX_LEGACY_SETTLE_IDS,
 } = require('../dist/householdApi');
 const { isAllowedWebOrigin } = require('../dist/webOrigins');
@@ -164,6 +167,116 @@ console.log('\ndecideClearAdvance（立替を取り消す）');
   check('advanceBy・advanceFull を消す', isFieldDelete(d.update.advanceBy) && isFieldDelete(d.update.advanceFull) && d.cardPatch.advanceFull === undefined);
   check('立替で精算済みは拒否', deepEqual(decideClearAdvance()({ status: 'advance_settled' }), { reject: SETTLED_REJECTION }));
   check('立替でなければ変えない（理由を返す）', deepEqual(decideClearAdvance()({ status: 'shared' }), { reject: '立替ではないため、変更はありません' }));
+}
+
+// ------------------------------------------------------------
+console.log('\ndecideMarkRead（Web の既読。confirmed を既読として使う）');
+for (const status of statuses) {
+  const d = decideMarkRead()({ status, amount: 1000, includeInTotal: status === 'shared', advanceBy: 'U2' });
+  check(
+    `status=${JSON.stringify(status)} は confirmed と updatedAt だけを書く（拒否しない）`,
+    !('reject' in d) && deepEqual(comparable(d), { update: { confirmed: true }, cardPatch: {}, updatedAtIsDate: true }),
+    JSON.stringify(d)
+  );
+}
+
+// ------------------------------------------------------------
+console.log('\ndecideSetInclude（Web の会計に含める / 含めない）');
+{
+  /** [今の status, 含める → status, 含めない → status]。undefined は status を書かない（そのまま） */
+  const table = [
+    [undefined, 'shared', 'personal'],
+    [null, 'shared', 'personal'],
+    ['', 'shared', 'personal'],
+    ['pending', 'shared', 'personal'],
+    ['shared', undefined, undefined],
+    ['personal', 'shared', undefined],
+    ['advance_pending', undefined, undefined],
+    ['advance_settled', undefined, undefined],
+  ];
+  check('表は status 8 種をすべて含む', deepEqual(table.map((row) => row[0]), statuses));
+  for (const [status, whenInclude, whenExclude] of table) {
+    for (const [include, next] of [[true, whenInclude], [false, whenExclude]]) {
+      const d = decideSetInclude(include)({ status, includeInTotal: !include, advanceBy: 'U2', advanceFull: true, amount: 1000 });
+      const statusPatch = next === undefined ? {} : { status: next };
+      check(
+        `status=${JSON.stringify(status)}・${include ? '含める' : '含めない'} → ${next ?? 'そのまま'}・includeInTotal=${include}・既読`,
+        !('reject' in d) &&
+          deepEqual(comparable(d), {
+            update: { ...statusPatch, includeInTotal: include, confirmed: true },
+            cardPatch: { ...statusPatch, includeInTotal: include },
+            updatedAtIsDate: true,
+          }),
+        JSON.stringify(d)
+      );
+    }
+  }
+  // 押す前の includeInTotal は判定に使わない（同じ status なら、押す前の値によらず同じ内容を書く）
+  for (const before of [true, false]) {
+    check(
+      `押す前の includeInTotal=${before} は読まない（status=shared）`,
+      [true, false].every((include) =>
+        deepEqual(comparable(decideSetInclude(include)({ status: 'shared', includeInTotal: before })), comparable(decideSetInclude(include)({ status: 'shared' })))
+      )
+    );
+  }
+
+  /** 判定の update を文書に当てた結果（FieldValue.delete() はキーを消す） */
+  const applyUpdate = (data, decision) => {
+    const next = { ...data };
+    for (const [k, v] of Object.entries(decision.update)) {
+      if (isFieldDelete(v)) delete next[k];
+      else next[k] = v;
+    }
+    return next;
+  };
+  // 「含めない」の後に古いカードの OK・［自分が払った］・カテゴリの変更が押されても、黙って合計に戻らない
+  const laterPresses = [
+    ['OK（decideConfirm）', decideConfirm()],
+    ['［自分が払った］（decideSetPayer）', decideSetPayer({ lineId: 'U1', displayName: 'まこと' })],
+    ['カテゴリの変更（decideSetCategory）', decideSetCategory('日用品')],
+  ];
+  for (const status of statuses) {
+    const excluded = applyUpdate({ status, includeInTotal: true, amount: 1000, category: '食費', description: 'x' }, decideSetInclude(false)({ status, includeInTotal: true }));
+    for (const [name, decide] of laterPresses) {
+      const d = decide(excluded);
+      const after = 'reject' in d ? excluded : applyUpdate(excluded, d);
+      check(
+        `status=${JSON.stringify(status)} を含めないにした後の ${name} でも合計に戻らない`,
+        after.includeInTotal === false && after.status === excluded.status && d.cardPatch?.includeInTotal !== true,
+        JSON.stringify({ excluded, decision: d })
+      );
+    }
+  }
+  // 既読にしただけ（status は未確認のまま）なら、LINE の OK で共同費・計上になる（判定は confirmed ではなく status。既知の挙動）
+  const readOnly = applyUpdate({ includeInTotal: false }, decideMarkRead()({ includeInTotal: false }));
+  const okAfterRead = decideConfirm()(readOnly);
+  check('既読にした未確認の支出に LINE の OK → 共同費・計上', readOnly.confirmed === true && okAfterRead.update.status === 'shared' && okAfterRead.update.includeInTotal === true);
+}
+
+// ------------------------------------------------------------
+console.log('\nparseExpenseAction（POST /household/expenses/:id/actions の body）');
+{
+  check('confirm（現行 Web の確認ボタン）', deepEqual(parseExpenseAction({ action: 'confirm' }), { action: 'confirm' }));
+  check('mark_read', deepEqual(parseExpenseAction({ action: 'mark_read' }), { action: 'mark_read' }));
+  check('set_include true / false', deepEqual(parseExpenseAction({ action: 'set_include', includeInTotal: true }), { action: 'set_include', includeInTotal: true }) &&
+    deepEqual(parseExpenseAction({ action: 'set_include', includeInTotal: false }), { action: 'set_include', includeInTotal: false }));
+  check('余分なキーは無視する（includeInTotal 以外は取り出さない）', deepEqual(parseExpenseAction({ action: 'mark_read', status: 'shared', includeInTotal: true }), { action: 'mark_read' }));
+  for (const [name, body] of [
+    ['includeInTotal が無い', { action: 'set_include' }],
+    ['includeInTotal が文字列', { action: 'set_include', includeInTotal: 'true' }],
+    ['includeInTotal が数値', { action: 'set_include', includeInTotal: 1 }],
+    ['includeInTotal が null', { action: 'set_include', includeInTotal: null }],
+    ['許可リスト外の action（set_split）', { action: 'set_split', to: 'personal' }],
+    ['action が無い', {}],
+    ['action が文字列でない', { action: ['mark_read'] }],
+    ['大文字違い', { action: 'MARK_READ' }],
+    ['配列の body', ['mark_read']],
+    ['null', null],
+    ['文字列', 'mark_read'],
+  ]) {
+    check(`${name} は null`, parseExpenseAction(body) === null);
+  }
 }
 
 // ------------------------------------------------------------

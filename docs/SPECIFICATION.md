@@ -161,7 +161,7 @@ LINE でメッセージを送るだけで支出を記録できる家計簿アプ
 
 **変更後の再表示**: LINE は送信済みメッセージを編集できないため、状態を変えたら最新値のカードを `replyToken` で返信する（`buildExpenseCardFromRecord()`）。登録直後のカードと同じビルダーを通すので表現がぶれない。
 
-**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`。OK・支払った人・立替・取り消しの判定 `decideConfirm()` / `decideSetPayer()` / `decideSetAdvance()` / `decideClearAdvance()` とともに `bot/src/expenseActions.ts` にあり、Web の確認と以前の立替を精算済みにする操作（§5.4。`decideSettleLegacyAdvance()`）も同じ仕組みを使う。支出を変える postback のメンバー確認も同じトランザクション内で読む）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
+**同時操作**: グループトークでは複数人が同時にボタンを押せるため、読み取り・判定・更新は `runTransaction` で1トランザクションにまとめる（`applyExpenseChange()`。OK・支払った人・立替・取り消しの判定 `decideConfirm()` / `decideSetPayer()` / `decideSetAdvance()` / `decideClearAdvance()` とともに `bot/src/expenseActions.ts` にあり、Web の既読・会計の切り替え（§5.4。`decideMarkRead()` / `decideSetInclude()`）、現行 Web の確認ボタン（`decideConfirm()`。次の PR で新 UI に置き換え）、以前の立替を精算済みにする操作（`decideSettleLegacyAdvance()`）も同じ仕組みを使う。支出を変える postback のメンバー確認も同じトランザクション内で読む）。分離していると、誰かが個人費にした直後に別の人の OK が古い `pending` を読んで共同費へ巻き戻したり、精算済み判定をすり抜けて変更が通ったりする。
 
 ### 2.6 メッセージ送信ポリシー
 
@@ -331,7 +331,7 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 
 | メソッド・パス | リクエスト | 成功時 | 主なエラー |
 |---|---|---|---|
-| `POST /household/expenses/:expenseId/actions` | `{ "action": "confirm" }`（これ以外の action は 400） | 200 `{ ok: true, expense: { id, status, includeInTotal, confirmed: true, advanceBy \| null, category, updatedAt(ISO) } }`。LINE の OK と同じ判定: status 無し / `pending` → `shared`・`includeInTotal: true`、それ以外は `confirmed: true` だけ（精算済みも 200） | 403 / 404（`confirm` は拒否しないので 409 は無い） |
+| `POST /household/expenses/:expenseId/actions` | `{ "action": "mark_read" }`（既読）/ `{ "action": "set_include", "includeInTotal": true \| false }`（会計に含める / 含めない）/ `{ "action": "confirm" }`（LINE の OK と同じ。現行 Web の確認ボタン用で、次の PR で新 UI に置き換え）。これ以外の action、`includeInTotal` が boolean でないものは 400 | 200 `{ ok: true, expense: { id, status, includeInTotal, confirmed: true, advanceBy \| null, category, updatedAt(ISO) } }`。判定は下の「支出の操作」（どの action も拒否しない。精算済みも 200） | 403 / 404（拒否しないので 409 は無い） |
 | `GET /household/legacy-advances?groupId=<id>` | − | 200 `{ groupId, items: [{ id, date, description, amount, category, advanceBy, advanceByName }], expenseIds: [...], asOf }`。全額にする前の立替（`advanceFull` の無い `advance_pending`。全額の立替は期間の精算で返すので含めない）を `createdAt` の新しい順で全件。`advanceBy` は `advanceBy`、無ければ `payerId`。`advanceByName` は支出に記録された名前（`advanceBy` があれば `userDisplayName` → `payerDisplayName`、無ければ `payerDisplayName`。分からなければ空文字） | 403 / 404 |
 | `POST /household/legacy-advances/settle` | `{ "groupId": "<id>", "expectedExpenseIds": ["…"] }`（ID は重複を除いて 500 件まで照合する。GET の `expenseIds` が 500 件を超えていてそのまま送った場合は 400 にせず、現在も 500 件超なら `too_many`、500 件以下に減っていれば `stale`） | 200 `{ ok: true, settled, skipped }`。1 件ずつトランザクションで `status: 'advance_settled'`・`advanceSettledAt`（`decideSettleLegacyAdvance`）。精算済みはどの期間の折半にも入らない。その間に範囲外になった・精算済みや取り消しになった・全額の立替になった支出は飛ばして `skipped` に数える（全額の立替〔`advanceFull`〕は変えない） | 409 `too_many`（500 件超）/ `stale`（ID の集合が現在と違う。`current` に最新の GET 内容）/ `nothing_to_settle`（対象も画面も 0 件、または 1 件も精算済みにできなかった） |
 | `GET /household/settlement-summary?groupId=<id>` | − | 200 `{ reason, startDay, closed: { startDate, endDate } \| null, current: { startDate, endDate } \| null, closedSentAt: ISO \| null }`（設定の「LINEへの精算の通知」の状態。§3.4）。`reason` は送れるなら `null`、送れなければ `no_line_group`（LINE グループに紐づいていない）/ `no_collect_from`（集金するメンバー未指定。脱退も含む）/ `not_two_members`（有効メンバーが 2 人でない）/ `fixed_period`（期間を日付で固定）。`closedSentAt` は締まった期間を送った時刻（自動・手動のどちらでも） | 403 / 404 |
@@ -344,10 +344,24 @@ Postback への応答（設定変更後のカード再送・カテゴリ選択�
 | `POST /household/category-rules` | `{ groupId, expectedVersion, rules: [{ keyword, category }], examples: { <カテゴリ>: string[] } }`（丸ごと置き換え） | 200（整えた結果を GET と同じ形で返し、`version` は保存した版）。`groups/{groupId}.categoryRules` に `{ rules, examples, updatedBy, updatedAt }` を書く。上限・カテゴリの一覧・文字を満たさなければ 400（書かない）。`expectedVersion` が今の版と違えば 409 `stale`（書かない） | 400 / 403 / 404 / 409 |
 | `POST /household/split-settings` | `{ groupId, collectFromLineId: string \| null }`（有効メンバーの lineId か `null`=解除） | 200 `{ collectFromLineId }`。`groups/{groupId}.splitSettings` に `{ collectFromLineId, updatedBy, updatedAt }` を書く | 400 / 403 / 404 |
 
+**支出の操作**（`POST /household/expenses/:expenseId/actions`。判定は `bot/src/expenseActions.ts`）: Web の支出一覧の「既読」と「会計に含める / 含めない」。`confirmed` を既読として使う（データの移行はしない）。判定はトランザクション内で読んだ最新の `status` で行い（`confirmed` では分けない）、どの action も拒否しない（精算済みも通す）。
+
+| 今の `status` | `mark_read`（`decideMarkRead`） | `set_include` 含める（`decideSetInclude(true)`） | `set_include` 含めない（`decideSetInclude(false)`） | `confirm`（現行 Web の確認ボタン用。`decideConfirm`） |
+|---|---|---|---|---|
+| 無し / `pending`（未確認） | そのまま | `shared` | `personal` | `shared`・`includeInTotal: true` |
+| `shared` | そのまま | そのまま | そのまま | そのまま |
+| `personal` | そのまま | `shared`（LINE の［戻す］と同じ） | そのまま | そのまま |
+| `advance_pending` / `advance_settled` | そのまま | そのまま | そのまま（除外した立替は返さない） | そのまま |
+
+- 書く項目: `mark_read` は `confirmed: true` と `updatedAt` だけ（status・`includeInTotal` は変えない）。`set_include` は表の status（変わるときだけ）と、`includeInTotal` = 送った値・`confirmed: true`・`updatedAt`。`confirm` は `confirmed: true`・`updatedAt`（未確認なら表の status と `includeInTotal: true`）
+- 未確認を「含めない」にすると、LINE の［除外］と同じ状態（`personal`）にする。理由は `decideSetInclude` の JSDoc
+- 既読にしただけ（status は未確認のまま）の支出は、そのあと LINE の OK を押すと共同費・計上になる（判定は `status` で行うため）
+- ログは `household expense action`（`action` は許可リストの値だけ。支出・押した人の ID は伏せる）
+
 - **立替は期間の精算に全額を加算する**: 以前は立替（`advance_pending`）が期間の精算（折半。支払った人 `payerId || lineId` で数える）と別の立替の精算の両方に入り、二重に払うおそれがあった。立替の精算（`GET /household/settlement`・`POST /household/settlement/settle`、LINE の `精算` の記録）はやめ、［自分が立替］にした支出（`advanceFull: true`）は支出の日付の期間の精算で全額を返す。全額にする前の立替（`advanceFull` 無し）は、これまでどおり支払った人の分として折半する（過去の期間の金額を変えないため）。精算が済んでいれば `legacy-advances/settle` で精算済みにする
 - **対象範囲**（全額にする前の立替）: `groups/{groupId}.lineGroupId` があれば `lineGroupId` 基準（以前の LINE の `立替一覧` / `精算` と同じ集合）、無ければ `groupId` 基準。期間は見ず、残っている全件
 - **期間の精算（折半）**の計算は API を持たない。`web/lib/periodSplit.ts` の `computePeriodSplit` がクライアントで計算する（LINE への通知は同じ式の `bot/src/periodSplit.ts`）: 集金額 = 世帯の支出合計 ÷ 2 − 集金するメンバーの支払い（`payerId`、無ければ `lineId`）＋ 相手の立替（全額）− 集金するメンバーの立替（全額）。合計は `groupId` が一致し `includeInTotal` のもので、`advance_settled` と立替（全額）を除く。立替（全額）は `isFullAdvance`（`status: 'advance_pending'` かつ `advanceFull: true`）のうち日付が期間内で `includeInTotal` のもの（合計から除外した立替は返さず、除外として数える）で、立て替えた人＝支払った人（`payerId` → `advanceBy` → `lineId`。Web の編集で支払った人を変えたらその人に返す）で分ける（集金するメンバー以外の立替は相手の分）。結果の `advanceCount` / `targetAdvanced` / `counterpartAdvanced` が件数と各人の立替の合計。有効メンバーが 2 人でない（`not_two_members`）か集金するメンバー未指定（`no_target`）なら出さない。記録は残さない
-- テスト: 純関数は `bot/scripts/smoke-household-api.js` / `smoke-recurring.js`（`npm -w bot test`）、web 側は `web/__tests__/periodSplit.test.mjs` / `renewal-logic.test.mjs`（`npm -w web test`）。ルーター・認証・Firestore を通した確認は `bot/scripts/emulator-household-api.js` / `emulator-recurring.js` / `emulator-settlement-summary.js`（`npm -w bot run test:emulator`。`bot/scripts/firebase.emulator.json` のポート 18080 / 19099 で Firestore・Auth エミュレータを起動する。firebase-tools は依存に入れていないので、別途入れて PATH に置く）
+- テスト: 純関数は `bot/scripts/smoke-household-api.js` / `smoke-recurring.js`（`npm -w bot test`。支出の操作は status 8 種 × 含める / 含めないの表と、含めないにした後に古いカードの OK・［自分が払った］・カテゴリの変更を当てても合計に戻らないこと）、web 側は `web/__tests__/periodSplit.test.mjs` / `renewal-logic.test.mjs`（`npm -w web test`）。ルーター・認証・Firestore を通した確認は `bot/scripts/emulator-household-api.js` / `emulator-recurring.js` / `emulator-settlement-summary.js`（`npm -w bot run test:emulator`。`bot/scripts/firebase.emulator.json` のポート 18080 / 19099 で Firestore・Auth エミュレータを起動する。firebase-tools は依存に入れていないので、別途入れて PATH に置く）
 
 ---
 
