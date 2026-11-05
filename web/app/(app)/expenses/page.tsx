@@ -416,7 +416,7 @@ function ExpensesPageContent() {
   // （未読の支出は、会計に含める・含めないを押すとあわせて既読になる。既読にするは会計を変えない）
   const handleExpenseAction = async (expense: Expense, kind: ExpenseActionKind) => {
     const include = kind === "include";
-    // 既読で、会計がすでに押した値なら送らない
+    // 区分が決まっていて、会計がすでに押した値なら送らない（区分が未定なら同じ値でも送って区分を決める）
     if (kind !== "read" && !shouldSendInclude(expense, include)) return;
     if (busyIdsRef.current.has(expense.id)) return;
     busyIdsRef.current.add(expense.id);

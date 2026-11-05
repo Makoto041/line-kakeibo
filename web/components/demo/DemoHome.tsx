@@ -119,7 +119,7 @@ export default function DemoHome() {
       {pendingCount > 0 && (
         <Link
           href="/demo/expenses/?filter=pending"
-          className="mt-4 flex items-center gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-amber-800 transition-colors hover:bg-amber-500/15 dark:text-amber-200"
+          className="mt-4 flex items-center gap-3 rounded-2xl border border-sky-500/25 bg-sky-500/10 px-4 py-3 text-sky-800 transition-colors hover:bg-sky-500/15 dark:text-sky-200"
         >
           <Clock className="h-5 w-5 shrink-0" />
           <span className="flex-1 text-sm font-semibold">未読の支出が {pendingCount}件 あります</span>

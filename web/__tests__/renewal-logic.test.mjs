@@ -18,7 +18,7 @@ import {
   canClientWrite,
   canClientDelete,
   canServerWrite,
-  isSplitUndecided,
+  needsSplitDecision,
   shouldSendInclude,
   isPersonalExpense,
   filterExpenses,
@@ -97,38 +97,45 @@ test('isPending: 手入力で status なし / pending かつ confirmed !== true 
   assert.equal(countPending([{}, { inputSource: 'gmail_auto', status: 'pending', confirmed: false }]), 1);
 });
 
-test('isSplitUndecided: 手入力で status なし / pending（既読にしただけのものも）。区分のチップを出さない条件', () => {
-  assert.equal(isSplitUndecided({}), true);
-  assert.equal(isSplitUndecided({ status: 'pending' }), true);
+test('needsSplitDecision: 手入力で status なし / pending（未読・既読にしただけ・旧データの確認済み）。送信判定にだけ使う', () => {
+  assert.equal(needsSplitDecision({}), true);
+  assert.equal(needsSplitDecision({ status: 'pending' }), true);
   // 既読（confirmed: true）にしても status が未定なら区分は決まっていない（isPending とはここが違う）
-  assert.equal(isSplitUndecided({ status: 'pending', confirmed: true }), true);
+  assert.equal(needsSplitDecision({ status: 'pending', confirmed: true }), true);
   assert.equal(isPending({ status: 'pending', confirmed: true }), false);
-  assert.equal(isSplitUndecided({ inputSource: 'line_text', confirmed: true }), true);
-  // 自動で入った支出は未定にしない（以前に pending で入ったカード取込も）
-  assert.equal(isSplitUndecided({ inputSource: 'gmail_auto', status: 'pending' }), false);
-  assert.equal(isSplitUndecided({ inputSource: 'recurring' }), false);
+  assert.equal(needsSplitDecision({ inputSource: 'line_text', confirmed: true }), true);
+  // 自動で入った支出は対象外（以前に pending で入ったカード取込も）
+  assert.equal(needsSplitDecision({ inputSource: 'gmail_auto', status: 'pending' }), false);
+  assert.equal(needsSplitDecision({ inputSource: 'recurring' }), false);
   for (const status of ['shared', 'personal', 'advance_pending', 'advance_settled']) {
-    assert.equal(isSplitUndecided({ status }), false, status);
+    assert.equal(needsSplitDecision({ status }), false, status);
   }
 });
 
-test('shouldSendInclude: 未読なら同じ値でも送る（押すと既読になる）。既読で今と同じ値なら送らない', () => {
-  // 未読（LINE の手入力。含めない）
+test('shouldSendInclude: 区分が未定なら同じ値でも送る（区分を決める）。決まっていれば違う値のときだけ送る', () => {
+  // 未読（LINE の手入力。含めない）: どちらも送る（押すと区分が決まり、既読にもなる）
   const unread = { status: undefined, confirmed: false, includeInTotal: false };
   assert.equal(shouldSendInclude(unread, true), true);
   assert.equal(shouldSendInclude(unread, false), true);
-  // 既読
+  // 既読済み・pending・除外（既読にしただけ）: 含めないも送って個人にする（古い LINE カードの OK で合計に戻らないように）
+  const readPendingExcluded = { status: 'pending', confirmed: true, includeInTotal: false };
+  assert.equal(shouldSendInclude(readPendingExcluded, false), true);
+  assert.equal(shouldSendInclude(readPendingExcluded, true), true);
+  // 旧データの確認済み（status なし・含める）: 同じ値でも送って区分を決める
+  const legacy = { status: undefined, confirmed: true, includeInTotal: true };
+  assert.equal(shouldSendInclude(legacy, true), true);
+  assert.equal(shouldSendInclude(legacy, false), true);
+  // 区分が決まっている: 違う値のときだけ
   const included = { status: 'shared', confirmed: true, includeInTotal: true };
   assert.equal(shouldSendInclude(included, true), false);
   assert.equal(shouldSendInclude(included, false), true);
   const excluded = { status: 'personal', confirmed: true, includeInTotal: false };
   assert.equal(shouldSendInclude(excluded, false), false);
   assert.equal(shouldSendInclude(excluded, true), true);
-  // 既読にしただけ（status は未定）
-  const readOnly = { status: 'pending', confirmed: true, includeInTotal: false };
-  assert.equal(shouldSendInclude(readOnly, false), false);
-  assert.equal(shouldSendInclude(readOnly, true), true);
-  // 自動で入った支出は未読にしないので、値が変わるときだけ送る
+  const advance = { status: 'advance_pending', confirmed: true, includeInTotal: true };
+  assert.equal(shouldSendInclude(advance, true), false);
+  assert.equal(shouldSendInclude(advance, false), true);
+  // 自動で入った支出（以前に pending で入ったカード取込も）は、値が変わるときだけ送る
   const card = { inputSource: 'gmail_auto', status: 'pending', confirmed: false, includeInTotal: true };
   assert.equal(shouldSendInclude(card, true), false);
   assert.equal(shouldSendInclude(card, false), true);

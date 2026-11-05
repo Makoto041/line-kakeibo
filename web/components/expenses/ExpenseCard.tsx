@@ -15,7 +15,6 @@ import type { Expense } from "../../lib/hooks";
 import type { ExpenseActionKind } from "../../lib/expenseState";
 import {
   isPending,
-  isSplitUndecided,
   splitChip,
   canClientWrite,
   canClientDelete,
@@ -150,8 +149,8 @@ export default function ExpenseCard({
                 advance: "bg-violet-500/12 text-violet-600 dark:text-violet-400",
                 settled: "bg-fg/5 text-muted",
               }[chip];
-              // 区分がまだ決まっていない（status が無い / pending。既読にしただけのものも）うちは出さない
-              return isSplitUndecided(expense) ? null : (
+              // 未読のうちは区分がまだ決まっていないので出さない
+              return pending ? null : (
                 <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${tone}`}>{label}</span>
               );
             })()}

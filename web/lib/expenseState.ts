@@ -32,23 +32,26 @@ export function isPending(e: Pick<ExpenseFields, 'status' | 'confirmed' | 'input
 }
 
 /**
- * 区分（共同費・個人・立替）がまだ決まっていない: 手入力の支出で、status が無い / pending。
- * 既読にしただけ（confirmed: true）の支出も含む（既読は区分を変えない）。区分のチップを出さない条件
+ * 会計に含める / 含めないを押したとき、区分（status）もサーバーに決めてもらう必要があるか（shouldSendInclude で使う）。
+ * 手入力の支出で status が無い / pending のもの。未読に加え、既読にしただけ（confirmed: true）のものと、
+ * status の無い旧データの確認済みも含む。サーバーは含める → 共同費、含めない → 個人にする。
+ * 画面の表示（区分のチップなど）には使わない（チップを出さないのは未読 = isPending のときだけ）
  */
-export function isSplitUndecided(e: Pick<ExpenseFields, 'status' | 'inputSource'>): boolean {
+export function needsSplitDecision(e: Pick<ExpenseFields, 'status' | 'inputSource'>): boolean {
   if (isAutoInput(e)) return false;
   return e.status == null || e.status === 'pending';
 }
 
 /**
  * 会計に含める / 含めないを押したとき、サーバーに送るか。
- * 未読なら同じ値でも送る（押すと既読になる）。既読で、今と同じ値なら送らない
+ * 区分が未定（needsSplitDecision。未読を含む）なら同じ値でも送る（区分が決まり、未読なら既読にもなる）。
+ * そうでなければ、今と違う値のときだけ送る
  */
 export function shouldSendInclude(
-  e: Pick<ExpenseFields, 'status' | 'confirmed' | 'inputSource' | 'includeInTotal'>,
+  e: Pick<ExpenseFields, 'status' | 'inputSource' | 'includeInTotal'>,
   include: boolean
 ): boolean {
-  return isPending(e) || e.includeInTotal !== include;
+  return needsSplitDecision(e) || e.includeInTotal !== include;
 }
 
 /** 支出一覧のカードの操作（既読にする / 会計に含める / 会計に含めない） */
@@ -64,7 +67,7 @@ export function isSettled(e: Pick<ExpenseFields, 'status'>): boolean {
 
 export type SplitChip = 'shared' | 'personal' | 'advance' | 'settled';
 
-/** 負担区分のチップ（bot の deriveExpenseSettings と同じ分け方。区分が未定かは isSplitUndecided で別に判定する） */
+/** 負担区分のチップ（bot の deriveExpenseSettings と同じ分け方。未読かどうかは別の表示で示す） */
 export function splitChip(e: Pick<ExpenseFields, 'status'>): SplitChip {
   switch (e.status) {
     case 'personal':
