@@ -5,7 +5,7 @@
  * status / confirmed を書けないため、状態を変える操作はここで Admin SDK を使って行う。判定と書き込みは
  * LINE の postback と同じ仕組み（expenseActions.ts）。
  *
- * - POST /household/expenses/:expenseId/actions   { action: 'mark_read' | 'set_include' | 'confirm'（旧 Web 用） }
+ * - POST /household/expenses/:expenseId/actions   { action: 'mark_read' | 'set_include' | 'confirm'（現行 Web の確認ボタン用） }
  * - GET  /household/legacy-advances?groupId=<id>   全額にする前の立替（advanceFull の無い advance_pending）
  * - POST /household/legacy-advances/settle        { groupId, expectedExpenseIds }（精算済みにする）
  * - POST /household/split-settings                { groupId, collectFromLineId }（期間の折半精算で集金するメンバー）
@@ -106,7 +106,7 @@ export function sameIdSet(a: string[], b: string[]): boolean {
 /**
  * 支出の操作（POST /household/expenses/:expenseId/actions の body）
  *
- * - confirm: LINE の OK と同じ確認（旧 Web 用に残す）
+ * - confirm: LINE の OK と同じ確認（現行 Web の確認ボタン用。次の PR で新 UI に置き換え）
  * - mark_read: 既読にする
  * - set_include: 会計（合計）に含める / 含めない
  */
@@ -461,14 +461,13 @@ function expenseDeciderFor(request: ExpenseActionRequest): ExpenseDecider {
 
 /**
  * POST /household/expenses/:expenseId/actions
- *   { action: 'mark_read' } | { action: 'set_include', includeInTotal: boolean } | { action: 'confirm' }（旧 Web 用）
  *
- * - mark_read: 既読（`confirmed: true`）にするだけ。status・includeInTotal は変えない（decideMarkRead）。
- * - set_include: 会計に含める / 含めないを切り替えて既読にする。未確認（status 無し / pending）は含める → shared、
- *   含めない → personal、personal を含める → shared、それ以外の status はそのまま（decideSetInclude）。
- * - confirm: LINE の OK ボタンと同じ処理。未確認なら共同費にして予算に計上する。それ以外の status は確認済みにするだけ。
+ * - mark_read: 既読にするだけ（decideMarkRead）
+ * - set_include: 会計に含める / 含めないを切り替えて既読にする。status の変わり方は decideSetInclude の JSDoc
+ * - confirm: LINE の OK と同じ確認（decideConfirm）。現行 Web の確認ボタン用（次の PR で新 UI に置き換え）
  *
- * どれも拒否しない（精算済みも 200。現在の status を返す）。これ以外の action・includeInTotal が boolean でなければ 400。
+ * どれも拒否しないので、認可を通れば 200（精算済みも。現在の status を返す）。これ以外の action・includeInTotal が
+ * boolean でなければ 400。
  */
 householdRouter.post(
   '/expenses/:expenseId/actions',

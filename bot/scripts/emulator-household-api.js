@@ -438,16 +438,27 @@ async function main() {
       await db.doc('expenses/inc_personal').set({ ...unread, status: 'personal', confirmed: true });
       await db.doc('expenses/inc_settled').set({ ...unread, status: 'advance_settled', advanceBy: 'Ualice', includeInTotal: true, confirmed: true });
 
-      // 認可（confirm と同じ authorizeExpenseWrite）
-      for (const [who, token] of [['メンバー外', tokens.stranger], ['脱退者', tokens.left]]) {
-        for (const body of [MARK_READ, INCLUDE]) {
-          const r = await act('rd_unread', token, body);
-          check(`${body.action}: ${who}は 403`, r.status === 403 && r.body.error === 'forbidden', r.body);
+      // 認可（confirm と同じ authorizeExpenseWrite）。403 のたびに読み直し、書いていないことを確かめる
+      // （set_include は今の includeInTotal の逆を送る。書けば includeInTotal・updatedAt が変わる）
+      const stateOf = (d) => ({ status: d.status ?? null, includeInTotal: d.includeInTotal ?? null, confirmed: d.confirmed ?? null, updatedAt: d.updatedAt ? d.updatedAt.toMillis() : null });
+      const forbiddenCases = [
+        ['メンバー外', tokens.stranger, 'rd_unread'],
+        ['脱退者', tokens.left, 'rd_unread'],
+        ['他の世帯（g2）のメンバー', tokens.carol, 'rd_unread'],
+        ['文書 ID が衝突する lineId（x_Umallory）', tokens.collider, 'rd_unread'],
+        ['他人の個人支出（Bob が Alice の e_personal）', tokens.bob, 'e_personal'],
+        ['lineGroupId だけの旧形式（登録した本人の Alice でも）', tokens.alice, 'e_legacy'],
+      ];
+      for (const [who, token, id] of forbiddenCases) {
+        for (const action of ['mark_read', 'set_include']) {
+          const before = stateOf(await read(id));
+          const body = action === 'mark_read' ? MARK_READ : { action, includeInTotal: before.includeInTotal !== true };
+          const r = await act(id, token, body);
+          const after = stateOf(await read(id));
+          check(`${action}: ${who}は 403 で、書かない`, r.status === 403 && r.body.error === 'forbidden' && JSON.stringify(after) === JSON.stringify(before), { status: r.status, body: r.body, before, after });
         }
       }
       for (const body of [MARK_READ, EXCLUDE]) {
-        const legacy = await act('e_legacy', tokens.alice, body);
-        check(`${body.action}: lineGroupId だけの旧形式は 403（所有者でも）`, legacy.status === 403, legacy.body);
         const missing = await act('no_such', tokens.bob, body);
         check(`${body.action}: 存在しない支出は 404`, missing.status === 404 && missing.body.error === 'not_found', missing.body);
       }
@@ -457,7 +468,7 @@ async function main() {
       const strInclude = await act('rd_unread', tokens.bob, { action: 'set_include', includeInTotal: 'false' });
       check('set_include: includeInTotal が文字列なら 400', strInclude.status === 400 && strInclude.body.error === 'invalid_request', strInclude.body);
       const untouched = await read('rd_unread');
-      check('拒否・400 のときは書き込まない', untouched.confirmed === false && untouched.status === undefined && untouched.includeInTotal === false && untouched.updatedAt.isEqual(seededAt), untouched);
+      check('400 のときは書き込まない', untouched.confirmed === false && untouched.status === undefined && untouched.includeInTotal === false && untouched.updatedAt.isEqual(seededAt), untouched);
 
       // 既読: confirmed と updatedAt だけ
       const markRead = await act('rd_unread', tokens.bob, MARK_READ);

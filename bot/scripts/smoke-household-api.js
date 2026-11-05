@@ -197,22 +197,28 @@ console.log('\ndecideSetInclude（Web の会計に含める / 含めない）');
   check('表は status 8 種をすべて含む', deepEqual(table.map((row) => row[0]), statuses));
   for (const [status, whenInclude, whenExclude] of table) {
     for (const [include, next] of [[true, whenInclude], [false, whenExclude]]) {
-      // 押す前の includeInTotal は押す値の逆（変化があるとき）と同じ値（変化がないとき）の両方で確かめる
-      for (const before of [!include, include]) {
-        const d = decideSetInclude(include)({ status, includeInTotal: before, advanceBy: 'U2', advanceFull: true, amount: 1000 });
-        const statusPatch = next === undefined ? {} : { status: next };
-        check(
-          `status=${JSON.stringify(status)}・${include ? '含める' : '含めない'}（前は ${before}）→ ${next ?? 'そのまま'}・includeInTotal=${include}・既読`,
-          !('reject' in d) &&
-            deepEqual(comparable(d), {
-              update: { ...statusPatch, includeInTotal: include, confirmed: true },
-              cardPatch: { ...statusPatch, includeInTotal: include },
-              updatedAtIsDate: true,
-            }),
-          JSON.stringify(d)
-        );
-      }
+      const d = decideSetInclude(include)({ status, includeInTotal: !include, advanceBy: 'U2', advanceFull: true, amount: 1000 });
+      const statusPatch = next === undefined ? {} : { status: next };
+      check(
+        `status=${JSON.stringify(status)}・${include ? '含める' : '含めない'} → ${next ?? 'そのまま'}・includeInTotal=${include}・既読`,
+        !('reject' in d) &&
+          deepEqual(comparable(d), {
+            update: { ...statusPatch, includeInTotal: include, confirmed: true },
+            cardPatch: { ...statusPatch, includeInTotal: include },
+            updatedAtIsDate: true,
+          }),
+        JSON.stringify(d)
+      );
     }
+  }
+  // 押す前の includeInTotal は判定に使わない（同じ status なら、押す前の値によらず同じ内容を書く）
+  for (const before of [true, false]) {
+    check(
+      `押す前の includeInTotal=${before} は読まない（status=shared）`,
+      [true, false].every((include) =>
+        deepEqual(comparable(decideSetInclude(include)({ status: 'shared', includeInTotal: before })), comparable(decideSetInclude(include)({ status: 'shared' })))
+      )
+    );
   }
 
   /** 判定の update を文書に当てた結果（FieldValue.delete() はキーを消す） */
@@ -251,7 +257,7 @@ console.log('\ndecideSetInclude（Web の会計に含める / 含めない）');
 // ------------------------------------------------------------
 console.log('\nparseExpenseAction（POST /household/expenses/:id/actions の body）');
 {
-  check('confirm（旧 Web）', deepEqual(parseExpenseAction({ action: 'confirm' }), { action: 'confirm' }));
+  check('confirm（現行 Web の確認ボタン）', deepEqual(parseExpenseAction({ action: 'confirm' }), { action: 'confirm' }));
   check('mark_read', deepEqual(parseExpenseAction({ action: 'mark_read' }), { action: 'mark_read' }));
   check('set_include true / false', deepEqual(parseExpenseAction({ action: 'set_include', includeInTotal: true }), { action: 'set_include', includeInTotal: true }) &&
     deepEqual(parseExpenseAction({ action: 'set_include', includeInTotal: false }), { action: 'set_include', includeInTotal: false }));
